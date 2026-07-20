@@ -320,6 +320,8 @@ class _AuthorityAdapter:
 
 
 class _FreshRunnerReader:
+    source_identity = "fixture.cnfutures.intraday-bars.v1"
+
     def get_bars_intraday(
         self, *args: object, **kwargs: object
     ) -> list[dict[str, object]]:
@@ -1252,6 +1254,8 @@ def test_real_market_ledger_reserves_futures_margin_before_simulated_fill() -> N
         assert session["execution_lineage_id"] == "test-lineage-20260710-0001"
 
         class _ClosingReader:
+            source_identity = "fixture.cnfutures.intraday-bars.v1"
+
             def get_bars_intraday(
                 self, *args: object, **kwargs: object
             ) -> list[dict[str, object]]:
@@ -1376,6 +1380,8 @@ def test_rejected_futures_fill_releases_pre_execution_margin_reservation() -> No
 
 def test_full_futures_flatten_releases_position_master_margin() -> None:
     class ClosingReader:
+        source_identity = "fixture.cnfutures.intraday-bars.v1"
+
         def get_bars_intraday(
             self, *args: object, **kwargs: object
         ) -> list[dict[str, object]]:
@@ -1576,6 +1582,8 @@ def test_fill_margin_above_reservation_is_not_accepted_as_position() -> None:
 
 def test_reduce_does_not_release_market_margin_before_position_is_durable() -> None:
     class ClosingReader:
+        source_identity = "fixture.cnfutures.intraday-bars.v1"
+
         def get_bars_intraday(
             self, *args: object, **kwargs: object
         ) -> list[dict[str, object]]:
@@ -1872,10 +1880,15 @@ def test_account_sidecar_charges_one_leg_fee_per_open_and_close_intent() -> None
         review_path = root / "reviews.jsonl"
         with (
             patch.object(
-                sim_runner,
-                "get_cn_futures_capital_provider_state",
-                side_effect=[_valid_market_provider_state(), second_state],
-            ),
+                    sim_runner,
+                    "get_cn_futures_capital_provider_state",
+                    side_effect=[
+                        _valid_market_provider_state(),
+                        second_state,
+                        second_state,
+                        second_state,
+                    ],
+                ),
             patch.object(
                 sim_runner,
                 "generate_style_signal",
@@ -1910,6 +1923,28 @@ def test_account_sidecar_charges_one_leg_fee_per_open_and_close_intent() -> None
                     "reference_id": kwargs.get("reference_id", ""),
                     "amount_cny": kwargs.get("amount_cny", 0.0),
                 },
+            ),
+            patch(
+                "shared.capital.commit_market_capital_fill",
+                return_value=SimpleNamespace(
+                    status="committed",
+                    reason="test_atomic_commit",
+                    committed=True,
+                    event_id="TEST-FILL-COMMIT",
+                    snapshot=SimpleNamespace(event_checksum="d" * 64),
+                    idempotent=False,
+                ),
+            ),
+            patch(
+                "shared.capital.commit_market_capital_position_close",
+                return_value=SimpleNamespace(
+                    status="committed",
+                    reason="test_atomic_commit",
+                    committed=True,
+                    event_id="TEST-CLOSE-COMMIT",
+                    snapshot=SimpleNamespace(event_checksum="e" * 64),
+                    idempotent=False,
+                ),
             ),
         ):
             sim_runner.run_multi_style_simulation(
@@ -2043,7 +2078,7 @@ def test_affordability_sidecar_records_each_pre_sizing_contract_rejection() -> N
     )
 
 
-def test_runner_allows_exact_reduce_only_without_account_authority() -> None:
+def test_runner_rejects_exact_reduce_only_without_account_authority() -> None:
     class Adapter:
         universe_filter = {"max_symbols": 1, "min_distinct_products": 1}
 
@@ -2072,24 +2107,22 @@ def test_runner_allows_exact_reduce_only_without_account_authority() -> None:
         positions_path = (
             root / "signals" / "positions" / "cn_futures_sim_positions.json"
         )
-        positions_path.parent.mkdir(parents=True)
-        positions_path.write_text(
-            json.dumps(
-                {
-                    "positions": [
-                        {
-                            "style": "trend",
-                            "symbol": "RB2610.SHF",
-                            "net_qty": 2,
-                            "avg_price": 3_520.0,
-                            "mark_price": 3_500.0,
-                            "contract_multiplier": 10,
-                            "margin_required": 9_100.0,
-                        }
-                    ]
-                }
-            ),
-            encoding="utf-8",
+        sim_runner._write_position_snapshot(
+            root / "signals",
+            {
+                "trade_date": "20260710",
+                "positions": [
+                    {
+                        "style": "trend",
+                        "symbol": "RB2610.SHF",
+                        "net_qty": 2,
+                        "avg_price": 3_520.0,
+                        "mark_price": 3_500.0,
+                        "contract_multiplier": 10,
+                        "margin_required": 9_100.0,
+                    }
+                ],
+            },
         )
         with patch.object(
             sim_runner,
@@ -2105,15 +2138,12 @@ def test_runner_allows_exact_reduce_only_without_account_authority() -> None:
                 now=datetime.fromisoformat("2026-07-10 09:36:00"),
             )
 
-        assert result["filled_count"] == 1
-        assert result["records"][0]["order"]["quantity"] == 2
-        assert result["records"][0]["order"]["intent"] == "reduce_only"
-        assert (
-            result["records"][0]["size_decision"]["reason"]
-            == "reduce_only_existing_position"
-        )
+        assert result["filled_count"] == 0
+        assert result["state"] == "degraded"
+        assert result["errors"]
+        assert "capital_provider" in str(result["errors"][0]).lower()
         snapshot = json.loads(positions_path.read_text(encoding="utf-8"))
-        assert snapshot["position_count"] == 0
+        assert snapshot["position_count"] == 1
 
 
 def test_force_flatten_still_requires_fresh_fill_evidence() -> None:
@@ -2803,7 +2833,7 @@ def test_prediction_snapshot_includes_pit_lineage_fields() -> None:
         bar_time="2026-07-10 09:35:00",
         authority="market_capital_ledger",
         symbol="RB2610.SHF",
-        source_name="sharedsignals_futures_bars",
+        source_name="fixture.cnfutures.intraday-bars.v1",
         source_cadence="5min",
         source_bars=[
             {
@@ -2834,7 +2864,7 @@ def test_prediction_snapshot_includes_pit_lineage_fields() -> None:
     assert snapshot["probability_model_state"] == "not_calibrated"
     assert "probability" not in snapshot
     assert "style_version" in snapshot
-    assert snapshot["source_name"] == "sharedsignals_futures_bars"
+    assert snapshot["source_name"] == "fixture.cnfutures.intraday-bars.v1"
     assert snapshot["source_symbol"] == "RB2610.SHF"
     assert snapshot["source_bar_count"] == 1
     assert snapshot["source_rule_version"]
@@ -2866,7 +2896,7 @@ def test_prediction_snapshot_persists_real_provider_receipt_lineage() -> None:
         bar_time="2026-07-10 09:35:00",
         authority="market_capital_ledger",
         symbol="RB2610.SHF",
-        source_name="sharedsignals_futures_bars",
+        source_name="fixture.cnfutures.intraday-bars.v1",
         source_cadence="5min",
         source_bars=[
             {
@@ -2922,7 +2952,7 @@ def test_prediction_snapshot_hash_binds_bar_source_signal_style_rule_and_pit() -
         "bar_time": "2026-07-10 09:35:00",
         "authority": "market_capital_ledger",
         "symbol": "RB2610.SHF",
-        "source_name": "sharedsignals_futures_bars",
+        "source_name": "fixture.cnfutures.intraday-bars.v1",
         "source_cadence": "5min",
         "source_bars": [source_bar],
     }
@@ -2980,7 +3010,7 @@ def test_prediction_snapshot_lineage_is_incomplete_without_immutable_source_bars
         bar_time="2026-07-10 09:35:00",
         authority="market_capital_ledger",
         symbol="RB2610.SHF",
-        source_name="sharedsignals_futures_bars",
+        source_name="fixture.cnfutures.intraday-bars.v1",
         source_cadence="5min",
         source_bars=[],
     )

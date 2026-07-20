@@ -15,7 +15,55 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _close_account(
+    *, symbol: str = "rb2601", position_side: str = "long", total_qty: int = 2
+) -> dict[str, object]:
+    return {
+        **_cnf_account(),
+        "position_snapshot": {
+            "snapshot_id": "fixture-cnf-position-001",
+            "as_of": "2026-07-06T14:30:00+08:00",
+            "authority_id": "cn-futures-capital-v1",
+            "broker_contract": "tradingagent.cnfutures.paper_broker.v1",
+            "positions": [
+                {
+                    "symbol": symbol,
+                    "position_side": position_side,
+                    "total_qty": total_qty,
+                }
+            ],
+        },
+    }
+
+
+def _cnf_account() -> dict[str, object]:
+    return {
+        "account_id": "cn_futures_sim",
+        "market": "cn_futures",
+        "broker_contract": "tradingagent.cnfutures.paper_broker.v1",
+        "authority_id": "cn-futures-capital-v1",
+        "authority_generation": 1,
+    }
+
+
 class CNFuturesSimTest(unittest.TestCase):
+    def test_direct_executor_rejects_real_account_before_ignoring_it(self) -> None:
+        from CNFutures.sim_executor import cn_futures_sim_execute
+
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            cn_futures_sim_execute(
+                order={
+                    "order_id": "SIM-CNF-REAL",
+                    "symbol": "rb2601",
+                    "side": "buy",
+                    "quantity": 1,
+                    "price": 3500.0,
+                    "previous_close": 3500.0,
+                },
+                account={"account_type": "real"},
+                config={},
+            )
+
     def test_force_flatten_position_close_records_realized_pnl(self) -> None:
         from CNFutures.sim_runner import _realized_pnl_from_position_close
 
@@ -496,16 +544,20 @@ class CNFuturesSimTest(unittest.TestCase):
         result = execute_sim_order(
             order={
                 "order_id": "SIM-CNF-1",
+                "authority_generation": 1,
                 "symbol": "rb2601",
                 "side": "buy",
+                "position_effect": "open",
                 "quantity": 2,
                 "price": 3500.0,
                 "previous_close": 3500.0,
                 "bar_time": "2026-07-06 14:30:00",
                 "bar_volume": 1000,
+                "trade_date": "20260706",
+                "decision_time": "2026-07-06T14:30:10+08:00",
             },
             market="cn_futures",
-            account={"account": "simnow"},
+            account=_cnf_account(),
             config={"fee_mode": "round_trip_estimate"},
         )
 
@@ -523,6 +575,79 @@ class CNFuturesSimTest(unittest.TestCase):
         self.assertEqual(result.raw_response["margin_required"], 9102.6)
         self.assertFalse(result.raw_response["real_trading_enabled"])
 
+    def test_close_requires_matching_authority_bound_position_snapshot(self) -> None:
+        from shared.execution.sim_broker import execute_sim_order
+
+        order = {
+            "order_id": "SIM-CNF-CLOSE",
+            "authority_generation": 1,
+            "symbol": "rb2601",
+            "side": "sell",
+            "position_effect": "close",
+            "quantity": 2,
+            "price": 3500.0,
+            "previous_close": 3500.0,
+            "bar_time": "2026-07-06 14:30:00",
+            "bar_volume": 1000,
+            "trade_date": "20260706",
+            "decision_time": "2026-07-06T14:30:10+08:00",
+        }
+        missing = execute_sim_order(
+            order=order,
+            market="cn_futures",
+            account=_cnf_account(),
+            config={"fee_mode": "round_trip_estimate"},
+        )
+        accepted = execute_sim_order(
+            order=order,
+            market="cn_futures",
+            account=_close_account(),
+            config={"fee_mode": "round_trip_estimate"},
+        )
+
+        self.assertEqual(missing.status, "rejected")
+        self.assertEqual(
+            missing.raw_response["reason"], "position_snapshot_required"
+        )
+        self.assertEqual(accepted.status, "filled")
+        self.assertEqual(accepted.filled_qty, 2)
+
+    def test_close_cannot_exceed_or_reverse_snapshot_side(self) -> None:
+        from shared.execution.sim_broker import execute_sim_order
+
+        base = {
+            "authority_generation": 1,
+            "symbol": "rb2601",
+            "side": "sell",
+            "position_effect": "close",
+            "quantity": 2,
+            "price": 3500.0,
+            "previous_close": 3500.0,
+            "bar_time": "2026-07-06 14:30:00",
+            "bar_volume": 1000,
+            "trade_date": "20260706",
+            "decision_time": "2026-07-06T14:30:10+08:00",
+        }
+        insufficient = execute_sim_order(
+            order={**base, "order_id": "SIM-CNF-CLOSE-OVER"},
+            market="cn_futures",
+            account=_close_account(total_qty=1),
+            config={},
+        )
+        wrong_side = execute_sim_order(
+            order={**base, "order_id": "SIM-CNF-CLOSE-WRONG"},
+            market="cn_futures",
+            account=_close_account(position_side="short"),
+            config={},
+        )
+
+        self.assertEqual(
+            insufficient.raw_response["reason"], "insufficient_close_position"
+        )
+        self.assertEqual(
+            wrong_side.raw_response["reason"], "position_snapshot_match_not_unique"
+        )
+
     def test_sim_executor_models_partial_fill_and_price_limits(self) -> None:
         import CNFutures.sim_executor  # noqa: F401
         from shared.execution.sim_broker import execute_sim_order
@@ -530,16 +655,20 @@ class CNFuturesSimTest(unittest.TestCase):
         partial = execute_sim_order(
             order={
                 "order_id": "SIM-CNF-PARTIAL",
+                "authority_generation": 1,
                 "symbol": "IF2601.CFFEX",
                 "side": "buy",
+                "position_effect": "open",
                 "quantity": 10,
                 "price": 3500.0,
                 "bar_volume": 20,
                 "bar_time": "2026-07-06 14:30:00",
                 "previous_close": 3500.0,
+                "trade_date": "20260706",
+                "decision_time": "2026-07-06T14:30:10+08:00",
             },
             market="cn_futures",
-            account={"account": "simnow"},
+            account=_cnf_account(),
             config={
                 "fee_mode": "round_trip_estimate",
                 "volume_participation": 0.10,
@@ -549,14 +678,16 @@ class CNFuturesSimTest(unittest.TestCase):
         rejected = execute_sim_order(
             order={
                 "order_id": "SIM-CNF-LIMIT",
+                "authority_generation": 1,
                 "symbol": "IF2601.CFFEX",
                 "side": "buy",
+                "position_effect": "open",
                 "quantity": 1,
                 "price": 4000.0,
                 "previous_close": 3500.0,
             },
             market="cn_futures",
-            account={"account": "simnow"},
+            account=_cnf_account(),
             config={},
         )
 
@@ -575,8 +706,10 @@ class CNFuturesSimTest(unittest.TestCase):
         result = execute_sim_order(
             order={
                 "order_id": "SIM-CNF-DEPTH",
+                "authority_generation": 1,
                 "symbol": "rb2601",
                 "side": "buy",
+                "position_effect": "open",
                 "quantity": 5,
                 "price": 3500.0,
                 "ask_price": 3502.0,
@@ -584,9 +717,11 @@ class CNFuturesSimTest(unittest.TestCase):
                 "previous_close": 3500.0,
                 "bar_volume": 1000,
                 "quote_time": "2026-07-06 14:30:00",
+                "trade_date": "20260706",
+                "decision_time": "2026-07-06T14:30:10+08:00",
             },
             market="cn_futures",
-            account={"account": "simnow"},
+            account=_cnf_account(),
             config={"fee_mode": "round_trip_estimate", "slippage_bps": 0.0},
         )
 
@@ -609,8 +744,10 @@ class CNFuturesSimTest(unittest.TestCase):
         result = execute_sim_order(
             order={
                 "order_id": "SIM-CNF-EXPIRY",
+                "authority_generation": 1,
                 "symbol": "rb2607",
                 "side": "buy",
+                "position_effect": "open",
                 "quantity": 1,
                 "price": 3500.0,
                 "trade_date": "20260703",
@@ -618,7 +755,7 @@ class CNFuturesSimTest(unittest.TestCase):
                 "previous_close": 3500.0,
             },
             market="cn_futures",
-            account={"account": "simnow"},
+            account=_cnf_account(),
             config={"rollover_min_days_to_expiry": 5},
         )
 
@@ -628,6 +765,44 @@ class CNFuturesSimTest(unittest.TestCase):
         )
         self.assertEqual(result.raw_response["days_to_expiry"], 2)
         self.assertEqual(result.raw_response["reason"], "contract_expiry_guard")
+
+    def test_sim_executor_requires_position_effect_and_exact_integer_lots(self) -> None:
+        from shared.execution.sim_broker import execute_sim_order
+
+        missing_effect = execute_sim_order(
+            order={
+                "order_id": "SIM-CNF-NO-OFFSET",
+                "authority_generation": 1,
+                "symbol": "rb2601",
+                "side": "buy",
+                "quantity": 1,
+                "price": 3500.0,
+                "previous_close": 3500.0,
+            },
+            market="cn_futures",
+            account=_cnf_account(),
+        )
+        fractional = execute_sim_order(
+            order={
+                "order_id": "SIM-CNF-FRACTIONAL",
+                "authority_generation": 1,
+                "symbol": "rb2601",
+                "side": "buy",
+                "position_effect": "open",
+                "quantity": 1.5,
+                "price": 3500.0,
+                "previous_close": 3500.0,
+            },
+            market="cn_futures",
+            account=_cnf_account(),
+        )
+
+        self.assertEqual(missing_effect.status, "rejected")
+        self.assertEqual(
+            missing_effect.raw_response["reason"], "position_effect_required"
+        )
+        self.assertEqual(fractional.status, "rejected")
+        self.assertEqual(fractional.raw_response["reason"], "non_positive_quantity")
 
     def test_reversal_pnl_uses_one_round_trip_fee_when_previous_fill_precharged_it(
         self,
@@ -887,7 +1062,7 @@ class CNFuturesSimTest(unittest.TestCase):
             1,
         )
 
-    def test_run_simulation_respects_kill_switch(self) -> None:
+    def test_run_simulation_cli_is_retired_before_kill_switch_or_data_access(self) -> None:
         import os
         import subprocess
 
@@ -908,10 +1083,10 @@ class CNFuturesSimTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertEqual(result.returncode, 0)
-        output = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(output["state"], "paused")
-        self.assertEqual(output["filled_count"], 0)
+        self.assertEqual(result.returncode, 78)
+        self.assertEqual(result.stdout, "")
+        output = json.loads(result.stderr.strip().splitlines()[-1])
+        self.assertEqual(output["state"], "retired")
         self.assertFalse(output["real_trading_enabled"])
 
     def test_night_session_22xx_reads_bars_with_natural_date(self) -> None:

@@ -2,9 +2,9 @@
 """Run one deterministic, offline-only Phase 1 A-share paper-day fixture.
 
 This entrypoint is intentionally unable to construct a real HTTP or broker
-adapter.  It reads frozen response data, injects the existing SharedSignals V1
-client contract, and publishes only a local-candidate report under an explicit
-output root.
+adapter.  It reads frozen response data, injects the TradingDatas V1 wire
+contract through the retained compatibility client, and publishes only a
+local-candidate report under an explicit output root.
 """
 
 from __future__ import annotations
@@ -160,9 +160,9 @@ _CONFIG_FIELDS = frozenset(
     {
         "trade_date",
         "decision_as_of",
-        "ss_v1_base_url",
-        "ss_catalog_version",
-        "ss_access_policy_id",
+        "tradingdatas_v1_base_url",
+        "tradingdatas_catalog_version",
+        "tradingdatas_access_policy_id",
         "capital_authority_id",
         "authority_generation",
         "execution_lineage",
@@ -961,7 +961,7 @@ def _parse_fixture(fixture: Mapping[str, Any]) -> _ParsedFixture:
 
     profile = ResearchDataProfile(
         profile_id=config_raw["profile_id"],
-        catalog_version=config_raw["ss_catalog_version"],
+        catalog_version=config_raw["tradingdatas_catalog_version"],
         requirements=tuple(requirements),
     )
     decision_as_of = _instant(
@@ -971,9 +971,11 @@ def _parse_fixture(fixture: Mapping[str, Any]) -> _ParsedFixture:
     config = PaperRuntimeConfig(
         trade_date=config_raw["trade_date"],
         decision_as_of=decision_as_of,
-        ss_v1_base_url=config_raw["ss_v1_base_url"],
-        ss_catalog_version=config_raw["ss_catalog_version"],
-        ss_access_policy_id=config_raw["ss_access_policy_id"],
+        tradingdatas_v1_base_url=config_raw["tradingdatas_v1_base_url"],
+        tradingdatas_catalog_version=config_raw["tradingdatas_catalog_version"],
+        tradingdatas_access_policy_id=config_raw[
+            "tradingdatas_access_policy_id"
+        ],
         dataset_profile=profile,
         dataset_requests=requests,
         evidence_policies=evidence_policies,
@@ -1227,14 +1229,14 @@ def _transport_call_summary(parsed: _ParsedFixture) -> list[dict[str, str | None
     expected: list[tuple[str, str, Mapping[str, Any] | None]] = [
         (
             "GET",
-            f"{parsed.config.ss_v1_base_url}{CATALOG_PATH}",
+            f"{parsed.config.tradingdatas_v1_base_url}{CATALOG_PATH}",
             None,
         )
     ]
     expected.extend(
         (
             "POST",
-            f"{parsed.config.ss_v1_base_url}{QUERY_PATH}",
+            f"{parsed.config.tradingdatas_v1_base_url}{QUERY_PATH}",
             parsed.requests[dataset_id].to_payload(),
         )
         for dataset_id in parsed.config.dataset_profile.dataset_ids
@@ -1248,8 +1250,7 @@ def _transport_call_summary(parsed: _ParsedFixture) -> list[dict[str, str | None
             or call.get("url") != url
             or call.get("json_body") != json_body
             or call.get("headers", {}).get("Accept") != "application/json"
-            or call.get("headers", {}).get("X-Access-Policy")
-            != parsed.config.ss_access_policy_id
+            or "X-Access-Policy" in call.get("headers", {})
         ):
             raise FixtureCLIError("fixture_transport_call_sequence_invalid")
         if method == "GET":

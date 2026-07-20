@@ -22,6 +22,15 @@ from urllib import parse, request
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# The legacy all-market health command embeds retired data routes. Stop a
+# direct CLI before importing market/runtime modules; current acceptance uses
+# the TradingDatas V1 gate and market-specific contract tests instead.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("shared.runtime_test.market_health"))
+
 from CNFutures.review import latest_actionable_review
 from CNFutures.session import is_current_session_bar, parse_cn_datetime
 from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
@@ -32,7 +41,6 @@ LATEST_BY_MARKET = {
     "sim": ROOT / "shared/runtime_test/sim_market_health_latest.json",
     "all": ROOT / "shared/runtime_test/market_health_latest.json",
 }
-DEFAULT_MINI_HEALTH_URL = "http://127.0.0.1:9865/health"
 DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 STALE_SIGNAL_MINUTES = 60
 VALID_ASHARE_RE = re.compile(
@@ -579,66 +587,6 @@ def _check_signal_queues() -> Check:
             "leaked_shadow_sample": leaked_shadow[:20],
             "stale_execution_sample": stale_execution[:20],
         },
-    )
-
-
-def _check_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
-    try:
-        with request.urlopen(url, timeout=4) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        pending = int(data.get("pending", 0))
-        in_progress = int(data.get("in_progress", 0))
-        expired = int(data.get("expired_pending", 0))
-        halted = bool(data.get("halted")) or data.get("execution_status") == "halted"
-        ok = (
-            data.get("status") == "ok"
-            and pending == 0
-            and in_progress == 0
-            and expired == 0
-            and not halted
-        )
-        return Check(
-            "mini_hermes_health",
-            _status(ok),
-            "mini/Hermes 执行桥 ready" if ok else "mini/Hermes 执行桥不可用或有积压",
-            {"url": url, "health": data},
-        )
-    except Exception as exc:  # noqa: BLE001
-        return Check(
-            "mini_hermes_health",
-            "fail",
-            "mini/Hermes 健康口不可达",
-            {"url": url, "error": f"{exc.__class__.__name__}: {exc}"},
-        )
-
-
-def _check_optional_mini_health(url: str = DEFAULT_MINI_HEALTH_URL) -> Check:
-    enabled = os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0").strip() == "1"
-    if not enabled:
-        return Check(
-            "mini_hermes_optional",
-            "pass",
-            "Hermes/同花顺 GUI 第二路径未启用，不影响服务器本地模拟盘",
-            {"url": url, "enabled": False, "primary_path": "server_local_sim"},
-            severity="info",
-        )
-
-    raw = _check_mini_health(url)
-    ok = raw.status == "pass"
-    return Check(
-        "mini_hermes_optional",
-        "pass" if ok else "warn",
-        "Hermes/同花顺 GUI 第二路径 ready"
-        if ok
-        else "Hermes/同花顺 GUI 第二路径异常，服务器本地模拟盘继续独立运行",
-        {
-            "url": url,
-            "enabled": True,
-            "raw_status": raw.status,
-            "raw_summary": raw.summary,
-            "raw_details": raw.details,
-        },
-        severity="warn",
     )
 
 
@@ -2095,8 +2043,8 @@ def run_sim_market_health(markets: tuple[str, ...] = SIM_MARKETS) -> dict[str, A
     }
 
 
-def run_all_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict[str, Any]:
-    ashare = run_ashare_health(mini_health_url=mini_health_url)
+def run_all_health() -> dict[str, Any]:
+    ashare = run_ashare_health()
     sim = run_sim_market_health()
     checks = list(ashare["checks"]) + list(sim["checks"])
     failed = [check for check in checks if check.get("status") == "fail"]
@@ -2116,14 +2064,11 @@ def run_all_health(*, mini_health_url: str = DEFAULT_MINI_HEALTH_URL) -> dict[st
     }
 
 
-def run_ashare_health(
-    *, mini_health_url: str = DEFAULT_MINI_HEALTH_URL
-) -> dict[str, Any]:
+def run_ashare_health() -> dict[str, Any]:
     checks = [
         _check_ashare_universe(),
         _check_shadow_ledger(),
         _check_signal_queues(),
-        _check_optional_mini_health(mini_health_url),
         _check_simulated_position_sync(),
         _check_local_sim_ledger(),
         _check_ashare_capital_plan_alignment(),
@@ -2170,55 +2115,10 @@ def run_cn_futures_health() -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="tradingagent market health checks")
-    parser.add_argument(
-        "--market",
-        default="ashare",
-        choices=["ashare", "cn_futures", "sim", "all"],
-        help="market scope to check",
-    )
-    parser.add_argument("--mini-health-url", default=DEFAULT_MINI_HEALTH_URL)
-    parser.add_argument("--pretty", action="store_true")
-    parser.add_argument(
-        "--write-latest",
-        action="store_true",
-        help="write a latest JSON report for dashboards and cron probes",
-    )
-    parser.add_argument(
-        "--latest-path",
-        type=Path,
-        default=None,
-        help="override latest JSON report path",
-    )
-    args = parser.parse_args(argv)
-    if args.market == "ashare":
-        result = run_ashare_health(mini_health_url=args.mini_health_url)
-    elif args.market == "cn_futures":
-        result = run_cn_futures_health()
-    elif args.market == "sim":
-        result = run_sim_market_health()
-    elif args.market == "all":
-        result = run_all_health(mini_health_url=args.mini_health_url)
-    else:  # pragma: no cover
-        raise ValueError(args.market)
-    if args.write_latest:
-        latest_path = args.latest_path or LATEST_BY_MARKET[args.market]
-        latest_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = latest_path.with_suffix(latest_path.suffix + ".tmp")
-        tmp_path.write_text(
-            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=False) + "\n",
-            encoding="utf-8",
-        )
-        tmp_path.replace(latest_path)
-    print(
-        json.dumps(
-            result,
-            ensure_ascii=False,
-            indent=2 if args.pretty else None,
-            sort_keys=False,
-        )
-    )
-    return 0 if result["overall_status"] != "fail" else 2
+    from shared.governance.retirement import retired_cli
+
+    del argv
+    return retired_cli("shared.runtime_test.market_health")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 # Market-Causal Terminal Implementation Plan
 
+> **Historical naming notice (2026-07-20):** This document preserves implementation history. The current upstream product is TradingDatas, and TradingAgent consumes only `GET /v1/catalog` and `POST /v1/query`. Old SharedSignals runtime routes, SQLite access, and dual registries are not dependencies or fallbacks. Compatibility file and function identifiers may retain historical names.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add sourced market pulse, persistent opportunity correlation and local desktop terminal controls to the existing TradingAgent frontend.

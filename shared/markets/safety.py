@@ -97,7 +97,7 @@ def reject_real_execution_payload(
         }:
             continue
         value = str(raw_value or "").strip().lower()
-        if value in {"real", "live", "broker", "exchange"}:
+        if value in {"real", "live", "production", "broker", "exchange"}:
             raise RuntimeError(
                 f"{context}: real/live execution is rejected in simulated market tools; "
                 f"unsafe fields={[path]}"

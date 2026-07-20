@@ -2345,7 +2345,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--prepare-source",
         action="store_true",
-        help="Refresh execution marks from SharedSignals before reconcile.",
+        help=(
+            "Retired compatibility option; current runs must prepare marks "
+            "through an explicit fixture/V1 adapter before reconcile."
+        ),
     )
     parser.add_argument("--pretty", action="store_true")
     return parser
@@ -2357,14 +2360,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     source_root_value = args.source_root or _default_source_root(args.market)
     try:
         if args.prepare_source:
-            from shared.data.reader import TradingagentDataReader
-
-            prepare_reconcile_source(
-                market=args.market,
-                source_root=source_root_value,
-                trade_date=args.trade_date,
-                pit_timestamp=args.pit_timestamp,
-                reader=TradingagentDataReader(),
+            raise MarketCapitalReconcileError(
+                "prepare_source_legacy_reader_retired:"
+                "explicit_fixture_or_tradingdatas_v1_adapter_required"
             )
         result = reconcile_market_capital(
             market=args.market,

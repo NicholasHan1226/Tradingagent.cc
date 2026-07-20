@@ -29,16 +29,27 @@ ASHARE_SIM_HERMES_ENABLED=0
 ASHARE_SIM_WEBHOOK_ENABLED=0
 BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
-# Health and evolution
-*/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh
-*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_equity_snapshots.sh
-4,34 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh
-0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh
+# Hypothetical post-handoff jobs used only to test generic merge mechanics.
+*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_future_catalog_loop.sh
+4,34 * * * * /opt/investment/tradingagent/shared/wrappers/job_future_sim_snapshot.sh
+0 */4 * * * /opt/investment/tradingagent/cron/future_challenger_audit.sh
+"""
+
+PAUSED_TEMPLATE = """\
+# TradingAgent cron snapshot
+SHELL=/bin/bash
+CRON_TZ=Asia/Shanghai
+TZ=Asia/Shanghai
+REAL_TRADING_ENABLED=false
+ASHARE_SIM_HERMES_ENABLED=0
+ASHARE_SIM_WEBHOOK_ENABLED=0
+BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
+# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff
 """
 
 CURRENT = """\
-# SharedSignals market data
-*/5 * * * * /opt/investment/sharedsignals/collectors/quote_collector.sh >> /opt/investment/sharedsignals/logs/quote.log 2>&1
+# TradingDatas market data
+*/5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh >> /opt/investment/tradingdatas/logs/provider_transport.log 2>&1
 
 # MarketGraph research
 30 */4 * * * /opt/investment/marketgraph/jobs/research_pipeline.sh >> /opt/investment/marketgraph/logs/research.log 2>&1
@@ -190,9 +201,9 @@ class MergeTests(unittest.TestCase):
             + "\n"
         )
         self.assertTrue(result.startswith(preserved))
-        self.assertIn("/opt/investment/sharedsignals/", result)
+        self.assertIn("/opt/investment/tradingdatas/", result)
         self.assertIn("/opt/investment/marketgraph/", result)
-        self.assertIn("# SharedSignals market data", result)
+        self.assertIn("# TradingDatas market data", result)
         self.assertIn("# MarketGraph research", result)
         self.assertIn("SHELL=/bin/sh", result)
         self.assertIn("BASH_ENV=/some/old/path", result)
@@ -210,7 +221,7 @@ class MergeTests(unittest.TestCase):
         self.assertFalse(_is_ta_schedule_line("SHELL=/bin/bash"))
         self.assertFalse(
             _is_ta_schedule_line(
-                "*/5 * * * * /opt/investment/sharedsignals/collectors/quote.sh"
+                "*/5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh"
             )
         )
 
@@ -220,15 +231,15 @@ class MergeTests(unittest.TestCase):
         self.assertNotIn("job_old_removed.sh", result)
         self.assertNotIn("/cron/health_check.sh", result)
         self.assertNotIn("job_ashare_sim_exec.sh", result)
-        self.assertEqual(result.count("job_sim_market_health.sh"), 1)
-        self.assertEqual(result.count("job_equity_snapshots.sh"), 1)
+        self.assertNotIn("job_sim_market_health.sh", result)
+        self.assertEqual(result.count("job_future_sim_snapshot.sh"), 1)
 
     def test_empty_template_fails(self):
         """Template with zero TA schedule entries returns None."""
         self.assertIsNone(merge(CURRENT, "# no schedule lines\nSHELL=/bin/bash\n"))
         duplicate = (
             TA_TEMPLATE
-            + "*/10 * * * * /opt/investment/tradingagent/shared/wrappers/job_sim_market_health.sh\n"
+            + "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_future_catalog_loop.sh\n"
         )
         self.assertIsNone(merge(CURRENT, duplicate))
 
@@ -242,6 +253,11 @@ class MergeTests(unittest.TestCase):
             "9,39 * * * * /opt/investment/tradingagent/shared/wrappers/job_crypto_sim.sh",
             "7,37 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_sim.sh",
             "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sim.sh",
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_equity_snapshots.sh",
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_self_heal.sh",
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops",
+            "0 */4 * * * /opt/investment/tradingagent/cron/evolution.sh",
+            "0 9 * * 1-5 /opt/investment/tradingagent/cron/auto_pipeline.sh",
         )
 
         for schedule in retired_schedules:
@@ -273,11 +289,25 @@ class MergeTests(unittest.TestCase):
         """Current without any TA lines gets all template entries appended."""
         result = merge("# other repo\n*/5 * * * * /usr/bin/foo\n", TA_TEMPLATE)
         self.assertIn("/usr/bin/foo", result)
-        self.assertIn("job_sim_market_health.sh", result)
-        self.assertIn("job_equity_snapshots.sh", result)
+        self.assertNotIn("job_sim_market_health.sh", result)
+        self.assertIn("job_future_sim_snapshot.sh", result)
         self.assertNotIn("/cron/health_check.sh", result)
         self.assertNotIn("job_ashare_", result)
-        self.assertIn("evolution.sh", result)
+        self.assertIn("future_challenger_audit.sh", result)
+
+    def test_explicit_paused_template_removes_all_ta_jobs(self):
+        result = merge(CURRENT, PAUSED_TEMPLATE)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            [line for line in result.splitlines() if _is_ta_schedule_line(line)],
+            [],
+        )
+        self.assertIn(
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
+            result,
+        )
+        self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
 
 
 class ApplyWorkflowTests(unittest.TestCase):
@@ -350,7 +380,9 @@ class ApplyWorkflowTests(unittest.TestCase):
 
     def test_readback_coverage_mismatch_rollback(self):
         # Readback missing a TA entry triggers rollback.
-        bad_readback = merge(CURRENT, TA_TEMPLATE).replace("evolution.sh", "")
+        bad_readback = merge(CURRENT, TA_TEMPLATE).replace(
+            "future_challenger_audit.sh", ""
+        )
         reads = iter([(CURRENT, ""), (bad_readback, ""), (CURRENT, "")])
 
         with patch("tools.merge_tradingagent_crontab._read") as mr:
@@ -407,13 +439,17 @@ class FileModeTests(unittest.TestCase):
             rc = main(["--current-file", current_path, "--output", output_path])
             self.assertEqual(rc, 0)
             content = Path(output_path).read_text()
-            self.assertIn("job_sim_market_health.sh", content)
-            self.assertIn("job_equity_snapshots.sh", content)
+            self.assertNotIn("job_sim_market_health.sh", content)
+            self.assertNotIn("job_equity_snapshots.sh", content)
+            self.assertIn(
+                "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
+                content,
+            )
             self.assertNotIn("/cron/health_check.sh", content)
             self.assertNotIn("job_ashare_", content)
             self.assertNotIn("job_market_capital_reconcile.sh ashare", content)
             self.assertNotIn("job_daily_brief_", content)
-            self.assertIn("/opt/investment/sharedsignals/", content)
+            self.assertIn("/opt/investment/tradingdatas/", content)
             self.assertNotIn("job_old_removed.sh", content)
         finally:
             os.unlink(current_path)
@@ -435,13 +471,17 @@ class FileModeTests(unittest.TestCase):
                 out = sys.stdout.getvalue()
                 sys.stdout = saved
             self.assertEqual(rc, 0)
-            self.assertIn("job_sim_market_health.sh", out)
-            self.assertIn("job_equity_snapshots.sh", out)
+            self.assertNotIn("job_sim_market_health.sh", out)
+            self.assertNotIn("job_equity_snapshots.sh", out)
+            self.assertIn(
+                "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
+                out,
+            )
             self.assertNotIn("/cron/health_check.sh", out)
             self.assertNotIn("job_ashare_", out)
             self.assertNotIn("job_market_capital_reconcile.sh ashare", out)
             self.assertNotIn("job_daily_brief_", out)
-            self.assertIn("/opt/investment/sharedsignals/", out)
+            self.assertIn("/opt/investment/tradingdatas/", out)
         finally:
             os.unlink(current_path)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed TradingAgent runtime gate for the frozen SharedSignals V1 API.
+"""Fail-closed TradingAgent runtime gate for the frozen TradingDatas V1 API.
 
 This module is a consumer only.  It delegates all contract parsing to the
 provider-neutral V1 client and all dataset decisions to ``DataEvidenceGate``.
@@ -58,13 +58,16 @@ class RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 @dataclass(frozen=True)
-class SharedSignalsV1RuntimeGateConfig:
+class TradingDatasV1RuntimeGateConfig:
     """All runtime authority inputs needed before a V1 probe may run."""
 
     base_url: str
     catalog_version: str
     dataset_ids: tuple[str, ...]
     schema_major: int
+    # Local cache/audit namespace only. It is not a TradingDatas wire header or
+    # credential; future authentication must be injected by the transport after
+    # a fresh handoff freezes that contract.
     access_policy_id: str
     transport_id: str
     timeout_seconds: float
@@ -72,15 +75,15 @@ class SharedSignalsV1RuntimeGateConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.transport_id, str) or not self.transport_id.strip():
             raise RuntimeGateConfigurationError(
-                "SHAREDSIGNALS_RUNTIME_TRANSPORT must be explicitly configured"
+                "TRADINGDATAS_RUNTIME_TRANSPORT must be explicitly configured"
             )
         if self.transport_id != self.transport_id.strip():
             raise RuntimeGateConfigurationError(
-                "SHAREDSIGNALS_RUNTIME_TRANSPORT must not contain outer whitespace"
+                "TRADINGDATAS_RUNTIME_TRANSPORT must not contain outer whitespace"
             )
         if not isinstance(self.dataset_ids, tuple) or not self.dataset_ids:
             raise RuntimeGateConfigurationError(
-                "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON must select at least one dataset"
+                "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON must select at least one dataset"
             )
         if len(set(self.dataset_ids)) != len(self.dataset_ids):
             raise RuntimeGateConfigurationError(
@@ -100,6 +103,12 @@ class SharedSignalsV1RuntimeGateConfig:
             timeout_seconds=self.timeout_seconds,
             cache_ttl_seconds=0,
         )
+
+
+# Compatibility-only Python symbol. The upstream product and every runtime
+# configuration key are TradingDatas; keeping this alias avoids an abrupt
+# import break for TA-side callers while the compatibility module is retired.
+SharedSignalsV1RuntimeGateConfig = TradingDatasV1RuntimeGateConfig
 
 
 def _required_environment_value(
@@ -123,11 +132,11 @@ def _dataset_ids_for_market(raw_json: str, market: str | None) -> tuple[str, ...
         payload = json.loads(raw_json)
     except json.JSONDecodeError as exc:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON must be valid JSON"
+            "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON must be valid JSON"
         ) from exc
     if not isinstance(payload, dict) or not payload:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON must be a non-empty object"
+            "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON must be a non-empty object"
         )
 
     selected: list[Any] = []
@@ -140,7 +149,7 @@ def _dataset_ids_for_market(raw_json: str, market: str | None) -> tuple[str, ...
             raise RuntimeGateConfigurationError("market must be explicitly configured")
         if normalized_market not in payload:
             raise RuntimeGateConfigurationError(
-                "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON has no dataset "
+                "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON has no dataset "
                 f"for market={normalized_market}"
             )
         value = payload[normalized_market]
@@ -150,14 +159,14 @@ def _dataset_ids_for_market(raw_json: str, market: str | None) -> tuple[str, ...
     for value in selected:
         if not isinstance(value, str) or not value.strip() or value != value.strip():
             raise RuntimeGateConfigurationError(
-                "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON values must be "
+                "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON values must be "
                 "non-empty dataset IDs"
             )
         if value not in dataset_ids:
             dataset_ids.append(value)
     if not dataset_ids:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON selected no datasets"
+            "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON selected no datasets"
         )
     return tuple(dataset_ids)
 
@@ -166,54 +175,54 @@ def config_from_environment(
     environment: Mapping[str, str],
     *,
     market: str | None,
-) -> SharedSignalsV1RuntimeGateConfig:
+) -> TradingDatasV1RuntimeGateConfig:
     """Build a gate config without inventing any authority-routing default."""
 
-    base_url = _required_environment_value(environment, "SHAREDSIGNALS_API_URL")
+    base_url = _required_environment_value(environment, "TRADINGDATAS_API_URL")
     catalog_version = _required_environment_value(
         environment,
-        "SHAREDSIGNALS_CATALOG_VERSION",
+        "TRADINGDATAS_CATALOG_VERSION",
     )
     access_policy_id = _required_environment_value(
         environment,
-        "SHAREDSIGNALS_ACCESS_POLICY_ID",
+        "TRADINGDATAS_ACCESS_POLICY_ID",
     )
     raw_dataset_ids = _required_environment_value(
         environment,
-        "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON",
+        "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON",
     )
     raw_schema_major = _required_environment_value(
         environment,
-        "SHAREDSIGNALS_SCHEMA_MAJOR",
+        "TRADINGDATAS_SCHEMA_MAJOR",
     )
     transport_id = _required_environment_value(
         environment,
-        "SHAREDSIGNALS_RUNTIME_TRANSPORT",
+        "TRADINGDATAS_RUNTIME_TRANSPORT",
     )
     try:
         schema_major = int(raw_schema_major)
     except ValueError as exc:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_SCHEMA_MAJOR must be a positive integer"
+            "TRADINGDATAS_SCHEMA_MAJOR must be a positive integer"
         ) from exc
     if schema_major <= 0 or str(schema_major) != raw_schema_major:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_SCHEMA_MAJOR must be a canonical positive integer"
+            "TRADINGDATAS_SCHEMA_MAJOR must be a canonical positive integer"
         )
 
-    raw_timeout = environment.get("SHAREDSIGNALS_API_TIMEOUT", "10")
+    raw_timeout = environment.get("TRADINGDATAS_API_TIMEOUT", "10")
     try:
         timeout_seconds = float(raw_timeout)
     except (TypeError, ValueError) as exc:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_API_TIMEOUT must be positive"
+            "TRADINGDATAS_API_TIMEOUT must be positive"
         ) from exc
     if timeout_seconds <= 0:
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_API_TIMEOUT must be positive"
+            "TRADINGDATAS_API_TIMEOUT must be positive"
         )
 
-    return SharedSignalsV1RuntimeGateConfig(
+    return TradingDatasV1RuntimeGateConfig(
         base_url=base_url,
         catalog_version=catalog_version,
         dataset_ids=_dataset_ids_for_market(raw_dataset_ids, market),
@@ -267,22 +276,22 @@ class UrllibJSONV1Transport:
             status_code = int(exc.code)
             raw_body = exc.read(4_194_305)
         if len(raw_body) > 4_194_304:
-            raise ContractViolation("SharedSignals V1 response exceeds 4 MiB")
+            raise ContractViolation("TradingDatas V1 response exceeds 4 MiB")
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ContractViolation(
-                "SharedSignals V1 response must be UTF-8 JSON"
+                "TradingDatas V1 response must be UTF-8 JSON"
             ) from exc
         if not isinstance(payload, Mapping):
-            raise ContractViolation("SharedSignals V1 response must be a JSON object")
+            raise ContractViolation("TradingDatas V1 response must be a JSON object")
         return HTTPResponse(status_code=status_code, json_body=payload)
 
 
 def build_runtime_transport(transport_id: str) -> HTTPTransport:
     if transport_id != "http-json-v1":
         raise RuntimeGateConfigurationError(
-            "SHAREDSIGNALS_RUNTIME_TRANSPORT must equal http-json-v1 for CLI runtime"
+            "TRADINGDATAS_RUNTIME_TRANSPORT must equal http-json-v1 for CLI runtime"
         )
     return UrllibJSONV1Transport()
 
@@ -357,14 +366,14 @@ def _reason_digest(decision: EvidenceDecision) -> str:
 
 
 def check_v1_runtime_gate(
-    config: SharedSignalsV1RuntimeGateConfig,
+    config: TradingDatasV1RuntimeGateConfig,
     *,
     transport: HTTPTransport | None,
 ) -> dict[str, Any]:
     """Probe every configured dataset and reject any non-ready evidence."""
 
-    if not isinstance(config, SharedSignalsV1RuntimeGateConfig):
-        raise TypeError("config must be a SharedSignalsV1RuntimeGateConfig")
+    if not isinstance(config, TradingDatasV1RuntimeGateConfig):
+        raise TypeError("config must be a TradingDatasV1RuntimeGateConfig")
     if transport is None:
         return _critical_result("transport_not_configured")
 
@@ -436,7 +445,7 @@ def check_v1_runtime_gate_from_environment(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Fail-closed SharedSignals V1 dataset gate for TradingAgent"
+        description="Fail-closed TradingDatas V1 dataset gate for TradingAgent"
     )
     parser.add_argument("--market", required=True)
     parser.add_argument("--json", action="store_true")
@@ -461,6 +470,7 @@ __all__ = [
     "RejectRedirectHandler",
     "RuntimeGateConfigurationError",
     "SharedSignalsV1RuntimeGateConfig",
+    "TradingDatasV1RuntimeGateConfig",
     "UrllibJSONV1Transport",
     "build_runtime_transport",
     "check_v1_runtime_gate",

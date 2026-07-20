@@ -1,5 +1,7 @@
 # Market Evidence & Attribution Design
 
+> **Historical naming notice (2026-07-20):** This document preserves implementation history. The current upstream product is TradingDatas, and TradingAgent consumes only `GET /v1/catalog` and `POST /v1/query`. Old SharedSignals runtime routes, SQLite access, and dual registries are not dependencies or fallbacks. Compatibility file and function identifiers may retain historical names.
+
 ## Goal
 
 Extend the read-only TradingAgent terminal with verifiable multi-market market-data coverage and explicit opportunity-to-position/PnL attribution, without guessing symbols or changing any execution path.

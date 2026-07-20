@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from shared.markets.evolution_engine import evaluate_all_markets, evaluate_and_adjust
+from shared.markets.evolution_engine import (
+    evaluate_all_markets,
+    evaluate_and_adjust,
+    promote_style,
+)
 from shared.markets.performance_tracker import save_run
 from shared.markets.style_runner import StyleRunner
 
@@ -95,10 +99,18 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
             )
 
             self.assertEqual(style_path.read_text(encoding="utf-8"), original)
-            self.assertEqual(result["state"], "adjusted")
+            self.assertEqual(result["state"], "proposal_generated")
+            self.assertFalse(result["runtime_applied"])
+            self.assertTrue(result["requires_manual_review"])
             generated_dir = review_root / "crypto" / "generated_styles"
             generated = sorted(generated_dir.glob("balanced_g2_*.json"))
             self.assertEqual(len(generated), 1)
+            challenger = json.loads(generated[0].read_text(encoding="utf-8"))
+            self.assertEqual(challenger["status"], "paused")
+            self.assertFalse(challenger["enabled"])
+            self.assertEqual(challenger["weight"], 0.0)
+            self.assertTrue(challenger["candidate_only"])
+            self.assertFalse(challenger["runtime_applied"])
 
             weights = json.loads(
                 (review_root / "crypto" / "style_weights.json").read_text(
@@ -106,12 +118,11 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
                 )
             )
             self.assertIn("balanced", weights["styles"])
-            self.assertIn(
-                json.loads(generated[0].read_text(encoding="utf-8"))["name"],
-                weights["styles"],
-            )
+            self.assertNotIn(challenger["name"], weights["styles"])
+            self.assertEqual(weights["authority"], "advisory_only")
+            self.assertFalse(weights["runtime_applied"])
 
-    def test_style_runner_loads_runtime_generated_styles(self) -> None:
+    def test_style_runner_ignores_unreviewed_generated_styles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             styles_dir = root / "styles"
@@ -140,9 +151,19 @@ class EvolutionRuntimeStylesTest(unittest.TestCase):
             )
             styles = runner._load_weighted_styles()
 
-            self.assertEqual(
-                {style.name for style in styles}, {"balanced", "balanced_g2_20260704"}
-            )
+            self.assertEqual({style.name for style in styles}, {"balanced"})
+
+    def test_promotion_is_a_pure_manual_review_proposal(self) -> None:
+        style = {**STYLE, "status": "paused", "enabled": False, "weight": 0.1}
+        original = dict(style)
+
+        result = promote_style(style)
+
+        self.assertEqual(style, original)
+        self.assertEqual(result["action"], "promotion_proposed")
+        self.assertFalse(result["runtime_applied"])
+        self.assertTrue(result["requires_manual_review"])
+        self.assertEqual(result["proposed"]["status"], "active")
 
     def test_save_run_deduplicates_same_style_date(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

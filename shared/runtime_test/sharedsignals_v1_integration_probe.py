@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Reusable, fail-closed SharedSignals V1 integration readiness probe.
+"""Reusable, fail-closed TradingDatas V1 integration readiness probe.
 
 The probe is a TradingAgent consumer only.  It composes the existing strict V1
 client, dataset Evidence Gate and immutable research snapshot contract.  It
-never reads a SharedSignals database, calls a data provider, or falls back to a
+never reads a TradingDatas database, calls a data provider, or falls back to a
 legacy route.  A passing receipt is integration evidence, not trading or
-production authority.
+production authority.  Public Python symbols and the immutable receipt schema
+ID remain compatibility identifiers after the product rename.
 """
 
 from __future__ import annotations
@@ -996,7 +997,7 @@ def _configuration_failure_receipt(error: Exception) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Fail-closed SharedSignals V1 integration readiness probe"
+        description="Fail-closed TradingDatas V1 integration readiness probe"
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path)

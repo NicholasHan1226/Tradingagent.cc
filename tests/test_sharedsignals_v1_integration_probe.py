@@ -23,8 +23,8 @@ CATALOG_VERSION = "catalog-integration-fixture-v1"
 ACCESS_POLICY_ID = "ta-integration-read-v1"
 AS_OF = "2026-07-17T09:25:00+08:00"
 DATASETS = {
-    "trade_calendar": "cn.market.trade-calendar.v1",
-    "daily_bars": "cn.equity.daily.mainboard.v1",
+    "trade_calendar": "fixture.cn.market.trade-calendar.v1",
+    "daily_bars": "fixture.cn.equity.daily.mainboard.v1",
 }
 
 
@@ -32,7 +32,7 @@ def _manifest() -> dict[str, Any]:
     return {
         "manifest_version": 1,
         "profile_id": "ashare-mainboard-integration-v1",
-        "base_url": "https://sharedsignals.fixture.invalid",
+        "base_url": "https://tradingdatas.fixture.invalid",
         "catalog_version": CATALOG_VERSION,
         "access_policy_id": ACCESS_POLICY_ID,
         "transport_id": "fixture-v1",
@@ -249,7 +249,7 @@ def test_healthy_multidataset_double_run_emits_content_addressed_receipt(
         assert "order" not in payload
 
     serialized = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
-    assert "sharedsignals.fixture.invalid" not in serialized
+    assert "tradingdatas.fixture.invalid" not in serialized
     assert ACCESS_POLICY_ID not in serialized
 
 
@@ -409,7 +409,7 @@ def test_transport_exception_is_redacted_and_never_falls_back(tmp_path: Path) ->
     config = _load_config(tmp_path)
     transport = DoubleRunTransport()
     transport.error = RuntimeError(
-        "https://user:sk-secret@sharedsignals.invalid/private?token=sk-secret"
+        "https://user:sk-secret@tradingdatas.invalid/private?token=sk-secret"
     )
 
     receipt = run_sharedsignals_integration_probe(config, transport=transport)
@@ -419,7 +419,7 @@ def test_transport_exception_is_redacted_and_never_falls_back(tmp_path: Path) ->
     assert receipt["reason_codes"] == ["catalog_contract_or_transport_failure"]
     assert receipt["error_type"] == "RuntimeError"
     assert "sk-secret" not in serialized
-    assert "sharedsignals.invalid" not in serialized
+    assert "tradingdatas.invalid" not in serialized
     assert len(transport.calls) == 1
 
 
@@ -454,7 +454,7 @@ def test_provider_reason_text_is_hashed_not_emitted(tmp_path: Path) -> None:
         lambda payload: payload.update({"expected_probe_roles": ["daily_bars"]}),
         lambda payload: payload.update({"api_key": "sk-must-not-be-in-manifest"}),
         lambda payload: payload.update(
-            {"base_url": "https://user:password@sharedsignals.invalid"}
+            {"base_url": "https://user:password@tradingdatas.invalid"}
         ),
         lambda payload: payload["datasets"][0].update({"limit": 10_001}),
         lambda payload: payload["datasets"][0]["fields"].remove("event_time"),

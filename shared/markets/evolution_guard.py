@@ -233,9 +233,23 @@ def evaluate_guard(
     if evolution_paused:
         actions.append({"action": "pause_evolution", "reason": "all_styles_losing_money", "date": all_losing.get("date")})
     if weights_frozen:
-        actions.append({"action": "freeze_style_weights", "reason": "portfolio_drawdown_limit", "drawdown": drawdown.get("drawdown")})
+        actions.append(
+            {
+                "action": "freeze_advisory_proposals",
+                "reason": "portfolio_drawdown_limit",
+                "drawdown": drawdown.get("drawdown"),
+                "runtime_applied": False,
+            }
+        )
     if recovered.get("triggered"):
-        actions.append({"action": "thaw_style_weights", "reason": "market_recovered", "date": recovered.get("date")})
+        actions.append(
+            {
+                "action": "thaw_advisory_proposals",
+                "reason": "market_recovered",
+                "date": recovered.get("date"),
+                "runtime_applied": False,
+            }
+        )
     if sim_halted:
         halt_payload = {
             "halted_at": _now_iso(),
@@ -253,6 +267,8 @@ def evaluate_guard(
 
     state = {
         "generated_at": _now_iso(),
+        "authority_scope": "advisory_proposals_only",
+        "runtime_weight_mutation_allowed": False,
         "capital_layer": "simulated",
         "account_type": "simulated",
         "real_execution": False,

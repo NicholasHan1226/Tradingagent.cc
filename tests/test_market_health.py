@@ -606,35 +606,6 @@ class MarketHealthTest(unittest.TestCase):
             {"outside_ashare_regular_session": 1},
         )
 
-    def test_optional_mini_health_does_not_block_server_local_sim_by_default(
-        self,
-    ) -> None:
-        with patch.dict("os.environ", {"ASHARE_SIM_HERMES_ENABLED": "0"}):
-            check = market_health._check_optional_mini_health(
-                "http://127.0.0.1:1/health"
-            )
-
-        self.assertEqual(check.status, "pass")
-        self.assertFalse(check.details["enabled"])
-        self.assertEqual(check.details["primary_path"], "server_local_sim")
-
-    def test_optional_mini_health_warns_only_when_explicitly_enabled(self) -> None:
-        with patch.dict("os.environ", {"ASHARE_SIM_HERMES_ENABLED": "1"}):
-            with patch.object(
-                market_health,
-                "_check_mini_health",
-                return_value=market_health.Check(
-                    "mini_hermes_health", "fail", "down", {"error": "boom"}
-                ),
-            ):
-                check = market_health._check_optional_mini_health(
-                    "http://127.0.0.1:1/health"
-                )
-
-        self.assertEqual(check.status, "warn")
-        self.assertTrue(check.details["enabled"])
-        self.assertEqual(check.details["raw_status"], "fail")
-
     def test_sim_market_loop_passes_with_cron_data_and_ledger(self) -> None:
         ledger = self.root / "shared/logs/sim_ledger/crypto/grid/trade_journal.jsonl"
         ledger.parent.mkdir(parents=True)

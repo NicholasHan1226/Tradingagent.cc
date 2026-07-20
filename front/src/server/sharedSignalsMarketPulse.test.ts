@@ -11,7 +11,7 @@ const DATASET_IDS: Partial<Record<Exclude<Market, 'All Markets'>, string>> = {
   CNFutures: 'cn_futures_intraday_fixture',
 }
 const V1_CONFIG = {
-  baseUrl: 'http://127.0.0.1:8082',
+  baseUrl: 'https://tradingdatas.fixture.invalid',
   expectedCatalogVersion: 'catalog-fixture-v1',
   accessPolicyId: 'ta-front-readonly-fixture',
   schemaMajor: 1,
@@ -75,7 +75,7 @@ function v1Fetch(
   })
 }
 
-describe('SharedSignals market pulse reader', () => {
+describe('TradingDatas market pulse reader (compatibility module)', () => {
   beforeEach(() => resetMarketPulseCacheForTests())
 
   it('uses only the configured V1 catalog/query contract and sends explicit schema_major without order', async () => {
@@ -84,8 +84,8 @@ describe('SharedSignals market pulse reader', () => {
       expect(init?.headers).toMatchObject({
         accept: 'application/json',
         'content-type': 'application/json',
-        'x-access-policy': V1_CONFIG.accessPolicyId,
       })
+      expect(init?.headers).not.toHaveProperty('x-access-policy')
       expect(body).toEqual({
         dataset_id: DATASET_IDS['A-share'],
         schema_major: V1_CONFIG.schemaMajor,
@@ -120,7 +120,7 @@ describe('SharedSignals market pulse reader', () => {
       low: 1400,
       volume: 2000,
       freshness: 'live',
-      source: `SharedSignals V1:${DATASET_IDS['A-share']}:receipt-${DATASET_IDS['A-share']}`,
+      source: `TradingDatas V1:${DATASET_IDS['A-share']}:receipt-${DATASET_IDS['A-share']}`,
     })
     expect(result.pulses[0].points).toEqual([1410, 1424.1])
   })

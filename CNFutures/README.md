@@ -11,7 +11,7 @@ CNFutures 是国内期货的长期模拟研究与样本闭环。当前目标是�
 
 ## 当前边界
 
-- 唯一资本 authority：`cn-futures-capital-v1`，generation 1，fresh-start simulated 50,000 CNY。
+- 唯一资本 authority：`cn-futures-capital-v1`，fresh-start simulated 50,000 CNY。generation 1 只是历史初始化基线；每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
 - 最大保证金使用：25,000 CNY（50%）。保证金容量与止损损失预算分别校验。
 - A 股与 CNFutures 的现金、保证金、PnL、回撤、execution lineage、样本和成熟度完全分离。
 - `REAL_TRADING_ENABLED=false`。不得连接真实 broker、发送真实委托或自动切换 live。
@@ -21,7 +21,7 @@ CNFutures 是国内期货的长期模拟研究与样本闭环。当前目标是�
 ## 运行闭环
 
 ```text
-SharedSignals Futures bars/spec evidence
+TradingDatas catalog/query futures bars/spec evidence
   -> strategy prediction / hold / risk reject
   -> one-lot affordability and hard risk gates
   -> simulated execution evidence + market capital commit
@@ -41,14 +41,14 @@ SharedSignals Futures bars/spec evidence
 | 事实 | 路径 |
 |---|---|
 | 资本事件与 reconcile | `shared/logs/capital/cn_futures/` |
-| 持仓、回执与 durable outbox | `signals/` |
-| append-only 订单事件 | `signals/order_events/cn_futures_order_events.jsonl` |
-| 订单事件投影 | `signals/order_events/cn_futures_order_projection.json` |
+| 历史兼容持仓、回执与 durable outbox 投影 | `signals/`；time-boxed compatibility，不是跨市场或未来 live authority |
+| 历史兼容 append-only 订单事件 | `signals/order_events/cn_futures_order_events.jsonl`；仅在 cutover 前按清单审计 |
+| 历史兼容订单事件投影 | `signals/order_events/cn_futures_order_projection.json`；可重建、不可反向成为资本事实 |
 | append-only 会话/样本 journal | `shared/review/data/cn_futures_sim_reviews.jsonl` |
 | 当前成熟度/KPI 投影 | `shared/review/cn_futures/market_maturity_latest.json` |
 | 只读观察报告 | `shared/review/cn_futures/observation_report.json` |
 
-`market_maturity_latest.json` 只是可重建投影。只有 canonical `projection_sha256`、report type、evidence source、`cn-futures-capital-v1` / generation 1、非空 execution lineage、50,000/25,000 资金口径、来源 SHA、sim-only 标记和 manual-review-only 策略全部一致时，才可用于当前成熟度展示；任一字段被改写后，观察报告和健康检查都会 fail closed。
+`market_maturity_latest.json` 只是可重建投影。只有 canonical `projection_sha256`、report type、evidence source、`cn-futures-capital-v1`、与 current snapshot 一致的正整数 generation、非空 execution lineage、50,000/25,000 资金口径、来源 SHA、sim-only 标记和 manual-review-only 策略全部一致时，才可用于当前成熟度展示；任一字段被改写后，观察报告和健康检查都会 fail closed。
 
 ## 演化规则
 
@@ -60,31 +60,29 @@ append-only review journal、前向标签、actual-cost execution evidence、Sam
 - 当前成熟度只做 assessment，不写策略、不调仓、不生成订单；
 - `promotion_evidence_ready` 只表示证据检查结果，不构成任何实盘或扩风险授权；
 - CNFutures 长期保持 `manual_review_only_no_futures_live_date`；
-- 旧自动演化 Python 入口、wrapper 与 schedule 已物理删除，不保留可被 stale caller 重新调用的 tombstone。
+- 旧自动演化、旧 SharedSignals 专用检查及其 wrapper/schedule 已退出当前链；部分源码名或入口仍作为 fail-closed tombstone、fixture regression 或安装态法证线索保留。它们不得调度、联网或恢复成 fallback，只有 `legacy_inventory.yaml` 的消费者、安装态、parity 和回滚门全部通过后才物理删除。
 
 ## 本地只读/模拟检查
 
-以下命令不会安装 cron，也不会连接真实交易：
+以下聚焦测试只使用本地测试输入，不安装 cron、不访问 TradingDatas 或连接真实交易：
 
 ```bash
-REAL_TRADING_ENABLED=false python -m shared.runtime_test.cn_futures_live_check --pretty
-
-REAL_TRADING_ENABLED=false python -m shared.runtime_test.cn_futures_sample_ops \
-  --trade-date 20260713 \
-  --as-of 2026-07-13T15:10:00+08:00 \
-  --pretty
-
-REAL_TRADING_ENABLED=false python -m CNFutures.observation_report --pretty
+REAL_TRADING_ENABLED=false python -m pytest -q \
+  tests/test_cn_futures_execution_evidence.py \
+  tests/test_cn_futures_sim.py \
+  tests/test_market_lane_governance.py
 ```
 
-服务器模板入口为：
+`shared.runtime_test.cn_futures_live_check` 是旧 SharedSignals 路由的退役/法证入口，不是当前验收器；fresh TradingDatas handoff 前不得运行它，也不得把 `127.0.0.1:8082`、`/realtime_5min` 或其它 provider 专用路由恢复为默认值。
+
+以下文件名只用于识别历史服务器安装态与退役依赖，不是当前推荐运行入口：
 
 - `shared/wrappers/job_cn_futures_sim.sh`
 - `shared/wrappers/job_cn_futures_sample_ops.sh`
 - `shared/wrappers/job_cn_futures_observation_report.sh`
 - `shared/wrappers/job_market_capital_reconcile.sh cn_futures`
 
-仓库中的 wrapper 与 crontab 只是模板；文件存在不等于生产 cron 已安装或 runtime 已切换。生产初始化、reconcile、cron apply、部署和发布均需单独 preflight 与 Nicholas 授权。
+仓库中的 wrapper 与 crontab 只是 tombstone/模板/法证线索；文件存在不等于可运行，更不等于生产 cron 已安装或 runtime 已切换。生产初始化、reconcile、cron apply、部署和发布均需单独 preflight 与 Nicholas 授权。
 
 ## 验收重点
 

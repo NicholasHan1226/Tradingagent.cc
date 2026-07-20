@@ -45,7 +45,7 @@
 
 - 入口：`tools/market_capital_ops.py`。
 - 只读：`status`、`verify`、`reconcile-dry-run`、`cutover-audit`、`dual-status`、`migration-plan`。
-- actual MTM 入口：`shared/wrappers/job_market_capital_reconcile.sh`；仅消费可验证的执行 snapshot/outbox/SharedSignals mark，并按 market 独立写 reconcile event。
+- actual MTM 入口：`shared/wrappers/job_market_capital_reconcile.sh`；仅消费可验证的执行 snapshot/outbox/TradingDatas mark，并按 market 独立写 reconcile event。TradingDatas fresh handoff 前只能使用显式 fixture/mock mark，禁止 SQLite、旧专用 route 或 provider fallback。
 - `init` 必须显式 `--root`，拒绝默认 root，且要求 `--confirm-fresh-start`、全字段 `--opening-manifest` 与 `--legacy-freeze-manifest`；任何字段/哈希/路径不一致都 fail-before-write。这不是日常运行命令，也不单独构成生产授权。
 - provider/reservation wrapper 在 authority 缺失时不创建 ledger。
 - 只有用户目标明确包含 fresh-start 生产发布且完成相应 preflight 时，主集成者才可执行 staging init、验证、root 激活和 sim-only cron merge；任何日常任务仍禁止隐式初始化。真实账户、broker、邮件或 GUI 委托始终需要独立授权，不能由本目录规则推导。

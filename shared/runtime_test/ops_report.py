@@ -504,7 +504,7 @@ def recommendations(
     notes: list[str] = []
     totals = queue.get("totals") or {}
     if int(receipts.get("invalid", 0) or 0) > 0:
-        notes.append("回执校验失败：需要检查 mini/Hermes 回执是否被截断或字段被改写。")
+        notes.append("回执校验失败：需要检查市场执行适配器回执是否被截断或字段被改写。")
     if int(totals.get("running", 0) or 0) > 0:
         notes.append(
             "存在 running 状态订单：需要确认执行器是否卡在处理中或回调未写回。"

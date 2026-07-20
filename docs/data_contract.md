@@ -1,6 +1,6 @@
 # TradingAgent 数据与事实契约
 
-> 本文是 SharedSignals/MarketGraph 输入、双市场资本、执行、样本、标签、KPI 与成熟度字段的 canonical contract。架构见 [architecture.md](architecture.md)，当前状态见 [STATUS.md](../STATUS.md)。
+> 本文是 TradingDatas/MarketGraph 输入、双市场资本、执行、样本、标签、KPI 与成熟度字段的 canonical contract。架构见 [architecture.md](architecture.md)，当前状态见 [STATUS.md](../STATUS.md)。
 
 ## 通用安全与 lineage
 
@@ -25,17 +25,19 @@
 
 ## 上游输入
 
-### SharedSignals
+### TradingDatas
 
-`SHAREDSIGNALS_API_URL` + `shared.data.reader.TradingagentDataReader` 是尚未退役的旧消费链，
-不是本地 V1 候选的 canonical client。该旧链在 A股 adapter、screening、research、
-wrapper/runtime-test 仍有真实消费者，只能标记 `COMPATIBILITY_TIMEBOXED` /
-`RETIREMENT_PENDING_VERIFICATION`。前端 market pulse 本地候选已经改为严格 V1 catalog/query，
-且不再是旧链消费者；这不证明其它路径已退役或 SS live runtime 已冻结。新链的边界是
-TradingAgent 不导入 SharedSignals 内部模块、不扫描兄弟仓目录、不打开其 SQLite、不现场调用
-数据商，也不在 V1 失败时回退旧链。
+`SHAREDSIGNALS_API_URL` + `shared.data.reader.TradingagentDataReader` 是待退役的旧 SharedSignals
+源码/库接口，不是本地 V1 候选的 canonical client。A股旧 wrapper、调度和直接诊断入口已经在
+进入旧 reader 前 fail closed；adapter、screening、research、review/runtime-test 中仍可见的旧引用
+只属于 `COMPATIBILITY_TIMEBOXED` / `RETIREMENT_PENDING_VERIFICATION` 清单和法证回归，不能被
+current-v1 composition、风险或订单链调用。前端 market pulse 本地候选已经改为严格 V1
+catalog/query；这既不证明剩余旧源码已物理删除，也不证明 TradingDatas live runtime 已冻结。新链的边界是
+TradingAgent 不导入 TradingDatas 内部模块、不扫描兄弟仓目录、不打开其 SQLite、不现场调用
+数据商，也不在 V1 失败时回退旧链。TradingDatas fresh handoff 前只允许 fixture/mock-first；旧
+SharedSignals runtime、route 与 dual-registry 不再是新架构依赖。
 
-新查询接口的 canonical contract ID 是 `sharedsignals.query_result.v1`。当前实现状态必须从 `shared/governance/system_state_matrix.yaml` 读取：SS upstream query仍是`TARGET_CONTRACT`；TA client已是`CURRENT_VERIFIED`但仅限`layer=local_isolated_candidate`、`production_verified=false`和fixture/contract allowed uses。两者都不能证明生产runtime已切换。V1读取失败、数据陈旧、lineage不完整或dataset未注册时一律fail closed；A股生产路径不得静默回退到Tushare、兄弟仓SQLite、旧HTTP shape或本地缓存拼装。
+新查询接口的 canonical contract ID 是 `sharedsignals.query_result.v1`；这是产品重命名后继续保留的 immutable wire/schema ID，不代表旧 SharedSignals runtime 仍受支持。当前实现状态必须从 `shared/governance/system_state_matrix.yaml` 读取：TradingDatas upstream query仍是`TARGET_CONTRACT`；TA client已是`CURRENT_VERIFIED`但仅限`layer=local_isolated_candidate`、`production_verified=false`和fixture/contract allowed uses。两者都不能证明生产runtime已切换。V1读取失败、数据陈旧、lineage不完整或dataset未注册时一律fail closed；A股路径不得静默回退到Tushare、兄弟仓SQLite、`/tushare`、`/source_status`、provider专用route、旧HTTP shape或本地缓存拼装。
 
 V1 唯一路由为：
 
@@ -58,9 +60,9 @@ POST /v1/query
 }
 ```
 
-`order` 是可选的非空、有序且无重复字符串列表；调用方不指定时必须从请求中省略，排序由 SharedSignals registry 的 dataset 默认值决定，TA 不得猜测或补造 provider 排序。`schema_major`、显式 `order`（如有）均进入 query identity/cache identity。
+`order` 是可选的非空、有序且无重复字符串列表；调用方不指定时必须从请求中省略，排序由 TradingDatas registry 的 dataset 默认值决定，TA 不得猜测或补造 provider 排序。`schema_major`、显式 `order`（如有）均进入 query identity/cache identity。
 
-`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。当前候选响应 envelope 至少保留：
+`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。这里的 `access_policy_id` 只是 TA 本地 cache/receipt 对注入 transport 身份的命名空间，不是 TradingDatas HTTP header 或 credential，绝不直接上 wire；真实 service-token/header 合同由未来 fresh handoff 冻结后在 transport 边界实现。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。当前候选响应 envelope 至少保留：
 
 ```yaml
 api_version: v1
@@ -82,11 +84,11 @@ metadata:
 
 HTTP 200 仅证明 transport 完成，不给 dataset 授权。每个 dataset 根据自己的 requirement policy 被 `ACCEPT / DEWEIGHT / REJECT`；`unobserved/paused/failed/stale/empty/degraded` 等 impaired state 可以如实携带 null `lineage/receipt_id/data_through/observed_at`，客户端不得为通过解析补造证据，Evidence Gate 必须依据 `metadata.state/degraded` 及证据完整性 fail closed。只有带完整 source proof 的 degraded/stale 数据才可能按显式 dataset policy 降权；缺 freshness/quality/lineage/receipt、catalog mismatch、未完整分页和 cursor 重放均不得被“其它 dataset 正常”洗白。只有完整、已验证且具有 receipt 的响应才能缓存；cache key 绑定 query、catalog、schema/receipt watermark 和 access policy。provider 原始字段只能保留在 provenance 中，不能覆盖 registry 的 dataset/provider identity。
 
-当前 endpoint base URL、catalog version 和 dataset IDs 仍只是显式配置/fixture；上游 SS 冻结前不得臆造生产值。
+当前 endpoint base URL、catalog version 和 dataset IDs 仍只是显式配置/fixture；TradingDatas fresh handoff 冻结前不得臆造生产值。
 
 #### TA integration-readiness profile 与回执
 
-`tradingagent.sharedsignals.integration-readiness.v1` 是 TA 对冻结 V1 consumer 合同的只读验收回执，不是 SharedSignals 服务端 receipt、生产健康证明或交易 authority。输入 manifest 必须显式且 secret-free，至少绑定：
+`tradingagent.sharedsignals.integration-readiness.v1` 是产品重命名后继续保留的 immutable schema ID，用于 TA 对冻结 TradingDatas V1 consumer 合同的只读验收回执；它不是 TradingDatas 服务端 receipt、生产健康证明或交易 authority。输入 manifest 必须显式且 secret-free，至少绑定：
 
 ```yaml
 manifest_version: 1
@@ -117,7 +119,7 @@ datasets:
 
 验收器对每个 dataset 使用同一 QueryRequest 连续读取两次。双跑语义比较包含 data、`next_cursor` 和完整 metadata，排除每次 transport 独有的 `request_id`；因此 request ID 变化不造成误报，而 receipt、lineage、data-through、observed-at、行值、默认排序或状态变化都会触发 `same_as_of_semantic_mismatch`。两次 exact response identity 仍分别保留在 snapshot SHA 中，不能用稳定语义哈希替代原始 trace。
 
-当前 research port 不具备经 SS owner 冻结的跨页 receipt/排序/snapshot identity。`next_cursor` 非空时只能输出 `pagination_complete=false` 与 `pagination_contract_unfrozen`，不得自动拼页、截取第一页或本地重排。待上游合同冻结后，分页扩展必须继续绑定每页 query identity、cursor 连续性、统一 source snapshot 与完整 readback。
+当前 research port 不具备经 TradingDatas owner 冻结的跨页 receipt/排序/snapshot identity。`next_cursor` 非空时只能输出 `pagination_complete=false` 与 `pagination_contract_unfrozen`，不得自动拼页、截取第一页或本地重排。待上游合同冻结后，分页扩展必须继续绑定每页 query identity、cursor 连续性、统一 source snapshot 与完整 readback。
 
 回执至少包含：
 
@@ -212,7 +214,7 @@ offline receipt必须使用固定offline transport ID/version/policy，不能声
 
 行情是证据，不是交易信号。数据不可用、陈旧、缺来源或 PIT 不完整时，新增风险 fail closed；observation 仍保存并明确 data-quality/label eligibility。市场治理隔离：无关市场故障不能误停 A股或 CNFutures。
 
-每次真实 HTTP response 都在 cache 前保存独立 `sharedsignals_response_lineage`，至少含 `transport=http_response`、endpoint 与带时区 `received_at`。provider 自带 `evidence_envelope` 或其中任一 group 结构非法时，原非法值必须原样保留供 Evidence Gate 拒绝；transport lineage 只能作为本次网络响应审计，不能覆盖、修复或洗白 provider lineage。cache 命中必须返回同一审计事实且不能再次发起 HTTP。
+每次真实 TradingDatas HTTP response 都在 cache 前保存独立 `sharedsignals_response_lineage`，至少含 `transport=http_response`、endpoint 与带时区 `received_at`。该字段是产品重命名后继续保留的 immutable wire ID。provider 自带 `evidence_envelope` 或其中任一 group 结构非法时，原非法值必须原样保留供 Evidence Gate 拒绝；transport lineage 只能作为本次网络响应审计，不能覆盖、修复或洗白 provider lineage。cache 命中必须返回同一审计事实且不能再次发起 HTTP。
 
 ### Sector flow confirmation（shadow-only）
 
@@ -451,7 +453,7 @@ Optimizer必须调用无默认实现的`AccountAuthorityVerifier`；proof逐项�
 
 Optimizer按当前持仓与pending book计算pre-exposure，再逐动作应用精确notional delta；同一symbol的candidate、position与open/increase pending必须保持六维group一致，不能靠重分类规避cap。open/increase超cap只可拒绝该新增风险，reduce/exit不得因cap已超而被锁死。Day loop不相信plan自报：它把每个决策的六维`group_id`重新绑定回权威exposure receipt，并验证authority context、逐订单金额变化、pre→post group连续性、最终六维map和plan hash；对payload改值后重新签名、遗漏pending、跨决策把pre exposure归零、替换policy/proof/set、改换group或过期proof均fail closed。外层stage为不可晋级不能掩盖任一嵌套proof的`promotion_eligible=true`。当前fixture policy及verifier只证明本地合同完整性，不证明生产行业/论点映射、真实订单预约、上限科学性或外部签名。
 
-Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的宽松口径。每只实际持仓的 mark 必须嵌入精确`AShareMarkEvidence + MarketEvidenceVerification`，绑定dataset/catalog、source receipt ID/SHA、source lineage、price payload、`data_through/observed_at/available_at`、`market_session=close`、完整`session_calendar_receipt`以及capital authority/generation/execution lineage/run decision context。按该 calendar，mark 的 `trade_date` 必须是运行日最近前一交易会话，`data_through=observed_at` 必须为该会话上海时间 `15:00:00`，且 `available_at <= account_as_of`。调用方另传的 `mark_observed_at` 必须与账户内不可变 evidence 完全相等；canonical position receipt 继续绑定由 mark evidence 参与形成的 ledger event/checksum、market authority SHA与verification SHA。当前唯一具体verifier是不可继承的`non_production_fixture`、`production_eligible=false`类型；proof hash只证明本地内容完整性，不是签名、生产calendar、SharedSignals live receipt readback或市场行情authority。
+Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的宽松口径。每只实际持仓的 mark 必须嵌入精确`AShareMarkEvidence + MarketEvidenceVerification`，绑定dataset/catalog、source receipt ID/SHA、source lineage、price payload、`data_through/observed_at/available_at`、`market_session=close`、完整`session_calendar_receipt`以及capital authority/generation/execution lineage/run decision context。按该 calendar，mark 的 `trade_date` 必须是运行日最近前一交易会话，`data_through=observed_at` 必须为该会话上海时间 `15:00:00`，且 `available_at <= account_as_of`。调用方另传的 `mark_observed_at` 必须与账户内不可变 evidence 完全相等；canonical position receipt 继续绑定由 mark evidence 参与形成的 ledger event/checksum、market authority SHA与verification SHA。当前唯一具体verifier是不可继承的`non_production_fixture`、`production_eligible=false`类型；proof hash只证明本地内容完整性，不是签名、生产calendar、TradingDatas live receipt readback或市场行情authority。
 
 ## A股机会、预测与三风格 shadow 合同
 
@@ -657,7 +659,7 @@ A股`close/1d/3d/5d`的target必须从预测前冻结且由独立verifier复核�
 - `as_of` 限制可见数据；日线不能伪造 m30/m60，晚到价格不能回填更早 horizon。
 - 科学 PIT 证据必须同时保存并重新校验 `event_time <= available_at <= ingested_at <= retrieved_as_of <= prediction/label as_of`；source SHA 或任意 `as_of` 字段不能单独证明 PIT。reference/entry 与每个 exit candidate 都必须在排序、选价和计算收益前通过同一个 Evidence Gate，且 validation 必须 `complete=true,status=valid`。EvidenceEnvelope 在 record root、PIT root、PIT `timestamps` 与 adapter 原始 envelope 收集所有 present event aliases（包括 `event_time/source_event_time/timestamp/observed_at/bar_time/trade_time/datetime`）；它们必须换算到同一 UTC instant，同义 `+08:00`/UTC 允许，任一非法、naive 或冲突 fail closed。receipt/availability aliases 至少覆盖 Journal 的 21 条 root/nested 路径，并额外覆盖 provider `published_at/retrieved_at/collected_at_dt`；每个 present 值必须带时区且可解析，最晚证据时刻不得晚于本轮边界，较早字段不能覆盖较晚字段。validated envelope 的 canonical 四钟必须与 nested lineage 一致；窗口资格、排序、`evidence_at` 与写出 lineage 只使用该 canonical instant。任一顺序冲突、future receipt 或 canonical instant 超窗的 point 不能影响候选排序，也绝不能生成 `ready/verified_exit_evidence`。
 - 原始 reference/entry collector 在选择前排除 PIT 失败 row；如果没有任何合法 row，候选保持 retryable `pending_reference_evidence`/degraded，不携带无效价格或 PIT。若一个已选中/已持久化的 reference/entry 声称有价格但其 lineage present-invalid，则为 `rejected_data_quality`。exit PIT 失败在可能由后续合法行情恢复时保持 retryable `missing_exit_evidence`/degraded。缺或非法 PIT 不删除 observation，也不伪造 terminal price/label；只有后来到达且独立通过 Evidence Gate 的合法 point 才能恢复该 horizon。
-- CNFutures prediction writer 必须把 SharedSignals 实际 HTTP response receipt 连同 source event aliases、原始 bar 和 nested PIT 持久化到 immutable source snapshot；session review 与 forward-label adapter 必须原样传递该 envelope。合法 receipt 参与 prediction/data-as-of 边界，reference 与 exit 都可 ready；missing/invalid/naive/future/conflicting receipt 一律 non-ready。HTTP receipt 是 transport 实际接收事实，不得由任务 `as_of`、prediction/bar time 或当前墙钟代填。历史缺 receipt 的记录保持 pending/degraded。
+- CNFutures prediction writer 必须把 TradingDatas 实际 HTTP response receipt 连同 source event aliases、原始 bar 和 nested PIT 持久化到 immutable source snapshot；session review 与 forward-label adapter 必须原样传递该 envelope。合法 receipt 参与 prediction/data-as-of 边界，reference 与 exit 都可 ready；missing/invalid/naive/future/conflicting receipt 一律 non-ready。HTTP receipt 是 transport 实际接收事实，不得由任务 `as_of`、prediction/bar time 或当前墙钟代填。历史缺 receipt 的记录保持 pending/degraded。
 - observation/counterfactual 使用版本化保守成本假设。
 - actual round trip 使用真实 commission/stamp duty/transfer fee/slippage；缺 actual costs 不进入绩效或 promotion evidence。
 - completed round trip 必须同时有有限数值 `gross_pnl_cny` 与 `net_pnl_cny`/`post_cost_pnl_cny`，不得把缺失值回落为 0 或静默用 gross-cost 推导。

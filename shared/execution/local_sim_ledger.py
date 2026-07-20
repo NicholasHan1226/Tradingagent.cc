@@ -7,6 +7,7 @@ import fcntl
 import errno
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -32,7 +33,10 @@ from shared.execution.execution_lineage import (
     build_execution_lineage,
     require_execution_lineage,
 )
-from shared.execution.execution_reality import ashare_execution_reality
+from shared.execution.execution_reality import (
+    ashare_execution_reality,
+    ashare_sell_quantity_rejection_reason,
+)
 
 LEGACY_LOCAL_SIM_DIR = Path(__file__).resolve().parent.parent / "logs" / "local_sim"
 LOCAL_SIM_DIR = Path(
@@ -496,10 +500,15 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return default
+    try:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return default
+    return int(parsed)
 
 
 def _verified_ashare_execution_evidence(
@@ -1934,7 +1943,7 @@ def record_local_sim_order(
             "recorded": False,
             "reason": "non-positive quantity or price",
         }
-    if quantity % 100 != 0:
+    if side == "buy" and quantity % 100 != 0:
         return {
             "status": "rejected",
             "recorded": False,
@@ -1979,7 +1988,7 @@ def record_local_sim_order(
                 "account": account_name,
             }
         quantity = min(quantity, linked_filled_qty)
-        if quantity % 100 != 0:
+        if side == "buy" and quantity % 100 != 0:
             return {
                 "status": "rejected",
                 "recorded": False,
@@ -2617,6 +2626,23 @@ def record_local_sim_order(
                 starting_cash=starting_cash,
             )
             sellable_quantity = _safe_int(sellable_snapshot.get("sellable_qty"), 0)
+            sell_quantity_reason = ashare_sell_quantity_rejection_reason(
+                current_shares=_safe_int(current.get("quantity"), 0),
+                sellable_shares=sellable_quantity,
+                requested_shares=quantity,
+            )
+            if sell_quantity_reason:
+                return {
+                    "status": "rejected",
+                    "recorded": False,
+                    "reason": sell_quantity_reason,
+                    "order_id": order_id,
+                    "idempotency_key": idempotency_key,
+                    "account": account_name,
+                    "requested_quantity": quantity,
+                    "current_quantity": _safe_int(current.get("quantity"), 0),
+                    "sellable_quantity": sellable_quantity,
+                }
             if quantity > sellable_quantity:
                 return {
                     "status": "rejected",

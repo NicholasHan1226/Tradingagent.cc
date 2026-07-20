@@ -14,6 +14,7 @@ from shared.runtime_test.sharedsignals_v1_gate import (
     RejectRedirectHandler,
     RuntimeGateConfigurationError,
     SharedSignalsV1RuntimeGateConfig,
+    TradingDatasV1RuntimeGateConfig,
     UrllibJSONV1Transport,
     check_v1_runtime_gate,
     config_from_environment,
@@ -92,9 +93,9 @@ class RecordingTransport:
         raise AssertionError(f"unexpected call: {method} {url}")
 
 
-def _config() -> SharedSignalsV1RuntimeGateConfig:
-    return SharedSignalsV1RuntimeGateConfig(
-        base_url="https://sharedsignals.fixture.invalid",
+def _config() -> TradingDatasV1RuntimeGateConfig:
+    return TradingDatasV1RuntimeGateConfig(
+        base_url="https://tradingdatas.fixture.invalid",
         catalog_version=CATALOG_VERSION,
         dataset_ids=(DATASET_ID,),
         schema_major=SCHEMA_MAJOR,
@@ -104,29 +105,33 @@ def _config() -> SharedSignalsV1RuntimeGateConfig:
     )
 
 
+def test_legacy_runtime_config_symbol_is_a_compatibility_alias_only() -> None:
+    assert SharedSignalsV1RuntimeGateConfig is TradingDatasV1RuntimeGateConfig
+
+
 def _environment() -> dict[str, str]:
     return {
-        "SHAREDSIGNALS_API_URL": "https://sharedsignals.fixture.invalid",
-        "SHAREDSIGNALS_CATALOG_VERSION": CATALOG_VERSION,
-        "SHAREDSIGNALS_ACCESS_POLICY_ID": ACCESS_POLICY_ID,
-        "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON": (
+        "TRADINGDATAS_API_URL": "https://tradingdatas.fixture.invalid",
+        "TRADINGDATAS_CATALOG_VERSION": CATALOG_VERSION,
+        "TRADINGDATAS_ACCESS_POLICY_ID": ACCESS_POLICY_ID,
+        "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON": (
             '{"us":"market-pulse-us-v1","crypto":["market-pulse-crypto-v1"]}'
         ),
-        "SHAREDSIGNALS_SCHEMA_MAJOR": str(SCHEMA_MAJOR),
-        "SHAREDSIGNALS_RUNTIME_TRANSPORT": "http-json-v1",
-        "SHAREDSIGNALS_API_TIMEOUT": "3",
+        "TRADINGDATAS_SCHEMA_MAJOR": str(SCHEMA_MAJOR),
+        "TRADINGDATAS_RUNTIME_TRANSPORT": "http-json-v1",
+        "TRADINGDATAS_API_TIMEOUT": "3",
     }
 
 
 @pytest.mark.parametrize(
     "missing_name",
     [
-        "SHAREDSIGNALS_API_URL",
-        "SHAREDSIGNALS_CATALOG_VERSION",
-        "SHAREDSIGNALS_ACCESS_POLICY_ID",
-        "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON",
-        "SHAREDSIGNALS_SCHEMA_MAJOR",
-        "SHAREDSIGNALS_RUNTIME_TRANSPORT",
+        "TRADINGDATAS_API_URL",
+        "TRADINGDATAS_CATALOG_VERSION",
+        "TRADINGDATAS_ACCESS_POLICY_ID",
+        "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON",
+        "TRADINGDATAS_SCHEMA_MAJOR",
+        "TRADINGDATAS_RUNTIME_TRANSPORT",
     ],
 )
 def test_environment_config_requires_every_v1_authority_field(
@@ -155,8 +160,8 @@ def test_runtime_gate_uses_only_catalog_and_query_with_schema_major() -> None:
     assert result["status"] == "ok"
     assert result["blocking"] is False
     assert [call["url"] for call in transport.calls] == [
-        "https://sharedsignals.fixture.invalid/v1/catalog",
-        "https://sharedsignals.fixture.invalid/v1/query",
+        "https://tradingdatas.fixture.invalid/v1/catalog",
+        "https://tradingdatas.fixture.invalid/v1/query",
     ]
     query_payload = transport.calls[1]["json_body"]
     assert query_payload is not None
@@ -218,7 +223,7 @@ def test_runtime_http_transport_refuses_redirects() -> None:
     handler = RejectRedirectHandler()
 
     redirected = handler.redirect_request(
-        urllib.request.Request("https://sharedsignals.fixture.invalid/v1/query"),
+        urllib.request.Request("https://tradingdatas.fixture.invalid/v1/query"),
         None,
         302,
         "Found",
@@ -251,7 +256,7 @@ def test_runtime_http_transport_disables_environment_proxy(monkeypatch) -> None:
 
 def test_runtime_gate_redacts_transport_error_details() -> None:
     def failing_transport(**_kwargs):
-        raise OSError("https://user:sk-secret@sharedsignals.invalid/private")
+        raise OSError("https://user:sk-secret@tradingdatas.invalid/private")
 
     result = check_v1_runtime_gate(_config(), transport=failing_transport)
 
@@ -289,8 +294,8 @@ def test_active_sim_wrappers_stop_before_unmigrated_legacy_readers() -> None:
 
     for relative_path in wrapper_paths:
         source = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert "sharedsignals_v1_runtime_gate" in source, relative_path
-        assert "block_unmigrated_sharedsignals_consumer" in source, relative_path
+        assert "tradingdatas_v1_runtime_gate" in source, relative_path
+        assert "block_unmigrated_tradingdatas_consumer" in source, relative_path
         assert "sharedsignals_source_gate" not in source, relative_path
         assert "run_sim.py" not in source, relative_path
         assert "CNFutures.run_simulation" not in source, relative_path
@@ -330,7 +335,8 @@ def test_missing_runtime_v1_config_blocks_before_python_or_legacy_reader(
     )
 
     assert result.returncode == 78
-    assert "missing_v1_config" in result.stderr
+    assert "retired_legacy_runtime" in result.stderr
+    assert "wait_for_tradingdatas_fresh_handoff" in result.stderr
     assert not python_sentinel.exists()
 
 
@@ -389,10 +395,10 @@ def test_runtime_v1_authority_variables_are_declared_without_live_defaults() -> 
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
     for name in (
-        "SHAREDSIGNALS_SCHEMA_MAJOR",
-        "SHAREDSIGNALS_RUNTIME_TRANSPORT",
+        "TRADINGDATAS_SCHEMA_MAJOR",
+        "TRADINGDATAS_RUNTIME_TRANSPORT",
     ):
         assert f'export {name}="${{{name}:-}}"' in env_loader
         assert f"{name}=" in env_example
-    assert "SHAREDSIGNALS_SCHEMA_MAJOR=1" not in env_example
-    assert "SHAREDSIGNALS_RUNTIME_TRANSPORT=http-json-v1" not in env_example
+    assert "TRADINGDATAS_SCHEMA_MAJOR=1" not in env_example
+    assert "TRADINGDATAS_RUNTIME_TRANSPORT=http-json-v1" not in env_example

@@ -1,6 +1,14 @@
 # Canonical focused checks for the isolated TradingAgent V1 candidate.
 # One repository-relative pytest file per line; keep this list deterministic.
 tests/test_architecture_contract_guards.py
+tests/test_market_lane_governance.py
+tests/test_mini_hermes_retirement.py
+tests/test_auto_pipeline_smoke.py
+tests/test_hk_pause_contract.py
+tests/test_market_base_layer.py
+tests/test_pm_workflow_config.py
+tests/test_daily_reconcile.py
+tests/test_ashare_sim.py
 tests/test_env_loader_boundary.py
 tests/test_sharedsignals_v1.py
 tests/test_sharedsignals_v1_runtime_gate.py

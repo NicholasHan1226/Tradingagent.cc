@@ -61,7 +61,7 @@ Quantitative design gate: **94/100**. Visual hierarchy 19/20, typography 14/15, 
 
 ## Next iteration
 
-1. Add sourced mini-sparklines to the market tape when SharedSignals exposes stable price-series fields.
+1. Add sourced mini-sparklines to the market tape after TradingDatas provides a fresh handoff with stable price-series fields.
 2. Add cycle-to-return cross-highlighting when event and equity timestamps share a reliable identifier.
 3. Add saved desktop column presets only after real operators demonstrate repeated table customization.
 

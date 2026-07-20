@@ -64,19 +64,19 @@ class _ForwardLabelReader:
             {
                 "bar_time": "2026-07-13T10:05:00+08:00",
                 "close": 3_510.0,
-                "source": "sharedsignals_futures_bars",
+                "source": "fixture.cnfutures.intraday-bars.v1",
                 **_receipts("2026-07-13T10:05:00+08:00"),
             },
             {
                 "bar_time": "2026-07-13T10:35:00+08:00",
                 "close": 3_520.0,
-                "source": "sharedsignals_futures_bars",
+                "source": "fixture.cnfutures.intraday-bars.v1",
                 **_receipts("2026-07-13T10:35:00+08:00"),
             },
             {
                 "bar_time": "2026-07-13T15:00:00+08:00",
                 "close": 3_530.0,
-                "source": "sharedsignals_futures_bars",
+                "source": "fixture.cnfutures.intraday-bars.v1",
                 **_receipts("2026-07-13T15:00:00+08:00"),
             },
         ]
@@ -529,14 +529,17 @@ def test_empty_fresh_start_persists_one_manual_only_maturity_projection(
     )
 
 
-def test_sim_only_wrapper_and_session_close_cron_templates_are_declared() -> None:
+def test_sample_ops_wrapper_is_retired_and_cron_templates_remain_paused() -> None:
     root = Path(__file__).resolve().parents[1]
     wrapper = root / "shared" / "wrappers" / "job_cn_futures_sample_ops.sh"
     assert wrapper.exists()
     wrapper_text = wrapper.read_text(encoding="utf-8")
-    assert "REAL_TRADING_ENABLED=false" in wrapper_text
-    assert "-m shared.runtime_test.cn_futures_sample_ops" in wrapper_text
-    assert "job_cn_futures_sample_ops" in wrapper_text
+    common_text = (root / "shared" / "wrappers" / "_common.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'source "${WRAPPER_DIR}/_common.sh"' in wrapper_text
+    assert "job_cn_futures_sample_ops.sh" in common_text
+    assert "block_retired_legacy_runtime" in common_text
     entries = (
         "40 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh",
         "10 15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_cn_futures_sample_ops.sh",
@@ -544,8 +547,12 @@ def test_sim_only_wrapper_and_session_close_cron_templates_are_declared() -> Non
     )
     for relative in ("shared/crontab.txt", "crontab.txt"):
         schedule = (root / relative).read_text(encoding="utf-8")
+        assert (
+            "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
+            in schedule
+        )
         for entry in entries:
-            assert entry in schedule
+            assert entry not in schedule
 
 
 def test_sample_ops_materializes_counterfactual_labels_before_maturity_and_is_idempotent(

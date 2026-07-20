@@ -21,17 +21,14 @@ def test_hk_is_not_in_default_evolution_markets() -> None:
     assert 'MARKETS = ("crypto", "pm", "us")' in guard
 
 
-def test_hk_sim_wrapper_requires_explicit_enable_flag() -> None:
+def test_hk_sim_wrapper_is_permanently_retired() -> None:
     wrapper = _read("shared/wrappers/job_hk_sim.sh")
 
-    assert "TRADINGAGENT_HK_SIM_ENABLED" in wrapper
-    assert "SKIP hk_sim disabled" in wrapper
-    assert "exit 0" in wrapper
+    assert 'block_retired_legacy_runtime "job_hk_sim"' in wrapper
+    assert "TRADINGAGENT_HK_SIM_ENABLED" not in wrapper
 
 
-def test_hk_run_sim_and_proxy_are_fail_closed_by_default() -> None:
+def test_hk_cannot_reactivate_retired_mixed_sim_runner() -> None:
     run_sim = _read("shared/wrappers/run_sim.py")
 
-    assert 'market == "hk" and not _env_enabled("TRADINGAGENT_HK_SIM_ENABLED")' in run_sim
-    assert '"status": "disabled"' in run_sim
-    assert 'and _env_enabled("SIM_HK_PROXY_ENABLED")' in run_sim
+    assert 'retired_cli("shared.wrappers.run_sim")' in run_sim

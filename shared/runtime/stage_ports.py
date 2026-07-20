@@ -2,7 +2,7 @@
 
 These ports have no implicit endpoint, storage root, clock, broker or fallback.
 They are suitable for isolated paper replays and for contract testing while the
-SharedSignals V1 producer contract remains externally owned and unfrozen.
+TradingDatas V1 producer contract remains externally owned and unfrozen.
 """
 
 from __future__ import annotations

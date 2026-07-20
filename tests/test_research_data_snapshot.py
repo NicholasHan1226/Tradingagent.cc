@@ -15,8 +15,8 @@ from shared.data.sharedsignals_v1 import parse_query_envelope
 
 
 CATALOG = "fixture-catalog-2026-07-16"
-PRICE_DATASET = "cn.equity.daily.mainboard.v1"
-CONTEXT_DATASET = "cn.equity.sector.full_market.context.v1"
+PRICE_DATASET = "fixture.cn.equity.daily.mainboard.v1"
+CONTEXT_DATASET = "fixture.cn.equity.sector.full-market-context.v1"
 DECISION_AS_OF = datetime(2026, 7, 16, 1, 5, tzinfo=timezone.utc)
 
 

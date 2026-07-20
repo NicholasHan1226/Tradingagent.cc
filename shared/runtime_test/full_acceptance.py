@@ -23,19 +23,19 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 
 KEY_TESTS = [
-    "tests/test_market_health.py",
-    "tests/test_ashare_opening_validator.py",
-    "tests/test_ashare_no_trade_summary.py",
-    "tests/test_ashare_preopen_dry_run.py",
-    "tests/test_run_sim_wrapper.py",
-    "tests/test_pnl_summary.py",
-    "tests/test_equity_snapshots.py",
+    "tests/test_sharedsignals_v1.py",
+    "tests/test_sharedsignals_v1_runtime_gate.py",
+    "tests/test_sharedsignals_v1_integration_probe.py",
+    "tests/test_architecture_contract_guards.py",
+    "tests/test_legacy_direct_entry_retirement.py",
+    "tests/test_market_lane_governance.py",
+    "tests/test_mini_hermes_retirement.py",
+    "tests/test_ashare_sim.py",
+    "tests/test_crypto_sim.py",
+    "tests/test_cn_futures_sim.py",
+    "tests/test_evolution_runtime_styles.py",
     "tests/test_real_trading_gate.py",
     "tests/test_real_money_boundary.py",
-    "tests/test_capital_layer_isolation.py",
-    "tests/test_cron_coverage.py",
-    "tests/test_opportunity_funnel_cron.py",
-    "tests/test_sharedsignals_evidence_contract.py",
 ]
 
 
@@ -58,6 +58,17 @@ def _env(overrides: dict[str, str] | None = None) -> dict[str, str]:
     # subprocess starts.  Pin the accepted child environment to simulation so
     # an unset variable cannot be interpreted differently by individual tools.
     env["REAL_TRADING_ENABLED"] = "false"
+    for retired_name in (
+        "SHAREDSIGNALS_API_URL",
+        "SHAREDSIGNALS_CATALOG_VERSION",
+        "SHAREDSIGNALS_ACCESS_POLICY_ID",
+        "SHAREDSIGNALS_MARKET_PULSE_DATASET_IDS_JSON",
+        "SHAREDSIGNALS_SCHEMA_MAJOR",
+        "SHAREDSIGNALS_RUNTIME_TRANSPORT",
+        "SHARED_SIGNALS_DB",
+        "TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE",
+    ):
+        env.pop(retired_name, None)
     env.update(overrides or {})
     return env
 
@@ -394,30 +405,17 @@ def _profiles(args: argparse.Namespace) -> list[tuple[str, list[str], Path, int]
         )
         profiles.append(
             (
-                "sharedsignals_evidence_contract",
+                "tradingdatas_v1_runtime_gate",
                 [
                     python,
                     "-m",
-                    "shared.runtime_test.sharedsignals_evidence_contract",
-                    "--pretty",
+                    "shared.runtime_test.sharedsignals_v1_gate",
+                    "--market",
+                    "ashare",
+                    "--json",
                 ],
                 ROOT,
                 30,
-            )
-        )
-        profiles.append(
-            (
-                "sim_market_health",
-                [
-                    python,
-                    "-m",
-                    "shared.runtime_test.market_health",
-                    "--market",
-                    "sim",
-                    "--pretty",
-                ],
-                ROOT,
-                120,
             )
         )
         profiles.append(
@@ -441,22 +439,6 @@ def _profiles(args: argparse.Namespace) -> list[tuple[str, list[str], Path, int]
                 60,
             )
         )
-        profiles.append(
-            (
-                "opening_acceptance",
-                [
-                    python,
-                    "-m",
-                    "shared.runtime_test.opening_acceptance",
-                    "--json",
-                    "--pretty",
-                    "--send-on",
-                    "never",
-                ],
-                ROOT,
-                120,
-            )
-        )
     if args.profile in {"full", "all"}:
         profiles.append(
             ("full_pytest", [python, "-m", "pytest", "-q"], ROOT, args.test_timeout)
@@ -477,16 +459,20 @@ def _profiles(args: argparse.Namespace) -> list[tuple[str, list[str], Path, int]
     if args.profile == "cn_futures":
         profiles.append(
             (
-                "cn_futures_live_check",
+                "cn_futures_contract_tests",
                 [
                     python,
                     "-m",
-                    "shared.runtime_test.cn_futures_live_check",
-                    "--json",
-                    "--pretty",
+                    "pytest",
+                    "-q",
+                    "tests/test_cn_futures_sim.py",
+                    "tests/test_cn_futures_sim_runner.py",
+                    "tests/test_cn_futures_sim_executor_evidence.py",
+                    "tests/test_cn_futures_order_events.py",
+                    "tests/test_market_authority_binding.py",
                 ],
                 ROOT,
-                120,
+                args.test_timeout,
             )
         )
     if args.profile == "capital_growth":
@@ -608,7 +594,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "capital_growth",
         ],
         default="quick",
-        help="quick=key tests; prod=runtime checks; capital_growth=50k sample-loop evidence; all preserves the legacy aggregate.",
+        help=(
+            "quick=current fixture/contract tests; prod=explicit TradingDatas V1 "
+            "runtime gate (expected to fail closed before fresh handoff); "
+            "cn_futures=market-specific simulation contract tests; "
+            "capital_growth=50k sample-loop evidence; all includes historical tests."
+        ),
     )
     parser.add_argument(
         "--front-tests",

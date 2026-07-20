@@ -1,37 +1,53 @@
 #!/usr/bin/env python3
-"""A-share simulated executor backed by the Mac Mini file bridge.
+"""A-share server-local simulated executor.
 
-Production simulated orders default to the server-local paper loop. The Mac Mini
-Hermes/Tonghuashun bridge is retained as an explicitly enabled secondary route
-(``ASHARE_SIM_HERMES_ENABLED=1`` or ``config["hermes_enabled"]=True``), but is
-not required for server-side simulated training data.
+Mini/Hermes bridge inputs are retired and fail closed. This module owns only the
+A-share paper-broker semantics; future broker adapters remain market-specific
+and are not implemented or enabled here.
 """
 
 from __future__ import annotations
 
 import os
+import math
 from datetime import datetime, time
-from pathlib import Path
 from typing import Any
 
 from shared.markets.sim_capital import default_sim_capital
 from zoneinfo import ZoneInfo
 
 from shared.execution.execution_reality import ashare_execution_reality
-from shared.execution.signal_state_machine import SignalStateMachine
 from shared.execution.sim_engine import SimExecutionEngine, SimOrder
 from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import register_sim_executor
-from shared.execution.webhook_sender import send_sim_signal_to_mini
+from shared.markets.safety import reject_real_execution_payload
 from shared.universe.policy import classify_instrument
 
 
-DEFAULT_SIGNALS_DIR = Path("/opt/investment/tradingagent/signals")
 MARKET = "ashare"
 SIM_ACCOUNT = "ashare_sim"
+PAPER_BROKER_CONTRACT = "tradingagent.ashare.paper_broker.v1"
+SIM_AUTHORITY_ID = "ashare-capital-v1"
 CN_TZ = ZoneInfo("Asia/Shanghai")
 MAX_EXECUTION_BAR_AGE_SECONDS = 15 * 60
 MAX_EXECUTION_BAR_FUTURE_SECONDS = 5 * 60
+_DISABLED_VALUES = frozenset({"", "0", "false", "no", "off", "disabled"})
+_RETIRED_BRIDGE_ENV = (
+    "ASHARE_SIM_HERMES_ENABLED",
+    "ASHARE_SIM_WEBHOOK_ENABLED",
+)
+_RETIRED_BRIDGE_CONFIG = (
+    "hermes_enabled",
+    "webhook",
+    "webhook_url",
+    "webhook_secret",
+    "webhook_timeout",
+    "webhook_retries",
+    "signals_dir",
+    "mock_mini_filled",
+)
+_TEST_ONLY_MOCK_CONFIG_KEY = "_test_only_ashare_mock_token"
+_TEST_ONLY_MOCK_TOKEN = object()
 
 
 def _now_cn() -> datetime:
@@ -49,17 +65,44 @@ def _account_name(account: dict[str, Any] | str | None) -> str:
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return default
+    try:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return default
+    return int(parsed)
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return default
+    try:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def build_test_only_ashare_mock_config(**overrides: Any) -> dict[str, Any]:
+    """Build an in-process mock config that cannot cross a serialized boundary."""
+
+    return {**overrides, _TEST_ONLY_MOCK_CONFIG_KEY: _TEST_ONLY_MOCK_TOKEN}
+
+
+def _retired_bridge_requests(config: dict[str, Any]) -> tuple[str, ...]:
+    requested: list[str] = []
+    for name in _RETIRED_BRIDGE_ENV:
+        value = str(os.environ.get(name, "")).strip().lower()
+        if value not in _DISABLED_VALUES:
+            requested.append(f"env:{name}")
+    for name in _RETIRED_BRIDGE_CONFIG:
+        value = config.get(name)
+        if value not in (None, "", False, 0):
+            requested.append(f"config:{name}")
+    return tuple(requested)
 
 
 def _parse_bar_time(value: Any) -> datetime | None:
@@ -121,9 +164,13 @@ def _reject(
             "mode": "pre_bridge_validation",
             "code": code,
             "reason": message,
+            "broker_contract": PAPER_BROKER_CONTRACT,
+            "authority_id": SIM_AUTHORITY_ID,
             "execution_reality_model_version": model.model_version,
             **dict(details or {}),
         },
+        broker_contract=PAPER_BROKER_CONTRACT,
+        authority_id=SIM_AUTHORITY_ID,
     )
 
 
@@ -303,7 +350,12 @@ def _fill_evidence_from_snapshot(
     bar_volume = _first_value(
         snapshot.get("bar_volume"), snapshot.get("volume"), snapshot.get("vol")
     )
-    fresh_bar, bar_age_seconds = _fresh_5min_bar(bar_time)
+    evidence_now = _parse_session_now(
+        config.get("_resolved_market_session_now")
+        or config.get("market_session_now")
+        or config.get("now")
+    )
+    fresh_bar, bar_age_seconds = _fresh_5min_bar(bar_time, now=evidence_now)
     verified_5min = (
         quote_source.startswith(("order.market_snapshot.", "config.market_snapshot."))
         and bool(str(bar_time or "").strip())
@@ -471,16 +523,23 @@ def _snapshot_from_payload(
         sellable_qty = _first_value(
             account.get("sellable_qty"), account.get("available_position")
         )
+        position_qty = _first_value(
+            account.get("position_qty"), account.get("current_position")
+        )
     else:
         cash_available = None
         sellable_qty = None
+        position_qty = None
     cash_available = _first_value(
         order.get("cash_available"), config.get("cash_available"), cash_available
     )
     sellable_qty = _first_value(
         order.get("sellable_qty"), config.get("sellable_qty"), sellable_qty
     )
-    if cash_available is None or sellable_qty is None:
+    position_qty = _first_value(
+        order.get("position_qty"), config.get("position_qty"), position_qty
+    )
+    if cash_available is None or sellable_qty is None or position_qty is None:
         try:
             from shared.execution.local_sim_ledger import get_local_sim_account_snapshot
 
@@ -509,10 +568,14 @@ def _snapshot_from_payload(
             cash_available = account_snapshot.get("cash_available")
         if sellable_qty is None:
             sellable_qty = account_snapshot.get("sellable_qty")
+        if position_qty is None:
+            position_qty = account_snapshot.get("position_qty")
     if cash_available is not None:
         snapshot.setdefault("cash_available", cash_available)
     if sellable_qty is not None:
         snapshot.setdefault("sellable_qty", sellable_qty)
+    if position_qty is not None:
+        snapshot.setdefault("position_qty", position_qty)
     return snapshot
 
 
@@ -528,6 +591,16 @@ def _execute_server_local(
     safe_metadata["signal_card"] = safe_card
     market_snapshot = _snapshot_from_payload(order, account, config, card)
     fill_evidence = _fill_evidence_from_snapshot(order, config, card, market_snapshot)
+    if fill_evidence.get("execution_evidence_class") != "verified_5min_market_data":
+        return _reject(
+            str(card["order_id"]),
+            str(card["ts_code"]),
+            "unverified_execution_evidence",
+            details={
+                "reason_code": "verified_fresh_5min_market_data_required",
+                "fill_evidence": fill_evidence,
+            },
+        )
     safe_metadata["fill_evidence"] = fill_evidence
     safe_metadata["fill_price_source"] = fill_evidence["fill_price_source"]
     safe_metadata["fill_price_source_class"] = fill_evidence["fill_price_source_class"]
@@ -550,6 +623,9 @@ def _execute_server_local(
         metadata=safe_metadata,
     )
     engine = SimExecutionEngine(MARKET, profile=config.get("sim_engine_profile"))
+    current_position = _coerce_int(market_snapshot.get("position_qty"), 0)
+    if current_position > 0:
+        engine.position(sim_order.symbol).current_holdings = current_position
     record = engine.submit_order(sim_order, market_snapshot)
     status = "pending" if record.state == "open" else record.state
     fee = float((record.fees or {}).get("total", 0.0) or 0.0)
@@ -564,12 +640,14 @@ def _execute_server_local(
         market=MARKET,
         raw_response={
             "mode": "server_local_sim_engine",
-            "hermes_enabled": False,
+            "broker_contract": PAPER_BROKER_CONTRACT,
             "signal_card": card,
             "market_snapshot": market_snapshot,
             "fill_evidence": fill_evidence,
             "engine_record": record.as_dict(),
         },
+        broker_contract=PAPER_BROKER_CONTRACT,
+        authority_id=SIM_AUTHORITY_ID,
     )
 
 
@@ -630,13 +708,14 @@ def _signal_card(
         "timestamp": now.isoformat(timespec="seconds"),
         "valid_until": str(config.get("valid_until") or trade_date),
         "idempotency_key": str(order.get("idempotency_key") or order_id),
-        "source": "ashare_sim_executor_file_bridge",
-        "bridge": "mini_hermes_file_bridge",
+        "source": "ashare_server_local_paper_broker",
+        "broker_contract": PAPER_BROKER_CONTRACT,
+        "authority_id": SIM_AUTHORITY_ID,
         "t_plus_1": {
             "sellable_from": sellable_date,
             "sellable_date": sellable_date,
         },
-        "notes": "Hermes/Mac Mini bridge is reserved; server-local simulated execution is primary unless explicitly enabled.",
+        "notes": "A-share simulated execution is server-local and isolated from every future live broker adapter.",
     }
     for key in (
         "capital_scope",
@@ -656,8 +735,14 @@ def ashare_sim_execute(
     account: dict[str, Any] | str | None = None,
     config: dict[str, Any] | None = None,
 ) -> SimResult:
-    """Queue an A-share simulated order for Mini execution, or fill via mock."""
+    """Execute one A-share order through the server-local paper broker."""
 
+    reject_real_execution_payload(order, context="ashare_sim_execute.order")
+    reject_real_execution_payload(
+        account if isinstance(account, dict) else {},
+        context="ashare_sim_execute.account",
+    )
+    reject_real_execution_payload(config or {}, context="ashare_sim_execute.config")
     config = dict(config or {})
     code = str(order.get("ts_code") or order.get("symbol") or "").strip().upper()
     eligibility = classify_instrument(
@@ -708,11 +793,29 @@ def ashare_sim_execute(
                 if key not in {"allowed", "reason"}
             },
         )
-    mock_mode = bool(
-        config.get("mock")
-        or config.get("mock_filled")
-        or config.get("mock_mini_filled")
-    )
+    mock_token = config.pop(_TEST_ONLY_MOCK_CONFIG_KEY, None)
+    serialized_mock_request = bool(config.get("mock") or config.get("mock_filled"))
+    mock_mode = mock_token is _TEST_ONLY_MOCK_TOKEN
+
+    retired_bridge_requests = _retired_bridge_requests(config)
+    if retired_bridge_requests:
+        return _reject(
+            order_id,
+            code,
+            "mini_hermes_bridge_retired",
+            details={
+                "broker_contract": PAPER_BROKER_CONTRACT,
+                "retired_inputs": list(retired_bridge_requests),
+            },
+        )
+
+    if serialized_mock_request and not mock_mode:
+        return _reject(
+            order_id,
+            code,
+            "serialized_mock_fill_not_authorized",
+            details={"reason_code": "test_only_mock_token_required"},
+        )
 
     if mock_mode:
         return SimResult(
@@ -725,83 +828,21 @@ def ashare_sim_execute(
             market=MARKET,
             raw_response={
                 "mode": "mock_filled",
+                "broker_contract": PAPER_BROKER_CONTRACT,
                 "signal_card": card,
             },
+            broker_contract=PAPER_BROKER_CONTRACT,
+            authority_id=SIM_AUTHORITY_ID,
         )
-
-    hermes_enabled = (
-        bool(config.get("hermes_enabled"))
-        or os.environ.get("ASHARE_SIM_HERMES_ENABLED", "0") == "1"
-    )
-    if not hermes_enabled:
-        return _execute_server_local(order, account, config, card)
-
-    signals_dir = Path(config.get("signals_dir") or DEFAULT_SIGNALS_DIR)
-    env_webhook = os.environ.get("ASHARE_SIM_WEBHOOK_ENABLED")
-    if "webhook" in config:
-        webhook_enabled = bool(config.get("webhook"))
-    elif signals_dir == DEFAULT_SIGNALS_DIR:
-        # Hermes is a reserved secondary route. When explicitly enabled, the
-        # production path can still attempt the Mini webhook unless separately
-        # disabled for rollback.
-        webhook_enabled = env_webhook != "0"
-    else:
-        webhook_enabled = env_webhook == "1"
-    webhook_result: dict[str, Any] | None = None
-
-    if webhook_enabled:
-        webhook_kwargs: dict[str, Any] = {}
-        for config_key, arg_name in (
-            ("webhook_url", "url"),
-            ("webhook_secret", "secret"),
-            ("webhook_timeout", "timeout"),
-            ("webhook_retries", "retries"),
-        ):
-            if config.get(config_key) not in (None, ""):
-                webhook_kwargs[arg_name] = config[config_key]
-        webhook_result = send_sim_signal_to_mini(card, **webhook_kwargs)
-        if webhook_result.get("success"):
-            return SimResult(
-                status="pending",
-                filled_qty=0,
-                avg_price=0.0,
-                fee=0.0,
-                message="Sent to Mac Mini Hermes webhook for simulated execution",
-                order_id=order_id,
-                market=MARKET,
-                raw_response={
-                    "mode": "mini_webhook_sent",
-                    "webhook": webhook_result,
-                    "signal_card": card,
-                },
-            )
-
-    machine = SignalStateMachine(signals_dir)
-    queued = machine.write_pending(card)
-    mode = (
-        "file_bridge_pending_after_webhook_failed"
-        if webhook_result
-        else "file_bridge_pending"
-    )
-    return SimResult(
-        status="pending",
-        filled_qty=0,
-        avg_price=0.0,
-        fee=0.0,
-        message="Queued for Mac Mini Hermes file bridge execution",
-        order_id=order_id,
-        market=MARKET,
-        raw_response={
-            "mode": mode,
-            "webhook": webhook_result or {},
-            "signals_dir": str(signals_dir),
-            "signal_path": queued.get("signal_path", ""),
-            "signal_card": queued.get("signal_card", card),
-        },
-    )
+    return _execute_server_local(order, account, config, card)
 
 
-register_sim_executor(MARKET, ashare_sim_execute)
+register_sim_executor(
+    MARKET,
+    ashare_sim_execute,
+    simulation_contract=PAPER_BROKER_CONTRACT,
+    authority_id=SIM_AUTHORITY_ID,
+)
 
 
-__all__ = ["ashare_sim_execute"]
+__all__ = ["ashare_sim_execute", "build_test_only_ashare_mock_config"]

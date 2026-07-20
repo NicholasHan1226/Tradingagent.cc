@@ -637,13 +637,13 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertEqual(latest["date"], "20260710")
         self.assertEqual(latest["state"], "ok")
 
-    def test_adapter_default_reader_uses_tradingagent_data_reader(self) -> None:
+    def test_adapter_default_reader_is_absent_until_explicit_port_is_injected(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
-        from shared.data.reader import TradingagentDataReader
 
         adapter = CNFuturesAdapter()
 
-        self.assertIsInstance(adapter.reader, TradingagentDataReader)
+        self.assertIsNone(adapter.reader)
+        self.assertEqual(adapter.get_universe("20260703"), [])
 
     def test_adapter_reads_futures_assets_without_using_trading_logic_upstream(
         self,
@@ -689,87 +689,24 @@ class CNFuturesAutomationTest(unittest.TestCase):
             all(call[1:] == ("20260707", "20260707") for call in reader.calls)
         )
 
-    def test_intraday_universe_read_model_uses_latest_bar_batch(self) -> None:
+    def test_intraday_universe_never_reopens_legacy_sqlite(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "marketdata.sqlite"
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                """
-                CREATE TABLE market_bars_intraday (
-                    market TEXT,
-                    symbol TEXT,
-                    bar_time TEXT,
-                    trade_date TEXT,
-                    interval TEXT,
-                    close REAL
-                )
-                """
-            )
-            conn.executemany(
-                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        "Futures",
-                        "CU2607.SHF",
-                        "2026-07-07 14:30:00",
-                        "20260707",
-                        "5min",
-                        71000.0,
-                    ),
-                    (
-                        "Futures",
-                        "CU.SHF",
-                        "2026-07-07 14:35:00",
-                        "20260707",
-                        "5min",
-                        71050.0,
-                    ),
-                    (
-                        "Futures",
-                        "RB2607.SHF",
-                        "2026-07-07 14:35:00",
-                        "20260707",
-                        "5min",
-                        3500.0,
-                    ),
-                    (
-                        "Futures",
-                        "RB2608.SHF",
-                        "2026-07-07 14:35:00",
-                        "20260707",
-                        "5min",
-                        3520.0,
-                    ),
-                ],
-            )
-            conn.commit()
-            conn.close()
-            old_db = os.environ.get("SHARED_SIGNALS_DB")
-            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
-            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
-            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
-            try:
-                with patch("CNFutures.adapter.TradingagentDataReader", None):
-                    adapter = CNFuturesAdapter(
-                        reader=None,
-                        universe_filter={"max_symbols": 4, "products": ("cu", "rb")},
-                    )
-
-                self.assertEqual(
-                    adapter.get_intraday_universe("20260707"),
-                    ["RB2607.SHF", "RB2608.SHF"],
-                )
-            finally:
-                if old_db is None:
-                    os.environ.pop("SHARED_SIGNALS_DB", None)
-                else:
-                    os.environ["SHARED_SIGNALS_DB"] = old_db
-                if old_diag is None:
-                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
-                else:
-                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
+            db_path.write_bytes(b"legacy bytes")
+            with patch.dict(
+                os.environ,
+                {
+                    "SHARED_SIGNALS_DB": str(db_path),
+                    "TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "1",
+                },
+            ):
+                adapter = CNFuturesAdapter(reader=None)
+                self.assertEqual(adapter.get_intraday_universe("20260707"), [])
+                self.assertFalse(hasattr(adapter, "_allow_direct_sqlite_fallback"))
+                self.assertFalse(hasattr(adapter, "_get_assets_from_sqlite"))
+            self.assertEqual(db_path.read_bytes(), b"legacy bytes")
 
     def test_intraday_universe_prefers_api_before_diagnostic_sqlite(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -1827,7 +1764,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
     def test_index_intraday_directional_forces_flatten_near_close(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
-        from CNFutures.sim_runner import run_multi_style_simulation
+        from CNFutures.sim_runner import (
+            _write_position_snapshot,
+            run_multi_style_simulation,
+        )
 
         class ClosingReader(FakeMixedFuturesReader):
             def get_assets(self, market: str) -> list[dict[str, object]]:
@@ -1843,6 +1783,34 @@ class CNFuturesAutomationTest(unittest.TestCase):
                     if market == "Futures"
                     else []
                 )
+
+            def get_bars_intraday(
+                self,
+                market: str,
+                symbol: str,
+                interval: str = "5min",
+                start: object = None,
+                end: object = None,
+            ) -> list[dict[str, object]]:
+                rows = super().get_bars_intraday(
+                    market,
+                    symbol,
+                    interval=interval,
+                    start=start,
+                    end=end,
+                )
+                if symbol != "IF2601.CFFEX":
+                    return rows
+                # Keep the close-out evidence inside the executor's frozen
+                # ten-minute freshness window; the test is about mandatory
+                # no-overnight flattening, not stale-evidence tolerance.
+                return [
+                    {
+                        **row,
+                        "bar_time": f"2026-07-06 14:{30 + index * 5:02d}:00",
+                    }
+                    for index, row in enumerate(rows)
+                ]
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -1869,24 +1837,22 @@ class CNFuturesAutomationTest(unittest.TestCase):
             positions_path = (
                 tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
             )
-            positions_path.parent.mkdir(parents=True)
-            positions_path.write_text(
-                json.dumps(
-                    {
-                        "positions": [
-                            {
-                                "style": "index_intraday_directional",
-                                "symbol": "IF2601.CFFEX",
-                                "net_qty": 1,
-                                "avg_price": 3_500.0,
-                                "mark_price": 3_520.0,
-                                "contract_multiplier": 300,
-                                "margin_required": 126_000.0,
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
+            _write_position_snapshot(
+                tmp_path / "signals",
+                {
+                    "trade_date": "20260706",
+                    "positions": [
+                        {
+                            "style": "index_intraday_directional",
+                            "symbol": "IF2601.CFFEX",
+                            "net_qty": 1,
+                            "avg_price": 3_500.0,
+                            "mark_price": 3_520.0,
+                            "contract_multiplier": 300,
+                            "margin_required": 126_000.0,
+                        }
+                    ],
+                },
             )
 
             result = run_multi_style_simulation(
@@ -2171,47 +2137,26 @@ class CNFuturesAutomationTest(unittest.TestCase):
             self.assertEqual(raw_response["last_trade_date"], "20261215")
             self.assertEqual(raw_response["expiry_date"], "20261231")
 
-    def test_adapter_falls_back_to_sharedsignals_sqlite_for_futures_assets(
+    def test_adapter_refuses_legacy_sqlite_for_futures_assets(
         self,
     ) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "marketdata.sqlite"
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                """
-                CREATE TABLE market_assets (
-                    market TEXT,
-                    symbol TEXT,
-                    name TEXT,
-                    status TEXT
-                )
-                """
-            )
-            conn.execute(
-                "INSERT INTO market_assets VALUES (?, ?, ?, ?)",
-                ("Futures", "RB2601.SHF", "螺纹钢2601", None),
-            )
-            conn.commit()
-            old_db = os.environ.get("SHARED_SIGNALS_DB")
-            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
-            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
-            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
-            try:
+            db_path.write_bytes(b"legacy bytes")
+            with patch.dict(
+                os.environ,
+                {
+                    "SHARED_SIGNALS_DB": str(db_path),
+                    "TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE": "1",
+                },
+            ):
                 adapter = CNFuturesAdapter(
                     reader=object(), universe_filter={"max_symbols": 1}
                 )
-                self.assertEqual(adapter.get_universe("20260703"), ["RB2601.SHF"])
-            finally:
-                if old_db is None:
-                    os.environ.pop("SHARED_SIGNALS_DB", None)
-                else:
-                    os.environ["SHARED_SIGNALS_DB"] = old_db
-                if old_diag is None:
-                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
-                else:
-                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
+                self.assertEqual(adapter.get_universe("20260703"), [])
+            self.assertEqual(db_path.read_bytes(), b"legacy bytes")
 
     def test_run_simulation_script_can_be_executed_directly(self) -> None:
         result = subprocess.run(
@@ -2226,240 +2171,42 @@ class CNFuturesAutomationTest(unittest.TestCase):
             check=False,
         )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--max-intraday-bar-age-minutes", result.stdout)
+        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn('"state": "retired"', result.stderr)
 
-    def test_run_simulation_cli_treats_market_closed_as_normal(self) -> None:
+    def test_run_simulation_library_entry_is_retired(self) -> None:
         from CNFutures import run_simulation
 
-        class Args:
-            date = "20260703"
-            signals_dir = Path("/tmp/cn_futures_signals")
-            review_path = Path("/tmp/cn_futures_reviews.jsonl")
-            max_symbols = None
-            cadence = "5min"
-            max_intraday_bar_age_minutes = 10.0
-            json = True
+        self.assertEqual(run_simulation.main(), 78)
 
-        with (
-            patch("CNFutures.run_simulation._parse_args", return_value=Args()),
-            patch("CNFutures.run_simulation.CNFuturesAdapter") as adapter_class,
-            patch("CNFutures.run_simulation.run_multi_style_simulation") as run_sim,
-        ):
-            adapter = adapter_class.return_value
-            adapter.reader = object()
-            run_sim.return_value = {
-                "market": "cn_futures",
-                "reader_market": "Futures",
-                "date": "20260703",
-                "cadence": "5min",
-                "state": "market_closed",
-                "capital_layer": "simulated",
-                "account_type": "simulated",
-                "universe_count": 1,
-                "style_count": 1,
-                "record_count": 0,
-                "filled_count": 0,
-                "hold_count": 0,
-                "errors": [],
-                "records": [],
-                "max_intraday_bar_age_minutes": 10.0,
-            }
-
-            self.assertEqual(run_simulation.main(), 0)
-
-    def test_run_simulation_cli_does_not_hide_market_closed_errors(self) -> None:
-        from CNFutures import run_simulation
-
-        class Args:
-            date = "20260703"
-            signals_dir = Path("/tmp/cn_futures_signals")
-            review_path = Path("/tmp/cn_futures_reviews.jsonl")
-            max_symbols = None
-            cadence = "5min"
-            max_intraday_bar_age_minutes = 10.0
-            json = True
-
-        with (
-            patch("CNFutures.run_simulation._parse_args", return_value=Args()),
-            patch("CNFutures.run_simulation.CNFuturesAdapter") as adapter_class,
-            patch("CNFutures.run_simulation.run_multi_style_simulation") as run_sim,
-        ):
-            adapter = adapter_class.return_value
-            adapter.reader = object()
-            run_sim.return_value = {
-                "market": "cn_futures",
-                "reader_market": "Futures",
-                "date": "20260703",
-                "cadence": "5min",
-                "state": "market_closed",
-                "capital_layer": "simulated",
-                "account_type": "simulated",
-                "universe_count": 1,
-                "style_count": 1,
-                "record_count": 0,
-                "filled_count": 0,
-                "hold_count": 0,
-                "error_count": 1,
-                "errors": [{"stage": "clock", "error": "bad_session_state"}],
-                "records": [],
-                "max_intraday_bar_age_minutes": 10.0,
-            }
-
-            self.assertEqual(run_simulation.main(), 2)
-
-    def test_adapter_prefers_contracts_with_available_daily_bars(self) -> None:
+    def test_adapter_does_not_discover_daily_bars_from_sqlite(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "marketdata.sqlite"
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                """
-                CREATE TABLE market_assets (
-                    market TEXT,
-                    symbol TEXT,
-                    name TEXT,
-                    status TEXT
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE market_bars_daily (
-                    market TEXT,
-                    symbol TEXT,
-                    trade_date TEXT,
-                    close REAL
-                )
-                """
-            )
-            conn.executemany(
-                "INSERT INTO market_assets VALUES (?, ?, ?, ?)",
-                [
-                    ("Futures", "CU0001.SHF", "old copper", None),
-                    ("Futures", "CU2609.SHF", "copper current", None),
-                    ("Futures", "RB2609.SHF", "rebar current", None),
-                ],
-            )
-            conn.executemany(
-                "INSERT INTO market_bars_daily VALUES (?, ?, ?, ?)",
-                [
-                    ("Futures", "CU2609.SHF", "20260703", 71000.0),
-                    ("Futures", "RB2609.SHF", "20260703", 3500.0),
-                ],
-            )
-            conn.commit()
-            old_db = os.environ.get("SHARED_SIGNALS_DB")
-            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
-            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
-            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
-            try:
-                with patch("CNFutures.adapter.TradingagentDataReader", None):
-                    adapter = CNFuturesAdapter(
-                        reader=None, universe_filter={"max_symbols": 2}
-                    )
+            db_path.write_bytes(b"legacy bytes")
+            with patch.dict(os.environ, {"SHARED_SIGNALS_DB": str(db_path)}):
+                adapter = CNFuturesAdapter(reader=None)
+                self.assertEqual(adapter.get_universe("20260703"), [])
+            self.assertEqual(db_path.read_bytes(), b"legacy bytes")
 
-                self.assertEqual(
-                    adapter.get_universe("20260703"), ["CU2609.SHF", "RB2609.SHF"]
-                )
-                self.assertEqual(
-                    adapter.get_universe("20260704"), ["CU2609.SHF", "RB2609.SHF"]
-                )
-            finally:
-                if old_db is None:
-                    os.environ.pop("SHARED_SIGNALS_DB", None)
-                else:
-                    os.environ["SHARED_SIGNALS_DB"] = old_db
-                if old_diag is None:
-                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
-                else:
-                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
-
-    def test_adapter_prefers_contracts_with_available_intraday_bars(self) -> None:
+    def test_adapter_does_not_discover_intraday_bars_from_sqlite(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "marketdata.sqlite"
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                """
-                CREATE TABLE market_assets (
-                    market TEXT,
-                    symbol TEXT,
-                    name TEXT,
-                    status TEXT
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE market_bars_intraday (
-                    market TEXT,
-                    symbol TEXT,
-                    bar_time TEXT,
-                    trade_date TEXT,
-                    interval TEXT,
-                    close REAL
-                )
-                """
-            )
-            conn.executemany(
-                "INSERT INTO market_assets VALUES (?, ?, ?, ?)",
-                [
-                    ("Futures", "CU2609.SHF", "copper current", None),
-                    ("Futures", "RB2609.SHF", "rebar current", None),
-                ],
-            )
-            conn.executemany(
-                "INSERT INTO market_bars_intraday VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        "Futures",
-                        "CU2609.SHF",
-                        "2026-07-03 14:55:00",
-                        "20260703",
-                        "5min",
-                        71000.0,
-                    ),
-                    (
-                        "Futures",
-                        "RB2609.SHF",
-                        "2026-07-03 14:55:00",
-                        "20260703",
-                        "5min",
-                        3500.0,
-                    ),
-                ],
-            )
-            conn.commit()
-            old_db = os.environ.get("SHARED_SIGNALS_DB")
-            old_diag = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE")
-            os.environ["SHARED_SIGNALS_DB"] = str(db_path)
-            os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = "1"
-            try:
-                with patch("CNFutures.adapter.TradingagentDataReader", None):
-                    adapter = CNFuturesAdapter(
-                        reader=None, universe_filter={"max_symbols": 2}
-                    )
-
+            db_path.write_bytes(b"legacy bytes")
+            with patch.dict(os.environ, {"SHARED_SIGNALS_DB": str(db_path)}):
+                adapter = CNFuturesAdapter(reader=None)
+                self.assertEqual(adapter.get_intraday_universe("20260703"), [])
                 self.assertEqual(
-                    adapter.get_intraday_universe("20260703"),
-                    ["CU2609.SHF", "RB2609.SHF"],
+                    adapter.get_bars_intraday(
+                        "Futures", "RB2609.SHF", "5min", end="20260703"
+                    ),
+                    [],
                 )
-                rows = adapter.get_bars_intraday(
-                    "Futures", "RB2609.SHF", "5min", end="20260703"
-                )
-                self.assertEqual(rows[-1]["bar_time"], "2026-07-03 14:55:00")
-            finally:
-                if old_db is None:
-                    os.environ.pop("SHARED_SIGNALS_DB", None)
-                else:
-                    os.environ["SHARED_SIGNALS_DB"] = old_db
-                if old_diag is None:
-                    os.environ.pop("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", None)
-                else:
-                    os.environ["TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE"] = old_diag
+            self.assertEqual(db_path.read_bytes(), b"legacy bytes")
 
     def test_review_scoring_marks_small_open_only_samples_insufficient(self) -> None:
         from CNFutures.review import score_records

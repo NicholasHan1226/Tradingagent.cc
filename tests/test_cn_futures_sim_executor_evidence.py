@@ -15,10 +15,13 @@ def _bar_order(**overrides: object) -> dict[str, object]:
         "order_id": "SIM-CNF-EVIDENCE",
         "symbol": "RB2610.SHF",
         "side": "buy",
+        "position_effect": "open",
         "quantity": 1,
         "price": 3500.0,
         "previous_close": 3500.0,
         "bar_time": "2026-07-11T09:35:00+08:00",
+        "decision_time": "2026-07-11T09:36:00+08:00",
+        "trade_date": "20260711",
         "bar_volume": 1000,
     }
     order.update(overrides)
@@ -62,6 +65,100 @@ def test_executor_requires_parseable_bar_or_quote_timestamp(bar_time: object) ->
     assert _reason(_bar_order(bar_time=bar_time)) == "missing_fill_evidence"
 
 
+@pytest.mark.parametrize(
+    "decision_time",
+    [None, "", "2026-07-11T09:36:00", "not-a-time"],
+)
+def test_executor_requires_explicit_aware_decision_time(decision_time: object) -> None:
+    assert _reason(_bar_order(decision_time=decision_time)) == "decision_time_required"
+
+
+@pytest.mark.parametrize("trade_date", [None, "", "202607", "20261340"])
+def test_executor_requires_parseable_trade_date(trade_date: object) -> None:
+    assert _reason(_bar_order(trade_date=trade_date)) == "trade_date_required"
+
+
+def test_executor_rejects_evidence_after_decision_time() -> None:
+    assert (
+        _reason(
+            _bar_order(
+                bar_time="2026-07-11T09:36:00.000001+08:00",
+                decision_time="2026-07-11T09:36:00+08:00",
+            )
+        )
+        == "future_fill_evidence"
+    )
+
+
+def test_executor_rejects_stale_evidence_using_default_ttl() -> None:
+    assert (
+        _reason(
+            _bar_order(
+                bar_time="2026-07-11T09:25:59+08:00",
+                decision_time="2026-07-11T09:36:00+08:00",
+            )
+        )
+        == "stale_fill_evidence"
+    )
+
+
+def test_executor_honours_a_stricter_explicit_evidence_ttl() -> None:
+    assert (
+        _reason(
+            _bar_order(
+                bar_time="2026-07-11T09:35:00+08:00",
+                decision_time="2026-07-11T09:36:00+08:00",
+            ),
+            config={"max_fill_evidence_age_seconds": 30},
+        )
+        == "stale_fill_evidence"
+    )
+
+
+@pytest.mark.parametrize(
+    "max_age", [True, None, 0, -1, math.nan, math.inf, "invalid"]
+)
+def test_executor_rejects_invalid_evidence_ttl(max_age: object) -> None:
+    assert (
+        _reason(
+            _bar_order(), config={"max_fill_evidence_age_seconds": max_age}
+        )
+        == "fill_evidence_max_age_invalid"
+    )
+
+
+def test_executor_binds_evidence_to_the_exchange_trade_date() -> None:
+    assert _reason(_bar_order(trade_date="20260710")) == "trade_date_mismatch"
+
+
+def test_executor_rejects_cross_session_trade_date_even_when_quote_is_recent() -> None:
+    assert (
+        _reason(
+            _bar_order(
+                bar_time="2026-07-08T20:59:59+08:00",
+                decision_time="2026-07-08T21:00:01+08:00",
+                trade_date="20260709",
+            )
+        )
+        == "trade_date_mismatch"
+    )
+
+
+def test_executor_supports_night_session_trade_date_binding() -> None:
+    result = cn_futures_sim_execute(
+        _bar_order(
+            bar_time="2026-07-08T21:04:00+08:00",
+            decision_time="2026-07-08T21:05:00+08:00",
+            trade_date="20260709",
+        )
+    )
+
+    assert result.status == "filled"
+    assert result.raw_response["decision_time"] == "2026-07-08T21:05:00+08:00"
+    assert result.raw_response["trade_date"] == "20260709"
+    assert result.raw_response["fill_evidence_age_seconds"] == 60.0
+
+
 def test_executor_rejects_missing_volume_and_same_side_book_depth() -> None:
     assert _reason(_bar_order(bar_volume=0)) == "missing_fill_evidence"
 
@@ -102,6 +199,20 @@ def test_executor_accepts_same_side_book_price_and_quantity_without_bar_volume()
     assert result.avg_price == 3501.0
     assert result.raw_response["fill_evidence_type"] == "order_book_ask"
     assert result.raw_response["evidence_timestamp"] == "2026-07-11T09:35:01+08:00"
+
+
+def test_executor_binds_book_fill_to_quote_time_not_unrelated_bar_time() -> None:
+    assert (
+        _reason(
+            _bar_order(
+                bar_time="2026-07-11T09:35:59+08:00",
+                quote_time="2026-07-11T09:20:00+08:00",
+                ask_price=3501.0,
+                ask_size=2,
+            )
+        )
+        == "stale_fill_evidence"
+    )
 
 
 def test_executor_rejects_opposite_side_book_as_fill_evidence() -> None:

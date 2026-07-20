@@ -1,8 +1,6 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,12 +14,28 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Ashare.adapter import AshareAdapter
-from Ashare.sim_executor import ashare_sim_execute
-from mini.mini_consumer import MiniConsumer
+from Ashare.sim_executor import (
+    ashare_sim_execute,
+    build_test_only_ashare_mock_config,
+)
 from shared.execution import local_sim_ledger
-from shared.execution.signal_state_machine import PENDING, read_json
-from shared.execution.sim_broker import SimResult
 from shared.execution.sim_executor_registry import get_sim_executor
+
+
+def _fresh_market_snapshot(
+    *,
+    price: float = 10.5,
+    side: str = "buy",
+    bar_volume: int = 100_000,
+) -> dict[str, object]:
+    quote_field = "ask_price" if side == "buy" else "bid_price"
+    return {
+        quote_field: price,
+        "last_price": price,
+        "bar_time": "2026-07-07 09:55:00",
+        "bar_volume": bar_volume,
+        "provider": "tradingdatas_fixture_5min",
+    }
 
 
 class AshareSimExecutorTest(unittest.TestCase):
@@ -29,7 +43,6 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.tmp_path = Path(self.tmpdir.name)
-        self.signals_dir = self.tmp_path / "signals"
         now_patcher = patch(
             "Ashare.sim_executor._now_cn",
             return_value=datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -65,9 +78,7 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(adapter.get_shadow_account(), "ashare_shadow")
         self.assertEqual(adapter.get_sim_account()["account"], "ashare_sim")
 
-    def test_ashare_sim_execute_queues_pending_signal_card_when_hermes_enabled(
-        self,
-    ) -> None:
+    def test_retired_mini_bridge_config_fails_closed(self) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-1",
@@ -75,46 +86,43 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "quantity": 100,
                 "price": 10.5,
                 "side": "buy",
-                "trade_date": "2026-07-07",
-                "capital_scope": "strategy",
-                "market_capital_required": True,
-                "market_capital_reference_id": "MCAP-A-REF-1",
-                "market_capital_reservation_id": "MCAP-A-RES-1",
-                "market_capital_event_id": "MCAP-A-EVENT-1",
-                "market_reserved_gross_cny": 1050.0,
-                "master_capital_reference_id": "RETIRED-MUST-NOT-LEAK",
+                "market_snapshot": _fresh_market_snapshot(),
             },
             account={"account_id": "ashare_sim"},
-            config={"signals_dir": self.signals_dir, "hermes_enabled": True},
+            config={"hermes_enabled": True},
         )
 
-        self.assertIsInstance(result, SimResult)
-        self.assertEqual(result.status, "pending")
-        self.assertEqual(result.capital_layer, "simulated")
-        self.assertEqual(result.account_type, "simulated")
-        self.assertEqual(result.order_id, "SIM-ASHARE-1")
-        self.assertEqual(result.market, "ashare")
-        pending_path = self.signals_dir / "pending" / "SIM-ASHARE-1.json"
-        self.assertTrue(pending_path.exists())
-        card = read_json(pending_path)
-        self.assertEqual(card["status"], PENDING)
-        self.assertEqual(card["market"], "ashare")
-        self.assertEqual(card["capital_layer"], "simulated")
-        self.assertEqual(card["account_type"], "simulated")
-        self.assertFalse(card["real_trading_enabled"])
-        self.assertEqual(card["quantity"], 100)
-        self.assertEqual(card["price"], 10.5)
-        self.assertEqual(card["t_plus_1"]["sellable_from"], "2026-07-08")
-        self.assertEqual(card["t_plus_1"]["sellable_date"], "2026-07-08")
-        self.assertEqual(card["capital_scope"], "strategy")
-        self.assertTrue(card["market_capital_required"])
-        self.assertEqual(card["market_capital_reference_id"], "MCAP-A-REF-1")
-        self.assertEqual(card["market_capital_reservation_id"], "MCAP-A-RES-1")
-        self.assertEqual(card["market_capital_event_id"], "MCAP-A-EVENT-1")
-        self.assertEqual(card["market_reserved_gross_cny"], 1050.0)
-        self.assertFalse(any(key.startswith("master_capital_") for key in card))
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("mini_hermes_bridge_retired", result.message)
+        self.assertEqual(
+            result.raw_response["broker_contract"],
+            "tradingagent.ashare.paper_broker.v1",
+        )
+        self.assertEqual(
+            result.raw_response["retired_inputs"], ["config:hermes_enabled"]
+        )
 
-    def test_ashare_sim_execute_rejects_non_a_share_before_bridge(self) -> None:
+    def test_retired_mini_bridge_environment_fails_closed(self) -> None:
+        with patch.dict("os.environ", {"ASHARE_SIM_WEBHOOK_ENABLED": "1"}):
+            result = ashare_sim_execute(
+                order={
+                    "order_id": "SIM-ASHARE-ENV-BRIDGE",
+                    "ts_code": "600000.SH",
+                    "quantity": 100,
+                    "price": 10.5,
+                    "side": "buy",
+                },
+                account={"account_id": "ashare_sim"},
+            )
+
+        self.assertEqual(result.status, "rejected")
+        self.assertIn("mini_hermes_bridge_retired", result.message)
+        self.assertEqual(
+            result.raw_response["retired_inputs"],
+            ["env:ASHARE_SIM_WEBHOOK_ENABLED"],
+        )
+
+    def test_ashare_sim_execute_rejects_non_a_share(self) -> None:
         result = ashare_sim_execute(
             order={
                 "order_id": "SIM-ASHARE-BSHARE",
@@ -122,30 +130,27 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "quantity": 100,
                 "price": 10.5,
                 "side": "buy",
+                "market_snapshot": _fresh_market_snapshot(),
             },
             account={"account_id": "ashare_sim"},
-            config={"signals_dir": self.signals_dir, "hermes_enabled": True},
         )
 
         self.assertEqual(result.status, "rejected")
-        self.assertFalse(
-            (self.signals_dir / "pending" / "SIM-ASHARE-BSHARE.json").exists()
-        )
 
-    def test_ashare_sim_execute_defaults_to_server_local_fill_without_hermes(
+    def test_ashare_sim_execute_uses_market_specific_server_local_broker(
         self,
     ) -> None:
-        with patch("Ashare.sim_executor.send_sim_signal_to_mini") as send_mock:
-            result = ashare_sim_execute(
-                order={
-                    "order_id": "SIM-ASHARE-LOCAL",
-                    "ts_code": "600000.SH",
-                    "quantity": 100,
-                    "price": 10.5,
-                    "side": "buy",
-                },
-                account={"account_id": "ashare_sim"},
-            )
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-LOCAL",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+                "market_snapshot": _fresh_market_snapshot(),
+            },
+            account={"account_id": "ashare_sim"},
+        )
 
         self.assertEqual(result.status, "filled")
         self.assertEqual(result.filled_qty, 100)
@@ -153,35 +158,29 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.capital_layer, "simulated")
         self.assertEqual(result.account_type, "simulated")
         self.assertEqual(result.raw_response["mode"], "server_local_sim_engine")
+        self.assertEqual(
+            result.raw_response["broker_contract"],
+            "tradingagent.ashare.paper_broker.v1",
+        )
         self.assertEqual(result.raw_response["engine_record"]["state"], "filled")
-        send_mock.assert_not_called()
 
     def test_ashare_sim_execute_rejects_outside_regular_session_before_any_execution(
         self,
     ) -> None:
-        with patch("Ashare.sim_executor.send_sim_signal_to_mini") as send_mock:
-            result = ashare_sim_execute(
-                order={
-                    "order_id": "SIM-ASHARE-AFTER-CLOSE",
-                    "ts_code": "600000.SH",
-                    "quantity": 100,
-                    "price": 10.5,
-                    "side": "buy",
-                },
-                account={"account_id": "ashare_sim"},
-                config={
-                    "signals_dir": self.signals_dir,
-                    "hermes_enabled": True,
-                    "market_session_now": "2026-07-07T15:01:00+08:00",
-                },
-            )
+        result = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-AFTER-CLOSE",
+                "ts_code": "600000.SH",
+                "quantity": 100,
+                "price": 10.5,
+                "side": "buy",
+            },
+            account={"account_id": "ashare_sim"},
+            config={"market_session_now": "2026-07-07T15:01:00+08:00"},
+        )
 
         self.assertEqual(result.status, "rejected")
         self.assertIn("market_closed", result.message)
-        self.assertFalse(
-            (self.signals_dir / "pending" / "SIM-ASHARE-AFTER-CLOSE.json").exists()
-        )
-        send_mock.assert_not_called()
 
     def test_ashare_sim_execute_classifies_closing_auction_as_explicitly_unsupported(
         self,
@@ -259,6 +258,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "quantity": 120,
                 "price": 10.5,
                 "side": "buy",
+                "market_snapshot": _fresh_market_snapshot(),
             },
             account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
@@ -281,6 +281,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "price": 10.5,
                 "side": "buy",
                 "bar_volume": 1500,
+                "market_snapshot": _fresh_market_snapshot(bar_volume=1500),
             },
             account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
@@ -302,7 +303,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                     "last_price": 10.5,
                     "bar_time": "2026-07-07 09:55:00",
                     "bar_volume": 1500,
-                    "provider": "sharedsignals_api_realtime_5min",
+                    "provider": "tradingdatas_fixture_5min",
                 },
             },
             account={"account_id": "ashare_sim", "cash_available": 50_000},
@@ -331,14 +332,19 @@ class AshareSimExecutorTest(unittest.TestCase):
                     "last_price": 10.5,
                     "bar_time": "2026-07-07 09:35:00",
                     "bar_volume": 1500,
-                    "provider": "sharedsignals_api_realtime_5min",
+                    "provider": "tradingdatas_fixture_5min",
                 },
             },
             account={"account_id": "ashare_sim", "cash_available": 50_000},
         )
 
         evidence = result.raw_response["fill_evidence"]
-        self.assertEqual(result.status, "filled")
+        self.assertEqual(result.status, "rejected")
+        self.assertEqual(result.message, "unverified_execution_evidence")
+        self.assertEqual(
+            result.raw_response["reason_code"],
+            "verified_fresh_5min_market_data_required",
+        )
         self.assertEqual(evidence["execution_evidence_class"], "weak_price_only")
         self.assertEqual(evidence["evidence_reason"], "stale_or_future_5min_bar")
 
@@ -368,6 +374,9 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "price": 10.0,
                 "side": "sell",
                 "trade_date": "2026-07-03",
+                "market_snapshot": _fresh_market_snapshot(
+                    price=10.0, side="sell"
+                ),
             },
             account="ashare_sim",
         )
@@ -388,6 +397,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "quantity": 20000,
                 "price": 10.0,
                 "side": "buy",
+                "market_snapshot": _fresh_market_snapshot(price=10.0),
             },
             account="ashare_sim",
         )
@@ -396,35 +406,6 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(
             result.raw_response["engine_record"]["reason"], "insufficient_cash"
         )
-
-    def test_ashare_sim_execute_sends_webhook_when_hermes_explicitly_enabled(
-        self,
-    ) -> None:
-        with patch(
-            "Ashare.sim_executor.send_sim_signal_to_mini",
-            return_value={
-                "status": "sent",
-                "success": True,
-                "order_id": "SIM-ASHARE-WEBHOOK",
-            },
-        ) as send_mock:
-            result = ashare_sim_execute(
-                order={
-                    "order_id": "SIM-ASHARE-WEBHOOK",
-                    "ts_code": "600000.SH",
-                    "quantity": 100,
-                    "price": 10.5,
-                    "side": "buy",
-                },
-                account={"account_id": "ashare_sim"},
-                config={"hermes_enabled": True},
-            )
-
-        self.assertEqual(result.status, "pending")
-        self.assertEqual(result.capital_layer, "simulated")
-        self.assertEqual(result.account_type, "simulated")
-        self.assertEqual(result.raw_response["mode"], "mini_webhook_sent")
-        send_mock.assert_called_once()
 
     def test_ashare_sim_execute_supports_local_mock_fill(self) -> None:
         result = ashare_sim_execute(
@@ -436,7 +417,7 @@ class AshareSimExecutorTest(unittest.TestCase):
                 "side": "buy",
             },
             account="ashare_sim",
-            config={"mock_filled": True, "mock_fee": 1.23},
+            config=build_test_only_ashare_mock_config(mock_fee=1.23),
         )
 
         self.assertEqual(result.status, "filled")
@@ -447,59 +428,55 @@ class AshareSimExecutorTest(unittest.TestCase):
         self.assertEqual(result.account_type, "simulated")
         self.assertEqual(result.raw_response["mode"], "mock_filled")
 
-    def test_registered_executor_and_mini_consumer_can_consume_ashare_signal(
-        self,
-    ) -> None:
+    def test_registered_executor_is_ashare_specific(self) -> None:
         executor = get_sim_executor("ashare")
         self.assertIs(executor, ashare_sim_execute)
 
-        queue_result = executor(
+    def test_direct_ashare_executor_rejects_real_markers_before_mock_fill(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "real/live execution is rejected"):
+            ashare_sim_execute(
+                order={
+                    "order_id": "SIM-ASHARE-REAL",
+                    "ts_code": "600000.SH",
+                    "quantity": 100,
+                    "price": 10.0,
+                    "capital_layer": "real",
+                },
+                account={"account_id": "ashare_sim"},
+                config={"mock_filled": True},
+            )
+
+    def test_serialized_mock_flag_and_fractional_lot_fail_closed(self) -> None:
+        serialized_mock = ashare_sim_execute(
             order={
-                "order_id": "SIM-ASHARE-2",
+                "order_id": "SIM-ASHARE-SERIALIZED-MOCK",
                 "ts_code": "600000.SH",
                 "quantity": 100,
                 "price": 10.0,
                 "side": "buy",
             },
-            account={"account_id": "ashare_sim"},
-            config={"signals_dir": self.signals_dir, "hermes_enabled": True},
+            account="ashare_sim",
+            config={"mock_filled": True},
         )
-        self.assertEqual(queue_result.status, "pending")
+        fractional_lot = ashare_sim_execute(
+            order={
+                "order_id": "SIM-ASHARE-FRACTIONAL",
+                "ts_code": "600000.SH",
+                "quantity": 100.5,
+                "price": 10.0,
+                "side": "buy",
+            },
+            account="ashare_sim",
+            config=build_test_only_ashare_mock_config(),
+        )
 
-        consumer = MiniConsumer(
-            signals_dir=self.signals_dir,
-            executor_path=self.tmp_path / "a_share_simulated_trade_executor.py",
-            worker_id="ashare-sim-test",
+        self.assertEqual(serialized_mock.status, "rejected")
+        self.assertEqual(
+            serialized_mock.raw_response["reason_code"],
+            "test_only_mock_token_required",
         )
-        claimed = consumer.claim_next_pending()
-        self.assertIsNotNone(claimed)
-
-        stdout = json.dumps(
-            {
-                "status": "ok",
-                "avg_price": 10.08,
-                "filled_qty": 100,
-                "fee": 0.8,
-            }
-        )
-        completed = subprocess.CompletedProcess(
-            args=["executor"], returncode=0, stdout=stdout, stderr=""
-        )
-        with patch(
-            "mini.mini_consumer.subprocess.run", return_value=completed
-        ) as run_mock:
-            result = consumer.dispatch(claimed or {})
-
-        self.assertEqual(result["status"], "filled")
-        run_mock.assert_called_once()
-        filled_path = self.signals_dir / "filled" / "SIM-ASHARE-2.json"
-        self.assertTrue(filled_path.exists())
-        filled = read_json(filled_path)
-        self.assertEqual(filled["market"], "ashare")
-        self.assertEqual(filled["account_type"], "simulated")
-        self.assertEqual(filled["capital_layer"], "simulated")
-        self.assertEqual(filled["filled_price"], 10.08)
-        self.assertEqual(filled["filled_qty"], 100)
+        self.assertEqual(fractional_lot.status, "rejected")
+        self.assertIn("non-positive quantity", fractional_lot.message)
 
 
 if __name__ == "__main__":

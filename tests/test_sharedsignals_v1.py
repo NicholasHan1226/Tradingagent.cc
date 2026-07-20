@@ -24,7 +24,7 @@ from shared.data.sharedsignals_v1 import (
 )
 
 
-DATASET_ID = "cn.equity.daily.mainboard.v1"
+DATASET_ID = "fixture.cn.equity.daily.mainboard.v1"
 CATALOG_VERSION = "fixture-catalog-2026-07-16"
 SCHEMA_MAJOR = 1
 
@@ -35,7 +35,7 @@ def _config(
     dataset_ids: frozenset[str] = frozenset({DATASET_ID}),
 ) -> SharedSignalsV1Config:
     return SharedSignalsV1Config(
-        base_url="http://sharedsignals.fixture.invalid:8082",
+        base_url="http://tradingdatas.fixture.invalid:8082",
         expected_catalog_version=CATALOG_VERSION,
         dataset_ids=dataset_ids,
         access_policy_id=access_policy_id,
@@ -177,10 +177,9 @@ def test_catalog_uses_only_v1_catalog_and_validates_configured_datasets() -> Non
     assert transport.calls == [
         {
             "method": "GET",
-            "url": "http://sharedsignals.fixture.invalid:8082/v1/catalog",
+            "url": "http://tradingdatas.fixture.invalid:8082/v1/catalog",
             "headers": {
                 "Accept": "application/json",
-                "X-Access-Policy": "ta-paper-read-v1",
             },
             "json_body": None,
             "timeout_seconds": 10.0,
@@ -501,7 +500,7 @@ def test_query_rejects_unconfigured_dataset_before_transport() -> None:
     with pytest.raises(ContractViolation, match="dataset_id"):
         client.query(
             QueryRequest(
-                dataset_id="cn.equity.star.daily.v1",
+                dataset_id="fixture.cn.equity.star.daily.v1",
                 schema_major=SCHEMA_MAJOR,
             )
         )
@@ -646,7 +645,7 @@ def test_catalog_envelope_recursively_snapshots_nested_fields() -> None:
     assert copy.deepcopy(envelope) == envelope
 
 
-def test_access_policy_is_part_of_request_and_cache_identity() -> None:
+def test_access_policy_is_local_cache_identity_not_an_invented_wire_header() -> None:
     left_transport = FakeTransport(
         [HTTPResponse(200, _query_payload(receipt_id="receipt-left"))]
     )
@@ -665,8 +664,15 @@ def test_access_policy_is_part_of_request_and_cache_identity() -> None:
     assert right.query(request).metadata.receipt_id == "receipt-right"
     assert left.cache_keys[0].access_policy_id == "paper-left"
     assert right.cache_keys[0].access_policy_id == "paper-right"
-    assert left_transport.calls[0]["headers"]["X-Access-Policy"] == "paper-left"
-    assert right_transport.calls[0]["headers"]["X-Access-Policy"] == "paper-right"
+    assert left_transport.calls[0]["headers"] == {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    assert right_transport.calls[0]["headers"] == {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    assert "X-Access-Policy" not in inspect.getsource(SharedSignalsV1Client._headers)
 
 
 def test_client_source_contains_no_legacy_or_direct_storage_fallbacks() -> None:

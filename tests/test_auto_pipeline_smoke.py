@@ -117,6 +117,18 @@ class AutoPipelineSmokeTest(unittest.TestCase):
                 result["markets"][0]["stages"]["daily_review"]["state"], "ok"
             )
 
+    def test_default_legacy_review_can_only_report_no_change(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            review_root = Path(tmp)
+            result = AutoPipeline(review_root=review_root).run_review(
+                "crypto", "20260720"
+            )
+
+            self.assertEqual(result["state"], "retired")
+            self.assertEqual(result["action"], "no_change")
+            self.assertFalse(result["runtime_mutation_allowed"])
+            self.assertEqual(list(review_root.iterdir()), [])
+
     def test_local_style_simulator_refuses_retired_ashare_authority(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "ashare.*retired"):
             LocalStyleSimulator("ashare")

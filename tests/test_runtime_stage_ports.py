@@ -60,8 +60,8 @@ from tests._thesis_risk_fixture import build_thesis_risk_fixture
 
 
 CATALOG = "fixture-catalog-2026-07-16"
-PRICE_DATASET = "cn.equity.daily.mainboard.v1"
-CONTEXT_DATASET = "cn.equity.sector.full_market.context.v1"
+PRICE_DATASET = "fixture.cn.equity.daily.mainboard.v1"
+CONTEXT_DATASET = "fixture.cn.equity.sector.full-market-context.v1"
 DECISION_AS_OF = "2026-07-16T01:05:00+00:00"
 LINEAGE = "ashare-sim-fresh-20260712-v1"
 
@@ -189,7 +189,7 @@ def _query_response(
 def _client(transport: _Transport) -> SharedSignalsV1Client:
     return SharedSignalsV1Client(
         SharedSignalsV1Config(
-            base_url="http://sharedsignals.fixture.invalid:8082",
+            base_url="http://tradingdatas.fixture.invalid:8082",
             expected_catalog_version=CATALOG,
             dataset_ids=frozenset({PRICE_DATASET, CONTEXT_DATASET}),
             access_policy_id="ta-paper-read-v1",
@@ -218,7 +218,7 @@ def _evidence_port(
     return SharedSignalsResearchEvidencePort(
         identity=ComponentIdentity(
             stage=RunStage.EVIDENCE_READY,
-            component_id="sharedsignals-research-evidence-port",
+            component_id="tradingdatas-research-evidence-port",
             version="1",
             artifact_sha256=_digest("2"),
         ),

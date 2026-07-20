@@ -1,6 +1,6 @@
 PyYAML>=6.0
 pytest>=8.0
 # Additional runtime dependencies (optional, for full feature set):
-# tushare>=1.4  — A-share data (via SharedSignals)
-# duckdb>=1.0   — analytical queries (via SharedSignals)
-# requests>=2.31 — HTTP client fallback
+# tushare>=1.4  — upstream provider dependency owned by TradingDatas, not TA
+# duckdb>=1.0   — upstream analytical dependency owned by TradingDatas, not TA
+# requests>=2.31 — optional reviewed external transports; never a market-data fallback

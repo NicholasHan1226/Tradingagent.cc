@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import sys
 import tempfile
@@ -27,7 +25,6 @@ from shared.execution.real_trading_gate import (
     validate_real_trading_enabled,
     validate_t1_settlement,
 )
-from shared.execution.signals_real import RealSignalQueue, _payload_sha256
 from shared.markets.safety import SafetyViolation
 
 
@@ -133,74 +130,6 @@ class RealTradingGateTest(unittest.TestCase):
 
         self.assertTrue(result.passed)
         self.assertEqual(result.gate, "all_gates")
-
-    def test_real_signal_queue_rejects_promotion_by_default(self) -> None:
-        queue = RealSignalQueue(self.root / "signals", max_per_order=20000, max_daily=50000)
-
-        with self.assertRaises(SafetyViolation):
-            queue.promote_from_shadow(
-                self._buy_order(
-                    capital_layer="shadow",
-                    account_type="none",
-                    source_path=str(self.root / "signals" / "shadow" / "pending" / "REAL-UNIT-1.json"),
-                )
-            )
-
-        self.assertFalse((self.root / "signals" / "real" / "pending").exists())
-
-    def test_real_signal_queue_rejects_non_shadow_promotion_source(self) -> None:
-        self._enable_env()
-        tz = ZoneInfo("Asia/Shanghai")
-        queue = RealSignalQueue(self.root / "signals", max_per_order=20000, max_daily=50000)
-        signal = self._buy_order(
-            capital_layer="shadow",
-            account_type="none",
-            approval_token="unit-token",
-            source_path=str(self.root / "signals" / "pending" / "REAL-UNIT-1.json"),
-        )
-
-        with self.assertRaisesRegex(SafetyViolation, "signals/shadow"):
-            queue.promote_from_shadow(signal, now=datetime(2026, 7, 3, 10, 0, tzinfo=tz))
-
-        self.assertFalse((self.root / "signals" / "real" / "review").exists())
-
-    def test_real_signal_queue_requires_manual_confirm_before_pending(self) -> None:
-        self._enable_env()
-        tz = ZoneInfo("Asia/Shanghai")
-        queue = RealSignalQueue(self.root / "signals", max_per_order=20000, max_daily=50000)
-        promoted = queue.promote_from_shadow(
-            self._buy_order(
-                capital_layer="shadow",
-                account_type="none",
-                approval_token="unit-token",
-                source_path=str(self.root / "signals" / "shadow" / "pending" / "REAL-UNIT-1.json"),
-            ),
-            now=datetime(2026, 7, 3, 10, 0, tzinfo=tz),
-        )
-
-        self.assertIn("/signals/shadow/", promoted["signal_card"]["source_shadow_path"])
-        with self.assertRaisesRegex(SafetyViolation, "manual confirmation"):
-            queue.submit_to_hermes(promoted["order_id"], now=datetime(2026, 7, 3, 10, 0, tzinfo=tz))
-
-        confirmed = queue.manual_confirm(promoted["order_id"], "unit-token")
-        submitted = queue.submit_to_hermes(confirmed["order_id"], now=datetime(2026, 7, 3, 10, 0, tzinfo=tz))
-
-        self.assertEqual(submitted["status"], "pending")
-        self.assertTrue((self.root / "signals" / "real" / "pending" / f"{submitted['order_id']}.json").exists())
-
-    def test_real_signal_queue_verifies_receipt_sha256(self) -> None:
-        queue = RealSignalQueue(self.root / "signals")
-        receipt = {"order_id": "REAL-RECEIPT-1", "status": "filled", "filled_qty": 100}
-        receipt["receipt_sha256"] = _payload_sha256(receipt, drop_checksums=True)
-
-        result = queue.track_receipt(receipt)
-        self.assertEqual(result["status"], "filled")
-
-        bad = dict(receipt)
-        bad["receipt_sha256"] = hashlib.sha256(b"bad").hexdigest()
-        with self.assertRaisesRegex(SafetyViolation, "checksum mismatch"):
-            queue.track_receipt(bad)
-
 
 if __name__ == "__main__":
     unittest.main()

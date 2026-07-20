@@ -42,11 +42,9 @@ class FullAcceptanceTest(unittest.TestCase):
             [check["name"] for check in report["checks"]],
             [
                 "cron_coverage",
-                "sharedsignals_evidence_contract",
-                "sim_market_health",
+                "tradingdatas_v1_runtime_gate",
                 "ashare_no_trade_summary",
                 "self_evolution_health",
-                "opening_acceptance",
             ],
         )
         self.assertTrue(
@@ -58,18 +56,15 @@ class FullAcceptanceTest(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                "shared.runtime_test.sharedsignals_evidence_contract" in part
+                "shared.runtime_test.sharedsignals_v1_gate" in part
                 for command in calls
                 for part in command
             )
         )
-        self.assertTrue(
-            any(
-                "shared.runtime_test.market_health" in part
-                for command in calls
-                for part in command
-            )
-        )
+        flattened = " ".join(part for command in calls for part in command)
+        self.assertNotIn("shared.runtime_test.sharedsignals_evidence_contract", flattened)
+        self.assertNotIn("shared.runtime_test.market_health", flattened)
+        self.assertNotIn("shared.runtime_test.opening_acceptance", flattened)
 
     def test_failed_command_fails_report(self) -> None:
         args = full_acceptance.parse_args(["--profile", "cn_futures"])
@@ -86,6 +81,7 @@ class FullAcceptanceTest(unittest.TestCase):
         self.assertEqual(report["overall_status"], "fail")
         self.assertEqual(report["checks"][0]["returncode"], 2)
         self.assertIn("boom", report["checks"][0]["tail"])
+        self.assertEqual(report["checks"][0]["name"], "cn_futures_contract_tests")
 
     def test_json_warn_status_is_preserved(self) -> None:
         args = full_acceptance.parse_args(["--profile", "prod"])

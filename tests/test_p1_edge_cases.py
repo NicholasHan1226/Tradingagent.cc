@@ -113,15 +113,11 @@ class TestTPlusOneHolidaysEdgeCases(unittest.TestCase):
         # Patch away any external trade calendar search so we rely on fallback
         self._root_patch = patch.object(mod, "TRADE_CALENDAR_SEARCH_ROOTS", ())
         self._root_patch.start()
-        # This legacy helper can otherwise instantiate TradingagentDataReader
-        # and wait on a real SharedSignals endpoint.  Edge tests must remain
-        # hermetic and exercise only the built-in/file calendar behavior.
-        self._reader_patch = patch.object(mod, "_calendar_reader", return_value=None)
-        self._reader_patch.start()
+        # The retired reader path is absent; these tests exercise only the
+        # explicit file calendar and conservative built-in fallback.
 
     def tearDown(self):
         self.mod._load_trade_calendar_data.cache_clear()
-        self._reader_patch.stop()
         self._root_patch.stop()
 
     def test_t_plus_1_known_holiday_spring_festival(self):

@@ -17,9 +17,11 @@ describe('TradingAgent capability map', () => {
     const execution = tradingAgentCapabilities.find((capability) => capability.id === 'execution-readiness')
 
     expect(execution).toMatchObject({
-      display: '实盘待接入',
+      display: '分市场执行边界',
       status: 'gated',
-      dashboardSurface: '实盘入口',
+      dashboardSurface: '执行状态 / 实盘待接入',
     })
+    expect(execution?.readableSources).toContain('shared/governance/market_lanes.yaml')
+    expect(execution?.readableSources.join('|')).not.toMatch(/signal_card_schema|fill_card_schema|positions_snapshot_schema/)
   })
 })

@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/shared/wrappers/_common.sh"
 ENV_LOADER="${ROOT}/shared/env_loader.sh"
 TRADE_DATE="${TRADINGAGENT_AUTO_PIPELINE_DATE:-}"
 STAGE="${TRADINGAGENT_AUTO_PIPELINE_STAGE:-all}"

@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
 RETIRED_RUNTIME_JOBS = frozenset(
     {
         "job_premarket_signals",
@@ -66,13 +71,13 @@ def _block_retired_runtime_job(job_name: str) -> None:
     raise SystemExit(78)
 
 
-# A direct Python invocation bypasses every shell wrapper.  Stop known retired
-# jobs using stdlib-only code, before importing accounting, market, or email
-# modules that belong to the old runtime.
+# This whole dispatcher belongs to the mixed legacy runtime. A direct Python
+# invocation must stop before importing accounting, market, data, or email
+# modules. Current A-share, Crypto and CNFutures lanes use separate entry ports.
 if __name__ == "__main__":
-    _early_job = _requested_cli_job(sys.argv[1:])
-    if is_retired_runtime_job(_early_job):
-        _block_retired_runtime_job(_early_job)
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("shared.wrappers.tradings_cron_entry"))
 
 import shared.capital as market_capital  # noqa: E402
 from shared.capital.ashare_position_authority import (  # noqa: E402
@@ -87,7 +92,6 @@ from shared.markets.sim_capital import (  # noqa: E402
 from shared.notify.email_sender import send_email, send_template_email  # noqa: E402
 from shared.notify.email_templates import CHANNELS, wrap_html  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "shared"
 DAILY_BRIEF_MARKETS = ("Ashare", "Crypto", "US", "PM")
 DAILY_BRIEF_CAPITAL_BASE = DEFAULT_SIM_CAPITAL_CNY
@@ -2996,20 +3000,9 @@ JOB_HANDLERS: dict[str, Any] = {
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument("--job", required=True)
-    args = parser.parse_args()
+    from shared.governance.retirement import retired_cli
 
-    if is_retired_runtime_job(args.job):
-        _block_retired_runtime_job(args.job)
-
-    if args.job in JOB_HANDLERS:
-        payload = JOB_HANDLERS[args.job]()
-    else:
-        raise SystemExit(f"unknown job: {args.job}")
-
-    print(json.dumps(payload, ensure_ascii=False))
-    return 0
+    return retired_cli("shared.wrappers.tradings_cron_entry")
 
 
 if __name__ == "__main__":

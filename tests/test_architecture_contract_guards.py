@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 import re
@@ -180,6 +181,29 @@ RETIRED_ASHARE_PYTHON_JOBS = (
     "job_daily_brief_day",
     "job_daily_brief_night",
     "job_email_notify",
+)
+
+
+RETIRED_LEGACY_RUNTIME_ENTRYPOINTS = (
+    "cron/auto_pipeline.sh",
+    "cron/evolution.sh",
+    "shared/wrappers/job_pm_research_probability.sh",
+    "shared/wrappers/job_equity_snapshots.sh",
+    "shared/wrappers/job_self_heal.sh",
+    "shared/wrappers/job_self_heal_night.sh",
+    "shared/wrappers/job_market_capital_reconcile.sh",
+    "shared/wrappers/job_cn_futures_observation_report.sh",
+    "shared/wrappers/job_cn_futures_sample_ops.sh",
+    "shared/wrappers/job_cn_futures_calibration_report.sh",
+    "shared/wrappers/job_cn_futures_replay.sh",
+    "shared/wrappers/job_cn_futures_pre_open_validation.sh",
+    "shared/wrappers/job_cn_futures_opening_validation.sh",
+    "shared/wrappers/job_cn_futures_first_sample_alert.sh",
+    "shared/wrappers/job_us_sim.sh",
+    "shared/wrappers/job_crypto_sim.sh",
+    "shared/wrappers/job_pm_sim.sh",
+    "shared/wrappers/job_hk_sim.sh",
+    "shared/wrappers/job_cn_futures_sim.sh",
 )
 
 
@@ -846,7 +870,10 @@ def test_legacy_data_and_research_paths_are_classified_outside_current_v1() -> N
     assert all("current_v1" not in item for item in screening.remaining_consumers)
     assert "hard_blocked_ashare_wrappers" in wrappers.remaining_consumers
     assert multi_market.compatibility_mode == "retirement_pending_verification"
-    assert "migration_probe_only_not_scheduled" in multi_market.remaining_consumers
+    assert (
+        "hard_blocked_tombstones_and_forensic_manual_research_only"
+        in multi_market.remaining_consumers
+    )
 
     screening_rules = (ROOT / "shared/screening/AGENTS.md").read_text(encoding="utf-8")
     benchmark_rules = (ROOT / "shared/benchmark/AGENTS.md").read_text(encoding="utf-8")
@@ -1113,99 +1140,87 @@ def test_sourced_retired_ashare_entrypoints_block_before_env_file_side_effects(
 
 
 def test_cron_templates_do_not_schedule_unconditionally_retired_generic_jobs() -> None:
-    retired_generic = (
-        "cron/health_check.sh",
-        "shared/wrappers/job_opening_acceptance.sh",
-        "shared/wrappers/job_daily_brief_morning.sh",
-        "shared/wrappers/job_daily_brief_day.sh",
-        "shared/wrappers/job_daily_brief_night.sh",
-    )
-    retained_non_ashare = {
-        "shared/wrappers/job_sim_market_health.sh": (
-            'export TRADINGAGENT_SIM_MARKETS="crypto,pm,us,cn_futures"',
-        ),
-        "shared/wrappers/job_equity_snapshots.sh": (
-            'MARKETS="crypto,pm,us,cn_futures"',
-            '--markets "${MARKETS}"',
-        ),
-    }
-
     for relative_crontab in ("shared/crontab.txt", "crontab.txt"):
         schedule = (ROOT / relative_crontab).read_text(encoding="utf-8")
-        for entrypoint in retired_generic:
-            assert entrypoint not in schedule, (relative_crontab, entrypoint)
-        for entrypoint in retained_non_ashare:
-            assert entrypoint in schedule, (relative_crontab, entrypoint)
+        active_ta_lines = [
+            line
+            for line in schedule.splitlines()
+            if line.strip()
+            and not line.lstrip().startswith("#")
+            and "=" not in line.split()[0]
+            and "/opt/investment/tradingagent/" in line
+        ]
+        assert active_ta_lines == [], (relative_crontab, active_ta_lines)
+        assert (
+            "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
+            in schedule
+        )
 
-    for relative_path, expected_contracts in retained_non_ashare.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert "block_retired_ashare_runtime" not in source, relative_path
-        assert "ashare" not in source.lower(), relative_path
-        for expected_contract in expected_contracts:
-            assert expected_contract in source, (relative_path, expected_contract)
 
-
-def test_retained_multi_market_wrappers_execute_without_ashare_scope(
+def test_retired_legacy_entrypoints_block_before_environment_side_effects(
     tmp_path: Path,
 ) -> None:
-    """The surviving generic jobs must execute, but only for non-A markets."""
-
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    probe_file = tmp_path / "python-probe.log"
-    python_probe = tmp_path / "python-probe.sh"
-    python_probe.write_text(
-        "#!/bin/bash\n"
-        "printf 'SIM_MARKETS=%s ARGS=%s\\n' "
-        '"${TRADINGAGENT_SIM_MARKETS:-}" "$*" >> "${PROBE_FILE}"\n',
+    env_sentinel = tmp_path / "env-was-sourced"
+    runtime_root = tmp_path / "runtime-must-not-exist"
+    env_file = tmp_path / "malicious.env"
+    env_file.write_text(
+        f"touch {env_sentinel!s}\nexport REAL_TRADING_ENABLED=false\n",
         encoding="utf-8",
     )
-    python_probe.chmod(0o755)
-    flock_probe = tmp_path / "flock"
-    flock_probe.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
-    flock_probe.chmod(0o755)
-    timeout_probe = tmp_path / "timeout"
-    timeout_probe.write_text(
-        '#!/bin/bash\nshift\nexec "$@"\n',
-        encoding="utf-8",
-    )
-    timeout_probe.chmod(0o755)
-
     env = os.environ.copy()
     env.pop("BASH_ENV", None)
     env.pop("TRADINGAGENT_ENV_LOADER_READY", None)
     env.update(
         {
-            "TRADINGAGENT_ROOT": str(runtime_root),
-            "TRADINGAGENT_ENV_FILE": str(tmp_path / "missing-ta.env"),
+            "TRADINGAGENT_ROOT": str(ROOT),
+            "TRADINGAGENT_ENV_FILE": str(env_file),
             "FINANCE_SHARED_ENV_FILE": str(tmp_path / "missing-finance.env"),
-            "TRADINGAGENT_PYTHON": str(python_probe),
-            "PROBE_FILE": str(probe_file),
+            "TRADINGS_RUNTIME_ROOT": str(runtime_root),
             "REAL_TRADING_ENABLED": "false",
-            "PATH": f"{tmp_path}:{env.get('PATH', '')}",
         }
     )
 
-    for relative_path in (
-        "shared/wrappers/job_sim_market_health.sh",
-        "shared/wrappers/job_equity_snapshots.sh",
-    ):
+    for relative_path in RETIRED_LEGACY_RUNTIME_ENTRYPOINTS:
+        args = (
+            ("cn_futures", "ops")
+            if relative_path.endswith("job_market_capital_reconcile.sh")
+            else ()
+        )
         result = subprocess.run(
-            ["bash", str(ROOT / relative_path)],
+            ["bash", str(ROOT / relative_path), *args],
             check=False,
             capture_output=True,
             text=True,
             env=env,
         )
-        assert result.returncode == 0, (relative_path, result.stderr)
-
-    probe = probe_file.read_text(encoding="utf-8").lower()
-    assert "ashare" not in probe
-    assert "sim_markets=crypto,pm,us,cn_futures" in probe
-    assert "--markets crypto,pm,us,cn_futures" in probe
+        assert result.returncode == 78, (relative_path, result.stderr)
+        assert "blocked=retired_legacy_runtime" in result.stderr, relative_path
+        assert not env_sentinel.exists(), relative_path
+        assert not runtime_root.exists(), relative_path
 
 
-def test_tradings_cron_entry_blocks_retired_ashare_and_brief_jobs_before_dispatch(
+def test_legacy_sim_market_health_wrapper_is_a_hard_tombstone() -> None:
+    relative_path = "shared/wrappers/job_sim_market_health.sh"
+    for relative_crontab in ("shared/crontab.txt", "crontab.txt"):
+        schedule = (ROOT / relative_crontab).read_text(encoding="utf-8")
+        active_lines = [
+            line
+            for line in schedule.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        assert all(relative_path not in line for line in active_lines)
+
+    result = subprocess.run(
+        ["bash", str(ROOT / relative_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 78
+    assert "retired" in result.stderr.lower()
+
+
+def test_tradings_cron_entry_blocks_all_mixed_legacy_jobs_before_dispatch(
     tmp_path: Path,
 ) -> None:
     env = os.environ.copy()
@@ -1230,7 +1245,7 @@ def test_tradings_cron_entry_blocks_retired_ashare_and_brief_jobs_before_dispatc
             env=env,
         )
         assert result.returncode == 78, job_name
-        assert "blocked=retired_ashare_runtime" in result.stderr, job_name
+        assert "legacy_runtime_retired" in result.stderr, job_name
 
 
 def test_tradings_cron_entry_early_guard_matches_final_job_argument_semantics(
@@ -1262,16 +1277,17 @@ def test_tradings_cron_entry_early_guard_matches_final_job_argument_semantics(
             env=env,
         )
         assert result.returncode == 78, argv
-        assert "blocked=retired_ashare_runtime" in result.stderr, argv
+        assert "legacy_runtime_retired" in result.stderr, argv
         assert "ModuleNotFoundError" not in result.stderr, argv
 
     source = entrypoint.read_text(encoding="utf-8")
-    assert "ArgumentParser(allow_abbrev=False)" in source
+    assert 'retired_cli("shared.wrappers.tradings_cron_entry")' in source
 
 
-def test_tradings_cron_entry_retirement_scope_does_not_include_other_markets() -> None:
-    from shared.wrappers.tradings_cron_entry import is_retired_runtime_job
-
+def test_tradings_cron_entry_direct_cli_does_not_restore_other_markets(
+    tmp_path: Path,
+) -> None:
+    entrypoint = ROOT / "shared" / "wrappers" / "tradings_cron_entry.py"
     for job_name in (
         "job_trading_signals",
         "job_crypto_sim",
@@ -1279,7 +1295,16 @@ def test_tradings_cron_entry_retirement_scope_does_not_include_other_markets() -
         "job_pm_sim",
         "job_cn_futures_sim",
     ):
-        assert is_retired_runtime_job(job_name) is False
+        result = subprocess.run(
+            [sys.executable, str(entrypoint), "--job", job_name],
+            cwd=tmp_path,
+            check=False,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "REAL_TRADING_ENABLED": "true"},
+        )
+        assert result.returncode == 78, (job_name, result.stderr)
+        assert "legacy_runtime_retired" in result.stderr, job_name
 
 
 def test_retired_ashare_entrypoints_are_not_scheduled() -> None:
@@ -1313,6 +1338,7 @@ def test_server_sidecar_safe_env_disables_legacy_localhost_clients() -> None:
     operations = (ROOT / "docs" / "operations.md").read_text(encoding="utf-8")
     safe_env = operations.split("SAFE_ENV=(", 1)[1].split("\n)", 1)[0]
 
+    assert "TRADINGDATAS_API_URL=" in safe_env
     assert "SHAREDSIGNALS_API_URL=" in safe_env
     assert "MARKETGRAPH_API_URL=" in safe_env
 
@@ -1461,3 +1487,65 @@ def test_candidate_check_manifest_is_complete_and_resolves_to_tests() -> None:
     for relative_path in entries:
         assert relative_path.startswith("tests/test_") and relative_path.endswith(".py")
         assert (ROOT / relative_path).is_file(), relative_path
+
+
+def test_current_tradingdatas_fixture_ids_are_explicitly_non_production() -> None:
+    fixture = json.loads(
+        (ROOT / "tests/fixtures/phase1_paper/paper_day.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    dataset_ids = {
+        dataset["dataset_id"] for dataset in fixture["config"]["datasets"]
+    }
+    dataset_ids.update(
+        dataset["dataset_id"]
+        for dataset in fixture["transport_responses"]["catalog"]["json_body"][
+            "data"
+        ]
+    )
+    dataset_ids.update(fixture["transport_responses"]["queries"])
+
+    assert dataset_ids
+    assert all(dataset_id.startswith("fixture.") for dataset_id in dataset_ids)
+
+
+def test_current_tradingdatas_client_does_not_invent_auth_or_old_config_names() -> None:
+    client_source = (ROOT / "shared/data/sharedsignals_v1.py").read_text(
+        encoding="utf-8"
+    )
+    composition_source = (ROOT / "shared/runtime/composition.py").read_text(
+        encoding="utf-8"
+    )
+    fixture_cli_source = (ROOT / "tools/run_phase1_paper_fixture.py").read_text(
+        encoding="utf-8"
+    )
+    front_source = (ROOT / "front/src/server/sharedSignalsMarketPulse.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert "X-Access-Policy" not in client_source
+    assert "x-access-policy" not in front_source.lower()
+    for source in (composition_source, fixture_cli_source):
+        assert "ss_v1_" not in source
+        assert "tradingdatas_v1_base_url" in source
+
+
+def test_cnfutures_lineage_never_hardcodes_retired_product_identity() -> None:
+    source = (ROOT / "CNFutures/sim_runner.py").read_text(encoding="utf-8")
+
+    assert "sharedsignals_futures_bars" not in source
+    assert "_explicit_source_identity" in source
+
+
+def test_historical_front_plans_mark_sharedsignals_name_as_superseded() -> None:
+    paths = (
+        "front/docs/superpowers/plans/2026-07-11-market-causal-terminal.md",
+        "front/docs/superpowers/plans/2026-07-11-market-evidence-attribution.md",
+        "front/docs/superpowers/specs/2026-07-11-market-causal-terminal-design.md",
+        "front/docs/superpowers/specs/2026-07-11-market-evidence-attribution-design.md",
+    )
+    for relative_path in paths:
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "Historical naming notice (2026-07-20)" in source
+        assert "current upstream product is TradingDatas" in source

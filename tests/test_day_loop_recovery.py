@@ -225,7 +225,7 @@ def _payloads() -> dict[RunStage, dict[str, Any]]:
             "blocking_reasons": [],
             "datasets": [
                 {
-                    "dataset_id": "cn.equity.daily",
+                    "dataset_id": "fixture.cn.equity.daily.v1",
                     "role": "required_execution",
                     "state": "ready",
                     "evidence_action": "accept",

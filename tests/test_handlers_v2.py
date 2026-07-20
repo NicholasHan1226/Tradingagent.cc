@@ -371,7 +371,7 @@ class CronHandlersV2Test(unittest.TestCase):
             self.assertEqual(result["email_notification"]["fallback_error"], notification["fallback_error"])
             self.assertEqual(result["email_notification"]["audit_status"], "degraded")
 
-    def test_run_self_heal_executes_real_cycle_and_logs_result(self) -> None:
+    def test_run_self_heal_keeps_unbound_legacy_signal_fail_closed(self) -> None:
         pending_dir = self.tmp_path / "signals" / "pending"
         pending_dir.mkdir(parents=True, exist_ok=True)
         self._write_json(
@@ -404,8 +404,16 @@ class CronHandlersV2Test(unittest.TestCase):
         self.assertNotEqual(result["state"], "scaffolded")
         self.assertGreaterEqual(int(result.get("issues_found", 0) or 0), 1)
         self.assertGreaterEqual(int(result.get("issues_fixed", 0) or 0), 1)
-        self.assertEqual(result["signal_sweep_expired"]["expired_count"], 1)
-        self.assertTrue(
+        sweep = result["signal_sweep_expired"]
+        self.assertEqual(sweep["expired_count"], 0)
+        self.assertEqual(sweep["state"], "degraded")
+        self.assertEqual(sweep["execution"]["status"], "error")
+        self.assertIn(
+            "capital_layer and account_type must use an explicit safe value",
+            sweep["execution"]["message"],
+        )
+        self.assertTrue((pending_dir / "EXPIRED-SELF-HEAL.json").exists())
+        self.assertFalse(
             (self.tmp_path / "signals" / "expired" / "EXPIRED-SELF-HEAL.json").exists()
         )
         self.assertTrue(

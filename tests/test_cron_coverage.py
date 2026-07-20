@@ -23,31 +23,17 @@ class CronCoverageTest(unittest.TestCase):
         schedules = "\n".join(cron_coverage.tradingagent_entries(template))
         return environment + "\n" + schedules
 
-    def test_unmigrated_market_sim_wrappers_are_unscheduled(self) -> None:
-        retained = {
-            "4,34 * * * * /opt/investment/tradingagent/shared/wrappers/job_pm_research_probability.sh >> /opt/investment/tradingagent/shared/logs/cron/job_pm_research_probability.log 2>&1",
-        }
-        blocked_wrappers = {
-            "job_us_sim.sh",
-            "job_crypto_sim.sh",
-            "job_pm_sim.sh",
-            "job_cn_futures_sim.sh",
-        }
-
+    def test_all_market_jobs_are_paused_until_tradingdatas_fresh_handoff(self) -> None:
         for path in (
             cron_coverage.ROOT / "crontab.txt",
             cron_coverage.ROOT / "shared/crontab.txt",
         ):
             text = path.read_text()
-            for line in retained:
-                self.assertIn(line, text)
-            active_lines = [
-                line.strip()
-                for line in text.splitlines()
-                if line.strip() and not line.lstrip().startswith("#")
-            ]
-            for wrapper in blocked_wrappers:
-                self.assertTrue(all(wrapper not in line for line in active_lines))
+            self.assertIn(
+                "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
+                text,
+            )
+            self.assertEqual(cron_coverage.tradingagent_entries(text), [])
 
     def test_template_entries_are_in_sync(self) -> None:
         report = cron_coverage.check_cron_coverage(
@@ -74,24 +60,15 @@ class CronCoverageTest(unittest.TestCase):
             text = path.read_text()
             self.assertNotIn("job_ashare_sample_ops.sh", text)
 
-    def test_cn_futures_reconcile_runs_before_opening_and_at_session_checkpoints(
+    def test_cn_futures_reconcile_is_not_scheduled_before_fresh_market_handoff(
         self,
     ) -> None:
-        expected = {
-            "58 8,20 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures preopen >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
-            "2 9,13,21 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures opening >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
-            "32 11 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
-            "2 15,23 * * 1-5 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
-            "32 2 * * 2-6 /opt/investment/tradingagent/shared/wrappers/job_market_capital_reconcile.sh cn_futures ops >> /opt/investment/tradingagent/shared/logs/cron/job_market_capital_reconcile_cn_futures.log 2>&1",
-        }
-
         for path in (
             cron_coverage.ROOT / "crontab.txt",
             cron_coverage.ROOT / "shared/crontab.txt",
         ):
             text = path.read_text()
-            for line in expected:
-                self.assertIn(line, text)
+            self.assertNotIn("job_market_capital_reconcile.sh cn_futures", text)
             self.assertNotIn("job_market_capital_reconcile.sh ashare", text)
 
     def test_retired_ashare_sample_jobs_are_absent_from_active_templates(self) -> None:
@@ -120,7 +97,7 @@ class CronCoverageTest(unittest.TestCase):
             cron_coverage.tradingagent_entries(authority),
         )
 
-    def test_fails_when_installed_crontab_misses_template_entry(self) -> None:
+    def test_fails_when_installed_crontab_has_retired_tradingagent_entry(self) -> None:
         report = cron_coverage.check_cron_coverage(
             crontabs={
                 "marketgraph_text": "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/job_crypto_sim.sh\n",
@@ -131,8 +108,8 @@ class CronCoverageTest(unittest.TestCase):
         )
 
         self.assertEqual(report["overall_status"], "fail")
-        self.assertIn("installed_crontab_missing_entries", report["failures"])
-        self.assertGreater(report["missing_count"], 0)
+        self.assertIn("installed_crontab_unexpected_entries", report["failures"])
+        self.assertEqual(report["unexpected_count"], 1)
 
     def test_fails_when_tradingagent_entries_inherit_marketgraph_bash_env(self) -> None:
         template = (cron_coverage.ROOT / "shared/crontab.txt").read_text()
@@ -140,6 +117,10 @@ class CronCoverageTest(unittest.TestCase):
             line
             for line in template.splitlines()
             if cron_coverage._is_cron_schedule_line(line)
+        )
+        schedules = schedules or (
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/"
+            "job_crypto_sim.sh"
         )
         installed = (
             "BASH_ENV=/opt/investment/MarketGraph/deploy/marketgraph_cron_loader.sh\n"
@@ -158,7 +139,7 @@ class CronCoverageTest(unittest.TestCase):
         self.assertIn("installed_crontab_environment_mismatch", report["failures"])
         self.assertEqual(
             report["environment_mismatch_count"],
-            len(cron_coverage.tradingagent_entries(template)),
+            1,
         )
 
     def test_accepts_tradingagent_block_after_marketgraph_loader(self) -> None:
@@ -206,8 +187,12 @@ class CronCoverageTest(unittest.TestCase):
 
     def test_rejects_live_or_wrong_timezone_for_every_tradingagent_entry(self) -> None:
         template = (cron_coverage.ROOT / "shared/crontab.txt").read_text()
-        valid = self._installed_ta_block(template)
-        expected_count = len(cron_coverage.tradingagent_entries(template))
+        retired_schedule = (
+            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/"
+            "job_crypto_sim.sh"
+        )
+        valid = self._installed_ta_block(template) + "\n" + retired_schedule
+        expected_count = 1
 
         for old, new, expected_field in (
             (

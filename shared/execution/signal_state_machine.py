@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""File-backed signal state machine for Hermes signal cards.
+"""Generic file-backed state machine for simulated signal cards.
 
-The state machine keeps the bridge intentionally simple: each state is a
-directory under ``signals/`` and transitions are atomic file moves where that
-matters for cron workers.
+Each state is a directory under ``signals/`` and transitions are atomic file
+moves where that matters for isolated workers. Real/live cards are always
+rejected; future market live adapters must not reuse this file queue.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from contextlib import contextmanager
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Iterator
+
+from shared.markets.safety import reject_real_execution_payload
 
 TRADINGAGENT_ROOT = Path("/opt/investment/tradingagent")
 SIGNALS_DIR = TRADINGAGENT_ROOT / "signals"
@@ -39,6 +41,30 @@ SIGNAL_STATES = ACTIVE_STATES + TERMINAL_STATES
 _ORDER_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 LOCK_RETRY_ATTEMPTS = 3
 LOCK_RETRY_DELAY_SECONDS = 0.1
+GOVERNED_SIM_MARKETS = frozenset({"ashare", "cn_futures", "crypto"})
+IMMUTABLE_CARD_FIELDS = frozenset(
+    {
+        "order_id",
+        "idempotency_key",
+        "market",
+        "account",
+        "account_id",
+        "authority_id",
+        "broker_contract",
+        "capital_layer",
+        "account_type",
+        "real_trading_enabled",
+        "symbol",
+        "ts_code",
+        "side",
+        "direction",
+        "quantity",
+        "price",
+        "position_effect",
+        "strategy_name",
+        "signal_delivery_mode",
+    }
+)
 
 
 class SignalStateConflict(RuntimeError):
@@ -100,7 +126,7 @@ class SignalStateMachine:
         card = dict(card)
         card["order_id"] = order_id
         card["status"] = PENDING
-        _assert_real_graduation_receipt(card)
+        _assert_non_live_card(card)
 
         with self._locked():
             existing_path, existing_card = self.find_by_order_id(order_id)
@@ -142,6 +168,7 @@ class SignalStateMachine:
                 raise SignalStateConflict(f"Signal cannot be claimed from status {status}")
 
             card = read_json(pending_path)
+            _assert_non_live_card(card)
             card["status"] = CLAIMED
             card["claimed_at"] = now_iso()
             if worker_id:
@@ -183,10 +210,19 @@ class SignalStateMachine:
                 raise SignalStateConflict("Signal cannot be filled after final cancellation")
 
             card = dict(existing_card)
+            for field in IMMUTABLE_CARD_FIELDS:
+                if field not in fill_info:
+                    continue
+                if fill_info[field] != existing_card.get(field):
+                    raise SignalStateConflict(
+                        f"Fill cannot overwrite immutable signal field {field}"
+                    )
+                fill_info.pop(field)
             card.update(fill_info)
             card["status"] = target_state
             card.setdefault("fill_time", now_iso())
             card["filled_at"] = card.get("fill_time") or now_iso()
+            _assert_non_live_card(card)
             target_path = self.path_for(target_state, order_id)
             write_json(existing_path, card)
             os.rename(existing_path, target_path)
@@ -224,6 +260,7 @@ class SignalStateMachine:
                 card["cancelled_at"] = now_iso()
                 if reason:
                     card["cancel_reason"] = reason
+                _assert_non_live_card(card)
                 target_path = self.path_for(CANCELLED, order_id)
                 write_json(existing_path, card)
                 os.rename(existing_path, target_path)
@@ -239,6 +276,7 @@ class SignalStateMachine:
                 card["cancel_requested_at"] = now_iso()
                 if reason:
                     card["cancel_reason"] = reason
+                _assert_non_live_card(card)
                 write_json(existing_path, card)
                 return {
                     "order_id": order_id,
@@ -266,10 +304,8 @@ class SignalStateMachine:
 
         with self._locked():
             for pending_path in sorted(self.state_dir(PENDING).glob("*.json")):
-                try:
-                    card = read_json(pending_path)
-                except (OSError, json.JSONDecodeError):
-                    continue
+                card = read_json(pending_path)
+                _assert_non_live_card(card)
                 valid_until = card.get("valid_until")
                 if not is_expired(valid_until, now):
                     continue
@@ -284,15 +320,21 @@ class SignalStateMachine:
 
     def find_by_order_id(self, order_id: str) -> tuple[Path | None, dict[str, Any]]:
         order_id = normalize_order_id(order_id)
+        matches: list[tuple[Path, dict[str, Any]]] = []
         for state in SIGNAL_STATES:
             path = self.path_for(state, order_id)
             if path.exists():
-                try:
-                    card = read_json(path)
-                except (OSError, json.JSONDecodeError):
-                    card = {"order_id": order_id, "status": state}
+                card = read_json(path)
+                _assert_non_live_card(card)
                 card.setdefault("status", state)
-                return path, card
+                matches.append((path, card))
+        if len(matches) > 1:
+            states = ",".join(path.parent.name for path, _ in matches)
+            raise SignalStateConflict(
+                f"Signal order_id exists in multiple states: {states}"
+            )
+        if matches:
+            return matches[0]
         return None, {}
 
     def find_by_idempotency_key(self, idempotency_key: str) -> tuple[Path | None, dict[str, Any]]:
@@ -300,10 +342,8 @@ class SignalStateMachine:
             return None, {}
         for state in SIGNAL_STATES:
             for path in self.state_dir(state).glob("*.json"):
-                try:
-                    card = read_json(path)
-                except (OSError, json.JSONDecodeError):
-                    continue
+                card = read_json(path)
+                _assert_non_live_card(card)
                 if str(card.get("idempotency_key", "")) == idempotency_key:
                     card.setdefault("status", state)
                     return path, card
@@ -331,6 +371,7 @@ class SignalStateMachine:
             next_card = dict(card)
             next_card.update({key: value for key, value in updates.items() if value is not None})
             next_card["status"] = to_state
+            _assert_non_live_card(next_card)
             target_path = self.path_for(to_state, order_id)
             write_json(existing_path, next_card)
             os.rename(existing_path, target_path)
@@ -360,27 +401,42 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _assert_real_graduation_receipt(card: dict[str, Any]) -> None:
-    if str(card.get("capital_layer", "")).strip().lower() != "real":
-        return
-    receipt = card.get("graduation_receipt")
-    if not isinstance(receipt, dict):
-        raise ValueError("real capital_layer pending write requires graduation_receipt from execution_router")
-    if receipt.get("issued_by") != "execution_router":
-        raise ValueError("real capital_layer pending write must come through execution_router")
-    if receipt.get("ready") is not True:
-        raise ValueError("real capital_layer graduation_receipt.ready must be true")
-    if receipt.get("current_stage") != "shadow" or receipt.get("next_stage") != "real":
-        raise ValueError("real capital_layer graduation_receipt must prove shadow_to_real graduation")
-    if not str(receipt.get("strategy_name", "")).strip():
-        raise ValueError("real capital_layer graduation_receipt.strategy_name is required")
-    checked_at = str(receipt.get("checked_at", "")).strip()
-    if not checked_at:
-        raise ValueError("real capital_layer graduation_receipt.checked_at is required")
-    try:
-        datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("real capital_layer graduation_receipt.checked_at must be date-time") from exc
+def _assert_non_live_card(card: dict[str, Any]) -> None:
+    reject_real_execution_payload(card, context="signal state card")
+    capital_layer = str(card.get("capital_layer") or "").strip().lower()
+    account_type = str(card.get("account_type") or "").strip().lower()
+    if capital_layer not in {"shadow", "simulated"} or account_type not in {
+        "none",
+        "paper",
+        "shadow",
+        "simulated",
+    }:
+        raise ValueError(
+            "file-backed signal state machine is simulation/shadow only; "
+            "capital_layer and account_type must use an explicit safe value"
+        )
+    if capital_layer == "simulated":
+        market = str(card.get("market") or "").strip().lower()
+        if market in GOVERNED_SIM_MARKETS:
+            from shared.governance.market_lanes import load_market_lanes
+
+            lane = load_market_lanes().get_for_runtime_market(market)
+            broker_contract = str(card.get("broker_contract") or "").strip()
+            authority_id = str(card.get("authority_id") or "").strip()
+            account = str(card.get("account") or "").strip()
+            account_id = str(card.get("account_id") or "").strip()
+            if account and account_id and account != account_id:
+                raise ValueError("simulated signal account identity is ambiguous")
+            if not (account or account_id):
+                raise ValueError("governed simulated signal requires account identity")
+            if broker_contract != lane.broker_boundary.simulation_contract:
+                raise ValueError(
+                    "governed simulated signal broker_contract does not match market lane"
+                )
+            if authority_id != lane.authority_id:
+                raise ValueError(
+                    "governed simulated signal authority_id does not match market lane"
+                )
 
 
 def now_iso(value: datetime | None = None) -> str:

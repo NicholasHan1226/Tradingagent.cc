@@ -417,7 +417,7 @@ def _payloads() -> dict[RunStage, dict[str, Any]]:
             "blocking_reasons": [],
             "datasets": [
                 {
-                    "dataset_id": "cn.equity.daily",
+                    "dataset_id": "fixture.cn.equity.daily.v1",
                     "role": "required_execution",
                     "state": "ready",
                     "evidence_action": "accept",
@@ -945,7 +945,7 @@ def test_optional_context_can_deweight_without_unblocking_required_data() -> Non
     payloads = _payloads()
     payloads[RunStage.EVIDENCE_READY]["datasets"].append(
         {
-            "dataset_id": "cn.equity.growth_board.context.v1",
+            "dataset_id": "fixture.cn.equity.growth-board.context.v1",
             "role": "optional_context",
             "state": "degraded",
             "evidence_action": "deweight",

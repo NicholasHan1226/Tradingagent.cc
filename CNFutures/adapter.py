@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""China futures adapter for SharedSignals-backed simulation."""
+"""China futures adapter for an explicit fixture or TradingDatas V1 port."""
 
 from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -14,15 +13,6 @@ from shared.markets.sim_capital import default_sim_capital
 
 from . import MARKET
 from .contract_rules import is_executable_contract_symbol, normalize_product
-
-try:  # Optional in partial local checkouts.
-    from shared.data.reader import DEFAULT_SHARED_SIGNALS_DB, TradingagentDataReader
-except Exception:  # pragma: no cover
-    DEFAULT_SHARED_SIGNALS_DB = Path(
-        "/nonexistent/tradingagent-sharedsignals-diagnostic.sqlite"
-    )
-    TradingagentDataReader = None  # type: ignore[assignment]
-
 
 READER_MARKET = "Futures"
 STRATEGY_DIR = Path(__file__).resolve().parent / "strategies"
@@ -138,13 +128,7 @@ class CNFuturesAdapter(MarketAdapter):
         strategy_dir: Path | None = None,
         styles: dict[str, dict[str, Any]] | None = None,
     ) -> None:
-        self._explicit_reader = reader is not None
-        if reader is not None:
-            self.reader = reader
-        elif TradingagentDataReader is not None:
-            self.reader = TradingagentDataReader()
-        else:
-            self.reader = None
+        self.reader = reader
         self.universe_filter = {
             **DEFAULT_UNIVERSE_FILTER,
             **dict(universe_filter or {}),
@@ -173,8 +157,6 @@ class CNFuturesAdapter(MarketAdapter):
         }
 
         symbols_with_bars = self._get_symbols_with_bars_from_reader(date)
-        if not symbols_with_bars and self._allow_direct_sqlite_fallback():
-            symbols_with_bars = self._get_symbols_with_bars(date)
         if symbols_with_bars:
             selected = self._select_symbols(
                 symbols_with_bars,
@@ -203,8 +185,6 @@ class CNFuturesAdapter(MarketAdapter):
         symbols_with_bars = self._get_symbols_with_intraday_bars_from_reader(
             date, interval
         )
-        if not symbols_with_bars and self._allow_direct_sqlite_fallback():
-            symbols_with_bars = self._get_symbols_with_intraday_bars(date, interval)
         if not symbols_with_bars:
             return self.get_universe(date)
         assets = self._get_assets()
@@ -390,137 +370,8 @@ class CNFuturesAdapter(MarketAdapter):
     def _get_intraday_symbols_from_reader_read_model(
         self, date: str, interval: str
     ) -> list[str]:
-        if not self._allow_direct_sqlite_fallback():
-            return []
-        trade_date = str(date or "").replace("-", "").strip()
-        if not trade_date:
-            return []
-        db_path = self._shared_signals_db_path()
-        if not db_path.exists():
-            return []
-        interval_values = ["5m", "5min"] if interval in {"5m", "5min"} else [interval]
-        placeholders = ",".join("?" for _ in interval_values)
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "WITH scoped AS ("
-                "SELECT symbol, MAX(COALESCE(bar_time, '')) AS latest_bar_time "
-                "FROM market_bars_intraday "
-                f"WHERE market=? AND interval IN ({placeholders}) "
-                "AND replace(COALESCE(trade_date,''),'-','')=? "
-                "GROUP BY symbol"
-                "), latest AS (SELECT MAX(latest_bar_time) AS latest_bar_time FROM scoped) "
-                "SELECT scoped.symbol FROM scoped, latest "
-                "WHERE scoped.latest_bar_time=latest.latest_bar_time "
-                "ORDER BY scoped.symbol ASC",
-                (READER_MARKET, *interval_values, trade_date),
-            ).fetchall()
-        except Exception:
-            return []
-        if not rows:
-            return []
-        max_symbols = max(1, int(self.universe_filter.get("max_symbols", 30)))
-        allowed_products = {
-            str(item).strip().lower()
-            for item in self.universe_filter.get("products", ())
-            if str(item).strip()
-        }
-        return self._select_symbols(
-            [str(dict(row).get("symbol") or "").strip() for row in rows],
-            asset_by_symbol={},
-            allowed_products=allowed_products,
-            max_symbols=max_symbols,
-        )
-
-    def _get_symbols_with_bars(self, date: str) -> list[str]:
-        db_path = self._shared_signals_db_path()
-        if not db_path.exists():
-            return []
-        trade_date = str(date or "").strip()
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT DISTINCT symbol
-                FROM market_bars_daily
-                WHERE market=? AND trade_date=?
-                ORDER BY symbol ASC
-                """,
-                (READER_MARKET, trade_date),
-            ).fetchall()
-            if rows:
-                return [str(row["symbol"]) for row in rows if row["symbol"]]
-            rows = conn.execute(
-                """
-                SELECT DISTINCT symbol
-                FROM market_bars_daily
-                WHERE market=?
-                AND trade_date=(
-                    SELECT MAX(trade_date)
-                    FROM market_bars_daily
-                    WHERE market=? AND trade_date<=?
-                )
-                ORDER BY symbol ASC
-                """,
-                (READER_MARKET, READER_MARKET, trade_date),
-            ).fetchall()
-        except Exception:
-            return []
-        return [str(row["symbol"]) for row in rows if row["symbol"]]
-
-    def _get_symbols_with_intraday_bars(self, date: str, interval: str) -> list[str]:
-        db_path = self._shared_signals_db_path()
-        if not db_path.exists():
-            return []
-        trade_date = str(date or "").replace("-", "").strip()
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                WITH scoped AS (
-                    SELECT symbol, MAX(COALESCE(bar_time, '')) AS latest_bar_time
-                    FROM market_bars_intraday
-                    WHERE market=? AND interval=? AND trade_date=?
-                    GROUP BY symbol
-                ), latest AS (
-                    SELECT MAX(latest_bar_time) AS latest_bar_time FROM scoped
-                )
-                SELECT scoped.symbol
-                FROM scoped, latest
-                WHERE scoped.latest_bar_time=latest.latest_bar_time
-                ORDER BY scoped.symbol ASC
-                """,
-                (READER_MARKET, interval, trade_date),
-            ).fetchall()
-            if rows:
-                return [str(row["symbol"]) for row in rows if row["symbol"]]
-            rows = conn.execute(
-                """
-                WITH latest_day AS (
-                    SELECT MAX(trade_date) AS trade_date
-                    FROM market_bars_intraday
-                    WHERE market=? AND interval=? AND trade_date<=?
-                ), scoped AS (
-                    SELECT symbol, MAX(COALESCE(bar_time, '')) AS latest_bar_time
-                    FROM market_bars_intraday
-                    WHERE market=? AND interval=? AND trade_date=(SELECT trade_date FROM latest_day)
-                    GROUP BY symbol
-                ), latest AS (
-                    SELECT MAX(latest_bar_time) AS latest_bar_time FROM scoped
-                )
-                SELECT scoped.symbol
-                FROM scoped, latest
-                WHERE scoped.latest_bar_time=latest.latest_bar_time
-                ORDER BY scoped.symbol ASC
-                """,
-                (READER_MARKET, interval, trade_date, READER_MARKET, interval),
-            ).fetchall()
-        except Exception:
-            return []
-        return [str(row["symbol"]) for row in rows if row["symbol"]]
+        del date, interval
+        return []
 
     def map_symbol_to_reader(self, symbol: str) -> tuple[str, str]:
         return READER_MARKET, str(symbol or "").strip()
@@ -545,7 +396,7 @@ class CNFuturesAdapter(MarketAdapter):
                 "uses_margin": True,
                 "night_session": "by_contract",
                 "real_trading_enabled": False,
-                "data_owner": "SharedSignals",
+                "data_owner": "TradingDatas_explicit_fixture_or_v1_port",
                 "reader_market": READER_MARKET,
             },
             "universe_filter": dict(self.universe_filter),
@@ -571,11 +422,7 @@ class CNFuturesAdapter(MarketAdapter):
 
     def _get_assets(self) -> list[dict[str, Any]]:
         if self.reader is None:
-            return (
-                self._get_assets_from_sqlite()
-                if self._allow_direct_sqlite_fallback()
-                else []
-            )
+            return []
         get_assets = getattr(self.reader, "get_assets", None)
         if callable(get_assets):
             rows = get_assets(market=READER_MARKET)
@@ -586,10 +433,6 @@ class CNFuturesAdapter(MarketAdapter):
             ]
             if filtered:
                 return filtered
-            if not self._allow_direct_sqlite_fallback():
-                return []
-        if self._allow_direct_sqlite_fallback():
-            return self._get_assets_from_sqlite()
         return []
 
     def get_bars_daily(
@@ -599,33 +442,10 @@ class CNFuturesAdapter(MarketAdapter):
         start: Any = None,
         end: Any = None,
     ) -> list[dict[str, Any]]:
-        """Read daily bars from SharedSignals SQLite only in explicit diagnostics."""
+        """Retired compatibility method; data must come from an injected port."""
 
-        del start
-        if not self._allow_direct_sqlite_fallback():
-            return []
-        if market != READER_MARKET:
-            return []
-        db_path = self._shared_signals_db_path()
-        if not db_path.exists():
-            return []
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM market_bars_daily
-                WHERE market=? AND symbol=?
-                AND (? IS NULL OR trade_date<=?)
-                ORDER BY trade_date DESC
-                LIMIT 120
-                """,
-                (READER_MARKET, symbol, end, end),
-            ).fetchall()
-        except Exception:
-            return []
-        return [dict(row) for row in reversed(rows)]
+        del market, symbol, start, end
+        return []
 
     def get_bars_intraday(
         self,
@@ -635,33 +455,10 @@ class CNFuturesAdapter(MarketAdapter):
         start: Any = None,
         end: Any = None,
     ) -> list[dict[str, Any]]:
-        """Read 5-minute futures bars from SharedSignals SQLite only in explicit diagnostics."""
+        """Retired compatibility method; data must come from an injected port."""
 
-        if not self._allow_direct_sqlite_fallback():
-            return []
-        if market != READER_MARKET:
-            return []
-        db_path = self._shared_signals_db_path()
-        if not db_path.exists():
-            return []
-        trade_date = str(end or start or "").replace("-", "").strip()
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            sql = """
-                SELECT *
-                FROM market_bars_intraday
-                WHERE market=? AND symbol=? AND interval=?
-            """
-            params: list[Any] = [READER_MARKET, symbol, interval]
-            if trade_date:
-                sql += " AND trade_date=?"
-                params.append(trade_date)
-            sql += " ORDER BY bar_time DESC LIMIT 120"
-            rows = conn.execute(sql, tuple(params)).fetchall()
-        except Exception:
-            return []
-        return [dict(row) for row in reversed(rows)]
+        del market, symbol, interval, start, end
+        return []
 
     def _load_styles(self) -> dict[str, dict[str, Any]]:
         if self._styles_override is not None:
@@ -688,28 +485,5 @@ class CNFuturesAdapter(MarketAdapter):
         # checked-in style set remains immutable until a manually reviewed
         # promotion is implemented against SampleJournal/KPI evidence.
         return {str(name): dict(config) for name, config in styles.items()}
-
-    def _shared_signals_db_path(self) -> Path:
-        return Path(os.environ.get("SHARED_SIGNALS_DB") or DEFAULT_SHARED_SIGNALS_DB)
-
-    def _allow_direct_sqlite_fallback(self) -> bool:
-        value = os.environ.get("TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE", "")
-        return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-    def _get_assets_from_sqlite(self) -> list[dict[str, Any]]:
-        db_path = self._shared_signals_db_path()
-        if not db_path.exists():
-            return []
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM market_assets WHERE market=? ORDER BY symbol ASC",
-                (READER_MARKET,),
-            ).fetchall()
-        except Exception:
-            return []
-        return [dict(row) for row in rows]
-
 
 __all__ = ["CNFuturesAdapter", "READER_MARKET"]

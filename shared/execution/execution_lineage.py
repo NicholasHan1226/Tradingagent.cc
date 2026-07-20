@@ -12,9 +12,14 @@ import json
 from datetime import datetime
 from typing import Any, Mapping
 
+from shared.capital.market_policy import MarketPolicy
+
 
 ASHARE_CAPITAL_AUTHORITY_ID = "ashare-capital-v1"
-ASHARE_AUTHORITY_GENERATION = 1
+# Compatibility export for callers that still need the configured bootstrap
+# generation.  Runtime lineage builders accept the current snapshot generation
+# explicitly and never compare it to this import-time value.
+ASHARE_AUTHORITY_GENERATION = MarketPolicy.load("ashare").authority_generation
 ASHARE_EXECUTION_LINEAGE_ID = "ashare-sim-fresh-20260712-v1"
 EXECUTION_LINEAGE_SCHEMA_VERSION = "2026-07-12.ashare-execution-lineage.v1"
 
@@ -66,19 +71,31 @@ def _lineage_sha256(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _positive_authority_generation(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ExecutionLineageError("authority_generation_mismatch")
+    return value
+
+
 def build_execution_lineage(
     *,
     lineage_started_at: Any,
     point_in_time_as_of: Any,
+    authority_generation: Any = None,
 ) -> dict[str, Any]:
     started = _aware_timestamp(lineage_started_at, field="lineage_started_at")
     as_of = _aware_timestamp(point_in_time_as_of, field="point_in_time_as_of")
     if datetime.fromisoformat(as_of) < datetime.fromisoformat(started):
         raise ExecutionLineageError("point_in_time_before_lineage_start")
+    generation = _positive_authority_generation(
+        MarketPolicy.load("ashare").authority_generation
+        if authority_generation is None
+        else authority_generation
+    )
     payload = {
         "schema_version": EXECUTION_LINEAGE_SCHEMA_VERSION,
         "capital_authority_id": ASHARE_CAPITAL_AUTHORITY_ID,
-        "authority_generation": ASHARE_AUTHORITY_GENERATION,
+        "authority_generation": generation,
         "execution_lineage_id": ASHARE_EXECUTION_LINEAGE_ID,
         "lineage_started_at": started,
         "point_in_time_as_of": as_of,
@@ -97,12 +114,12 @@ def require_execution_lineage(payload: Mapping[str, Any]) -> dict[str, Any]:
             if any("epoch" in field for field in forbidden)
             else "legacy_master_capital_forbidden"
         )
+    generation = _positive_authority_generation(payload.get("authority_generation"))
     normalized = build_execution_lineage(
         lineage_started_at=payload.get("lineage_started_at"),
         point_in_time_as_of=payload.get("point_in_time_as_of"),
+        authority_generation=generation,
     )
-    if type(payload.get("authority_generation")) is not int:
-        raise ExecutionLineageError("authority_generation_mismatch")
     for field in (
         "schema_version",
         "capital_authority_id",

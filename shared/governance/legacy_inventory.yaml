@@ -5,7 +5,7 @@ entries:
     paths:
       - .env.example
       - shared/env_loader.sh
-    replacement: explicit_sharedsignals_v1_environment_configuration
+    replacement: explicit_tradingdatas_v1_environment_configuration
     compatibility_mode: retirement_pending_verification
     sunset_phase: phase_3
     remaining_consumers:
@@ -101,8 +101,11 @@ entries:
       - shared/wrappers/run_sim.py
       - shared/wrappers/tradings_cron_entry.py
       - shared/execution/auto_pipeline.py
+      - shared/runtime_test/ashare_opening_validator.py
       - shared/runtime_test/ashare_preopen_dry_run.py
+      - shared/runtime_test/ashare_health_alert.py
       - shared/runtime_test/sharedsignals_evidence_contract.py
+      - shared/wrappers/job_ashare_health_check.sh
     replacement: shared/runtime/composition.py_and_shared/review/decision_ledger.py
     compatibility_mode: timeboxed_read_only
     sunset_phase: phase_3
@@ -172,17 +175,18 @@ entries:
     owner: TradingAgent
     paths:
       - CNFutures/adapter.py
+      - CNFutures/run_simulation.py
       - CNFutures/opening_validator.py
       - CNFutures/replay.py
       - shared/data/reader.py
       - shared/runtime_test/cn_futures_live_check.py
       - shared/runtime_test/market_health.py
       - shared/runtime_test/opening_acceptance.py
-    replacement: shared/data/sharedsignals_v1.py
-    compatibility_mode: timeboxed_read_only
-    sunset_phase: phase_5
+    replacement: explicit_tradingdatas_catalog_query_port_after_fresh_handoff
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: market_kernel_cutover
     remaining_consumers:
-      - cnfutures_runtime
+      - explicit_fixture_injected_library_tests_only
     deletion_preconditions:
       - cnfutures_dataset_contract_is_complete
       - cnfutures_same_as_of_parity_passes
@@ -191,24 +195,73 @@ entries:
   - legacy_id: multi_market_legacy_sim_wrappers
     owner: TradingAgent
     paths:
+      - cron/auto_pipeline.sh
+      - cron/evolution.sh
       - shared/wrappers/job_us_sim.sh
       - shared/wrappers/job_crypto_sim.sh
       - shared/wrappers/job_pm_sim.sh
+      - shared/wrappers/job_hk_sim.sh
       - shared/wrappers/job_cn_futures_sim.sh
+      - shared/wrappers/job_pm_research_probability.sh
+      - shared/wrappers/job_equity_snapshots.sh
+      - shared/wrappers/job_self_heal.sh
+      - shared/wrappers/job_self_heal_night.sh
+      - shared/wrappers/job_market_capital_reconcile.sh
+      - shared/wrappers/job_cn_futures_observation_report.sh
+      - shared/wrappers/job_cn_futures_sample_ops.sh
+      - shared/wrappers/job_cn_futures_calibration_report.sh
+      - shared/wrappers/job_cn_futures_replay.sh
+      - shared/wrappers/job_cn_futures_pre_open_validation.sh
+      - shared/wrappers/job_cn_futures_opening_validation.sh
+      - shared/wrappers/job_cn_futures_first_sample_alert.sh
+      - shared/execution/auto_pipeline.py
+      - shared/markets/evolution_engine.py
+      - shared/markets/style_runner.py
+      - Crypto/adapter.py
+      - Crypto/market_data.py
+      - Crypto/workflow.py
+      - shared/review/self_heal_loop.py
+      - shared/runtime_test/market_capital_reconcile_ops.py
+      - shared/runtime_test/cn_futures_sample_ops.py
+      - CNFutures/opening_validator.py
+      - CNFutures/replay.py
+      - CNFutures/calibration.py
+      - CNFutures/observation_report.py
       - shared/crontab.txt
       - crontab.txt
-    replacement: shared/runtime_test/sharedsignals_v1_gate.py_then_market_specific_v1_compositions
+    replacement: tradingdatas_catalog_query_port_then_market_specific_fixture_validated_compositions
     compatibility_mode: retirement_pending_verification
-    sunset_phase: phase_5
+    sunset_phase: market_kernel_cutover
     remaining_consumers:
-      - migration_probe_only_not_scheduled
+      - hard_blocked_tombstones_and_forensic_manual_research_only
       - installed_runtime_entries_not_readback_verified
     deletion_preconditions:
       - each_market_has_frozen_v1_dataset_contract
       - each_market_business_reader_has_no_legacy_fallback
+      - tradingdatas_fresh_handoff_is_verified
       - installed_crontab_readback_has_no_blocked_wrapper_entries
       - market_specific_simulation_parity_passes
     rollback: keep_wrappers_unscheduled_and_fail_closed_without_restoring_old_endpoints
+  - legacy_id: mini_hermes_installed_runtime_tombstone
+    owner: TradingAgent
+    paths:
+      - shared/env_loader.sh
+      - shared/crontab.txt
+      - shared/wrappers/job_ashare_sim_exec.sh
+    replacement: ashare_server_local_paper_broker_and_market_specific_future_adapters
+    compatibility_mode: retirement_pending_verification
+    sunset_phase: phase_3_release_readback
+    remaining_consumers:
+      - installed_server_cron_and_environment_not_readback_verified_for_this_candidate
+      - installed_mini_process_launchagent_and_ports_not_readback_verified_for_this_candidate
+      - historical_receipts_may_require_read_only_forensic_preservation
+    deletion_preconditions:
+      - repository_source_and_import_scan_is_zero_outside_explicit_tombstone_guards
+      - server_installed_cron_environment_process_and_port_readback_is_zero
+      - mini_installed_cron_launchagent_process_and_port_readback_is_zero
+      - historical_receipts_are_preserved_read_only
+      - rollback_evidence_keeps_all_market_paper_brokers_simulation_only
+    rollback: keep_ashare_server_local_paper_broker_and_all_legacy_bridge_flags_zero
   - legacy_id: historical_desktop_investment_runtime
     owner: Nicholas
     paths:

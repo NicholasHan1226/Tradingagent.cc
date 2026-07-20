@@ -42,7 +42,7 @@ def _healthy_v1_daily_row(
             "api_version": "v1",
             "catalog_version": "v1-contract-1",
             "request_id": request_id,
-            "dataset_id": "cn.equity.daily",
+            "dataset_id": "fixture.cn.equity.daily.v1",
             "schema_version": "1.0.0",
             "next_cursor": None,
             "metadata": {
@@ -60,7 +60,7 @@ def _healthy_v1_daily_row(
                     "complete": True,
                     "provider_neutral": True,
                     "authority": "sqlite_ingest_receipts",
-                    "dataset_id": "cn.equity.daily",
+                    "dataset_id": "fixture.cn.equity.daily.v1",
                     "providers": ["tushare"],
                     "receipt_watermark": "receipt-watermark-1",
                 },
@@ -1583,7 +1583,7 @@ class AsharePreopenDryRunTest(unittest.TestCase):
         self.assertEqual(reader.calls, [("Ashare", 5000)])
         self.assertEqual(
             rows[0]["sharedsignals_v1_page_evidence"]["dataset_id"],
-            "cn.equity.daily",
+            "fixture.cn.equity.daily.v1",
         )
 
     def test_warns_and_safe_empty_when_no_candidate_passes_threshold(self) -> None:

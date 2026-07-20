@@ -45,6 +45,7 @@ class TPlusOneIntegrationTest(unittest.TestCase):
     def _route_shadow(self, **overrides: object) -> dict[str, object]:
         order = {
             "order_id": "TPLUS1-ORDER",
+            "market": "ashare",
             "ts_code": "600000.SH",
             "side": "sell",
             "quantity": 100,

@@ -44,9 +44,10 @@ class CryptoSimulator(BaseSimulator):
         date = str(order.get("trade_date") or order.get("date") or "")
         price = self.fill_price(symbol, date)
         if price is None or price <= 0:
-            price = self._optional_positive_float(order.get("price") or order.get("limit_price") or order.get("latest_price"))
-        if price is None or price <= 0:
-            raise ValueError(f"no public Crypto fill price for {symbol} at {date}")
+            raise ValueError(
+                f"no provider-neutral Crypto market evidence for {symbol} at {date}; "
+                "order-price fallback is retired"
+            )
 
         notional = quantity * price
         fee = round(notional * (float(self.config.fees.taker_bps) / 10000.0), 8)

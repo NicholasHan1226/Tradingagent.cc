@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # ruff: noqa: E402
-"""Read-only A-share pre-open dry run for the simulated trading chain."""
+"""Retired A-share pre-open compatibility library.
+
+The historical direct CLI is permanently tombstoned.  Tests and forensic code
+may call :func:`run_preopen_dry_run` only with an explicitly injected fixture or
+TradingDatas V1 data port; this module never constructs a legacy reader.
+"""
 
 from __future__ import annotations
 
@@ -18,12 +23,16 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from shared.governance.retirement import require_explicit_data_port, retired_cli
+
+if __name__ == "__main__":
+    raise SystemExit(retired_cli("ashare_preopen_dry_run"))
+
 from Ashare.adapter import AshareAdapter
 from Ashare.capital_plan import TOTAL_CAPITAL, plan_capital
 from Ashare.evolution_controller import decision_market_context, load_latest_decision
 from Ashare.sim_executor import _is_supported_ashare_code, _market_session_rejection
 from shared.capital import load_market_capital_provider_state
-from shared.data.reader import TradingagentDataReader
 from shared.execution.execution_lineage import (
     ASHARE_AUTHORITY_GENERATION,
     ASHARE_CAPITAL_AUTHORITY_ID,
@@ -1146,7 +1155,10 @@ def run_preopen_dry_run(
 
     current = now or _now_cn()
     date = _trade_date(current)
-    data_reader = reader or TradingagentDataReader()
+    data_reader = require_explicit_data_port(
+        reader,
+        context="ashare_preopen_dry_run",
+    )
     adapter = AshareAdapter(reader=data_reader)
     resolved_score_limit = int(
         score_limit
@@ -1406,25 +1418,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    report = run_preopen_dry_run(
-        now=_now_cn(args.now) if args.now else None,
-        score_limit=args.score_limit,
-    )
-    rendered = render_text(report)
-    email_result = maybe_send_alert(report, rendered, args.send_on)
-    report["email"] = email_result
-    if not args.no_write:
-        write_outputs(report)
-    if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-    else:
-        print(rendered)
-        if email_result.get("status") not in {"skipped", "rate_limited"}:
-            print(f"邮件: {email_result.get('status')} -> {email_result.get('to')}")
-    if args.exit_zero:
-        return 0
-    return 2 if report["status"] == "fail" else 0
+    del argv
+    return retired_cli("ashare_preopen_dry_run")
 
 
 if __name__ == "__main__":

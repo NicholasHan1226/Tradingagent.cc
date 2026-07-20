@@ -11,6 +11,7 @@ from Crypto.common import CryptoConfig, load_crypto_config, reject_real_executio
 from Crypto.market_data import CryptoMarketData
 from Crypto.shadow_runner import CryptoShadowRunner
 from Crypto.simulator import CryptoSimulator
+from shared.governance.retirement import require_explicit_data_port
 
 
 class CryptoWorkflow:
@@ -24,6 +25,7 @@ class CryptoWorkflow:
         signals_dir: Path | str | None = None,
     ) -> None:
         self.config = config or load_crypto_config()
+        reader = require_explicit_data_port(reader, context="CryptoWorkflow")
         reject_real_execution_payload(
             {
                 "capital_layer": self.config.capital.default_layer,
@@ -55,10 +57,10 @@ class CryptoWorkflow:
         return result
 
 
-def run_crypto_shadow_cycle(as_of: str) -> dict[str, Any]:
+def run_crypto_shadow_cycle(as_of: str, *, reader: Any | None = None) -> dict[str, Any]:
     """Run one Crypto shadow cycle using the checked-in Crypto config."""
 
-    return CryptoWorkflow().run_crypto_shadow_cycle(as_of)
+    return CryptoWorkflow(reader=reader).run_crypto_shadow_cycle(as_of)
 
 
 __all__ = ["CryptoWorkflow", "run_crypto_shadow_cycle"]

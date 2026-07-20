@@ -3,15 +3,23 @@
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
-import urllib.parse
-import urllib.request
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# A direct module or file-path invocation is a retired runtime entry. Stop
+# before relative market imports, data access, or report writes.
+if __name__ == "__main__":
+    from shared.governance.retirement import retired_cli
+
+    raise SystemExit(retired_cli("CNFutures.replay"))
 
 from . import MARKET
 from .adapter import CNFuturesAdapter, READER_MARKET
@@ -26,11 +34,14 @@ from .sim_runner import (
     quantity_for_style_decision,
 )
 from shared.markets.sim_capital import default_sim_capital
+from shared.governance.retirement import (
+    raise_retired_runtime,
+    require_explicit_data_port,
+    retired_cli,
+)
 
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "shared" / "review" / "cn_futures" / "replay_latest.json"
 DEFAULT_HISTORY = ROOT / "shared" / "review" / "cn_futures" / "replay_history.jsonl"
-DEFAULT_SHAREDSIGNALS_API_URL = "http://127.0.0.1:8082"
 ACTIONABLE_EXAMPLE_LIMIT = 20
 
 
@@ -95,39 +106,8 @@ def _symbols_from_realtime_batch(
 
 
 def _symbols_from_realtime_api(date: str, *, max_symbols: int) -> list[str]:
-    base_url = (
-        os.environ.get("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL)
-        .strip()
-        .rstrip("/")
-    )
-    url = f"{base_url}/realtime_5min?{urllib.parse.urlencode({'market': READER_MARKET, 'date': date})}"
-    try:
-        with urllib.request.urlopen(
-            urllib.request.Request(url, headers={"Accept": "application/json"}),
-            timeout=10,
-        ) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-    except Exception:
-        return []
-    rows = payload.get("data") if isinstance(payload, dict) else payload
-    symbols: list[str] = []
-    seen: set[str] = set()
-    for row in rows or []:
-        if not isinstance(row, dict):
-            continue
-        symbol = str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
-        if not symbol or symbol in seen or not is_executable_contract_symbol(symbol):
-            continue
-        try:
-            if float(row.get("close") or row.get("price") or 0) <= 0:
-                continue
-        except (TypeError, ValueError):
-            continue
-        symbols.append(symbol)
-        seen.add(symbol)
-        if len(symbols) >= max_symbols:
-            break
-    return symbols
+    del date, max_symbols
+    raise_retired_runtime("CNFutures.replay.realtime_provider_route")
 
 
 def _styles(
@@ -260,11 +240,10 @@ def build_replay_report(
     output: Path | None = DEFAULT_OUTPUT,
     history: Path | None = DEFAULT_HISTORY,
 ) -> dict[str, Any]:
-    os.environ.setdefault("SHAREDSIGNALS_API_URL", DEFAULT_SHAREDSIGNALS_API_URL)
-    adapter = (
-        CNFuturesAdapter(reader=reader) if reader is not None else CNFuturesAdapter()
+    active_reader = require_explicit_data_port(
+        reader, context="CNFutures.build_replay_report"
     )
-    active_reader = reader or adapter.reader
+    adapter = CNFuturesAdapter(reader=active_reader)
     if symbols is not None:
         selected_symbols = list(symbols)
     else:
@@ -278,8 +257,6 @@ def build_replay_report(
             selected_symbols = _symbols_from_realtime_batch(
                 active_reader, date, max_symbols=max_symbols
             )
-        if not selected_symbols:
-            selected_symbols = _symbols_from_realtime_api(date, max_symbols=max_symbols)
     selected_symbols = selected_symbols[: max(1, max_symbols)]
     selected_styles = _styles(adapter, styles)
     style_summary: dict[str, dict[str, Any]] = {}
@@ -437,35 +414,8 @@ def build_replay_report(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Run read-only CNFutures 5-minute replay."
-    )
-    parser.add_argument("--date", default=datetime.now().strftime("%Y%m%d"))
-    parser.add_argument("--symbol", action="append", dest="symbols")
-    parser.add_argument("--min-bars", type=int, default=6)
-    parser.add_argument("--max-symbols", type=int, default=20)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--history", type=Path, default=DEFAULT_HISTORY)
-    parser.add_argument("--no-write", action="store_true")
-    parser.add_argument("--pretty", action="store_true")
-    args = parser.parse_args(argv)
-    report = build_replay_report(
-        date=str(args.date),
-        symbols=args.symbols,
-        min_bars=max(2, _safe_int(args.min_bars, 6)),
-        max_symbols=max(1, _safe_int(args.max_symbols, 20)),
-        output=None if args.no_write else args.output,
-        history=None if args.no_write else args.history,
-    )
-    print(
-        json.dumps(
-            report,
-            ensure_ascii=False,
-            indent=2 if args.pretty else None,
-            sort_keys=True,
-        )
-    )
-    return 0
+    del argv
+    return retired_cli("CNFutures.replay")
 
 
 if __name__ == "__main__":

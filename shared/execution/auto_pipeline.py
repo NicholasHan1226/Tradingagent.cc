@@ -3,16 +3,18 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from shared.data.reader import TradingagentDataReader
 from shared.execution.decision_engine import DecisionEngine
-from shared.markets.evolution_engine import evaluate_and_adjust
+from shared.governance.retirement import (
+    RetiredRuntimeError,
+    require_explicit_data_port,
+    retired_cli,
+)
 from shared.markets.performance_tracker import load_style_weights
 from shared.markets.safety import reject_real_execution_payload
 from shared.markets.style_config import styles_dir_for_market
@@ -35,12 +37,36 @@ PIPELINE_STAGES = (
 )
 
 
+class _UnavailableDataPort:
+    """Non-network sentinel used by pure unit helpers and retired code paths."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise RetiredRuntimeError(
+            f"AutoPipeline.{name}:tradingdatas_fixture_or_v1_port_required"
+        )
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _today_compact() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def _retired_evolution_observer(
+    market: str, *, review_root: Path | str | None = None
+) -> dict[str, Any]:
+    """Return an audit-only result; legacy pipeline defaults never mutate models."""
+
+    del review_root
+    return {
+        "state": "retired",
+        "market": _normalize_market(market),
+        "action": "no_change",
+        "reason": "legacy_auto_evolution_retired",
+        "runtime_mutation_allowed": False,
+    }
 
 
 def _normalize_market(market: Any) -> str:
@@ -301,13 +327,13 @@ class AutoPipeline:
         perspective_analyzer: Any | None = None,
         simulator_factory: Callable[[str], Any] | None = None,
         style_runner_cls: type[StyleRunner] = StyleRunner,
-        evolution_fn: Callable[..., dict[str, Any]] = evaluate_and_adjust,
+        evolution_fn: Callable[..., dict[str, Any]] = _retired_evolution_observer,
         review_root: Path | str | None = None,
         styles_dir_by_market: dict[str, Path | str] | None = None,
         max_candidates: int = 10,
         initial_capital: float | None = None,
     ) -> None:
-        self.reader = reader or TradingagentDataReader()
+        self.reader = reader if reader is not None else _UnavailableDataPort()
         self.decision_engine = decision_engine or DecisionEngine(market="crypto")
         self.fundamental_analyzer = fundamental_analyzer or FundamentalAnalyzer(
             reader=self.reader
@@ -1189,8 +1215,14 @@ def run_auto_pipeline(
     stage: str = "all",
     review_root: Path | str | None = None,
     max_candidates: int = 10,
+    reader: Any | None = None,
 ) -> dict[str, Any]:
-    return AutoPipeline(review_root=review_root, max_candidates=max_candidates).run(
+    safe_reader = require_explicit_data_port(reader, context="run_auto_pipeline")
+    return AutoPipeline(
+        reader=safe_reader,
+        review_root=review_root,
+        max_candidates=max_candidates,
+    ).run(
         trade_date=trade_date,
         markets=markets,
         stage=stage,
@@ -1198,24 +1230,8 @@ def run_auto_pipeline(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Run TradingAgent simulated auto pipeline"
-    )
-    parser.add_argument("--date", dest="trade_date", default=None)
-    parser.add_argument("--market", action="append", dest="markets", default=None)
-    parser.add_argument("--stage", default="all", choices=("all", "daily_review"))
-    parser.add_argument("--review-root", default=None)
-    parser.add_argument("--max-candidates", type=int, default=10)
-    args = parser.parse_args(argv)
-    result = run_auto_pipeline(
-        trade_date=args.trade_date,
-        markets=tuple(args.markets) if args.markets else None,
-        stage=args.stage,
-        review_root=args.review_root,
-        max_candidates=args.max_candidates,
-    )
-    print(json.dumps(result, ensure_ascii=False))
-    return 0
+    del argv
+    return retired_cli("shared.execution.auto_pipeline")
 
 
 if __name__ == "__main__":

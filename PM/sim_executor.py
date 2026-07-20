@@ -18,6 +18,8 @@ _VALID_SIDES = {"buy", "sell"}
 _VALID_OUTCOMES = {"yes", "no"}
 _MIN_PRICE = 0.0
 _MAX_PRICE = 1.0
+PAPER_BROKER_CONTRACT = "tradingagent.pm.research_sandbox.v1"
+SIM_AUTHORITY_ID = "pm-research-sim-v1"
 
 
 def _coerce_price(value: Any, field_name: str) -> float:
@@ -111,6 +113,8 @@ def pm_sim_execute(
         "account_id": account.get("account_id", "pm_sim"),
         "opponent_order_id": str(match.get("opponent_order_id", "")),
         "notes": message,
+        "broker_contract": PAPER_BROKER_CONTRACT,
+        "authority_id": SIM_AUTHORITY_ID,
     }
     raw_response.update(match)
 
@@ -123,7 +127,14 @@ def pm_sim_execute(
         order_id=order_id,
         market="pm",
         raw_response=raw_response,
+        broker_contract=PAPER_BROKER_CONTRACT,
+        authority_id=SIM_AUTHORITY_ID,
     )
 
 
-register_sim_executor("pm", pm_sim_execute)
+register_sim_executor(
+    "pm",
+    pm_sim_execute,
+    simulation_contract=PAPER_BROKER_CONTRACT,
+    authority_id=SIM_AUTHORITY_ID,
+)

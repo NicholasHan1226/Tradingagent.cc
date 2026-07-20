@@ -4,7 +4,7 @@
 
 ## 目标与非目标
 
-TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测 → 风控 → 真实规格模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，并用真实证据判断策略是否存在可重复正期望。
+TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测 → 风控 → 真实规格模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，并让 Crypto 在独立市场 lane 中推进自己的闭环；三者用真实证据分别判断策略是否存在可重复正期望。
 
 50,000 CNY 是每个市场的独立模拟资本约束，不是盈利承诺。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
 
@@ -14,7 +14,7 @@ TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测
 
 ```mermaid
 flowchart LR
-    SS["SharedSignals\n采集、校验、统一只读 API"] --> TA["TradingAgent\n候选、预测、风控、模拟执行、复盘"]
+    TD["TradingDatas\n采集、校验、统一只读 API"] --> TA["TradingAgent\n候选、预测、风控、模拟执行、复盘"]
     MG["MarketGraph\n宏观、事件、行业/供应链研究"] -. "paired mg_on / mg_off" .-> TA
     TA --> AC["A股 capital authority\n独立 fresh-start 50k"]
     TA --> FC["CNFutures capital authority\n独立 fresh-start 50k"]
@@ -26,15 +26,38 @@ flowchart LR
     FS --> FM["long-horizon futures maturity"]
 ```
 
-- SharedSignals 是基础行情、事件、行业、交易日历与合约输入 authority。TradingAgent 生产只走 HTTP API，不直读兄弟仓 SQLite，也不现场调用数据提供商。
+- TradingDatas 是基础行情、事件、行业、交易日历与合约输入 authority。TradingAgent 只消费 `GET /v1/catalog` 与 `POST /v1/query`，不直读兄弟仓 SQLite，也不现场调用数据提供商；TradingDatas fresh handoff 前只运行 fixture/mock-first。
 - MarketGraph 是可选只读增强，不是价格、账户、资本或执行 authority。缺 MG 时 `mg_off` 仍应形成基础闭环。
 - TradingAgent 拥有候选生成、风格预测、组合决策、资本预约、模拟成交、风险拒绝、样本、标签、复盘和只读看板。
 - `front/` 是唯一活跃前端；它不写资金、队列或订单。
 
+### 三市场 BrokerAdapter 边界
+
+三市场只能共享机械接口，不能共享交易 API。当前机器合同见
+`shared/governance/market_lanes.yaml`：
+
+| 市场 | 模拟合同 | 外部测试环境 | 未来实盘适配器 | 关键不可混用语义 |
+|---|---|---|---|---|
+| A股 | `tradingagent.ashare.paper_broker.v1` | 无；server-local paper | `ashare.broker_specific.unimplemented` | T+1、100股整手、涨跌停、可卖量、印花税 |
+| CNFutures | `tradingagent.cnfutures.paper_broker.v1` | 无；独立期货paper | `cnfutures.ctp_or_broker_specific.unimplemented` | 多空、开平、保证金、逐日盯市、夜盘、换月 |
+| Crypto | `tradingagent.crypto.paper_broker.v1` | `tradingagent.crypto.binance_spot_testnet.v1` | `crypto.binance_spot_live.unimplemented` | 小数数量、最小名义金额、7x24、交易所过滤器、Testnet/Live分账 |
+
+共享内核只可定义`BrokerPort`、幂等键、不可变回执、outbox、审计和对账原语。
+以下内容必须由每个市场自己实现并禁止跨市场转换：provider payload、认证和密钥、
+账户身份、下单/撤单字段、订单状态机、交易时钟、费用、风险、资本authority和错误码。
+Crypto Testnet是一个外部测试适配器，不是paper broker，也不能通过改base URL或环境变量
+自动升级为Live。三个`future_live_adapter_family`当前均是未实现且`live_enabled=false`；
+合同登记不构成实盘能力或发布授权。
+
+Mini/Hermes webhook、文件消费者和`RealSignalQueue`已在本地候选源码层退役。
+通用文件`SignalStateMachine`永久限定为simulation/shadow，伪造graduation receipt也不能
+写入real/live卡。源码退役不证明服务器或Mini的安装态已清理；零值环境变量只作清理墓碑，
+仍需独立cron/env/process/port只读readback。
+
 ### V1 契约与权限边界
 
-- `sharedsignals.query_result.v1`：SharedSignals 的 provider-neutral 查询结果契约。当前仅是隔离工作树中的目标契约，未经生产 runtime 和真实数据新鲜度验证前，不得描述为生产可用，也不得回退到 Tushare 直连或兄弟仓 SQLite。
-- `tradingagent.sharedsignals.integration-readiness.v1`：TradingAgent 侧的可复用接入验收回执。它只从显式、无密钥 manifest 读取冻结的 endpoint、catalog、dataset、schema、PIT 与角色要求，通过同一 `SharedSignalsV1Client` 对每个数据集执行同 `as_of` 的两次独立查询，并复用 `DataEvidenceGate` 与 research snapshot 验证状态、freshness、lineage、receipt、字段及逐行 PIT。任一分页游标会按 `pagination_contract_unfrozen` 阻断，不能由客户端擅自拼页。通过结果仍是 `non_authority`，不证明生产可用、真实交易可用或未来结果可复现。
+- `sharedsignals.query_result.v1`：TradingDatas provider-neutral 查询结果的 immutable wire/schema ID；重命名产品不改变该标识。当前仅是隔离工作树中的目标契约，未经 fresh handoff、runtime 与真实数据新鲜度验证前，不得描述为生产可用，也不得回退到 Tushare 直连或兄弟仓 SQLite。
+- `tradingagent.sharedsignals.integration-readiness.v1`：TradingAgent 侧可复用接入验收回执的 immutable schema ID；重命名产品不改变该标识。它只从显式、无密钥 manifest 读取冻结的 endpoint、catalog、dataset、schema、PIT 与角色要求，通过兼容代码符号 `SharedSignalsV1Client` 对每个数据集执行同 `as_of` 的两次独立查询，并复用 `DataEvidenceGate` 与 research snapshot 验证状态、freshness、lineage、receipt、字段及逐行 PIT。任一分页游标会按 `pagination_contract_unfrozen` 阻断，不能由客户端擅自拼页。通过结果仍是 `non_authority`，不证明 TradingDatas runtime 可用、真实交易可用或未来结果可复现。
 - `tradingagent.universe_scope.v1`：A股第一阶段只允许沪深主板个股进入候选、组合和模拟订单；创业板、科创板的指数及行业聚合数据只允许作为市场环境证据，不能升级为可交易个股。两个 paper composition root 只接受精确、无实例可变状态且由冻结 manifest 内容寻址的 `CanonicalMainboardScopePolicy`；伪 duck type、callable 与 subclass 一律在组装阶段拒绝。
 - `tradingagent.llm_evidence.v1`：LLM/DeepSeek 只生成固定Prompt、内容寻址且可重新验证的证据观察。source span 被包在明确的不可信数据边界，提示注入负例在transport前阻断；外部来源authority必须由receipt和独立verifier复核。provenance分为两个完全独立的结果：accepted `ProviderTransportReceipt`只在provider envelope、evidence schema/引用和Gateway observation全部成功后生成；`ProviderRejectedAttemptReceipt`只在真实HTTP 200 envelope成功但后续schema/binding失败时保留无正文的audit-only hash证据。`GatewayAnalysisResult`强制两者互斥并与status/reason绑定；accepted evidence只能进入`LLMEvidenceJournal`，rejected attempt只能进入物理分离的`LLMRejectedAttemptAuditJournal`，后者绝不进入样本、晋级、风险或交易链。Bull/Bear provider模式必须显式注入同verifier绑定的typed recorder，并从一个显式绝对accepted锚点确定性派生canonical accepted/rejected/provider-invocation Journal family；另配invocation锁、相对路径和Unicode/大小写/真实路径或物理别名均拒绝。provider-invocation Journal以不依赖调用方request ID的逻辑内容键在网络前持久化`in_flight`，并持有跨进程锁直到唯一终态；同一canonical family内换ID重发、未知崩溃状态、未知mode、ID/内容冲突或任一持久化校验失败均在provider调用或返回available前fail closed。本地receipt/journal均不是provider签名、外部密封、tamper-proof authority或production durable sink。2026-07-18一次隔离v1请求达到provider envelope但schema失败，不能被后新增的rejected receipt追溯包装，也不证明认证稳定、模型可用或生产部署。LLM不能直接改变候选成员、预测分数、风险请求、目标仓位或订单。
 - `tradingagent.small_account_plan_receipt.v1`：5万元可行池只给出cash+policy上界；决策阶段必须另以无默认实现的`AccountAuthorityVerifier`复核完整账户内容、position receipt/hash、现金、gross、T+1可卖量、价格时点和有效期，再生成不可变plan receipt。A股卖出还必须符合整手、仅卖出不足100股余额或全部退出之一；risk与订单逐项绑定其SHA。
@@ -48,7 +71,7 @@ flowchart LR
 IntegrationReadinessProbe（显式 fixture/移交 manifest；非 authority）
   -> catalog + 同 as_of 双查询 + 语义一致性/PIT/内容回执
   -> 通过后才允许进入下方本地研究链的下一层人工验收
-SharedSignalsV1Client（fixture transport）
+SharedSignalsV1Client（TradingDatas V1 兼容代码符号；fixture transport）
   -> DataEvidenceGate
   -> immutable ResearchDataSnapshot
   -> content-addressed CoverageReceipt
@@ -67,11 +90,11 @@ SharedSignalsV1Client（fixture transport）
   -> front read-only Today panel
 ```
 
-这条图中 Opportunity/forecast/router 是与资本链隔离的shadow支路，最终只汇入审计/反事实，不接入 Champion、SmallCapitalFeasible、risk或OMS；其模块存在不表示预测有效或概率可发布。IntegrationReadinessProbe 当前也只有 fixture manifest 与本地合同测试，尚未获得 SharedSignals 所有者移交的真实 endpoint、catalog、dataset、认证及分页冻结合同，因此不能证明已有 live SS 数据。整条链同样不表示已有券商权限、真实持仓/可卖数量、生产 scheduler 或真实模拟样本。`CoverageReceipt` 以 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象、来源 generation/receipt/lineage 和内容 hash 证明本次环境覆盖，并要求无默认实现的外部 `CoverageAuthorityVerifier` 在构造与消费两处复验 denominator；调用方不能自报 `full_market`。Phase 1.5 行业薄切片还要求独立 `IndustryScoreAuthorityVerifier` 绑定评分方法、有效期、score/coverage receipts 与内容 hash，才动态选出 1 个深研行业和 2 个观察行业。两类真实 verifier 均未接入，因此当前只具备 fixture 合同，不能产生当前可交易symbol或仓位影响。
+这条图中 Opportunity/forecast/router 是与资本链隔离的shadow支路，最终只汇入审计/反事实，不接入 Champion、SmallCapitalFeasible、risk或OMS；其模块存在不表示预测有效或概率可发布。IntegrationReadinessProbe 当前也只有 fixture manifest 与本地合同测试，尚未获得 TradingDatas 所有者移交的 fresh endpoint、catalog、dataset、认证及分页冻结合同，因此不能证明已有 live TradingDatas 数据。整条链同样不表示已有券商权限、真实持仓/可卖数量、生产 scheduler 或真实模拟样本。`CoverageReceipt` 以 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象、来源 generation/receipt/lineage 和内容 hash 证明本次环境覆盖，并要求无默认实现的外部 `CoverageAuthorityVerifier` 在构造与消费两处复验 denominator；调用方不能自报 `full_market`。Phase 1.5 行业薄切片还要求独立 `IndustryScoreAuthorityVerifier` 绑定评分方法、有效期、score/coverage receipts 与内容 hash，才动态选出 1 个深研行业和 2 个观察行业。两类真实 verifier 均未接入，因此当前只具备 fixture 合同，不能产生当前可交易symbol或仓位影响。
 
 当前 `AccountTradable` 只是模拟scope历史类型名；SmallCapital快照的 `max_buyable_shares` 只是在`position_state_applied=false`下的cash+policy upper bound，不能直接成为订单量。Decision stage 强制注入独立账户verifier，proof逐项绑定capital generation、账户时点、完整持仓、mark、sellable数量、现金、gross、position receipt/hash与有效期；本地重算会检查这些输入与proof一致。canonical 候选另须提交内容寻址的 Champion score receipt，绑定当前人工选择 manifest、精确冻结 spec、symbol、PIT decision time、数值特征 namespace/快照及数据 receipt/vintage/lineage；调用方 raw rank、篡改 receipt、过期/非当前 Champion 或 fixture evidence 冒充 canonical authority 均 fail closed。fixture路径只证明输入与不可晋级proof/evidence一致；canonical-capital测试路径从同一simulated ledger head派生并复读账户状态，current generation/lineage轮换必须随snapshot传播。两条路径都不证明账户、持仓或可卖量来自真实broker。随后plan从唯一 A股 policy 重算100股整手、15%单票、90% gross、最多8仓、最低经济订单、无交易区、`cost_policy_id`、费用、现金和完整digest；未校准 rank 只决定候选排序，新仓目标金额采用与 rank 无关的固定最小经济 probe，并标注为 engineering simulation。估值价与保守预留价分开。卖出100股整数倍、一次性卖出不足100股余额和全部退出之外的数量被optimizer、day loop及模拟撮合三处拒绝，调用方不得自动取整或改写。Day loop还会独立复算佣金、过户费和卖出印花税，重新签名不能洗白错费用。
 
-Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark 与非空执行 snapshot 必须嵌入精确 `MarketEvidenceAuthority`。该对象把 dataset/catalog、source receipt ID/SHA、source lineage、calendar receipt、symbol/price/session、capital authority/generation、execution lineage 与完整时点链绑定；账户估值只接受运行日前一已验证交易会话的 15:00 close，调用方不能用一个较新的 `mark_observed_at` 洗白旧账户 evidence。模拟执行只接受当前 trade date 的受支持连续竞价 session，quote 的 `data_through` 到 effect time 最多 30 秒。当前唯一具体 authority/verifier 是不可继承且 `production_eligible=false` 的冻结 fixture 类型；其proof是本地内容完整性hash，不是外部签名、SharedSignals live receipt readback或交易所行情认证。
+Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark 与非空执行 snapshot 必须嵌入精确 `MarketEvidenceAuthority`。该对象把 dataset/catalog、source receipt ID/SHA、source lineage、calendar receipt、symbol/price/session、capital authority/generation、execution lineage 与完整时点链绑定；账户估值只接受运行日前一已验证交易会话的 15:00 close，调用方不能用一个较新的 `mark_observed_at` 洗白旧账户 evidence。模拟执行只接受当前 trade date 的受支持连续竞价 session，quote 的 `data_through` 到 effect time 最多 30 秒。当前唯一具体 authority/verifier 是不可继承且 `production_eligible=false` 的冻结 fixture 类型；其proof是本地内容完整性hash，不是外部签名、TradingDatas live receipt readback或交易所行情认证。
 
 执行 composition 还必须显式注入无默认实现的 `TrustedExecutionClock`。本地唯一具体时钟是内容寻址、不可继承的 `NonProductionFixtureExecutionClock`；系统分别在 `sim_submit` 与 `capital_commit` 紧邻副作用前重新取时并复核quote，commit校验后、账务提交前再做一次drift/Champion authority重读。quote时间只代表市场证据，模拟fill/terminal采用submit副作用时间，所有时点保留原始微秒精度且commit不得早于submit。若两次检查之间quote变旧、进入错误会话、时钟倒退或跨交易日，坏reading仍写入审计字段，terminal停在最后合法submit，尚未提交的模拟结果被丢弃、预约释放且capital outbox/ledger不提交；回执绑定时钟identity、market session、available/data-through与检查时点。日循环与对账复用`execution_receipt_contract.py`中的同一session/30秒TTL及严格零成交失败语义，先重证`data_through <= available <= execution <= submit`、submit时quote仍在30秒内且execution session匹配声明，再按生产器的错误优先级复核唯一原因和精确terminal；对账端另行强制`quote <= submit <= fill/terminal <= commit <= reconcile`。崩溃重放会先内容校验pending outbox及完整receipt seed，但只有canonical ledger证明对应commit已存在并返回幂等结果时才补settlement；intent-before-commit仍经过最新risk/drift门。整批静态 preflight、每个副作用前动态 recheck、最终authority reread、已提交事实恢复、对账重验和 drift/Champion revalidation是不同门，不互相代替。当前没有生产时钟、生产市场证据verifier，也没有未来外部authority与capital commit的原子事务。
 
@@ -122,17 +145,17 @@ DeepSeek adapter只接受精确的冻结离线响应fixture或上述精确HTTP t
 - DeepSeek provider transport已是默认关闭的`local_isolated_candidate`；一次真实canary已到达provider但schema拒绝，accepted evidence readback、认证稳定性、quota/成本/留存及生产激活未验证；live paper scheduler仍为`PLANNED_NOT_IMPLEMENTED`；
 - 当前已在每次risk评估及网络关闭的模拟副作用前重读drift latch；未来长驻scheduler/live broker仍须在真实外部副作用前绑定同一最新authority，当前fixture不能替代该验收；
 - mark/quote、Champion selection/feature、metrics与时钟已有本地完整性和TOCTOU门，但生产市场证据verifier、生产Champion/feature registry verifier、独立metrics重算authority和可信长驻时钟均未实现；
-- 真实 SS V1 runtime/dataset IDs、市场样本、20交易日工程闭环、60–120交易日科学成熟度与 paper-to-live 转化均未验证。
+- 真实 TradingDatas V1 runtime/dataset IDs、市场样本、20交易日工程闭环、60–120交易日科学成熟度与 paper-to-live 转化均未验证。
 
 ### 兼容退役尚未完成
 
-新 V1 client 不代表旧消费链整体已切换。前端 market pulse 本地候选已只使用严格
-`GET /v1/catalog` + `POST /v1/query`，并以静态门禁止恢复旧端点或 SQLite fallback；但 A股
-adapter/research/T+1/opening/closing、`shared/screening/*`、`shared/research/*`、
-`shared/execution/auto_pipeline.py`、wrapper/runtime-test/review 工具仍有
-`TradingagentDataReader`、专用端点或旧配置引用，CNFutures 也仍有明示 SQLite/旧 endpoint
-兼容；但显式空`SHAREDSIGNALS_API_URL`必须在旧reader前fail closed，SQLite仅能在隔离诊断中以
-`TRADINGAGENT_ALLOW_SHARED_SIGNALS_SQLITE=1`和已存在的诊断数据库同时明示启用。其余路径在同
+新 V1 client 不代表旧源码已经物理删除。前端 market pulse 本地候选已只使用严格
+`GET /v1/catalog` + `POST /v1/query`，A股旧 wrapper、调度、混合 dispatcher 与直接诊断 CLI
+也已经在进入旧 reader 前以退出码 78 fail closed；但 A股 adapter/research/T+1/opening/closing、
+`shared/screening/*`、`shared/research/*`、`shared/execution/auto_pipeline.py` 以及部分
+runtime-test/review 库函数仍含 `TradingagentDataReader`、专用端点或旧配置引用，CNFutures 也仍有
+SQLite/旧 endpoint 的历史源码。这些只属于退役清单或法证回归，不是 current 兼容入口。
+显式空`SHAREDSIGNALS_API_URL`必须在旧reader前fail closed，旧 SQLite 诊断开关不得进入 current lane 或作为 TradingDatas fallback。其余路径在同
 `as_of` parity、消费者切换、运行时 no-fallback 负例、文档/环境/调度扫描
 全部通过前，只能标记 `COMPATIBILITY_TIMEBOXED` 或 `RETIREMENT_PENDING_VERIFICATION`。
 新链失败时 fail closed，不回退旧链。
@@ -267,11 +290,11 @@ label materialization 以 100–250 条为一批，在锁内校验 frozen 原始
 
 上述锁是项目内授权 writer 的协作协议，不是对同 UID 恶意或失控进程的内核隔离。所有授权 SampleJournal/projection writer 必须先取得同一锁，并禁止直接改写已发布 generation、compatibility mirror 或 log；在最后一次用户态验证返回后、内核执行 pointer rename 前，无视锁的同 UID 进程仍可构成 P1 OS 隔离窗口。生产启用前必须完成所有 writer inventory，并 read back 运行 UID/GID、路径 owner/mode/ACL、mount 与 filesystem 语义；不能证明 writer 全部遵守锁或不能隔离非协作写入时，sample-ops cron 保持禁用。
 
-本轮 P0 不包含 SharedSignals batch API、请求并发、持久化 sidecar index 或增量 KPI；这些仍是 P1，不能把本地 in-memory cache/index 描述成对应能力已经落地。
+本轮 P0 不包含 TradingDatas batch API、请求并发、持久化 sidecar index 或增量 KPI；这些仍是 P1，不能把本地 in-memory cache/index 描述成对应能力已经落地。
 
 前向标签为 `m30/m60/close/1d/3d/5d`。A股`close/1d/3d/5d`目标由预测前冻结且经独立verifier复核的同一交易会话proof派生；调用方target只能断言相等，缺目标会话15:00日线不得顺延，label与结果绑定plan/calendar/proof SHA。该target authority只证明时点，不证明价格或收益真值。标签以 PIT `as_of` 限制可见数据；provider/bar/reference 先形成保留全部原始 event 与 receipt alias 的 EvidenceEnvelope，逐行用真实 prediction/decision boundary 校验 event 同一 UTC instant、所有 receipt 合法有时区、最晚 evidence receipt 不晚于边界。跨 stage 顺序使用所有 alias 的上下界，而不是只比较各组最大值；embedded structure error 在重复 canonicalization 中不可逆传播。invalid/future sibling 在价格选择前排除，只保留独立 rejection audit；有效行再按 validated canonical event instant 选择，与 provider 输入顺序无关。没有有效行时 reference price 保持空、snapshot pending/degraded、exploration 不得 selected。reference/entry 和 exit candidate 的窗口、排序、`evidence_at` 与 lineage 均只使用 validated canonical instant。真实 round trip 只有在同一 frozen Journal view 中唯一关联当前 authority prediction、entry fill 和全部 exit stop 后才供 maturity 与 actual-cost 使用；prediction append 保存 canonical source payload，validator从权威frozen event重算其source SHA与prediction canonical content，再重算fill/stop的canonical receipt/local-trade payload digests和由这些digest组成的round-trip source/content SHA。所有SHA通过constant-time内容绑定；多腿exit数组按identity顺序等长、逐元素验证，不能把任意64-hex、自报lineage或wrapper hash当作内容证据。历史prediction缺source payload、关联对象、完整数值或PIT EvidenceEnvelope任一不一致时保留审计并回退版本化保守成本，不得反向补造。进入predictive release的market-truth还必须绑定决策前冻结的OOS plan receipt、total-return definition、corporate-action policy与adjustment-truth receipt/hash/覆盖时点，并由注入的registry verifier在投影重建时复核。5分钟重复样本聚类去重，缺lineage/cost/fill/OOS/total-return revalidation的记录不进入晋级证据。
 
-CNFutures 与 A股使用同一 EvidenceEnvelope 合同。SharedSignals HTTP client 在实际 response bytes 收到时保存独立 transport receipt；provider envelope/group 已非法时仍原样保留，并以 sibling `sharedsignals_response_lineage` 审计本次 HTTP，不允许 transport receipt 洗白 provider lineage。CNFutures prediction snapshot、session review row 与 `_price_evidence` 必须逐层保留 provider 的全部 event/receipt aliases、structure errors 和 nested PIT。只允许在统一验证成功后生成 canonical 四钟；历史 prediction 或 raw bar 没有真实 receipt 时继续 pending/degraded，不能用 bar time、prediction/as-of 或 wall clock 补造 provider receipt。
+CNFutures 与 A股使用同一 EvidenceEnvelope 合同。TradingDatas HTTP client（当前兼容代码符号仍为 `SharedSignalsV1Client`）在实际 response bytes 收到时保存独立 transport receipt；provider envelope/group 已非法时仍原样保留，并以 immutable wire 字段 `sharedsignals_response_lineage` 审计本次 HTTP，不允许 transport receipt 洗白 provider lineage。CNFutures prediction snapshot、session review row 与 `_price_evidence` 必须逐层保留 provider 的全部 event/receipt aliases、structure errors 和 nested PIT。只允许在统一验证成功后生成 canonical 四钟；历史 prediction 或 raw bar 没有真实 receipt 时继续 pending/degraded，不能用 bar time、prediction/as-of 或 wall clock 补造 provider receipt。
 
 A股第 5、10 个交易日只触发人工复核状态；SampleJournal/KPI 只能评估 evidence readiness。`automatic_promotion_enabled=false`、`automatic_risk_expansion_enabled=false`、`live_transition_authorized=false`。
 

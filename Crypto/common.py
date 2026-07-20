@@ -12,7 +12,10 @@ import yaml
 from shared.markets.config_schema import CapitalConfig, MarketToolConfig, SessionConfig, validate_market_config
 
 MARKET = "crypto"
-SHAREDSIGNALS_MARKET = "Crypto"
+TRADINGDATAS_MARKET_CONTEXT = "Crypto"
+# Compatibility alias for legacy injected fixture readers. New TradingDatas
+# V1 consumers use provider-neutral dataset IDs instead of this market label.
+SHAREDSIGNALS_MARKET = TRADINGDATAS_MARKET_CONTEXT
 CURRENCY = "USDT"
 SESSION_TYPE = "24x7"
 
@@ -86,6 +89,7 @@ __all__ = [
     "MARKET",
     "SESSION_TYPE",
     "SHAREDSIGNALS_MARKET",
+    "TRADINGDATAS_MARKET_CONTEXT",
     "CryptoConfig",
     "load_crypto_config",
     "reject_real_execution_payload",

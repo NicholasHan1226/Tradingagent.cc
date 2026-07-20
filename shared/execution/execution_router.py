@@ -156,6 +156,9 @@ def _resolve_position_entry_date(order: dict[str, Any]) -> str | None:
 
 
 def _check_t_plus_1(order: dict[str, Any]) -> dict[str, Any] | None:
+    market = str(order.get("market") or "").strip().lower()
+    if market not in {"ashare", "a_share", "cn_equity"}:
+        return None
     side = str(order.get("direction", order.get("side", ""))).lower().strip()
     if side not in {"sell", "reduce"}:
         return None
@@ -307,6 +310,29 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
     Returns:
         dict with: channel, executed, result, order_id, message.
     """
+    market = str(order.get("market") or "").strip().lower()
+    if not market:
+        result = {
+            "status": "failed",
+            "reason": "market_required",
+            "filled_qty": 0,
+            "avg_price": 0.0,
+            "fee": 0.0,
+            "recorded": False,
+            "legacy_fallback_used": False,
+            "message": "Explicit market is required before execution routing",
+            "order_id": str(order.get("order_id", "")),
+            "real_trading_enabled": False,
+        }
+        _log_route(order, "none", result)
+        return {
+            "channel": "none",
+            "executed": False,
+            "result": result,
+            "order_id": order.get("order_id", ""),
+            "message": result["message"],
+        }
+
     stage = strategy_stage.lower().strip()
     if stage not in STAGE_CHANNELS:
         return {
@@ -352,18 +378,18 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
 
     if channel == "sim_broker":
         try:
-            from Ashare.sim_executor import ashare_sim_execute
+            from shared.execution.sim_broker import execute_sim_order
         except Exception as exc:
             error = f"{exc.__class__.__name__}: {exc}"
             result = {
                 "status": "unavailable",
-                "reason": "ashare_sim_executor_unavailable",
+                "reason": "market_sim_broker_unavailable",
                 "filled_qty": 0,
                 "avg_price": 0.0,
                 "fee": 0.0,
                 "recorded": False,
                 "legacy_fallback_used": False,
-                "message": f"A-share simulated executor unavailable: {error}",
+                "message": f"Market simulated executor unavailable: {error}",
                 "order_id": str(order.get("order_id", "")),
             }
             executed = False
@@ -371,47 +397,53 @@ def route(order: dict[str, Any], strategy_stage: str) -> dict[str, Any]:
         else:
             try:
                 execution_order = dict(order)
+                # ``account`` is a separate governed port. Keeping the nested
+                # caller payload inside the order makes the binding validator
+                # interpret a mapping as an account identity and also exposes
+                # two mutable representations of the same authority input.
+                execution_order.pop("account", None)
                 execution_account = deepcopy(order.get("account"))
-                if "account" in execution_order:
-                    execution_order["account"] = execution_account
-                tr = ashare_sim_execute(
+                sim_config = (
+                    dict(order.get("sim_config"))
+                    if isinstance(order.get("sim_config"), dict)
+                    else {}
+                )
+                sim_config["dry_run"] = bool(order.get("dry_run", False))
+                tr = execute_sim_order(
                     execution_order,
+                    market=market,
                     account=execution_account,
-                    config={
-                        "dry_run": order.get("dry_run", False),
-                        "mock": order.get("mock", order.get("dry_run", False)),
-                    },
+                    config=sim_config,
                 )
             except Exception as exc:
                 error = f"{exc.__class__.__name__}: {exc}"
                 result = {
                     "status": "failed",
-                    "reason": "ashare_sim_executor_failed",
+                    "reason": "market_sim_broker_failed",
                     "filled_qty": 0,
                     "avg_price": 0.0,
                     "fee": 0.0,
                     "recorded": False,
                     "legacy_fallback_used": False,
-                    "message": f"A-share simulated executor failed: {error}",
+                    "message": f"Market simulated executor failed: {error}",
                     "order_id": str(order.get("order_id", "")),
                 }
                 executed = False
                 message = result["message"]
             else:
-                executed = tr.status in (
-                    "filled",
-                    "pending",
-                    "ok",
-                    "warning",
-                    "dry_run_ok",
-                )
+                executed = tr.status in ("filled", "partial")
                 result = {
                     "status": tr.status,
                     "filled_qty": tr.filled_qty,
                     "avg_price": tr.avg_price,
+                    "fee": tr.fee,
                     "message": tr.message,
                     "slippage": 0.0,
                     "order_id": tr.order_id,
+                    "market": tr.market,
+                    "broker_contract": tr.broker_contract,
+                    "authority_id": tr.authority_id,
+                    "raw_response": tr.raw_response,
                 }
                 message = (
                     f"Sim executed: {tr.status} @ {tr.avg_price} (qty {tr.filled_qty})"

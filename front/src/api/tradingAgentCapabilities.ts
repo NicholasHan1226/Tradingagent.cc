@@ -55,10 +55,14 @@ export const tradingAgentCapabilities: TradingAgentCapability[] = [
   },
   {
     id: 'execution-readiness',
-    display: '实盘待接入',
+    display: '分市场执行边界',
     status: 'gated',
-    dashboardSurface: '实盘入口',
-    readableSources: ['shared/execution/signal_card_schema.json', 'shared/execution/fill_card_schema.json', 'signals/filled/*.json'],
-    note: '只能展示接入状态；不得从 Dashboard 触发实盘执行。',
+    dashboardSurface: '执行状态 / 实盘待接入',
+    readableSources: [
+      'shared/governance/system_state_matrix.yaml',
+      'shared/governance/market_lanes.yaml',
+      'shared/logs/execution_lineages/<execution_lineage_id>/*',
+    ],
+    note: '只读展示A股、CNFutures、Crypto各自的模拟合同与未来适配器状态；不得复用旧执行schema、触发订单或把模拟/Testnet升级为Live。',
   },
 ]

@@ -2,7 +2,7 @@
 
 This module wires existing authorities without reimplementing them.  The
 caller supplies every business stage, every durable local store, the exact
-SharedSignals V1 contract and a fixture transport.  The three adapter stages
+TradingDatas V1 contract and a fixture transport.  The three adapter stages
 are assembled here so their persistence and publication dependencies cannot
 silently drift or acquire defaults.
 """
@@ -1297,13 +1297,13 @@ def _request_instant(value: QueryRequest) -> datetime | None:
 
 @dataclass(frozen=True)
 class PaperRuntimeConfig:
-    """All frozen business and SharedSignals identities for one paper run."""
+    """All frozen business and TradingDatas identities for one paper run."""
 
     trade_date: str
     decision_as_of: datetime
-    ss_v1_base_url: str
-    ss_catalog_version: str
-    ss_access_policy_id: str
+    tradingdatas_v1_base_url: str
+    tradingdatas_catalog_version: str
+    tradingdatas_access_policy_id: str
     dataset_profile: ResearchDataProfile
     dataset_requests: Mapping[str, QueryRequest]
     evidence_policies: Mapping[str, DatasetEvidencePolicy]
@@ -1314,8 +1314,8 @@ class PaperRuntimeConfig:
     real_trading_enabled: bool = False
     live_execution_enabled: bool = False
     network_enabled: bool = False
-    ss_timeout_seconds: float = 10.0
-    ss_max_limit: int = 10_000
+    tradingdatas_timeout_seconds: float = 10.0
+    tradingdatas_max_limit: int = 10_000
     _client_config: SharedSignalsV1Config = field(init=False, repr=False)
     _run_context: RunContext = field(init=False, repr=False)
 
@@ -1345,7 +1345,10 @@ class PaperRuntimeConfig:
                 )
             if not isinstance(self.dataset_profile, ResearchDataProfile):
                 raise PaperRuntimeConfigurationError("dataset_profile_missing")
-            if self.dataset_profile.catalog_version != self.ss_catalog_version:
+            if (
+                self.dataset_profile.catalog_version
+                != self.tradingdatas_catalog_version
+            ):
                 raise PaperRuntimeConfigurationError(
                     "dataset_profile_catalog_version_mismatch"
                 )
@@ -1377,12 +1380,12 @@ class PaperRuntimeConfig:
                     )
 
             client_config = SharedSignalsV1Config(
-                base_url=self.ss_v1_base_url,
-                expected_catalog_version=self.ss_catalog_version,
+                base_url=self.tradingdatas_v1_base_url,
+                expected_catalog_version=self.tradingdatas_catalog_version,
                 dataset_ids=frozenset(expected_datasets),
-                access_policy_id=self.ss_access_policy_id,
-                timeout_seconds=self.ss_timeout_seconds,
-                max_limit=self.ss_max_limit,
+                access_policy_id=self.tradingdatas_access_policy_id,
+                timeout_seconds=self.tradingdatas_timeout_seconds,
+                max_limit=self.tradingdatas_max_limit,
                 cache_ttl_seconds=0.0,
             )
             run_context = RunContext(
@@ -1404,7 +1407,11 @@ class PaperRuntimeConfig:
             ) from exc
 
         object.__setattr__(self, "decision_as_of", decision_as_of)
-        object.__setattr__(self, "ss_v1_base_url", client_config.base_url)
+        object.__setattr__(
+            self,
+            "tradingdatas_v1_base_url",
+            client_config.base_url,
+        )
         object.__setattr__(self, "dataset_requests", MappingProxyType(requests))
         object.__setattr__(self, "evidence_policies", MappingProxyType(policies))
         object.__setattr__(self, "_client_config", client_config)

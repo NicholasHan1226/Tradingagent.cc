@@ -249,31 +249,39 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
         entry for entry in root_entries if entry not in set(shared_entries)
     ]
 
-    installed_text = details.get("marketgraph_text") or details.get("root_text") or ""
-    installed_source = (
-        "marketgraph"
-        if details.get("marketgraph_text")
-        else ("root" if details.get("root_text") else "")
-    )
+    marketgraph_readable = not bool(details.get("marketgraph_error"))
+    root_readable = not bool(details.get("root_error"))
+    if marketgraph_readable:
+        installed_text = details.get("marketgraph_text") or ""
+        installed_source = "marketgraph"
+    elif root_readable:
+        installed_text = details.get("root_text") or ""
+        installed_source = "root"
+    else:
+        installed_text = ""
+        installed_source = ""
     installed_entries = set(tradingagent_entries(installed_text))
     missing_entries = [
         entry for entry in shared_entries if entry not in installed_entries
     ]
+    unexpected_entries = sorted(installed_entries.difference(shared_entries))
 
     env_mismatches = _tradingagent_environment_mismatches(installed_text)
 
     root_residual_entries: list[str] = []
-    if details.get("marketgraph_text"):
+    if marketgraph_readable:
         root_residual_entries = tradingagent_entries(details.get("root_text") or "")
     permission_blockers = _runtime_permission_blockers()
 
     failures: list[str] = []
     if template_drift or template_extra:
         failures.append("template_drift")
-    if not installed_text:
+    if not installed_source:
         failures.append("installed_crontab_unreadable")
     if missing_entries:
         failures.append("installed_crontab_missing_entries")
+    if unexpected_entries:
+        failures.append("installed_crontab_unexpected_entries")
     if env_mismatches:
         failures.append("installed_crontab_environment_mismatch")
     if root_residual_entries:
@@ -289,6 +297,8 @@ def check_cron_coverage(*, crontabs: dict[str, str] | None = None) -> dict[str, 
         "installed_entry_count": len(installed_entries),
         "missing_count": len(missing_entries),
         "missing_entries": missing_entries,
+        "unexpected_count": len(unexpected_entries),
+        "unexpected_entries": unexpected_entries,
         "template_drift_count": len(template_drift) + len(template_extra),
         "template_drift": {
             "missing_from_root_crontab_txt": template_drift,

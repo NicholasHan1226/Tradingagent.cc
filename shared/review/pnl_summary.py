@@ -452,27 +452,19 @@ def load_mark_prices_for_positions(
     market: str,
     *,
     trade_date: str = "",
+    reader: Any | None = None,
 ) -> dict[str, float]:
-    """Load daily close prices for a set of open positions via SharedSignals reader.
+    """Load marks through an explicitly injected market data port.
 
-    Falls back to an empty dict if the reader is unavailable so callers can still
-    report trade-price-fallback unrealized PnL.
+    The former implementation rebuilt an implicit legacy client and defaulted
+    to localhost:8082.  Absence of an injected fixture/TradingDatas V1 adapter
+    now returns no marks so the accounting caller can report a missing-mark or
+    cost-basis fallback without silently changing data authority.
     """
     prices: dict[str, float] = {}
-    if not positions:
+    if not positions or reader is None:
         return prices
     try:
-        from shared.data.reader import SharedSignalsAPIClient, TradingagentDataReader
-
-        api_url = (
-            __import__("os", fromlist=["environ"])
-            .environ.get("SHAREDSIGNALS_API_URL", "http://127.0.0.1:8082")
-            .strip()
-            or "http://127.0.0.1:8082"
-        )
-        reader = TradingagentDataReader(
-            api_client=SharedSignalsAPIClient(base_url=api_url)
-        )
         market_key = str(market).lower().strip()
         date = trade_date or __import__(
             "datetime", fromlist=["date"]

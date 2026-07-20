@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Execution layer package: Hermes bridge, shadow broker, sim broker, router."""
+"""Shared execution primitives and fail-closed real-trading safety gates.
+
+Market-specific paper and future live broker adapters live in their own market
+domains. Importing this package never creates a live-order path.
+"""
 
 from .real_trading_gate import (
     GateResult,
@@ -11,11 +15,8 @@ from .real_trading_gate import (
     validate_real_trading_enabled,
     validate_t1_settlement,
 )
-from .signals_real import RealSignalQueue
-
 __all__ = [
     "GateResult",
-    "RealSignalQueue",
     "emergency_stop_check",
     "require_explicit_approval",
     "run_real_order_gates",

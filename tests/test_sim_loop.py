@@ -1359,8 +1359,7 @@ class SimLoopTest(unittest.TestCase):
                 "filled_qty": 0,
                 "avg_price": 0.0,
                 "raw_response": {
-                    "mode": "mini_webhook_sent",
-                    "webhook": {"success": True},
+                    "mode": "paper_broker_pending",
                 },
             }
 
@@ -1941,37 +1940,6 @@ class SimLoopTest(unittest.TestCase):
             self.assertNotIn("provider bearish", authority_paths)
             self.assertNotIn("provider bullish", authority_paths)
 
-    def test_write_execution_signal_does_not_duplicate_successful_mini_webhook(
-        self,
-    ) -> None:
-        from shared.orchestrator import _write_execution_signal
-
-        signals_dir = self.tmp_path / "signals"
-        card = {
-            "order_id": "SIM-ASHARE-WEBHOOK-NODUP",
-            "ts_code": "600000.SH",
-            "market": "ashare",
-            "direction": "buy",
-            "quantity": 100,
-            "price": 10.0,
-            "capital_layer": "simulated",
-            "account_type": "simulated",
-        }
-        receipt = {
-            "status": "pending",
-            "raw_response": {
-                "mode": "mini_webhook_sent",
-                "webhook": {"success": True, "http_status": 200},
-                "signal_card": card,
-            },
-        }
-
-        result = _write_execution_signal(card, receipt, signals_dir=signals_dir)
-
-        self.assertEqual(result["status"], "pending")
-        self.assertEqual(result["pending_signal"]["source"], "mini_webhook")
-        self.assertEqual(list((signals_dir / "pending").glob("*.json")), [])
-
     def test_write_execution_signal_persists_failure_details(self) -> None:
         from shared.execution.signal_state_machine import read_json
         from shared.orchestrator import _write_execution_signal
@@ -1986,6 +1954,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
         }
         receipt = {
             "order_id": "SIM-ASHARE-FAIL-DETAILS",
@@ -2024,6 +1995,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
         }
 
         result = _write_execution_signal(
@@ -2052,6 +2026,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
         }
         receipt = {
             "status": "filled",
@@ -2078,6 +2055,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
         }
         receipt = {
             "status": "partial",
@@ -2107,6 +2087,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
             "valid_until": "2026-07-13",
             "status": "filled",
         }
@@ -2145,6 +2128,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
             "valid_until": "2026-07-13",
             "status": "failed",
             "retry_attempt": 0,
@@ -2195,6 +2181,9 @@ class SimLoopTest(unittest.TestCase):
             "price": 10.0,
             "capital_layer": "simulated",
             "account_type": "simulated",
+            "account": "ashare_sim",
+            "broker_contract": "tradingagent.ashare.paper_broker.v1",
+            "authority_id": "ashare-capital-v1",
             "valid_until": "2026-07-13",
             "status": "failed",
             "retry_attempt": 2,
@@ -2236,14 +2225,22 @@ class SimLoopTest(unittest.TestCase):
         def execute_sim_order(
             order: dict[str, object], market: str, account: object = None
         ) -> object:
+            del account
             self.executed_orders.append(dict(order))
             received_markets.append(market)
             return sim_broker.execute_sim_order(
                 order,
                 market=market,
-                account=account,
+                account={
+                    "account_id": "ashare_sim",
+                    "market": "ashare",
+                    "broker_contract": "tradingagent.ashare.paper_broker.v1",
+                    "authority_id": "ashare-capital-v1",
+                    "authority_generation": 1,
+                    "cash": 50_000.0,
+                    "positions": {},
+                },
                 config={
-                    "signals_dir": self.tmp_path / "signals",
                     "bypass_market_hours": True,
                 },
             )
@@ -2255,7 +2252,7 @@ class SimLoopTest(unittest.TestCase):
                         "close": 10.0,
                         "bar_time": "2026-07-13T10:00:00+08:00",
                         "volume": 100_000.0,
-                        "provider": "sharedsignals_api_realtime_5min",
+                        "provider": "fixture.tradingdatas.realtime-5min.v1",
                     }
                 ]
 

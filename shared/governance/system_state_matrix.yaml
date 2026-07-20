@@ -3,8 +3,8 @@ entries:
   - entry_id: sharedsignals_v1_query
     state: TARGET_CONTRACT
     layer: local_isolated_candidate
-    owner: SharedSignals
-    canonical_path: SharedSignals:/v1/query
+    owner: TradingDatas
+    canonical_path: TradingDatas:/v1/query
     production_verified: false
     last_verified_at: "2026-07-18"
     evidence:
@@ -28,7 +28,7 @@ entries:
       - fixture_and_contract_testing
       - provider_neutral_v1_client_in_local_candidate
     prohibited_uses:
-      - claim_sharedsignals_runtime_available
+      - claim_tradingdatas_runtime_available
       - fallback_to_legacy_endpoint_or_sqlite
     successor: sharedsignals.query_result.v1
   - entry_id: tradingagent_sharedsignals_v1_integration_probe
@@ -47,7 +47,7 @@ entries:
       - same_as_of_semantic_consistency_and_row_pit_validation
       - content_addressed_non_authority_readiness_receipt
     prohibited_uses:
-      - claim_sharedsignals_live_runtime_available
+      - claim_tradingdatas_live_runtime_available
       - infer_production_or_trading_authority
       - follow_unfrozen_pagination_contract
       - store_credentials_in_probe_manifest_or_receipt
@@ -211,7 +211,7 @@ entries:
     prohibited_uses:
       - claim_fixture_verifier_as_production_market_authority
       - claim_local_integrity_hash_as_external_authentication
-      - infer_live_sharedsignals_or_exchange_market_truth
+      - infer_live_tradingdatas_or_exchange_market_truth
       - accept_unbound_mark_or_quote_for_nonempty_capital_or_execution_effects
       - authorize_real_trading
     successor: tradingagent.market_evidence_authority.v1
@@ -587,7 +587,7 @@ entries:
       - output_root_independent_business_bundle_validation
       - isolated_fixture_only_review_artifacts
     prohibited_uses:
-      - claim_live_sharedsignals
+      - claim_live_tradingdatas
       - claim_realtime_market_paper_runtime
       - write_formal_sample_journal_or_promotion_evidence
       - network_or_broker_access
@@ -699,7 +699,7 @@ entries:
       - scheduler_contract_and_recovery_design
     prohibited_uses:
       - infer_cron_or_scheduler_installed
-      - consume_unfrozen_sharedsignals_runtime
+      - consume_unfrozen_tradingdatas_runtime
       - deploy_or_trigger_production
     successor: tradingagent.live_paper_scheduler.v1
   - entry_id: tradingagent_run_bundle_store
@@ -816,6 +816,46 @@ entries:
       - apply_cron_without_authorization
       - execute_retired_ashare_wrappers
     successor: shared/crontab.txt
+  - entry_id: tradingagent_mini_hermes_retirement
+    state: RETIRED_BLOCKED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/execution/AGENTS.md
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - tests/test_mini_hermes_retirement.py
+      - tests/test_ashare_sim.py
+      - shared/governance/legacy_inventory.yaml
+    allowed_uses:
+      - repository_retirement_guard
+      - installed_runtime_readback_with_zero_only_tombstones
+    prohibited_uses:
+      - restore_mini_hermes_webhook_or_file_consumer
+      - restore_real_signal_queue
+      - infer_server_or_mini_installed_runtime_is_clean
+      - live_broker_or_real_capital_execution
+    successor: market_specific_paper_and_future_live_broker_adapters
+  - entry_id: tradingagent_market_lane_governance
+    state: CURRENT_VERIFIED
+    layer: local_isolated_candidate
+    owner: TradingAgent
+    canonical_path: shared/governance/market_lanes.yaml
+    production_verified: false
+    last_verified_at: "2026-07-20"
+    evidence:
+      - tests/test_market_lane_governance.py
+      - scripts/validate_market_lane.py
+      - docs/architecture.md
+    allowed_uses:
+      - validate_long_lived_market_worktree_branch_and_path_ownership
+      - register_disjoint_market_specific_simulation_and_future_adapter_contracts
+    prohibited_uses:
+      - infer_any_future_live_adapter_is_implemented
+      - infer_market_worktree_changes_are_merged_or_deployed
+      - share_market_accounts_credentials_payloads_or_order_state_machines
+      - enable_live_trading
+    successor: market_specific_lanes_with_shared_mechanical_kernel_only
   - entry_id: tradingagent_installed_cron
     state: CURRENT_VERIFIED
     layer: production_runtime_read_only_snapshot
@@ -861,7 +901,7 @@ entries:
       - inspect_detached_candidate_and_release_receipt_read_only
     prohibited_uses:
       - infer_active_service_cutover
-      - infer_live_sharedsignals_or_scheduler
+      - infer_live_tradingdatas_or_scheduler
       - infer_real_llm_or_trading_authority
       - bind_public_ingress
     successor: real_data_paper_phase_requires_separate_authorization
@@ -882,7 +922,7 @@ entries:
       - tests/test_architecture_contract_guards.py
     allowed_uses:
       - read_only_simulation_dashboard
-      - explicitly_configured_sharedsignals_v1_market_context
+      - explicitly_configured_tradingdatas_v1_market_context
       - single_user_authenticated_remote_entry_target
     prohibited_uses:
       - write_capital_or_orders

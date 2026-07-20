@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Read-only opening acceptance for A-share simulated trading.
+"""Retired A-share opening-acceptance compatibility library.
 
-Validates SharedSignals 5-minute data, server-local simulated trade samples,
-receipts and review artifacts after the market opens. Alerts are produced only
-when anomalies are detected; the script never creates orders or writes ledger
-state.
-
-All market data checks use TradingagentDataReader (SharedSignals HTTP API).
-Direct SQLite reads from the sibling SharedSignals system are removed —
-production must use the API exclusively and fail closed.
+The historical direct CLI is permanently tombstoned.  Tests and forensic code
+may call the pure validation functions only with an explicitly injected fixture
+or TradingDatas V1 data port; this module never constructs a legacy reader.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from shared.governance.retirement import require_explicit_data_port, retired_cli
+
+if __name__ == "__main__":
+    raise SystemExit(retired_cli("ashare_opening_validator"))
+
 from Ashare.sim_executor import _is_supported_ashare_code
-from shared.data.reader import TradingagentDataReader
 from shared.execution.execution_lineage import ASHARE_EXECUTION_LINEAGE_ID
 from shared.runtime_test.ashare_preopen_dry_run import _api_daily_coverage_from_reader
 
@@ -792,10 +796,12 @@ def _has_warning_alerts(alerts: list[dict[str, Any]]) -> bool:
 
 
 def _resolve_reader(reader: Any | None) -> Any:
-    """Return the provided reader or create a new TradingagentDataReader."""
-    if reader is not None:
-        return reader
-    return TradingagentDataReader()
+    """Require a caller-owned fixture or TradingDatas V1 data port."""
+
+    return require_explicit_data_port(
+        reader,
+        context="ashare_opening_validator",
+    )
 
 
 def validate_pre_open(
@@ -1117,25 +1123,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    now = _parse_now(args.now)
-    if args.pre_open:
-        report = validate_pre_open(now=now, min_symbols=max(1, int(args.min_symbols)))
-    elif args.first_sample:
-        report = first_sample_alerts(
-            signals_dir=args.signals_dir,
-            local_sim_path=args.local_sim_path,
-            receipt_path=args.receipt_path,
-            review_path=args.review_path,
-            no_trade_log_path=args.no_trade_log_path,
-            now=now,
-            min_symbols=args.min_symbols,
-            wait_minutes=args.wait_minutes,
-        )
-    else:
-        report = validate_opening(now=now, min_symbols=args.min_symbols)
-    print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-    return 2 if report.get("status") == "fail" else 0
+    del argv
+    return retired_cli("ashare_opening_validator")
 
 
 if __name__ == "__main__":
