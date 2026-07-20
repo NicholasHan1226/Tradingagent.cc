@@ -62,7 +62,7 @@ def _finite_number(value: Any) -> float | None:
         return None
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return None
     return parsed if parsed == parsed and abs(parsed) != float("inf") else None
 
@@ -269,13 +269,34 @@ def _mainboard_rows(
 
 
 def _mark_portfolio(
-    positions: Mapping[str, Mapping[str, Any]], mark_prices: Mapping[str, Any]
+    positions: Mapping[str, Mapping[str, Any]],
+    mark_prices: Mapping[str, Any],
+    mainboard_rows: Sequence[Mapping[str, Any]],
 ) -> tuple[dict[str, float] | None, str | None]:
     value = unrealized = 0.0
+    rows_by_symbol = {_symbol(row): row for row in mainboard_rows}
     for symbol, position in positions.items():
+        row = rows_by_symbol.get(symbol)
+        if row is None:
+            return None, f"mark_evidence_missing:{symbol}"
+        if row.get("suspended") is not False:
+            return None, f"mark_instrument_suspended:{symbol}"
+        if regime_reason := _price_limit_regime_reason(row):
+            return None, f"mark_{regime_reason}:{symbol}"
+        previous_close = _finite_number(row.get("previous_close_cny"))
+        if previous_close is None or previous_close <= 0.0:
+            return None, f"mark_price_limit_evidence_missing:{symbol}"
         mark = _finite_number(mark_prices.get(symbol))
         if mark is None or mark <= 0.0:
             return None, f"mark_unavailable:{symbol}"
+        if price_reason := _price_limit_reason(
+            symbol=symbol,
+            previous_close=previous_close,
+            reference=mark,
+            fill=mark,
+            mark=mark,
+        ):
+            return None, f"mark_{price_reason}:{symbol}"
         market_value = int(position["quantity"]) * mark
         value += market_value
         unrealized += market_value - _number(position["entry_cost_cny"])
@@ -286,8 +307,9 @@ def _mark_portfolio(
     }, None
 
 
-def _fill_price(reference_price: float, side: str) -> tuple[float, float, str]:
-    reality = ashare_execution_reality()
+def _fill_price(
+    reference_price: float, side: str, *, reality: Any
+) -> tuple[float, float, str]:
     slippage_bps = reality.conservative_label_slippage_bps_per_side
     tick = Decimal(str(reality.price_tick_cny))
     if not tick.is_finite() or tick <= 0:
@@ -467,9 +489,14 @@ def run_fixture_twenty_day_loop(
             ]
             reason = evidence_reason
         else:
-            mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
             universe_rows, context, universe_reason = _mainboard_rows(day.instruments)
             universe = [_symbol(row) for row in universe_rows]
+            if universe_reason:
+                mark, mark_reason = None, universe_reason
+            else:
+                mark, mark_reason = _mark_portfolio(
+                    positions, day.mark_prices, universe_rows
+                )
             samples = [
                 {
                     "sample_type": "observation",
@@ -489,9 +516,14 @@ def run_fixture_twenty_day_loop(
             reason = universe_reason
         elif mark is None:
             reason = str(mark_reason)
-        elif universe_rows:
+        elif candidate_rows := [
+            row
+            for row in universe_rows
+            if _symbol(row) not in positions
+            or str(row.get("signal") or "buy").strip().lower() == "sell"
+        ]:
             candidate = min(
-                universe_rows,
+                candidate_rows,
                 key=lambda row: (
                     -_number(row.get("rank_score"), float("-inf")),
                     _symbol(row),
@@ -534,7 +566,8 @@ def run_fixture_twenty_day_loop(
                 elif mark_price is None or mark_price <= 0.0:
                     reason = f"mark_unavailable:{symbol}"
                 else:
-                    fill, slippage, _ = _fill_price(reference, side)
+                    reality = ashare_execution_reality()
+                    fill, slippage, _ = _fill_price(reference, side, reality=reality)
                     if fill <= 0.0:
                         reason = "invalid_fill_price"
                     elif price_reason := _price_limit_reason(
@@ -549,7 +582,7 @@ def run_fixture_twenty_day_loop(
                         holding_quantity = int(holding["quantity"])
                         quantity = min(holding_quantity, bar_capacity)
                         notional = quantity * fill
-                        fees = ashare_execution_reality().calculate_fees(side, notional)
+                        fees = reality.calculate_fees(side, notional)
                         cash = round(cash + notional - _number(fees["total"]), 2)
                         sold_cost = round(
                             _number(holding["entry_cost_cny"])
@@ -600,7 +633,8 @@ def run_fixture_twenty_day_loop(
             elif mark_price is None or mark_price <= 0.0:
                 reason = f"mark_unavailable:{symbol}"
             else:
-                fill, slippage, _ = _fill_price(reference, side)
+                reality = ashare_execution_reality()
+                fill, slippage, _ = _fill_price(reference, side, reality=reality)
                 risk_price = max(fill, mark_price)
                 budget = min(
                     policy.single_name_cap_cny,
@@ -635,7 +669,7 @@ def run_fixture_twenty_day_loop(
                 ):
                     reason = "minimum_economic_order_not_met"
                 else:
-                    fees = ashare_execution_reality().calculate_fees(side, notional)
+                    fees = reality.calculate_fees(side, notional)
                     total = notional + _number(fees["total"])
                     if total > cash:
                         reason = "insufficient_cash_after_fee"
@@ -657,8 +691,10 @@ def run_fixture_twenty_day_loop(
                             policy=policy,
                         )
                         reason = "simulated_buy_filled"
-        if not evidence_reason:
-            mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
+        if not evidence_reason and not universe_reason:
+            mark, mark_reason = _mark_portfolio(
+                positions, day.mark_prices, universe_rows
+            )
             if receipt and mark is None:
                 raise RuntimeError("fixture_mark_required_before_simulated_receipt")
         if not evidence_reason:

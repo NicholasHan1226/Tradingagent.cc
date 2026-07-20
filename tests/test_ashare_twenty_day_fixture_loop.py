@@ -364,6 +364,18 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
         days[1].trade_date,
         [
             {
+                "symbol": "600000.SH",
+                "price": 10,
+                "volume": 1,
+                "rank_score": 0,
+                "suspended": False,
+                "previous_close_cny": 10,
+                "bar_volume_shares": 100_000,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
+            },
+            {
                 "symbol": "600001.SH",
                 "price": 10,
                 "volume": 1,
@@ -374,10 +386,10 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
                 "price_limit_regime": "standard_mainboard",
                 "price_limit_exempt": False,
                 "new_listing": False,
-            }
+            },
         ],
         _evidence(days[1].trade_date),
-        {"600000.SH": 70},
+        {"600000.SH": 11, "600001.SH": 10},
     )
     days[2] = FixtureDay(
         days[2].trade_date,
@@ -401,7 +413,7 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
     )
     result = run_fixture_twenty_day_loop(days)
     assert result["days"][1]["reason_code"] == "single_name_mark_limit_breached"
-    assert result["days"][1]["reconcile"]["gross_exposure_cny"] == 49_000
+    assert result["days"][1]["reconcile"]["gross_exposure_cny"] == 7_700
     assert result["days"][2]["reconcile"]["realized_pnl_cny"] == 6_968.79
     missing = _days(
         first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
@@ -443,6 +455,77 @@ def test_invalid_evidence_does_not_consume_marks_or_change_valuation() -> None:
     assert reconcile["position_count"] == 1
     assert reconcile["status"] == "fixture_blocked"
     assert reconcile["reason_code"] == "evidence_state_invalid"
+
+
+def _held_mark_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "symbol": "600000.SH",
+        "price": 20,
+        "volume": 1,
+        "rank_score": 0,
+        "suspended": False,
+        "previous_close_cny": 20,
+        "bar_volume_shares": 100_000,
+        "price_limit_regime": "standard_mainboard",
+        "price_limit_exempt": False,
+        "new_listing": False,
+    }
+    row.update(overrides)
+    return row
+
+
+def _held_mark_days(
+    *, mark: object, rows: list[dict[str, object]] | None = None
+) -> list[FixtureDay]:
+    days = _days(
+        first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
+        first_marks={"600000.SH": 20},
+    )
+    days[1] = FixtureDay(
+        days[1].trade_date,
+        [_held_mark_row()] if rows is None else rows,
+        _evidence(days[1].trade_date),
+        {"600000.SH": mark},
+    )
+    return days
+
+
+def test_held_mark_requires_same_day_canonical_row_and_limits() -> None:
+    normal = run_fixture_twenty_day_loop(_held_mark_days(mark=20))
+    second = normal["days"][1]
+    assert second["simulated_receipt"] is None
+    assert second["reconcile"]["status"] == "fixture_reconciled"
+    assert second["reconcile"]["market_value_cny"] == 6_000
+
+    for mark, reason in (
+        (1000, "mark_price_limit_violation:600000.SH"),
+        (1, "mark_price_limit_violation:600000.SH"),
+        (True, "mark_unavailable:600000.SH"),
+        (20.005, "mark_price_tick_invalid:600000.SH"),
+        (10**400, "mark_unavailable:600000.SH"),
+        (-(10**400), "mark_unavailable:600000.SH"),
+    ):
+        blocked = run_fixture_twenty_day_loop(_held_mark_days(mark=mark))["days"][1]
+        assert blocked["reconcile"]["status"] == "fixture_blocked"
+        assert blocked["reconcile"]["market_value_cny"] is None
+        assert blocked["reconcile"]["reason_code"] == reason
+
+    missing = run_fixture_twenty_day_loop(_held_mark_days(mark=20, rows=[]))["days"][1]
+    assert missing["reconcile"]["reason_code"] == "mark_evidence_missing:600000.SH"
+    regime_unknown = run_fixture_twenty_day_loop(
+        _held_mark_days(mark=20, rows=[_held_mark_row(price_limit_regime="unknown")])
+    )["days"][1]
+    assert (
+        regime_unknown["reconcile"]["reason_code"]
+        == "mark_price_limit_regime_invalid:600000.SH"
+    )
+    aliases = run_fixture_twenty_day_loop(
+        _held_mark_days(
+            mark=20,
+            rows=[_held_mark_row(symbol="600000"), _held_mark_row(symbol="600000.SH")],
+        )
+    )["days"][1]
+    assert aliases["reconcile"]["reason_code"] == "duplicate_instrument_symbol"
 
 
 def test_real_mode_and_non_twenty_days_are_rejected() -> None:
@@ -947,6 +1030,38 @@ def test_boolean_and_nonfinite_numeric_inputs_fail_closed(
                 }
             ],
             first_marks=marks,  # type: ignore[arg-type]
+        )
+    )
+    assert result["days"][0]["reason_code"] == reason
+    assert result["days"][0]["simulated_receipt"] is None
+
+
+@pytest.mark.parametrize(
+    ("row_override", "reason"),
+    [
+        ({"price": 10**400}, "invalid_reference_price"),
+        ({"price": -(10**400)}, "invalid_reference_price"),
+        ({"previous_close_cny": 10**400}, "price_limit_evidence_missing"),
+        ({"previous_close_cny": -(10**400)}, "price_limit_evidence_missing"),
+        ({"rank_score": 10**400}, "rank_score_invalid"),
+        ({"rank_score": -(10**400)}, "rank_score_invalid"),
+    ],
+)
+def test_unbounded_integer_numeric_inputs_fail_closed(
+    row_override: dict, reason: str
+) -> None:
+    result = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 10,
+                    "volume": 1,
+                    "rank_score": 1,
+                    **row_override,
+                }
+            ],
+            first_marks={"600000.SH": 10},
         )
     )
     assert result["days"][0]["reason_code"] == reason

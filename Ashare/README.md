@@ -32,7 +32,11 @@ Each `FixtureDay` must explicitly supply a current `mark_prices` mapping for
 every open position. Cost basis and mark are separate: reconciliation reports
 realized/unrealized PnL, market value, equity, and gross exposure from current
 marks. A missing or invalid mark blocks reconciliation and all new simulated
-orders for that day; it never silently reuses the entry price.
+orders for that day; it never silently reuses the entry price. Every held symbol
+also needs a same-day canonical mainboard row with `suspended=false`, standard
+price-limit regime authority, valid tick-aligned `previous_close_cny`, and a
+mark within canonical price limits. Held rows are valuation evidence only and
+are excluded from candidate selection.
 
 The loop keeps `ashare-capital-v1` at 50,000 CNY simulated capital and applies
 mainboard-only filtering, canonical capital-policy lots/limits, deterministic
