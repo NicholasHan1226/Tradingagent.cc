@@ -6,6 +6,7 @@ from pathlib import Path
 
 from Crypto.common import CryptoConfig
 from Crypto.market_data import CryptoMarketData
+from Crypto.sim_executor import CryptoLegacyExecutionRetired
 from Crypto.simulator import CryptoSimulator
 from Crypto.workflow import CryptoWorkflow
 
@@ -42,13 +43,14 @@ class FakeCryptoReader:
 
 
 class CryptoPhaseDToolsTest(unittest.TestCase):
-    def test_crypto_config_is_usdt_24x7_shadow_only(self) -> None:
+    def test_crypto_config_is_usdt_24x7_simulated_only(self) -> None:
         config = CryptoConfig()
 
         self.assertEqual(config.market, "crypto")
         self.assertEqual(config.capital.currency, "USDT")
         self.assertEqual(config.session.type, "24x7")
-        self.assertEqual(config.capital.allowed_layers, ("shadow", "simulated"))
+        self.assertEqual(config.capital.default_layer, "simulated")
+        self.assertEqual(config.capital.allowed_layers, ("simulated",))
 
     def test_market_data_reads_sharedsignals_crypto_market(self) -> None:
         reader = FakeCryptoReader()
@@ -60,11 +62,18 @@ class CryptoPhaseDToolsTest(unittest.TestCase):
         self.assertIn(("Crypto", "BTCUSDT", "", "20260702"), reader.calls)
 
     def test_simulator_rejects_real_or_signed_payloads(self) -> None:
-        simulator = CryptoSimulator(CryptoConfig(), CryptoMarketData(CryptoConfig(), reader=FakeCryptoReader()))
+        simulator = CryptoSimulator(
+            CryptoConfig(), CryptoMarketData(CryptoConfig(), reader=FakeCryptoReader())
+        )
 
         with self.assertRaisesRegex(RuntimeError, "unsafe fields"):
             simulator.simulate(
-                {"symbol": "BTCUSDT", "quantity": 1, "trade_date": "20260702", "api_key": "x"},
+                {
+                    "symbol": "BTCUSDT",
+                    "quantity": 1,
+                    "trade_date": "20260702",
+                    "api_key": "x",
+                },
                 {"account_type": "simulated"},
             )
         with self.assertRaisesRegex(RuntimeError, "real/live"):
@@ -73,27 +82,19 @@ class CryptoPhaseDToolsTest(unittest.TestCase):
                 {"account_type": "real"},
             )
 
-    def test_workflow_writes_shadow_pending_only(self) -> None:
+    def test_legacy_workflow_fails_closed_without_writing_shadow_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            workflow = CryptoWorkflow(
-                CryptoConfig(),
-                reader=FakeCryptoReader(),
-                signals_dir=Path(tmp) / "signals",
-            )
+            signals = Path(tmp) / "signals"
+            with self.assertRaisesRegex(
+                CryptoLegacyExecutionRetired, "crypto-capital-v1"
+            ):
+                CryptoWorkflow(
+                    CryptoConfig(),
+                    reader=FakeCryptoReader(),
+                    signals_dir=signals,
+                )
 
-            result = workflow.run_crypto_shadow_cycle("20260702")
-            pending = list((Path(tmp) / "signals" / "shadow" / "pending").glob("*.json"))
-            filled = list((Path(tmp) / "signals" / "shadow" / "filled").glob("*.json"))
-            root_pending = Path(tmp) / "signals" / "pending"
-
-        self.assertEqual(result["market"], "crypto")
-        self.assertEqual(result["capital_layer"], "shadow")
-        self.assertEqual(result["real_execution"], False)
-        self.assertEqual(result["pending_count"], 0)
-        self.assertEqual(result["filled_count"], 1)
-        self.assertEqual(len(pending), 0)
-        self.assertEqual(len(filled), 1)
-        self.assertFalse(root_pending.exists())
+            self.assertFalse(signals.exists())
 
 
 if __name__ == "__main__":

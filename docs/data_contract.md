@@ -268,9 +268,11 @@ paired 消融要求：
 ## 按市场隔离的 capital contract
 
 本节的 append-only capital ledger 字段只规范 A股与 CNFutures 两套 50,000 CNY
-simulated authority。Crypto 当前使用 `Crypto/config.yaml` 定义的独立 10,000 USDT
-shadow/simulated authority；其金额字段必须显式携带 `market=crypto,currency=USDT`，不得
-套用 `_cny` 字段、固定汇率或国内 ledger authority。三者在 All Markets 层均禁止货币聚合。
+simulated authority。Crypto 的 10,000 USDT 数值只来自 `Crypto/capital_policy.py`，是
+本地 fixture opening candidate，不是 current、runtime、execution 或 durable capital
+authority；`Crypto/config.yaml` 只允许 simulated fixture 写入，既有 shadow artifacts 只读。
+Crypto 金额字段仍必须显式携带 `market=crypto,currency=USDT`，不得套用 `_cny` 字段、
+固定汇率或国内 ledger authority。三个市场在 All Markets 层均禁止货币聚合。
 
 ### 根与文件
 
@@ -295,7 +297,7 @@ shadow/simulated authority；其金额字段必须显式携带 `market=crypto,cu
 }
 ```
 
-CNFutures 使用相同初始权益和 generation，并以 `margin_utilization_limit_pct=0.50` 取代 A股单票/gross 字段。两套国内 policy 均为 `fresh_start_approved`，不接受 cross-market allocations 或 fixed protected cash；Crypto shadow authority 不参与这两套 policy。
+CNFutures 使用相同初始权益和 generation，并以 `margin_utilization_limit_pct=0.50` 取代 A股单票/gross 字段。两套国内 policy 均为 `fresh_start_approved`，不接受 cross-market allocations 或 fixed protected cash；Crypto 的 10,000 USDT 本地 fixture opening candidate 不参与这两套 policy，也不是第三套 current capital snapshot authority。
 
 ### Snapshot/provider state
 

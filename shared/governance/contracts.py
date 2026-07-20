@@ -118,6 +118,7 @@ class LegacyEntry:
     owner: str
     paths: tuple[str, ...]
     runtime_paths: tuple[str, ...]
+    retired_paths: tuple[str, ...]
     replacement: str
     compatibility_mode: str
     sunset_phase: str
@@ -208,10 +209,18 @@ def load_legacy_inventory(
         runtime_paths = _optional_repository_paths(
             item.get("runtime_paths"), "runtime_paths"
         )
-        overlap = set(paths).intersection(runtime_paths)
-        if overlap:
+        retired_paths = _optional_repository_paths(
+            item.get("retired_paths"), "retired_paths"
+        )
+        overlaps = (
+            set(paths).intersection(runtime_paths)
+            | set(paths).intersection(retired_paths)
+            | set(runtime_paths).intersection(retired_paths)
+        )
+        if overlaps:
             raise ValueError(
-                f"legacy paths and runtime_paths must not overlap: {sorted(overlap)}"
+                "legacy paths, runtime_paths and retired_paths must not overlap: "
+                f"{sorted(overlaps)}"
             )
         entries.append(
             LegacyEntry(
@@ -219,6 +228,7 @@ def load_legacy_inventory(
                 owner=_text(item.get("owner"), "owner"),
                 paths=paths,
                 runtime_paths=runtime_paths,
+                retired_paths=retired_paths,
                 replacement=_text(item.get("replacement"), "replacement"),
                 compatibility_mode=compatibility_mode,
                 sunset_phase=_text(item.get("sunset_phase"), "sunset_phase"),

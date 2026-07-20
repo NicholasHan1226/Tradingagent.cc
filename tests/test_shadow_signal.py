@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from shared.execution.shadow_signal import write_shadow_signal
 from shared.execution.signal_state_machine import SignalStateMachine, read_json
+from shared.governance.retirement import RetiredRuntimeError
 
 
 class ShadowSignalTest(unittest.TestCase):
@@ -36,11 +37,15 @@ class ShadowSignalTest(unittest.TestCase):
 
             self.assertEqual(result["status"], "filled")
             self.assertTrue(filled.exists())
-            self.assertFalse((Path(tmp) / "shadow" / "pending" / "SHADOW-1.json").exists())
+            self.assertFalse(
+                (Path(tmp) / "shadow" / "pending" / "SHADOW-1.json").exists()
+            )
 
     def test_shadow_settlement_failure_moves_card_to_failed_not_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.object(SignalStateMachine, "fill", side_effect=RuntimeError("boom")):
+            with patch.object(
+                SignalStateMachine, "fill", side_effect=RuntimeError("boom")
+            ):
                 result = write_shadow_signal(self._card("SHADOW-FAIL"), Path(tmp))
 
             failed = Path(tmp) / "shadow" / "failed" / "SHADOW-FAIL.json"
@@ -51,6 +56,26 @@ class ShadowSignalTest(unittest.TestCase):
             self.assertTrue(failed.exists())
             self.assertFalse(pending.exists())
             self.assertIn("boom", card["failure_reason"])
+
+    def test_crypto_identity_is_rejected_before_any_signal_write(self) -> None:
+        cases = (
+            {"market": "crypto", "symbol": "BTCUSDT"},
+            {"symbol": "BTCUSD"},
+            {"market": "ashare", "ts_code": "BTC/USDT"},
+            {"base_asset": "BTC", "quote_asset": "USDT"},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "signals"
+            for index, identity in enumerate(cases):
+                card = self._card(f"CRYPTO-{index}")
+                card.update(identity)
+                with self.subTest(identity=identity):
+                    with self.assertRaisesRegex(
+                        RetiredRuntimeError, "legacy_runtime_retired"
+                    ):
+                        write_shadow_signal(card, root)
+
+            self.assertFalse(root.exists())
 
 
 if __name__ == "__main__":

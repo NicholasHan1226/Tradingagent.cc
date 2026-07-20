@@ -53,6 +53,11 @@ def register_sim_executor(
         raise TypeError("sim executor must be callable")
     lane = _governed_lane(market_key)
     if lane is not None:
+        if lane.authority_state != "current_verified_simulated":
+            raise ValueError(
+                "generic executor registration disabled for "
+                f"market={market_key} authority_state={lane.authority_state}"
+            )
         expected_contract = lane.broker_boundary.simulation_contract
         if simulation_contract != expected_contract:
             raise ValueError(
@@ -148,6 +153,9 @@ def build_test_only_legacy_sim_executor(market: str) -> SimExecutor:
 def get_sim_executor(market: str | None) -> SimExecutor | None:
     """Return only an explicitly registered executor; unknown markets fail closed."""
     market_key = _normalize_market(market)
+    lane = _governed_lane(market_key)
+    if lane is None or lane.authority_state != "current_verified_simulated":
+        return None
     registered = _SIM_EXECUTORS.get(market_key)
     if registered is not None:
         return registered.fn
@@ -156,5 +164,8 @@ def get_sim_executor(market: str | None) -> SimExecutor | None:
 
 def get_sim_executor_binding(market: str | None) -> SimExecutorBinding | None:
     """Return the immutable binding for a governed market."""
-
-    return _SIM_EXECUTORS.get(_normalize_market(market))
+    market_key = _normalize_market(market)
+    lane = _governed_lane(market_key)
+    if lane is None or lane.authority_state != "current_verified_simulated":
+        return None
+    return _SIM_EXECUTORS.get(market_key)

@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""Crypto Phase D workflow entrypoints."""
+"""Fail-closed tombstone for the retired Crypto shadow workflow."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
-from Crypto.common import CryptoConfig, load_crypto_config, reject_real_execution_payload
-from Crypto.market_data import CryptoMarketData
-from Crypto.shadow_runner import CryptoShadowRunner
-from Crypto.simulator import CryptoSimulator
-from shared.governance.retirement import require_explicit_data_port
+from Crypto.capital_policy import CRYPTO_CAPITAL_AUTHORITY_ID
+from Crypto.common import CryptoConfig
+from Crypto.sim_executor import CryptoLegacyExecutionRetired
+
+
+def _raise_retired() -> NoReturn:
+    raise CryptoLegacyExecutionRetired(
+        "CryptoWorkflow:legacy_runtime_retired; use the capital-backed fixture runtime for "
+        f"{CRYPTO_CAPITAL_AUTHORITY_ID}"
+    )
 
 
 class CryptoWorkflow:
-    """Wire public Crypto data, local mock simulation, and shadow queue writes."""
+    """Preserve import compatibility while refusing the former writable path."""
 
     def __init__(
         self,
@@ -24,43 +28,19 @@ class CryptoWorkflow:
         reader: Any | None = None,
         signals_dir: Path | str | None = None,
     ) -> None:
-        self.config = config or load_crypto_config()
-        reader = require_explicit_data_port(reader, context="CryptoWorkflow")
-        reject_real_execution_payload(
-            {
-                "capital_layer": self.config.capital.default_layer,
-                "live_broker": self.config.safety.live_broker_enabled,
-            },
-            context="CryptoWorkflow.config",
-        )
-        self.market_data = CryptoMarketData(self.config, reader=reader)
-        self.simulator = CryptoSimulator(self.config, self.market_data)
-        self.shadow_runner = CryptoShadowRunner(
-            self.config,
-            self.market_data,
-            self.simulator,
-            signals_dir=signals_dir,
-        )
+        del config, reader, signals_dir
+        _raise_retired()
 
-    def run_crypto_shadow_cycle(self, as_of: str) -> dict[str, Any]:
-        result = self.shadow_runner.run_shadow(as_of)
-        result.update(
-            {
-                "workflow": "crypto_shadow_cycle",
-                "currency": self.config.capital.currency,
-                "session": self.config.session.type,
-                "public_data_only": True,
-                "real_execution": False,
-                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            }
-        )
-        return result
+    def run_crypto_shadow_cycle(self, as_of: str) -> NoReturn:
+        del as_of
+        _raise_retired()
 
 
-def run_crypto_shadow_cycle(as_of: str, *, reader: Any | None = None) -> dict[str, Any]:
-    """Run one Crypto shadow cycle using the checked-in Crypto config."""
+def run_crypto_shadow_cycle(as_of: str, *, reader: Any | None = None) -> NoReturn:
+    """Reject the former module-level workflow entrypoint."""
 
-    return CryptoWorkflow(reader=reader).run_crypto_shadow_cycle(as_of)
+    del as_of, reader
+    _raise_retired()
 
 
 __all__ = ["CryptoWorkflow", "run_crypto_shadow_cycle"]

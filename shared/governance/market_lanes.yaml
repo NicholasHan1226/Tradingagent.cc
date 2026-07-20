@@ -50,8 +50,8 @@ lanes:
   - lane_id: crypto
     worktree_basename: market-crypto
     branch: codex/market-crypto-lane
-    authority_id: crypto-shadow-sim-v1
-    authority_state: isolated_shadow_only
+    authority_id: crypto-capital-v1
+    authority_state: local_fixture_simulated_candidate
     broker_boundary:
       simulation_contract: tradingagent.crypto.paper_broker.v1
       external_test_contracts:
@@ -70,3 +70,10 @@ lanes:
       - AGENTS.md
       - README.md
       - STATUS.md
+
+retired_authorities:
+  - authority_id: crypto-shadow-sim-v1
+    lane_id: crypto
+    successor_authority_id: crypto-capital-v1
+    state: historical_evidence_only
+    read_only: true

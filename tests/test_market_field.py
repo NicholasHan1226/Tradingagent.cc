@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.execution import shadow_broker
+from shared.governance.retirement import RetiredRuntimeError
 from shared.review import benchmark, daily_review
 
 
@@ -34,14 +35,13 @@ class MarketFieldTest(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_shadow_broker_accepts_only_three_owned_markets(self) -> None:
+    def test_shadow_broker_writes_only_non_crypto_owned_markets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             self._patch_shadow_paths(tmp_path)
 
             for market, symbol in (
                 ("ashare", "600519.SH"),
-                ("crypto", "BTCUSDT"),
                 ("cn_futures", "IF2601.CFFEX"),
             ):
                 result = shadow_broker.record_shadow(
@@ -59,8 +59,57 @@ class MarketFieldTest(unittest.TestCase):
                 self.assertTrue(result["recorded"])
                 self.assertEqual(result["market"], market)
 
+            for market, symbol in (
+                ("crypto", "BTCUSDT"),
+                (None, "BTC/USDT"),
+                ("ashare", "BTC-USDT"),
+            ):
+                with self.subTest(market=market, symbol=symbol):
+                    with self.assertRaisesRegex(
+                        RetiredRuntimeError, "legacy_runtime_retired"
+                    ):
+                        shadow_broker.record_shadow(
+                            {
+                                "ts_code": symbol,
+                                "side": "buy",
+                                "quantity": 1,
+                                "price": 10.0,
+                                "trade_date": "2026-06-30",
+                                "capital_layer": "shadow",
+                            },
+                            "multi_market_strategy",
+                            market=market,
+                        )
+
+            self.assertEqual(
+                len(
+                    shadow_broker.SHADOW_TRADES.read_text(encoding="utf-8").splitlines()
+                ),
+                2,
+            )
+
             shadow_broker.SHADOW_DIR.mkdir(parents=True, exist_ok=True)
             with shadow_broker.SHADOW_TRADES.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "trade_id": "SHADOW-crypto-history",
+                            "strategy_name": "multi_market_strategy",
+                            "trade_date": "2026-06-30",
+                            "ts_code": "BTCUSDT",
+                            "market": "crypto",
+                            "side": "buy",
+                            "quantity": 1,
+                            "price": 10.0,
+                            "amount": 10.0,
+                            "net_amount": 15.0,
+                            "pnl": 0.0,
+                            "capital_layer": "shadow",
+                            "created_at": "2026-06-30T09:00:00",
+                        }
+                    )
+                    + "\n"
+                )
                 handle.write(
                     json.dumps(
                         {

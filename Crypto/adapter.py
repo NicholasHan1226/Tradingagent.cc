@@ -21,7 +21,17 @@ DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "max_symbols": 50,
 }
 
-_ACTIVE_STATUSES = {"1", "active", "enabled", "listed", "open", "trading", "true", "yes", "y"}
+_ACTIVE_STATUSES = {
+    "1",
+    "active",
+    "enabled",
+    "listed",
+    "open",
+    "trading",
+    "true",
+    "yes",
+    "y",
+}
 
 
 def _is_active(asset: dict[str, Any]) -> bool:
@@ -32,7 +42,9 @@ def _is_active(asset: dict[str, Any]) -> bool:
         if isinstance(value, str):
             return value.strip().lower() in _ACTIVE_STATUSES
         return bool(value)
-    status = str(asset.get("status") or asset.get("market_status") or "").strip().lower()
+    status = (
+        str(asset.get("status") or asset.get("market_status") or "").strip().lower()
+    )
     return not status or status in _ACTIVE_STATUSES
 
 
@@ -41,7 +53,9 @@ def _is_binance_usdt(asset: dict[str, Any]) -> bool:
     if not symbol.endswith("USDT"):
         return False
 
-    quote_asset = str(asset.get("quote_asset") or asset.get("quote") or "").strip().upper()
+    quote_asset = (
+        str(asset.get("quote_asset") or asset.get("quote") or "").strip().upper()
+    )
     if quote_asset and quote_asset != "USDT":
         return False
 
@@ -50,7 +64,7 @@ def _is_binance_usdt(asset: dict[str, Any]) -> bool:
 
 
 class CryptoAdapter(MarketAdapter):
-    """Market-specific adapter for Crypto shadow screening and execution."""
+    """Market-specific read adapter for explicit Crypto research evidence."""
 
     def __init__(
         self,
@@ -60,7 +74,10 @@ class CryptoAdapter(MarketAdapter):
         strategy_dir: Path | None = None,
     ) -> None:
         self.reader = reader
-        self.universe_filter = {**DEFAULT_UNIVERSE_FILTER, **dict(universe_filter or {})}
+        self.universe_filter = {
+            **DEFAULT_UNIVERSE_FILTER,
+            **dict(universe_filter or {}),
+        }
         self.strategy_dir = strategy_dir or STRATEGY_DIR
 
     def get_market(self) -> str:

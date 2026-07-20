@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from CNFutures import sim_runner
+from Crypto.capital_policy import CRYPTO_CAPITAL_AUTHORITY_ID
 from shared.capital.market_policy import MarketPolicy
 from shared.execution.execution_lineage import (
     build_execution_lineage,
@@ -19,7 +20,7 @@ from shared.execution import sim_executor_registry
 
 
 CRYPTO_CONTRACT = "tradingagent.crypto.paper_broker.v1"
-CRYPTO_AUTHORITY = "crypto-shadow-sim-v1"
+CRYPTO_AUTHORITY = CRYPTO_CAPITAL_AUTHORITY_ID
 CNF_CONTRACT = "tradingagent.cnfutures.paper_broker.v1"
 CNF_AUTHORITY = "cn-futures-capital-v1"
 
@@ -86,7 +87,6 @@ def test_registry_rejects_any_market_outside_the_three_owned_lanes() -> None:
 @pytest.mark.parametrize(
     ("market", "contract", "authority_id"),
     [
-        ("crypto", CRYPTO_CONTRACT, CRYPTO_AUTHORITY),
         ("cn_futures", CNF_CONTRACT, CNF_AUTHORITY),
     ],
 )
@@ -116,9 +116,10 @@ def test_dispatch_rejects_ashare_account_in_another_market_lane(
     assert calls == []
 
 
-def test_dispatch_rejects_unbound_governed_account_before_executor() -> None:
+def test_crypto_dispatch_is_retired_before_any_registered_executor() -> None:
     calls: list[object] = []
-    _register_filled_stub("crypto", CRYPTO_CONTRACT, CRYPTO_AUTHORITY, calls)
+    with pytest.raises(ValueError, match="registration disabled"):
+        _register_filled_stub("crypto", CRYPTO_CONTRACT, CRYPTO_AUTHORITY, calls)
 
     result = execute_sim_order(
         order={"order_id": "UNBOUND-CRYPTO", "authority_generation": 2},
@@ -128,7 +129,7 @@ def test_dispatch_rejects_unbound_governed_account_before_executor() -> None:
     )
 
     assert result.status == "failed"
-    assert result.raw_response["reason"] == "sim_account_binding_invalid"
+    assert result.raw_response["reason"] == "crypto_general_executor_retired"
     assert calls == []
 
 

@@ -42,7 +42,14 @@ def test_registry_has_three_disjoint_market_lanes() -> None:
     assert len({lane.authority_id for lane in registry.lanes}) == 3
     assert registry.get("ashare").authority_state == "current_verified_simulated"
     assert registry.get("cnfutures").authority_state == "current_verified_simulated"
-    assert registry.get("crypto").authority_state == "isolated_shadow_only"
+    crypto = registry.get("crypto")
+    assert crypto.authority_state == "local_fixture_simulated_candidate"
+    assert crypto.authority_id == "crypto-capital-v1"
+    retired = registry.get_retired_authority("crypto-shadow-sim-v1")
+    assert retired.lane_id == "crypto"
+    assert retired.successor_authority_id == crypto.authority_id
+    assert retired.state == "historical_evidence_only"
+    assert retired.read_only is True
     assert (
         len({lane.broker_boundary.simulation_contract for lane in registry.lanes}) == 3
     )

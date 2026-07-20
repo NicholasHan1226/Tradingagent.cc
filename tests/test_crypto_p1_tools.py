@@ -50,7 +50,9 @@ class CryptoP1ToolsTest(unittest.TestCase):
         self.assertEqual(result["capital_layer"], "shadow")
 
     def test_forward_validation_reports_oos_quality_and_pnl(self) -> None:
-        validator = CryptoForwardValidation(records=_crypto_records(), train_end="2026-07-01")
+        validator = CryptoForwardValidation(
+            records=_crypto_records(), train_end="2026-07-01"
+        )
 
         result = validator.evaluate(as_of="2026-07-02")
 
@@ -76,7 +78,7 @@ class CryptoP1ToolsTest(unittest.TestCase):
         self.assertEqual(result["oos_count"], 2)
         self.assertEqual(result["total_pnl"], 5.0)
 
-    def test_strategy_promotion_has_five_tier_sim_ready_gate(self) -> None:
+    def test_strategy_scorecard_never_auto_promotes_to_sim(self) -> None:
         config = CryptoConfig(
             promotion={"min_shadow_trades": 3, "min_positive_days_pct": 0.6},
         )
@@ -88,10 +90,16 @@ class CryptoP1ToolsTest(unittest.TestCase):
 
         result = promotion.score("momentum_shadow", as_of="2026-07-02")
 
-        self.assertEqual(promotion.TIERS, ("research", "shadow_candidate", "shadow", "sim_candidate", "sim"))
-        self.assertEqual(result["tier"], "sim")
-        self.assertTrue(result["eligible_for_sim"])
-        self.assertEqual(result["target_layer"], "simulated")
+        self.assertEqual(
+            promotion.TIERS,
+            ("research", "shadow_candidate", "shadow", "sim_candidate", "sim"),
+        )
+        self.assertEqual(result["tier"], "sim_candidate")
+        self.assertFalse(result["eligible_for_sim"])
+        self.assertFalse(result["automatic_promotion_enabled"])
+        self.assertFalse(result["promotion_authority"])
+        self.assertTrue(result["manual_review_required"])
+        self.assertEqual(result["target_layer"], "shadow")
         self.assertFalse(result["real_execution"])
 
     def test_p1_tools_reject_real_execution_payloads(self) -> None:

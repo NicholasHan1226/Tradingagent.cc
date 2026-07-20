@@ -193,12 +193,9 @@ entries:
     owner: TradingAgent
     paths:
       - cron/auto_pipeline.sh
-      - shared/wrappers/job_us_sim.sh
       - shared/wrappers/job_crypto_sim.sh
-      - shared/wrappers/job_pm_sim.sh
-      - shared/wrappers/job_hk_sim.sh
+      - shared/wrappers/job_crypto_scan.sh
       - shared/wrappers/job_cn_futures_sim.sh
-      - shared/wrappers/job_pm_research_probability.sh
       - shared/wrappers/job_self_heal.sh
       - shared/wrappers/job_self_heal_night.sh
       - shared/wrappers/job_market_capital_reconcile.sh
@@ -210,8 +207,6 @@ entries:
       - shared/wrappers/job_cn_futures_opening_validation.sh
       - shared/wrappers/job_cn_futures_first_sample_alert.sh
       - shared/execution/auto_pipeline.py
-      - Crypto/adapter.py
-      - Crypto/market_data.py
       - Crypto/workflow.py
       - shared/review/self_heal_loop.py
       - shared/runtime_test/market_capital_reconcile_ops.py
@@ -222,6 +217,13 @@ entries:
       - CNFutures/observation_report.py
       - shared/crontab.txt
       - crontab.txt
+    retired_paths:
+      - shared/wrappers/job_us_sim.sh
+      - shared/wrappers/job_pm_sim.sh
+      - shared/wrappers/job_hk_sim.sh
+      - shared/wrappers/job_pm_research_probability.sh
+      - shared/execution/risk_manager.py
+      - shared/signals/signal_cards.jsonl
     replacement: tradingdatas_catalog_query_port_then_market_specific_fixture_validated_compositions
     compatibility_mode: retirement_pending_verification
     sunset_phase: market_kernel_cutover

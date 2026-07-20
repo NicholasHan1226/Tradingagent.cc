@@ -1,0 +1,189 @@
+{
+  "contract": "tradingagent.crypto.fixture_spot_cycle.v1",
+  "fixture_id": "crypto-weekend-btc-closed-bars-v1",
+  "source_kind": "fixture",
+  "wire_contract": {
+    "catalog": {
+      "method": "GET",
+      "path": "/v1/catalog"
+    },
+    "query": {
+      "method": "POST",
+      "path": "/v1/query"
+    }
+  },
+  "symbol": "BTCUSDT",
+  "as_of": "2026-07-19T00:00:00Z",
+  "metadata": {
+    "state": "ready",
+    "degraded": false,
+    "freshness": {
+      "state": "fresh"
+    },
+    "quality": {
+      "state": "pass"
+    },
+    "receipt_id": "fixture-receipt-crypto-weekend-btc-v1",
+    "observed_at": "2026-07-19T00:01:00Z",
+    "data_through": "2026-07-19T00:00:00Z",
+    "lineage": {
+      "source": "checked_in_fixture",
+      "fixture_id": "crypto-weekend-btc-closed-bars-v1"
+    }
+  },
+  "instrument": {
+    "base_asset": "BTC",
+    "quote_asset": "USDT",
+    "price_tick": "0.01",
+    "quantity_step": "0.000001",
+    "min_quantity": "0.000001",
+    "min_notional": "10"
+  },
+  "next_executable_quote": {
+    "symbol": "BTCUSDT",
+    "observed_at": "2026-07-19T00:01:00Z",
+    "bid": "49990.00",
+    "ask": "50000.00"
+  },
+  "bars_5m": [
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:00:00Z",
+      "close_time": "2026-07-18T23:05:00Z",
+      "open": "49000.00",
+      "high": "49150.00",
+      "low": "48950.00",
+      "close": "49100.00",
+      "volume": "10.25",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:05:00Z",
+      "close_time": "2026-07-18T23:10:00Z",
+      "open": "49100.00",
+      "high": "49250.00",
+      "low": "49050.00",
+      "close": "49200.00",
+      "volume": "11.00",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:10:00Z",
+      "close_time": "2026-07-18T23:15:00Z",
+      "open": "49200.00",
+      "high": "49350.00",
+      "low": "49150.00",
+      "close": "49300.00",
+      "volume": "12.50",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:15:00Z",
+      "close_time": "2026-07-18T23:20:00Z",
+      "open": "49300.00",
+      "high": "49450.00",
+      "low": "49250.00",
+      "close": "49400.00",
+      "volume": "9.75",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:20:00Z",
+      "close_time": "2026-07-18T23:25:00Z",
+      "open": "49400.00",
+      "high": "49550.00",
+      "low": "49350.00",
+      "close": "49500.00",
+      "volume": "13.10",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:25:00Z",
+      "close_time": "2026-07-18T23:30:00Z",
+      "open": "49500.00",
+      "high": "49650.00",
+      "low": "49450.00",
+      "close": "49600.00",
+      "volume": "10.80",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:30:00Z",
+      "close_time": "2026-07-18T23:35:00Z",
+      "open": "49600.00",
+      "high": "49750.00",
+      "low": "49550.00",
+      "close": "49700.00",
+      "volume": "14.20",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:35:00Z",
+      "close_time": "2026-07-18T23:40:00Z",
+      "open": "49700.00",
+      "high": "49850.00",
+      "low": "49650.00",
+      "close": "49800.00",
+      "volume": "15.00",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:40:00Z",
+      "close_time": "2026-07-18T23:45:00Z",
+      "open": "49800.00",
+      "high": "49900.00",
+      "low": "49750.00",
+      "close": "49850.00",
+      "volume": "10.40",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:45:00Z",
+      "close_time": "2026-07-18T23:50:00Z",
+      "open": "49850.00",
+      "high": "49950.00",
+      "low": "49800.00",
+      "close": "49900.00",
+      "volume": "11.30",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:50:00Z",
+      "close_time": "2026-07-18T23:55:00Z",
+      "open": "49900.00",
+      "high": "50000.00",
+      "low": "49850.00",
+      "close": "49950.00",
+      "volume": "12.20",
+      "closed": true
+    },
+    {
+      "symbol": "BTCUSDT",
+      "open_time": "2026-07-18T23:55:00Z",
+      "close_time": "2026-07-19T00:00:00Z",
+      "open": "49950.00",
+      "high": "50050.00",
+      "low": "49900.00",
+      "close": "50000.00",
+      "volume": "16.75",
+      "closed": true
+    }
+  ],
+  "llm_evidence": {
+    "mode": "offline_fixture",
+    "authority": "none",
+    "network_used": false,
+    "evidence_id": "offline-llm-sidecar-example-v1",
+    "summary": "Offline context only; deterministic code owns evidence, sizing, risk, and orders."
+  }
+}

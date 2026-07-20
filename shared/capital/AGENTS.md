@@ -1,6 +1,6 @@
 # TradingAgent / shared/capital
 
-本目录只拥有 A股与 CNFutures 两个彼此隔离的正式 simulated capital authorities。任何调用必须显式指定 market；缺 authority、lineage、PIT 或 checksum 时 fail closed。Crypto 的 10,000 USDT shadow/simulated authority 由 `Crypto/config.yaml` 与 `shared/markets/sim_capital.py` 管理，不得伪装成本目录第三套 CNY authority。
+本目录只拥有 A股与 CNFutures 两个彼此隔离的正式 simulated capital authorities。任何调用必须显式指定 market；缺 authority、lineage、PIT 或 checksum 时 fail closed。Crypto 的 `Crypto/capital_policy.py` 只定义 10,000 USDT 本地 fixture opening baseline；`Crypto/config.yaml` 只声明币种/风险，`shared/markets/sim_capital.py` 只提供由该 policy 派生的兼容读侧投影。三者都不得伪装成本目录第三套 CNY authority，也不得声称 Crypto 已有 current/runtime/live capital authority。
 
 ## 唯一政策源
 

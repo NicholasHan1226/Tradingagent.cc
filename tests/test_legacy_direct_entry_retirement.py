@@ -18,6 +18,7 @@ from CNFutures import (
 )
 from CNFutures.adapter import CNFuturesAdapter
 from Crypto.adapter import CryptoAdapter
+from Crypto.sim_executor import CryptoLegacyExecutionRetired
 from Crypto.workflow import CryptoWorkflow
 from shared.execution import auto_pipeline
 from shared.data.marketgraph_api import DEFAULT_API_URL as DEFAULT_MARKETGRAPH_API_URL
@@ -97,9 +98,7 @@ def test_library_workflows_require_explicit_data_port(tmp_path: Path) -> None:
     ):
         auto_pipeline.run_auto_pipeline(reader=None)
 
-    with pytest.raises(
-        RetiredRuntimeError, match="tradingdatas_fixture_or_v1_port_required"
-    ):
+    with pytest.raises(CryptoLegacyExecutionRetired, match="legacy_runtime_retired"):
         CryptoWorkflow(reader=None)
 
     with pytest.raises(
