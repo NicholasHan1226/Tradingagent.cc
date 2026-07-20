@@ -12,6 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from shared.execution.execution_reality import ashare_execution_reality
+from shared.universe.policy import InstrumentRole, classify_instrument
+
 
 ACCOUNT_ID = "ashare-capital-v1"
 INITIAL_CASH_CNY = 50_000.0
@@ -23,7 +26,6 @@ MIN_ECONOMIC_ORDER_CNY = 2_000.0
 NO_TRADE_SCORE = 0.60
 _CATALOG_ROUTE = "GET /v1/catalog"
 _QUERY_ROUTE = "POST /v1/query"
-_BLOCKED_BOARDS = frozenset({"chinext", "star", "beijing"})
 
 
 @dataclass(frozen=True)
@@ -50,8 +52,8 @@ def _symbol(row: Mapping[str, Any]) -> str:
     return str(row.get("symbol") or row.get("ts_code") or "").strip().upper()
 
 
-def _board(row: Mapping[str, Any]) -> str:
-    return str(row.get("board") or "").strip().lower()
+def _instrument_type(row: Mapping[str, Any]) -> str:
+    return str(row.get("instrument_type") or "common_stock")
 
 
 def _mainboard_rows(
@@ -61,27 +63,23 @@ def _mainboard_rows(
     context: list[str] = []
     for source in rows:
         row = dict(source)
-        symbol = _symbol(row)
-        board = _board(row)
-        if not symbol:
+        raw_symbol = row.get("symbol") or row.get("ts_code") or ""
+        eligibility = classify_instrument(
+            raw_symbol,
+            instrument_type=_instrument_type(row),
+        )
+        if eligibility.context_only:
+            context.append(eligibility.normalized_symbol)
             continue
-        if bool(row.get("context_only")) or board in _BLOCKED_BOARDS:
-            context.append(symbol)
+        if eligibility.role is not InstrumentRole.MAINBOARD_COMMON_STOCK:
             continue
-        if (
-            board != "mainboard"
-            or str(row.get("instrument_type") or "common_stock") != "common_stock"
-        ):
-            continue
+        row["symbol"] = eligibility.normalized_symbol
         tradable.append(row)
     return tradable, context
 
 
-def _fee(symbol: str, side: str, notional: float) -> float:
-    commission = max(5.0, notional * 0.0003)
-    transfer = notional * 0.00001 if symbol.endswith(".SH") else 0.0
-    stamp = notional * 0.0005 if side == "sell" else 0.0
-    return round(commission + transfer + stamp, 2)
+def _fees(side: str, notional: float) -> dict[str, Any]:
+    return ashare_execution_reality().calculate_fees(side, notional)
 
 
 def _day_report(
@@ -198,7 +196,8 @@ def run_fixture_twenty_day_loop(
                 else:
                     quantity = int(holding["quantity"])
                     notional = quantity * price
-                    fee = _fee(symbol, side, notional)
+                    fees = _fees(side, notional)
+                    fee = _number(fees["total"])
                     cash = round(cash + notional - fee, 2)
                     del positions[symbol]
                     receipt = {
@@ -208,6 +207,13 @@ def run_fixture_twenty_day_loop(
                         "quantity": quantity,
                         "price": price,
                         "fee_cny": fee,
+                        "cost_model_version": fees["execution_reality_model_version"],
+                        "commission_schedule_status": fees[
+                            "commission_schedule_status"
+                        ],
+                        "commission_schedule_version": fees[
+                            "commission_schedule_version"
+                        ],
                         "capital_layer": "simulated",
                         "real_trading_enabled": False,
                     }
@@ -224,7 +230,8 @@ def run_fixture_twenty_day_loop(
                 budget = min(MAX_SINGLE_NAME_CNY, MAX_GROSS_CNY - gross, cash)
                 quantity = int(budget // (price * LOT_SIZE)) * LOT_SIZE
                 notional = quantity * price
-                fee = _fee(symbol, side, notional) if quantity else 0.0
+                fees = _fees(side, notional) if quantity else _fees(side, 0.0)
+                fee = _number(fees["total"])
                 if quantity == 0:
                     reason = "lot_or_single_name_cap_not_feasible"
                 elif notional < MIN_ECONOMIC_ORDER_CNY:
@@ -245,6 +252,13 @@ def run_fixture_twenty_day_loop(
                         "quantity": quantity,
                         "price": price,
                         "fee_cny": fee,
+                        "cost_model_version": fees["execution_reality_model_version"],
+                        "commission_schedule_status": fees[
+                            "commission_schedule_status"
+                        ],
+                        "commission_schedule_version": fees[
+                            "commission_schedule_version"
+                        ],
                         "capital_layer": "simulated",
                         "real_trading_enabled": False,
                     }
