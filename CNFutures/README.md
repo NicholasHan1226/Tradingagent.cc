@@ -38,7 +38,11 @@ TradingDatas catalog/query futures bars/spec evidence
 
 ## Fixture/mock 最小纵向切片
 
-`CNFutures.fixture_closed_loop` 是当前唯一可直接运行的期货纵向切片。它只接收显式 `fixture_only=true` 的内存 mock，既不访问 TradingDatas、SQLite 或网络，也不声明或猜测真实 dataset ID。切片依次验证 fixture 数据证据、夜盘交易日、换月保护、一手保证金/止损预算、多空开平、tick 对齐、费用、逐日 MTM、维持保证金强平风险、平仓和最终 reconcile，并输出独立的样本复盘记录与 lineage hash。
+`CNFutures.fixture_closed_loop` 是当前唯一可直接运行的期货纵向切片。它只接收显式 `fixture_only=true` 的内存 mock，既不访问 TradingDatas、SQLite 或网络，也不声明或猜测真实 dataset ID。切片依次验证 fixture 数据证据、注入的 exchange trade-date/calendar eligibility、产品 session windows、换月保护、一手保证金/止损预算、多空开平、tick 对齐、费用、逐日 MTM、维持保证金强平风险、平仓和最终 reconcile，并输出独立的样本复盘记录与 lineage hash。
+
+每个 bar、mark、close 必须各自提供可解析的 `timestamp` 与不晚于该时点的 `available_at`，并强制 `entry < mark <= close`；强平可按 mark 成交但仍需 close 时间证据。交易资格只来自 fixture 注入的 `exchange_calendar`，其中 `trade_date`、`calendar_eligible`、`session`、`available_at` 必填；缺失或与合约声明的 product-specific `session_windows`/`night_session_end_minute` 不一致即 fail closed。合约 symbol 必须是与 product 一致的具体合约，不能用泛品种字符串。
+
+费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。
 
 它的静态合约参数仅用于模拟 bootstrap，不能替代 TradingDatas 将来交接的可追溯合约规格。真实 handoff 到位前，任何非 fixture 输入都必须 fail closed；该切片不安装 cron、不连接 broker，也不写入 ledger/outbox 文件。
 

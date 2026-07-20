@@ -10,10 +10,11 @@ TradingDatas runtime integration.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 import hashlib
 import json
 import math
+import re
 from typing import Any, Mapping
 
 from .session import CN_TZ, parse_cn_datetime
@@ -23,6 +24,9 @@ ACCOUNT_ID = "cn-futures-capital-v1"
 INITIAL_EQUITY_CNY = 50_000.0
 MAX_MARGIN_CNY = 25_000.0
 SIMULATION_MARKER = "fixture_mock_only"
+_CONTRACT_SYMBOL = re.compile(
+    r"^(?P<product>[a-z]+)(?P<month>\d{3,4})\.(?P<exchange>[A-Z]+)$"
+)
 
 
 class FixtureContractError(ValueError):
@@ -39,7 +43,11 @@ class FixtureContract:
     maintenance_margin_rate: float
     open_fee_rate: float
     close_fee_rate: float
+    open_fee_type: str
+    close_fee_type: str
     night_session: bool
+    night_session_end_minute: int | None
+    session_windows: Mapping[str, tuple[tuple[int, int], ...]]
     active_symbol: str
 
     @classmethod
@@ -47,6 +55,8 @@ class FixtureContract:
         symbol = _text(raw, "symbol")
         active_symbol = _text(raw, "active_symbol")
         product = _text(raw, "product")
+        _validate_contract_identity(symbol, product, "symbol")
+        _validate_contract_identity(active_symbol, product, "active_symbol")
         values = {
             name: _positive(raw, name)
             for name in (
@@ -72,11 +82,24 @@ class FixtureContract:
             and raw.get("night_session") is not False
         ):
             raise FixtureContractError("night_session must be a boolean")
+        night_session = bool(raw["night_session"])
+        night_session_end_minute = _minute_or_none(raw.get("night_session_end_minute"))
+        if night_session != (night_session_end_minute is not None):
+            raise FixtureContractError(
+                "night_session and night_session_end_minute must agree"
+            )
+        session_windows = _session_windows(raw, night_session, night_session_end_minute)
+        open_fee_type = _fee_type(raw, "open_fee_type")
+        close_fee_type = _fee_type(raw, "close_fee_type")
         return cls(
             symbol=symbol,
             active_symbol=active_symbol,
             product=product,
-            night_session=bool(raw["night_session"]),
+            night_session=night_session,
+            night_session_end_minute=night_session_end_minute,
+            session_windows=session_windows,
+            open_fee_type=open_fee_type,
+            close_fee_type=close_fee_type,
             **values,
         )
 
@@ -92,9 +115,21 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     _validate_fixture_evidence(fixture)
     contract = FixtureContract.from_mapping(_mapping(fixture, "contract"))
     bar = _mapping(fixture, "bar")
-    timestamp = parse_cn_datetime(bar.get("timestamp"))
-    if timestamp is None:
-        raise FixtureContractError("bar timestamp must be an ISO-8601 datetime")
+    mark = _mapping(fixture, "mark")
+    close = _mapping(fixture, "close")
+    timestamp = _event_timestamp(bar, "bar")
+    mark_timestamp = _event_timestamp(mark, "mark")
+    close_timestamp = _event_timestamp(close, "close")
+    if not timestamp < mark_timestamp <= close_timestamp:
+        raise FixtureContractError("entry timestamp must be before mark and close")
+    evidence = _mapping(fixture, "data_evidence")
+    _assert_available_no_later_than(evidence, "data_evidence", timestamp)
+    _assert_available_no_later_than(
+        _mapping(fixture, "contract"), "contract", timestamp
+    )
+    _assert_available_no_later_than(bar, "bar", timestamp)
+    _assert_available_no_later_than(mark, "mark", mark_timestamp)
+    _assert_available_no_later_than(close, "close", close_timestamp)
     price = _positive(bar, "price")
     requested_side = _text(fixture, "side").lower()
     if requested_side not in {"long", "short"}:
@@ -102,14 +137,14 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     requested_quantity = _whole_positive(fixture, "quantity")
     generation = _whole_positive(fixture, "generation")
 
-    trade_date, session = _trade_date_and_session(timestamp, contract.night_session)
+    trade_date, session = _trade_date_and_session(timestamp, contract, evidence)
     base = _base_result(
         contract,
         timestamp,
         trade_date,
         session,
         generation,
-        _mapping(fixture, "data_evidence"),
+        evidence,
     )
     candidate = {
         "symbol": contract.symbol,
@@ -139,22 +174,32 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         candidate["counterfactual_only"] = True
         return _hold(base, candidate, "one_lot_margin_or_stop_budget_ineligible")
 
-    open_fee = entry * contract.multiplier * quantity * contract.open_fee_rate
+    open_fee = _fee(
+        entry,
+        contract.multiplier,
+        quantity,
+        contract.open_fee_rate,
+        contract.open_fee_type,
+    )
     margin = entry * contract.multiplier * quantity * contract.initial_margin_rate
     cash_after_open = INITIAL_EQUITY_CNY - open_fee
-    mark_price = _positive(_mapping(fixture, "mark"), "price")
+    mark_price = _positive(mark, "price")
     unrealized = _pnl(requested_side, entry, mark_price, contract.multiplier, quantity)
     equity_before_close = cash_after_open + unrealized
     maintenance = (
         mark_price * contract.multiplier * quantity * contract.maintenance_margin_rate
     )
     liquidation = equity_before_close < maintenance
-    close_price_raw = (
-        mark_price if liquidation else _positive(_mapping(fixture, "close"), "price")
-    )
+    close_price_raw = mark_price if liquidation else _positive(close, "price")
     close_side_is_buy = requested_side == "short"
     close_price = _round_tick(close_price_raw, contract.tick_size, close_side_is_buy)
-    close_fee = close_price * contract.multiplier * quantity * contract.close_fee_rate
+    close_fee = _fee(
+        close_price,
+        contract.multiplier,
+        quantity,
+        contract.close_fee_rate,
+        contract.close_fee_type,
+    )
     realized = _pnl(requested_side, entry, close_price, contract.multiplier, quantity)
     final_cash = cash_after_open + realized - close_fee
     open_order = _order(
@@ -234,27 +279,141 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> None:
         raise FixtureContractError("fixture lineage_ref is required")
 
 
-def _trade_date_and_session(
-    timestamp: datetime, night_session: bool
-) -> tuple[str, str]:
+def _validate_contract_identity(symbol: str, product: str, field_name: str) -> None:
+    match = _CONTRACT_SYMBOL.fullmatch(symbol)
+    if match is None or match.group("product") != product.lower():
+        raise FixtureContractError(
+            f"{field_name} must be a concrete contract for the declared product"
+        )
+
+
+def _minute_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value < 24 * 60
+    ):
+        raise FixtureContractError("night_session_end_minute must be a valid minute")
+    return value
+
+
+def _session_windows(
+    raw: Mapping[str, Any],
+    night_session: bool,
+    night_session_end_minute: int | None,
+) -> Mapping[str, tuple[tuple[int, int], ...]]:
+    value = raw.get("session_windows")
+    if not isinstance(value, Mapping):
+        raise FixtureContractError("session_windows must be a mapping")
+    required = {"day_morning", "day_afternoon"}
+    if night_session:
+        required.add("night")
+    if set(value) != required:
+        raise FixtureContractError(
+            "session_windows must contain exactly the enabled sessions"
+        )
+    parsed: dict[str, tuple[tuple[int, int], ...]] = {}
+    for name in sorted(required):
+        windows = value.get(name)
+        if not isinstance(windows, (list, tuple)) or not windows:
+            raise FixtureContractError(f"session_windows.{name} must be non-empty")
+        rows: list[tuple[int, int]] = []
+        for window in windows:
+            if (
+                not isinstance(window, (list, tuple))
+                or len(window) != 2
+                or any(
+                    isinstance(item, bool) or not isinstance(item, int)
+                    for item in window
+                )
+            ):
+                raise FixtureContractError(
+                    f"session_windows.{name} entries must be minute pairs"
+                )
+            start, end = window
+            if not 0 <= start <= end < 24 * 60:
+                raise FixtureContractError(
+                    f"session_windows.{name} minute range is invalid"
+                )
+            rows.append((start, end))
+        parsed[name] = tuple(rows)
+    if night_session and parsed["night"][-1][1] != night_session_end_minute:
+        raise FixtureContractError("night window must end at night_session_end_minute")
+    return parsed
+
+
+def _fee_type(raw: Mapping[str, Any], key: str) -> str:
+    value = raw.get(key)
+    if value not in {"rate", "fixed_per_lot"}:
+        raise FixtureContractError(f"{key} must be rate or fixed_per_lot")
+    return str(value)
+
+
+def _event_timestamp(raw: Mapping[str, Any], name: str) -> datetime:
+    timestamp = parse_cn_datetime(raw.get("timestamp"))
+    if timestamp is None:
+        raise FixtureContractError(f"{name} timestamp must be an ISO-8601 datetime")
+    _assert_available_no_later_than(raw, name, timestamp)
+    return timestamp
+
+
+def _assert_available_no_later_than(
+    raw: Mapping[str, Any], name: str, timestamp: datetime
+) -> None:
+    available_at = parse_cn_datetime(raw.get("available_at"))
+    if available_at is None:
+        raise FixtureContractError(f"{name} available_at must be an ISO-8601 datetime")
+    if available_at > timestamp:
+        raise FixtureContractError(f"{name} became available after its event timestamp")
+
+
+def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str:
     local = timestamp.astimezone(CN_TZ)
     minute = local.hour * 60 + local.minute
-    weekday = local.weekday()
-    if weekday >= 5 and not (weekday == 6 and night_session and minute >= 21 * 60):
-        return local.strftime("%Y%m%d"), "closed"
-    if night_session and (minute >= 21 * 60 or minute < 2 * 60 + 30):
-        anchor = (
-            local.date() if minute >= 21 * 60 else (local - timedelta(days=1)).date()
+    for name, windows in contract.session_windows.items():
+        if any(start <= minute <= end for start, end in windows):
+            return name
+    return "closed"
+
+
+def _fee(
+    price: float,
+    multiplier: float,
+    quantity: int,
+    value: float,
+    fee_type: str,
+) -> float:
+    if fee_type == "fixed_per_lot":
+        return value * quantity
+    return price * multiplier * quantity * value
+
+
+def _trade_date_and_session(
+    timestamp: datetime, contract: FixtureContract, evidence: Mapping[str, Any]
+) -> tuple[str, str]:
+    calendar = _mapping(evidence, "exchange_calendar")
+    trade_date = calendar.get("trade_date")
+    if not isinstance(trade_date, str) or not re.fullmatch(r"\d{8}", trade_date):
+        raise FixtureContractError("exchange calendar trade_date must be YYYYMMDD")
+    eligible = calendar.get("calendar_eligible")
+    if eligible is not True and eligible is not False:
+        raise FixtureContractError("exchange calendar eligibility is required")
+    _assert_available_no_later_than(calendar, "exchange_calendar", timestamp)
+    actual_session = _session_for_contract(timestamp, contract)
+    declared_session = calendar.get("session")
+    if not isinstance(declared_session, str) or not declared_session:
+        raise FixtureContractError("exchange calendar session is required")
+    if not eligible:
+        if declared_session != "closed":
+            raise FixtureContractError("ineligible exchange calendar must be closed")
+        return trade_date, "closed"
+    if actual_session == "closed" or declared_session != actual_session:
+        raise FixtureContractError(
+            "exchange calendar session is not permitted by contract"
         )
-        trade_day = anchor + timedelta(days=1)
-        while trade_day.weekday() >= 5:
-            trade_day += timedelta(days=1)
-        return trade_day.strftime("%Y%m%d"), "night"
-    if weekday < 5 and 9 * 60 <= minute <= 11 * 60 + 30:
-        return local.strftime("%Y%m%d"), "day_morning"
-    if weekday < 5 and 13 * 60 <= minute <= 15 * 60:
-        return local.strftime("%Y%m%d"), "day_afternoon"
-    return local.strftime("%Y%m%d"), "closed"
+    return trade_date, actual_session
 
 
 def _base_result(
