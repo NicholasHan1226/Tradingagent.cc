@@ -386,7 +386,7 @@ def test_capital_writer_is_not_exported_and_default_ledger_is_read_only(
 
 def test_runtime_ledger_factory_has_one_source_caller() -> None:
     callers = []
-    for path in (ROOT / "Crypto").rglob("*.py"):
+    for path in sorted((ROOT / "Crypto").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
         count = source.count("_open_runtime_ledger(")
         if count:
