@@ -48,7 +48,17 @@ def _days(
     *, first_rows: list[dict] | None = None, first_marks: dict[str, float] | None = None
 ) -> list[FixtureDay]:
     valid_first_rows = (
-        [{"suspended": False, **row} for row in first_rows] if first_rows else []
+        [
+            {
+                "suspended": False,
+                "previous_close_cny": row.get("price"),
+                "bar_volume_shares": 100_000 if row.get("volume", 1) else 0,
+                **row,
+            }
+            for row in first_rows
+        ]
+        if first_rows
+        else []
     )
     return [
         FixtureDay(
@@ -119,6 +129,42 @@ def test_fixture_loop_records_fill_with_structured_evidence_slippage_and_policy(
             _evidence(decision_time="2026-07-01T12:00:00+08:00"),
             "decision_time_outside_fixture_session",
         ),
+        (
+            _evidence(decision_time="2026-07-01T11:30:00.000001+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T11:30:59+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T15:00:00.000001+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T15:00:59+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T09:15:00+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T09:25:00+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T09:26:00+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T09:29:59.999999+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T14:57:00.000001+08:00"),
+            "decision_time_outside_fixture_session",
+        ),
         (_evidence(session="unknown"), "fixture_session_invalid"),
     ],
 )
@@ -149,6 +195,28 @@ def test_fixture_evidence_gate_fails_closed_before_candidate(
             "reason_code": reason,
         }
     ]
+    assert first["reconcile"]["status"] == "fixture_blocked"
+    assert first["reconcile"]["reason_code"] == reason
+    assert first["reconcile"]["market_value_cny"] is None
+    assert first["reconcile"]["equity_cny"] is None
+
+
+@pytest.mark.parametrize(
+    "decision_time", ["09:30:00", "11:30:00", "13:00:00", "14:57:00"]
+)
+def test_exact_fixture_session_endpoints_are_accepted(decision_time: str) -> None:
+    days = _days(
+        first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
+        first_marks={"600000.SH": 20},
+    )
+    days[0] = FixtureDay(
+        days[0].trade_date,
+        days[0].instruments,
+        _evidence(days[0].trade_date, decision_time=f"2026-07-01T{decision_time}+08:00"),
+        days[0].mark_prices,
+    )
+    result = run_fixture_twenty_day_loop(days)
+    assert result["days"][0]["simulated_receipt"] is not None
 
 
 def test_reconcile_has_one_stable_result_shape() -> None:
@@ -163,6 +231,7 @@ def test_reconcile_has_one_stable_result_shape() -> None:
     assert set(result["days"][0]["reconcile"]) == {
         "account_id",
         "capital_layer",
+        "account_type",
         "real_trading_enabled",
         "non_authoritative",
         "durable",
@@ -193,9 +262,9 @@ def test_reconcile_has_one_stable_result_shape() -> None:
             },
             "instrument_suspended",
         ),
-        (
-            {"symbol": "600000.SH", "price": 20, "volume": 0, "rank_score": 1},
-            "volume_unavailable",
+            (
+                {"symbol": "600000.SH", "price": 20, "volume": 0, "rank_score": 1},
+                "bar_volume_shares_invalid",
         ),
         (
             {"symbol": "600000.SH", "price": 0, "volume": 1, "rank_score": 1},
@@ -241,10 +310,10 @@ def test_only_canonical_indices_and_namespaced_aggregates_are_context() -> None:
         _days(first_rows=rows, first_marks={"600000.SH": 20})
     )
     assert result["days"][0]["universe"]["context_only"] == [
-        "399006.SZ",
         "000688.SH",
-        "SECTOR:AI",
+        "399006.SZ",
         "INDUSTRY:ROBOT",
+        "SECTOR:AI",
     ]
 
 
@@ -295,6 +364,8 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
                 "volume": 1,
                 "rank_score": 1,
                 "suspended": False,
+                "previous_close_cny": 10,
+                "bar_volume_shares": 100_000,
             }
         ],
         _evidence(days[1].trade_date),
@@ -310,6 +381,8 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
                 "rank_score": 1,
                 "signal": "sell",
                 "suspended": False,
+                "previous_close_cny": 20,
+                "bar_volume_shares": 100_000,
             }
         ],
         _evidence(days[2].trade_date),
@@ -332,6 +405,33 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
     blocked = run_fixture_twenty_day_loop(missing)["days"][1]
     assert blocked["simulated_receipt"] is None
     assert blocked["reconcile"]["status"] == "fixture_blocked"
+
+
+def test_invalid_evidence_does_not_consume_marks_or_change_valuation() -> None:
+    days = _days(
+        first_rows=[{"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}],
+        first_marks={"600000.SH": 20},
+    )
+    days[1] = FixtureDay(
+        days[1].trade_date,
+        [],
+        _evidence(days[1].trade_date, state="failed"),
+        {"600000.SH": 1000},
+    )
+    result = run_fixture_twenty_day_loop(days)
+    first, invalid = result["days"][:2]
+    assert invalid["reason_code"] == "evidence_state_invalid"
+    assert invalid["sample_review"][0]["sample_type"] == "data_reject"
+    reconcile = invalid["reconcile"]
+    assert reconcile["cash_cny"] == first["reconcile"]["cash_cny"]
+    assert reconcile["realized_pnl_cny"] == first["reconcile"]["realized_pnl_cny"]
+    assert reconcile["market_value_cny"] is None
+    assert reconcile["gross_exposure_cny"] is None
+    assert reconcile["unrealized_pnl_cny"] is None
+    assert reconcile["equity_cny"] is None
+    assert reconcile["position_count"] == 1
+    assert reconcile["status"] == "fixture_blocked"
+    assert reconcile["reason_code"] == "evidence_state_invalid"
 
 
 def test_real_mode_and_non_twenty_days_are_rejected() -> None:
@@ -363,7 +463,7 @@ def _assert_no_duplicate_literal_keys(node: ast.AST) -> None:
 
 def test_fixture_result_is_non_authoritative_with_stable_result_shapes() -> None:
     _assert_no_duplicate_literal_keys(
-        ast.parse(inspect.getsource(fixture_loop.run_fixture_twenty_day_loop))
+        ast.parse(inspect.getsource(fixture_loop))
     )
     result = run_fixture_twenty_day_loop(
         _days(
@@ -387,6 +487,7 @@ def test_fixture_result_is_non_authoritative_with_stable_result_shapes() -> None
         "promotion_eligible",
         "account_id",
         "capital_layer",
+        "account_type",
         "real_trading_enabled",
         "day_count",
         "days",
@@ -406,6 +507,19 @@ def test_fixture_result_is_non_authoritative_with_stable_result_shapes() -> None
         for mapping in _mappings(result)
         for key in ("capital_commit_id", "outbox_id")
         if key in mapping
+    )
+    assert all(
+        mapping["account_type"] == "simulated"
+        and mapping["capital_layer"] == "simulated"
+        and mapping["real_trading_enabled"] is False
+        for mapping in _mappings(result)
+        if "capital_layer" in mapping
+    )
+    assert all(
+        mapping.get("account_type") not in {"real", "live"}
+        and mapping.get("capital_layer") not in {"real", "live"}
+        and mapping.get("real_trading_enabled") is not True
+        for mapping in _mappings(result)
     )
     assert result["calendar_authoritative"] is False
     assert result["real_session_verified"] is False
@@ -473,13 +587,14 @@ def test_buy_risk_uses_current_mark_not_only_fill_price() -> None:
             first_rows=[
                 {"symbol": "600000.SH", "price": 10, "volume": 1, "rank_score": 1}
             ],
-            first_marks={"600000.SH": 100},
+            first_marks={"600000.SH": 11},
         )
     )
     first = result["days"][0]
-    assert first["reason_code"] == "lot_or_single_name_cap_not_feasible"
-    assert first["simulated_receipt"] is None
-    assert first["reconcile"]["gross_exposure_cny"] == 0.0
+    receipt = first["simulated_receipt"]
+    assert receipt is not None
+    assert receipt["quantity"] == 600
+    assert first["reconcile"]["gross_exposure_cny"] == 6_600
 
 
 def test_zero_tick_rounded_sell_is_rejected_without_cash_mutation() -> None:
@@ -499,6 +614,8 @@ def test_zero_tick_rounded_sell_is_rejected_without_cash_mutation() -> None:
                 "rank_score": 1,
                 "signal": "sell",
                 "suspended": False,
+                "previous_close_cny": 20,
+                "bar_volume_shares": 100_000,
             }
         ],
         _evidence(days[1].trade_date),
@@ -509,3 +626,196 @@ def test_zero_tick_rounded_sell_is_rejected_without_cash_mutation() -> None:
     assert second["reason_code"] == "invalid_fill_price"
     assert second["simulated_receipt"] is None
     assert second["reconcile"]["cash_cny"] == first["reconcile"]["cash_cny"]
+
+
+def test_missing_previous_close_fails_closed() -> None:
+    days = _days()
+    days[0] = FixtureDay(
+        days[0].trade_date,
+        [
+            {
+                "symbol": "600000.SH",
+                "price": 20,
+                "volume": 1,
+                "rank_score": 1,
+                "suspended": False,
+                "bar_volume_shares": 100_000,
+            }
+        ],
+        _evidence(days[0].trade_date),
+        {"600000.SH": 20},
+    )
+    result = run_fixture_twenty_day_loop(days)
+    assert result["days"][0]["reason_code"] == "price_limit_evidence_missing"
+    assert result["days"][0]["simulated_receipt"] is None
+
+
+@pytest.mark.parametrize("sell_quote", [1, 1000])
+def test_extreme_sell_quotes_cannot_bypass_price_limits(sell_quote: float) -> None:
+    days = _days(
+        first_rows=[
+            {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}
+        ],
+        first_marks={"600000.SH": 20},
+    )
+    days[1] = FixtureDay(
+        days[1].trade_date,
+        [
+            {
+                "symbol": "600000.SH",
+                "price": sell_quote,
+                "volume": 1,
+                "rank_score": 1,
+                "signal": "sell",
+                "suspended": False,
+                "previous_close_cny": 20,
+                "bar_volume_shares": 100_000,
+            }
+        ],
+        _evidence(days[1].trade_date),
+        {"600000.SH": 20},
+    )
+    result = run_fixture_twenty_day_loop(days)
+    second = result["days"][1]
+    assert second["reason_code"] == "price_limit_violation"
+    assert second["simulated_receipt"] is None
+
+
+def test_extreme_buy_mark_and_off_tick_quote_fail_price_gates() -> None:
+    extreme_mark = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 20,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "previous_close_cny": 20,
+                }
+            ],
+            first_marks={"600000.SH": 100},
+        )
+    )
+    assert extreme_mark["days"][0]["reason_code"] == "price_limit_violation"
+    off_tick = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 10.005,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "previous_close_cny": 10,
+                }
+            ],
+            first_marks={"600000.SH": 10},
+        )
+    )
+    assert off_tick["days"][0]["reason_code"] == "price_tick_invalid"
+
+
+def test_price_limit_boundaries_and_normal_values_can_fill() -> None:
+    upper_bound = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 10.99,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "previous_close_cny": 10,
+                }
+            ],
+            first_marks={"600000.SH": 11},
+        )
+    )
+    assert upper_bound["days"][0]["simulated_receipt"]["fill_price"] == 11
+    days = _days(
+        first_rows=[
+            {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}
+        ],
+        first_marks={"600000.SH": 20},
+    )
+    days[1] = FixtureDay(
+        days[1].trade_date,
+        [
+            {
+                "symbol": "600000.SH",
+                "price": 18.01,
+                "volume": 1,
+                "rank_score": 1,
+                "signal": "sell",
+                "suspended": False,
+                "previous_close_cny": 20,
+                "bar_volume_shares": 100_000,
+            }
+        ],
+        _evidence(days[1].trade_date),
+        {"600000.SH": 20},
+    )
+    lower_bound = run_fixture_twenty_day_loop(days)
+    assert lower_bound["days"][1]["simulated_receipt"]["fill_price"] == 18
+
+
+def test_bar_volume_shares_is_required_and_caps_fixture_quantity() -> None:
+    no_lot_capacity = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 20,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "bar_volume_shares": 999,
+                }
+            ],
+            first_marks={"600000.SH": 20},
+        )
+    )
+    assert (
+        no_lot_capacity["days"][0]["reason_code"]
+        == "bar_participation_capacity_not_feasible"
+    )
+    capped = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 20,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "bar_volume_shares": 2_500,
+                }
+            ],
+            first_marks={"600000.SH": 20},
+        )
+    )
+    assert capped["days"][0]["simulated_receipt"]["quantity"] == 200
+
+
+def test_duplicate_universe_symbols_fail_closed_and_ties_are_deterministic() -> None:
+    duplicate = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1},
+                {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1},
+            ],
+            first_marks={"600000.SH": 20},
+        )
+    )
+    first = duplicate["days"][0]
+    assert first["reason_code"] == "duplicate_instrument_symbol"
+    assert first["universe"] == {"tradable_mainboard": [], "context_only": []}
+    assert first["simulated_receipt"] is None
+
+    rows = [
+        {"symbol": "600001.SH", "price": 20, "volume": 1, "rank_score": 1},
+        {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1},
+    ]
+    marks = {"600000.SH": 20, "600001.SH": 20}
+    forward = run_fixture_twenty_day_loop(_days(first_rows=rows, first_marks=marks))
+    reversed_rows = run_fixture_twenty_day_loop(
+        _days(first_rows=list(reversed(rows)), first_marks=marks)
+    )
+    assert forward["days"][0] == reversed_rows["days"][0]
+    assert forward["days"][0]["simulated_receipt"]["symbol"] == "600000.SH"

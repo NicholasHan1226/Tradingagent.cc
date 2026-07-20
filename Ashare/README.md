@@ -38,9 +38,20 @@ The loop keeps `ashare-capital-v1` at 50,000 CNY simulated capital and applies
 mainboard-only filtering, canonical capital-policy lots/limits, deterministic
 fixture weekday/session checks, T+1 state-machine math, versioned
 execution-reality fees plus conservative per-side slippage, a no-trade score
-band, single-name/gross/cash limits, and explicit no-trade reasons. The
-`ashare_regular` fixture decision window is 09:15-11:30 or 13:00-15:00 Shanghai
-time. It is a bootstrap, not a real exchange-calendar assertion: until fresh
+band, single-name/gross/cash limits, and explicit no-trade reasons. Each
+tradable fixture row must provide a positive finite `previous_close_cny`; the
+canonical price-limit bounds then gate reference price, conservative fill, and
+current mark at valid ticks. New-listing/no-limit and other incomplete trading
+regimes are unsupported and fail closed. Tradable rows must also provide a
+positive integer `bar_volume_shares` in shares; canonical execution-reality
+bar participation capacity caps each simulated fill and capacity below one
+100-share lot fails closed. The
+`ashare_regular` decision gate reads canonical execution-reality sessions: only
+continuous auction 09:30:00-11:30:00 or 13:00:00-14:57:00 Shanghai time is
+supported, with exact endpoints only. Opening/closing auctions and their gaps
+are rejected. An evidence-rejected day does not consume marks or produce a
+valuation. It is a bootstrap, not a real
+exchange-calendar assertion: until fresh
 TradingDatas calendar handoff, all 20 sessions declare
 `calendar_authoritative=false`, `real_session_verified=false`, and are neither
 training- nor promotion-eligible. ChiNext, STAR, and Beijing individual equities are

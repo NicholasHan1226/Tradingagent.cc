@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
-from datetime import datetime
+from datetime import datetime, time
 import re
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
@@ -26,7 +26,6 @@ _NO_TRADE_SCORE = 0.60
 _AGGREGATE_NAMESPACE = re.compile(r"^(?:SECTOR|INDUSTRY):[A-Z0-9._:-]+$")
 _FIXTURE_SESSION = "ashare_regular"
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
-_DECISION_WINDOWS = ((9 * 60 + 15, 11 * 60 + 30), (13 * 60, 15 * 60))
 
 
 @dataclass(frozen=True)
@@ -70,6 +69,68 @@ def _symbol(row: Mapping[str, Any]) -> str:
 
 def _instrument_type(row: Mapping[str, Any]) -> str:
     return str(row.get("instrument_type") or "common_stock")
+
+
+def _tick_aligned(price: float, tick: float) -> bool:
+    if price <= 0.0 or tick <= 0.0:
+        return False
+    try:
+        units = Decimal(str(price)) / Decimal(str(tick))
+        return units == units.quantize(Decimal("1"))
+    except (ArithmeticError, ValueError):
+        return False
+
+
+def _price_limit_reason(
+    *, symbol: str, previous_close: float, reference: float, fill: float, mark: float
+) -> str | None:
+    if previous_close <= 0.0:
+        return "price_limit_evidence_missing"
+    reality = ashare_execution_reality()
+    tick = _number(reality.price_tick_cny, -1.0)
+    if not all(_tick_aligned(price, tick) for price in (reference, fill, mark)):
+        return "price_tick_invalid"
+    try:
+        lower, upper = reality.price_limit_bounds(previous_close, symbol=symbol)
+    except (TypeError, ValueError):
+        return "price_limit_evidence_missing"
+    if not all(lower <= price <= upper for price in (reference, fill, mark)):
+        return "price_limit_violation"
+    return None
+
+
+def _bar_capacity_shares(row: Mapping[str, Any], *, lot_size: int) -> tuple[int, str | None]:
+    raw_volume = row.get("bar_volume_shares")
+    if type(raw_volume) is not int or raw_volume <= 0:
+        return 0, "bar_volume_shares_invalid"
+    participation_cap = _number(
+        ashare_execution_reality().as_engine_config().get("bar_participation_cap"),
+        -1.0,
+    )
+    if not 0.0 < participation_cap <= 1.0 or lot_size <= 0:
+        return 0, "bar_participation_capacity_unavailable"
+    capacity = int(raw_volume * participation_cap)
+    return (capacity // lot_size) * lot_size, None
+
+
+def _execution_supported_session(local_time: time) -> bool:
+    """Read the canonical execution-reality contract; never infer auction support."""
+    sessions = ashare_execution_reality().as_contract().get("sessions", {})
+    if not isinstance(sessions, Mapping):
+        return False
+    for definition in sessions.values():
+        if not isinstance(definition, Mapping) or not definition.get(
+            "execution_supported"
+        ):
+            continue
+        try:
+            start = time.fromisoformat(str(definition["start"]))
+            end = time.fromisoformat(str(definition["end"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start <= local_time <= end:
+            return True
+    return False
 
 
 def _evidence_reason(day: FixtureDay) -> str | None:
@@ -127,8 +188,8 @@ def _evidence_reason(day: FixtureDay) -> str | None:
     if available_at > decision_time:
         return "evidence_available_after_decision"
     local_decision = decision_time.astimezone(_SHANGHAI)
-    decision_minute = local_decision.hour * 60 + local_decision.minute
-    if not any(start <= decision_minute <= end for start, end in _DECISION_WINDOWS):
+    local_time = local_decision.time()
+    if not _execution_supported_session(local_time):
         return "decision_time_outside_fixture_session"
     return None
 
@@ -142,13 +203,17 @@ def _restricted_individual(symbol: str) -> bool:
 
 def _mainboard_rows(
     rows: Sequence[Mapping[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], str | None]:
     tradable: list[dict[str, Any]] = []
     context: list[str] = []
+    seen_symbols: set[str] = set()
     for source in rows:
         row = dict(source)
         raw_symbol = row.get("symbol") or row.get("ts_code") or ""
         normalized = str(raw_symbol).strip().upper()
+        if normalized in seen_symbols:
+            return [], [], "duplicate_instrument_symbol"
+        seen_symbols.add(normalized)
         if _restricted_individual(normalized):
             continue
         eligibility = classify_instrument(
@@ -169,7 +234,9 @@ def _mainboard_rows(
             continue
         row["symbol"] = eligibility.normalized_symbol
         tradable.append(row)
-    return tradable, context
+    tradable.sort(key=_symbol)
+    context.sort()
+    return tradable, context, None
 
 
 def _mark_portfolio(
@@ -241,6 +308,7 @@ def _receipt(
         "commission_schedule_version": fees["commission_schedule_version"],
         "capital_authority_id": policy.capital_authority_id,
         "capital_layer": "simulated",
+        "account_type": "simulated",
         "real_trading_enabled": False,
         "execution_authority": False,
         "durable": False,
@@ -272,6 +340,9 @@ def _report(
         "durable": False,
         "capital_commit_id": None,
         "outbox_id": None,
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "real_trading_enabled": False,
         "reason_code": reason,
         "evidence": {
             "fixture_only": True,
@@ -299,6 +370,7 @@ def _report(
         "reconcile": {
             "account_id": policy.capital_authority_id,
             "capital_layer": "simulated",
+            "account_type": "simulated",
             "real_trading_enabled": False,
             "non_authoritative": True,
             "durable": False,
@@ -344,10 +416,11 @@ def run_fixture_twenty_day_loop(
     journal: list[dict[str, Any]] = []
     for session_index, day in enumerate(days):
         evidence_reason = _evidence_reason(day)
-        mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
         reason = "no_eligible_mainboard_candidate"
         receipt: dict[str, Any] | None = None
         if evidence_reason:
+            mark: dict[str, float] | None = None
+            mark_reason: str | None = evidence_reason
             universe_rows: list[dict[str, Any]] = []
             context: list[str] = []
             universe: list[str] = []
@@ -365,7 +438,8 @@ def run_fixture_twenty_day_loop(
             ]
             reason = evidence_reason
         else:
-            universe_rows, context = _mainboard_rows(day.instruments)
+            mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
+            universe_rows, context, universe_reason = _mainboard_rows(day.instruments)
             universe = [_symbol(row) for row in universe_rows]
             samples = [
                 {
@@ -382,49 +456,84 @@ def run_fixture_twenty_day_loop(
             ]
         if evidence_reason:
             pass
+        elif universe_reason:
+            reason = universe_reason
         elif mark is None:
             reason = str(mark_reason)
         elif universe_rows:
-            candidate = max(
-                universe_rows, key=lambda row: _number(row.get("rank_score"))
+            candidate = min(
+                universe_rows,
+                key=lambda row: (-_number(row.get("rank_score")), _symbol(row)),
             )
             symbol = _symbol(candidate)
             side = str(candidate.get("signal") or "buy").strip().lower()
             reference = _number(candidate.get("price"), -1.0)
-            volume = _number(candidate.get("volume"), -1.0)
+            previous_close = _number(candidate.get("previous_close_cny"), -1.0)
+            mark_price = _number(day.mark_prices.get(symbol), -1.0)
+            lot = int(policy.buy_lot_size_shares or 0)
+            bar_capacity, capacity_reason = _bar_capacity_shares(
+                candidate, lot_size=lot
+            )
             if _number(candidate.get("rank_score")) < _NO_TRADE_SCORE:
                 reason = "no_trade_band"
             elif candidate.get("suspended") is not False:
                 reason = "instrument_suspended"
-            elif volume <= 0.0:
-                reason = "volume_unavailable"
+            elif capacity_reason:
+                reason = capacity_reason
+            elif bar_capacity < lot:
+                reason = "bar_participation_capacity_not_feasible"
             elif reference <= 0.0:
                 reason = "invalid_reference_price"
             elif side not in {"buy", "sell"}:
                 reason = "unsupported_fixture_signal"
+            elif previous_close <= 0.0:
+                reason = "price_limit_evidence_missing"
             elif side == "sell":
                 holding = positions.get(symbol)
                 if holding is None:
                     reason = "no_position_to_sell"
                 elif holding["acquired_session_index"] >= session_index:
                     reason = "t_plus_1_not_sellable"
+                elif mark_price <= 0.0:
+                    reason = f"mark_unavailable:{symbol}"
                 else:
                     fill, slippage, _ = _fill_price(reference, side)
                     if fill <= 0.0:
                         reason = "invalid_fill_price"
+                    elif price_reason := _price_limit_reason(
+                        symbol=symbol,
+                        previous_close=previous_close,
+                        reference=reference,
+                        fill=fill,
+                        mark=mark_price,
+                    ):
+                        reason = price_reason
                     else:
-                        quantity = int(holding["quantity"])
+                        holding_quantity = int(holding["quantity"])
+                        quantity = min(holding_quantity, bar_capacity)
                         notional = quantity * fill
                         fees = ashare_execution_reality().calculate_fees(side, notional)
                         cash = round(cash + notional - _number(fees["total"]), 2)
+                        sold_cost = round(
+                            _number(holding["entry_cost_cny"])
+                            * quantity
+                            / holding_quantity,
+                            2,
+                        )
                         realized_pnl = round(
                             realized_pnl
                             + notional
                             - _number(fees["total"])
-                            - _number(holding["entry_cost_cny"]),
+                            - sold_cost,
                             2,
                         )
-                        del positions[symbol]
+                        if quantity == holding_quantity:
+                            del positions[symbol]
+                        else:
+                            positions[symbol]["quantity"] = holding_quantity - quantity
+                            positions[symbol]["entry_cost_cny"] = round(
+                                _number(holding["entry_cost_cny"]) - sold_cost, 2
+                            )
                         receipt = _receipt(
                             side=side,
                             symbol=symbol,
@@ -451,11 +560,10 @@ def run_fixture_twenty_day_loop(
                 >= policy.stock_gross_exposure_limit_cny
             ):
                 reason = "gross_exposure_limit_reached"
-            elif _number(day.mark_prices.get(symbol), -1.0) <= 0.0:
+            elif mark_price <= 0.0:
                 reason = f"mark_unavailable:{symbol}"
             else:
                 fill, slippage, _ = _fill_price(reference, side)
-                mark_price = _number(day.mark_prices.get(symbol), -1.0)
                 risk_price = max(fill, mark_price)
                 budget = min(
                     policy.single_name_cap_cny,
@@ -463,13 +571,21 @@ def run_fixture_twenty_day_loop(
                     - _number(mark["gross_exposure_cny"]),
                     cash,
                 )
-                lot = int(policy.buy_lot_size_shares or 0)
                 quantity = int(budget // (risk_price * lot)) * lot if lot else 0
+                quantity = min(quantity, bar_capacity)
                 notional = quantity * fill
                 post_single_name = quantity * mark_price
                 post_gross = _number(mark["gross_exposure_cny"]) + post_single_name
                 if fill <= 0.0:
                     reason = "invalid_fill_price"
+                elif price_reason := _price_limit_reason(
+                    symbol=symbol,
+                    previous_close=previous_close,
+                    reference=reference,
+                    fill=fill,
+                    mark=mark_price,
+                ):
+                    reason = price_reason
                 elif quantity == 0:
                     reason = "lot_or_single_name_cap_not_feasible"
                 elif post_single_name > policy.single_name_cap_cny:
@@ -504,9 +620,10 @@ def run_fixture_twenty_day_loop(
                             policy=policy,
                         )
                         reason = "simulated_buy_filled"
-        mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
-        if receipt and mark is None:
-            raise RuntimeError("fixture_mark_required_before_simulated_receipt")
+        if not evidence_reason:
+            mark, mark_reason = _mark_portfolio(positions, day.mark_prices)
+            if receipt and mark is None:
+                raise RuntimeError("fixture_mark_required_before_simulated_receipt")
         if not evidence_reason:
             samples.append(
                 {
@@ -553,6 +670,7 @@ def run_fixture_twenty_day_loop(
         "promotion_eligible": False,
         "account_id": policy.capital_authority_id,
         "capital_layer": "simulated",
+        "account_type": "simulated",
         "real_trading_enabled": False,
         "day_count": len(reports),
         "days": reports,
