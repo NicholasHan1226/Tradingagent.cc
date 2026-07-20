@@ -610,6 +610,39 @@ def test_session_windows_distinguish_midnight_seam_from_true_close(
     )
 
 
+@pytest.mark.parametrize(
+    "contract_patch",
+    [
+        {"session_windows": {"night": [[1260, 1439], [0, 60]]}},
+        {"session_windows": {"night": [[0, 60], [1260, 1439]]}},
+        {"session_windows": {"night": [[1260, 1440], [0, 60], [120, 180]]}},
+        {"session_windows": {"day_morning": [[540, 540]]}},
+        {"session_windows": {"day_morning": [[600, 690], [540, 590]]}},
+        {
+            "session_windows": {
+                "day_morning": [[540, 690]],
+                "day_afternoon": [[690, 900]],
+            }
+        },
+        {"night_session_end_minute": 59},
+    ],
+)
+def test_session_windows_reject_noncanonical_or_ambiguous_injection(
+    contract_patch: dict[str, object],
+) -> None:
+    contract = copy.deepcopy(_fixture()["contract"])
+    assert isinstance(contract, dict)
+    patch = copy.deepcopy(contract_patch)
+    windows = patch.pop("session_windows", None)
+    if windows is not None:
+        assert isinstance(windows, dict)
+        contract["session_windows"] = {**contract["session_windows"], **windows}
+    contract.update(patch)
+
+    with pytest.raises(FixtureContractError):
+        FixtureContract.from_mapping(contract)
+
+
 def test_finite_inputs_with_derived_overflow_fail_closed() -> None:
     close = dict(_fixture()["close"])
     close["price"] = 1e308

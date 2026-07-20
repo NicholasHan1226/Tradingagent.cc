@@ -468,12 +468,31 @@ def _session_windows(
                     f"session_windows.{name} entries must be minute pairs"
                 )
             start, end = window
-            if not 0 <= start <= end <= 24 * 60:
+            if not 0 <= start < end <= 24 * 60:
                 raise FixtureContractError(
                     f"session_windows.{name} minute range is invalid"
                 )
             rows.append((start, end))
+        if name == "night" and len(rows) > 1:
+            if not (len(rows) == 2 and rows[0][1] == 24 * 60 and rows[1][0] == 0):
+                raise FixtureContractError(
+                    "cross-midnight night windows must be [start, 1440], [0, end]"
+                )
+        elif any(end == 24 * 60 for _, end in rows):
+            raise FixtureContractError("1440 is only valid for a cross-midnight seam")
+        elif any(
+            previous[1] >= current[0] for previous, current in zip(rows, rows[1:])
+        ):
+            raise FixtureContractError(f"session_windows.{name} must be ordered")
         parsed[name] = tuple(rows)
+    all_windows = sorted(
+        (start, end, name) for name, windows in parsed.items() for start, end in windows
+    )
+    if any(
+        previous[1] >= current[0]
+        for previous, current in zip(all_windows, all_windows[1:])
+    ):
+        raise FixtureContractError("session windows must not overlap")
     if night_session and parsed["night"][-1][1] != night_session_end_minute:
         raise FixtureContractError("night window must end at night_session_end_minute")
     return parsed
