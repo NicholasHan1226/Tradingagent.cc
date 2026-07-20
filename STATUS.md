@@ -1,22 +1,22 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-20 CST。本文件只记录当前代码、服务器旁路、现役 runtime 与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史候选、旧测试数字与作废证据从 Git 和服务器只读证据目录审计，不在这里维护流水账。
+> 最后更新：2026-07-21 CST。本文件只记录当前代码、服务器旁路、现役 runtime 与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史候选、旧测试数字与作废证据从 Git 和服务器只读证据目录审计，不在这里维护流水账。
 
 ## 当前结论
 
 功能发布提交 `5158a096a9511cbbee1f4f23ea290292289772c3` 已由 GitHub review #8 普通合并进入 `main`，物理删除 PM/US/HK、旧 Style/Evolution/Exit 执行栈与失效文档，并完成多币种/账户隔离、三市场 lane freshness、Crypto 单一资本权威和旧读侧退役门。
 
-其后 A股20交易日 fixture loop（review #10）、CNFutures fixture closed loop（review #11）和 Crypto fixture opening/旧 direct writer 原子退役（review #12）均已普通合并。服务器首次验证 review #12 时发现一条依赖文件系统遍历顺序的测试，保留失败证据后由 review #13 修复；`b38838a02397cc080160e6cf3dae7c47757d9c85` 是当前已完成目标服务器旁路验收的功能基线。其后的 review #14 只更新状态文档；当前 GitHub `main` 与三条市场 lane 的精确 SHA 由 fresh Git readback 确认，不把会被下一次文档合并立即改变的主线 SHA 固化为长期事实。修复后的功能基线已完成 loopback-only、network-disabled、simulation-only 的非权威服务器 sidecar 验收，但没有切换现役源码、systemd service、cron、8787 API 或公开入口。
+其后 A股20交易日 fixture loop（review #10）、CNFutures fixture closed loop（review #11）和 Crypto fixture opening/旧 direct writer 原子退役（review #12）均已普通合并。服务器首次验证 review #12 时发现一条依赖文件系统遍历顺序的测试，保留失败证据后由 review #13 修复；`b38838a02397cc080160e6cf3dae7c47757d9c85` 是当前已完成目标服务器旁路验收的功能基线。review #14 只更新状态文档；review #15 进一步关闭跨市场调用旧 A股 `local_sim_executor` 的逃逸路径，并修正相关状态文档。review #15 已完成本地全量测试、独立审计和 GitHub CI，但没有对其精确功能字节重复运行服务器 sidecar，因此服务器已验证功能基线仍是 `b38838a...`。当前 GitHub `main` 与三条市场 lane 的精确 SHA 由 fresh Git readback 确认，不把会被下一次文档合并立即改变的主线 SHA 固化为长期事实。已验证基线的 sidecar 保持 loopback-only、network-disabled、simulation-only；任何一次 review 都没有切换现役源码、systemd service、cron、8787 API 或公开入口。
 
-全系统继续保持 **fixture/mock-first / simulation-only / 无真实交易权限**，`REAL_TRADING_ENABLED=false`。仓库主线发布、服务器旁路通过和现役生产激活仍是三种不同状态；本轮只完成前两种。
+全系统继续保持 **fixture/mock-first / simulation-only / 无真实交易权限**，`REAL_TRADING_ENABLED=false`。仓库主线发布、服务器旁路通过和现役生产激活仍是三种不同状态：仓库主线已发布，服务器旁路只覆盖 `b38838a...` 功能基线，现役生产没有激活。
 
 ## 六层事实
 
-| 层级 | 2026-07-20 当前事实 | 不能据此推断 |
+| 层级 | 2026-07-21 当前事实 | 不能据此推断 |
 |---|---|---|
 | 本地主线 | 本轮 fresh readback 与 `origin/main` 一致；A股、CNFutures、Crypto 三条长期 lane 的本地与远端均干净同步到同一 SHA，三个 lane validator 对 `origin/main` 均通过 | 本地/远端同步不等于服务器现役切换；本机代码图缓存不属于产品状态或发布证据 |
 | 本地发布候选 | 当前没有待合并功能候选；被新模块化实现覆盖的旧 Crypto 单体原型仅保存在本地 archive commit `c51f957161662dcb37fd6ebe795bd037b35d060b`，不得 merge/cherry-pick | archive 只用于法证和回滚，不是兼容入口或备用 authority |
-| GitHub 主线 | reviews #8/#10/#11/#12/#13/#14 均已普通合并，`main` 与三条远端市场 lane 的 fresh readback 当前一致；精确 SHA 只保存在当次验收证据 | GitHub main 不等于服务器进程已加载；文档提交也不要求重复执行未变功能字节的服务器 sidecar |
+| GitHub 主线 | reviews #8/#10/#11/#12/#13/#14/#15 均已普通合并，`main` 与三条远端市场 lane 的 fresh readback 当前一致；精确 SHA 只保存在当次验收证据 | GitHub main 不等于服务器进程已加载；review #15 的功能字节只完成本地/CI验证，不能继承 review #13 的服务器旁路证据 |
 | 服务器旁路 | `/opt/investment/tradingagent-candidates/ta-crypto-fixture-b38838a@b38838a02397cc080160e6cf3dae7c47757d9c85` clean；独立 venv/node_modules、三市场 fixture 检查与 18787 canary 已验证并停止 | 只证明目标服务器环境可安装、测试和旁路运行，不是生产激活、live paper 或真实数据接入 |
 | 服务器现役 | `/opt/investment/tradingagent@6c12fbed29db925019f85a6016774626f63b857a`；`tradingagent-front-api.service=active`，PID `1043`，只监听 `127.0.0.1:8787`，`/healthz` 为 200；18787 无监听 | 现役代码、service、cron 与入口均未切换 |
 | 外部能力 | 未连接 live TradingDatas、accepted DeepSeek evidence、broker、真实账户、邮件、同花顺、GUI、Cloudflare 控制面或公开 API | 不能声称真实数据闭环、真实模型可用或真实交易 |
@@ -25,9 +25,9 @@
 
 ## 当前发布证据
 
-- 本地最终字节：Crypto 原子候选全仓后端 `3294 passed`；Crypto 永久 lane 定向 `144 passed`；Ruff format/check、扩展 `compileall` 和 `git diff --check` 通过。
-- 独立审计：Crypto 原子候选最终为 `P0=0 / P1=0`；保留的 P2 是 package-private writer 只防合作式调用、未来多标的需要账户级 PIT mark 完整性，以及祖先目录 symlink 加固，不影响当前 fixture-only 发布门禁。
-- GitHub：review #12 与可移植性修复 review #13 的 `front`、`test` CI 均成功；review #13 的 merge commit `b38838a02397cc080160e6cf3dae7c47757d9c85` 是服务器已验证功能字节。其后仅状态文档 review #14 的 `front`、`test` CI 也成功；它不改变旁路候选功能字节，当前主线精确 SHA 以 fresh Git readback 为准。
+- 本地最终字节：review #15 候选全仓后端 `3296 passed`，架构/退役聚焦集合 `50 passed`；Ruff format/check 和 `git diff --check` 通过。更早 Crypto 原子候选的 Crypto 永久 lane 定向证据为 `144 passed`。
+- 独立审计：Crypto 原子候选最终为 `P0=0 / P1=0`；review #15 的架构文档与旧执行退役复核也为 `P0=0 / P1=0`。保留的 P2 是 package-private writer 只防合作式调用、未来多标的需要账户级 PIT mark 完整性，以及祖先目录 symlink 加固，不影响当前 fixture-only 发布门禁。
+- GitHub：reviews #12/#13/#14/#15 的 `front`、`test` CI 均成功；review #13 的 merge commit `b38838a02397cc080160e6cf3dae7c47757d9c85` 是服务器已验证功能字节。review #14 仅修改状态文档；review #15 包含 fail-closed 功能加固，只完成本地与 GitHub CI，不提升服务器旁路或现役状态。当前主线精确 SHA 以 fresh Git readback 为准。
 - 服务器：后端 `3294 passed, 218 subtests passed`；A股/CNFutures fixture 聚焦集合 `167 passed`；前端 44 个测试文件、`297 passed`，lint 为 0 warnings/0 errors，`build:all` 通过；扩展 `compileall` 覆盖 `shared/Ashare/CNFutures/Crypto/tools/scripts`。
 - 冻结模拟盘：A股基线首次运行/同根重放/跨根输出字节一致；Crypto 首次运行、同根幂等重放和跨根业务 bundle 字节一致，且保持 `execution_eligible=false / execution_authority=false / durable_execution_receipt=false / local_fixture_opening_baseline_only`；CNFutures fixture 聚焦集合通过。
 - API canary：仅监听 `127.0.0.1:18787`；health/snapshot 为 200，`Cache-Control: no-store`，POST 为 405、未知路由为 404，顶层 `mode=simulated` 且所有真实交易标志为 false；随后按精确 PID 停止并确认端口关闭。
