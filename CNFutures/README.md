@@ -42,7 +42,7 @@ TradingDatas catalog/query futures bars/spec evidence
 
 上述 session window 和 data/calendar evidence 都只是 non-authoritative fixture bootstrap，绝不构成真实交易所时段验证。真实运行必须等待 TradingDatas 与交易所 calendar/contract authority 的可追溯交接；当前不能据此宣称真实会话已验证。
 
-fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid`、非空（strip 后）`lineage_ref` 与 `receipt_id`；entry、mark、close 的各自 calendar 同样要求非空 `calendar_lineage_ref` 与 `receipt_id`。所有 evidence/calendar mapping/list 都递归扫描 authority/live/broker/order 禁键，并以 cycle、深度和节点上限 fail closed。任何旧/provider route、degraded、stale、failed、空 receipt/lineage 或无效 `YYYYMMDD` 均在候选和订单形成前 fail closed。canonical fixture 先从 typed semantic projection 生成稳定 `fixture_lineage_sha256`，再派生 `intent_id` 与不同的 open/close `order_id`；无害、未使用的未知 metadata 不改变这些 ID，但禁键嵌套绝不被忽略。schema/dataset 仍等待 TradingDatas fresh manifest。
+fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid`、非空（strip 后）`lineage_ref` 与 `receipt_id`；entry、mark、close 的各自 calendar 同样要求非空 `calendar_lineage_ref` 与 `receipt_id`。所有 evidence/calendar mapping/list 都递归扫描 authority/live/broker/order 禁键；每个弹出的 tree value 都先计入固定预算、先验 depth，mapping/list child 仅在剩余预算允许时才增量展开，以 cycle、深度和节点上限 fail closed，绝不为超长容器构造无界 child stack。共享无环 metadata DAG 允许，真实环拒绝。任何旧/provider route、degraded、stale、failed、空 receipt/lineage 或无效 `YYYYMMDD` 均在候选和订单形成前 fail closed。canonical fixture 先从 typed semantic projection 生成稳定 `fixture_lineage_sha256`，再派生 `intent_id` 与不同的 open/close `order_id`；无害、未使用的未知 metadata 不改变这些 ID，但禁键嵌套绝不被忽略。schema/dataset 仍等待 TradingDatas fresh manifest。
 
 费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。
 

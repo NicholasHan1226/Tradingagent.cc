@@ -430,34 +430,54 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> dict[str, Any]:
     return _project_data_evidence(evidence)
 
 
-def _reject_authority_evidence_fields(raw: Mapping[str, Any], name: str) -> None:
-    stack: list[tuple[Any, int]] = [(raw, 0)]
-    seen_containers: set[int] = set()
+def _reject_authority_evidence_fields(raw: Any, name: str) -> None:
+    """Scan a JSON-shaped value without unbounded child-stack expansion."""
+
+    stack: list[tuple[str, Any, int]] = [("enter", raw, 0)]
+    active_containers: set[int] = set()
     node_count = 0
     while stack:
-        current, depth = stack.pop()
-        if not isinstance(current, (Mapping, list)):
+        action, current, depth = stack.pop()
+        if action == "exit":
+            active_containers.remove(int(current))
             continue
-        node_count += 1
-        if node_count > _MAX_EVIDENCE_TREE_NODES:
-            raise FixtureContractError(f"{name} evidence tree is too large")
-        if depth > _MAX_EVIDENCE_TREE_DEPTH:
-            raise FixtureContractError(f"{name} evidence tree is too deep")
-        container_id = id(current)
-        if container_id in seen_containers:
-            raise FixtureContractError(f"{name} evidence tree contains a cycle")
-        seen_containers.add(container_id)
-        if isinstance(current, Mapping):
-            for key, value in current.items():
+        if action in {"mapping_item", "list_item"}:
+            iterator = current
+            try:
+                item = next(iterator)
+            except StopIteration:
+                continue
+            if node_count >= _MAX_EVIDENCE_TREE_NODES:
+                raise FixtureContractError(f"{name} evidence tree is too large")
+            if action == "mapping_item":
+                key, value = item
                 if not isinstance(key, str):
                     raise FixtureContractError(f"{name} evidence keys must be strings")
                 if key in _FORBIDDEN_EVIDENCE_FIELDS:
                     raise FixtureContractError(
                         f"{name} contains forbidden authority fields"
                     )
-                stack.append((value, depth + 1))
+            else:
+                value = item
+            stack.append((action, iterator, depth))
+            stack.append(("enter", value, depth + 1))
+            continue
+        node_count += 1
+        if node_count > _MAX_EVIDENCE_TREE_NODES:
+            raise FixtureContractError(f"{name} evidence tree is too large")
+        if depth > _MAX_EVIDENCE_TREE_DEPTH:
+            raise FixtureContractError(f"{name} evidence tree is too deep")
+        if not isinstance(current, (Mapping, list)):
+            continue
+        container_id = id(current)
+        if container_id in active_containers:
+            raise FixtureContractError(f"{name} evidence tree contains a cycle")
+        active_containers.add(container_id)
+        stack.append(("exit", container_id, depth))
+        if isinstance(current, Mapping):
+            stack.append(("mapping_item", iter(current.items()), depth))
         else:
-            stack.extend((value, depth + 1) for value in current)
+            stack.append(("list_item", iter(current), depth))
 
 
 def _project_exchange_calendar(raw: Mapping[str, Any], name: str) -> dict[str, Any]:

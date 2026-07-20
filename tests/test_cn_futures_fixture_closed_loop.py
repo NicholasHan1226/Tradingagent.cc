@@ -9,6 +9,7 @@ import pytest
 from CNFutures.fixture_closed_loop import (
     FixtureContract,
     FixtureContractError,
+    _reject_authority_evidence_fields,
     _session_for_contract,
     run_fixture_closed_loop,
 )
@@ -270,6 +271,67 @@ def test_nested_evidence_authority_spoofing_fails_closed_at_every_path(
         run_fixture_closed_loop(fixture)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("data_evidence",),
+        ("data_evidence", "exchange_calendar"),
+        ("bar", "exchange_calendar"),
+        ("mark", "exchange_calendar"),
+        ("close", "exchange_calendar"),
+    ],
+)
+@pytest.mark.parametrize(
+    "payload_factory",
+    [
+        lambda: [0] * 257,
+        lambda: {f"note_{index}": 0 for index in range(257)},
+    ],
+)
+def test_flat_evidence_bombs_fail_closed_at_every_path(
+    path: tuple[str, ...], payload_factory: object
+) -> None:
+    fixture = copy.deepcopy(_fixture())
+    target: dict[str, object] = fixture
+    for key in path:
+        target = target[key]  # type: ignore[assignment,index]
+    assert callable(payload_factory)
+    target["innocent_note"] = payload_factory()
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(fixture)
+
+
+def test_evidence_tree_node_budget_has_exact_total_value_boundary() -> None:
+    _reject_authority_evidence_fields([0] * 255, "boundary")
+    _reject_authority_evidence_fields(
+        {f"note_{index}": 0 for index in range(255)}, "boundary"
+    )
+
+    with pytest.raises(FixtureContractError):
+        _reject_authority_evidence_fields([0] * 256, "boundary")
+    with pytest.raises(FixtureContractError):
+        _reject_authority_evidence_fields(
+            {f"note_{index}": 0 for index in range(256)}, "boundary"
+        )
+
+
+def test_evidence_tree_depth_checks_scalar_leaf_boundary() -> None:
+    def nested_scalar_leaf(depth: int) -> dict[str, object]:
+        root: dict[str, object] = {}
+        cursor = root
+        for _ in range(depth - 1):
+            child: dict[str, object] = {}
+            cursor["child"] = child
+            cursor = child
+        cursor["leaf"] = 0
+        return root
+
+    _reject_authority_evidence_fields(nested_scalar_leaf(16), "boundary")
+    with pytest.raises(FixtureContractError):
+        _reject_authority_evidence_fields(nested_scalar_leaf(17), "boundary")
+
+
 @pytest.mark.parametrize("bomb_kind", ["cycle", "depth", "node_count"])
 def test_evidence_tree_bombs_fail_closed_without_recursion_error(
     bomb_kind: str,
@@ -290,7 +352,7 @@ def test_evidence_tree_bombs_fail_closed_without_recursion_error(
             cursor = child
         evidence["innocent_note"] = depth
     else:
-        evidence["innocent_note"] = [{} for _ in range(257)]
+        evidence["innocent_note"] = [0] * 257
 
     with pytest.raises(FixtureContractError):
         run_fixture_closed_loop(fixture)
@@ -356,6 +418,21 @@ def test_ignored_metadata_does_not_change_semantic_lineage_or_order_ids() -> Non
     assert [order["order_id"] for order in replay["execution"]["orders"]] == [
         order["order_id"] for order in baseline["execution"]["orders"]
     ]
+
+
+def test_shared_metadata_dag_is_not_a_cycle_and_keeps_semantic_identity() -> None:
+    baseline = run_fixture_closed_loop(_fixture())
+    fixture = _fixture()
+    evidence = fixture["data_evidence"]
+    assert isinstance(evidence, dict)
+    shared_metadata = {"nested": ["metadata"]}
+    evidence["first_alias"] = shared_metadata
+    evidence["second_alias"] = shared_metadata
+
+    replay = run_fixture_closed_loop(fixture)
+
+    assert replay["fixture_lineage_sha256"] == baseline["fixture_lineage_sha256"]
+    assert replay["candidate"]["intent_id"] == baseline["candidate"]["intent_id"]
 
 
 @pytest.mark.parametrize(
