@@ -254,6 +254,7 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     )
     realized = _pnl(requested_side, entry, close_price, contract.multiplier, quantity)
     final_cash = cash_after_open + realized - close_fee
+    capital_deficit = max(0.0, -final_cash)
     open_order = _order(
         intent_id,
         "open",
@@ -301,7 +302,14 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "execution_eligible": False,
         "fixture_simulation_eligible": True,
         "counterfactual_only": False,
-        "reason": "forced_liquidation" if liquidation else "fixture_round_trip",
+        "reason": (
+            "forced_liquidation_capital_deficit"
+            if liquidation and capital_deficit > 0
+            else "forced_liquidation"
+            if liquidation
+            else "fixture_round_trip"
+        ),
+        "capital_deficit_cny": _money(capital_deficit),
     }
     reconcile = {
         "account_id": policy.capital_authority_id,
@@ -311,8 +319,10 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "equity_cny": _money(final_cash),
         "margin_cny": 0.0,
         "open_position_quantity": 0,
-        "fixture_reconciled": True,
+        "fixture_reconciled": capital_deficit == 0,
         "non_authoritative": True,
+        "risk_state": "capital_deficit" if capital_deficit > 0 else "fixture_balanced",
+        "capital_deficit_cny": _money(capital_deficit),
         "durable": False,
         "capital_commit_id": None,
         "outbox_id": None,
@@ -354,6 +364,7 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> None:
         or not evidence["lineage_ref"].strip()
     ):
         raise FixtureContractError("fixture lineage_ref is required")
+    _nonempty_string_field(evidence, "receipt_id", "fixture data receipt_id")
 
 
 def _load_cn_futures_policy() -> MarketPolicy:
@@ -513,6 +524,12 @@ def _event_trade_date_and_session(
     trade_date = calendar.get("trade_date")
     if not isinstance(trade_date, str) or not re.fullmatch(r"\d{8}", trade_date):
         raise FixtureContractError(f"{name} calendar trade_date must be YYYYMMDD")
+    try:
+        datetime.strptime(trade_date, "%Y%m%d")
+    except ValueError as exc:
+        raise FixtureContractError(f"{name} calendar trade_date is invalid") from exc
+    _nonempty_string_field(calendar, "calendar_lineage_ref", f"{name} calendar lineage")
+    _nonempty_string_field(calendar, "receipt_id", f"{name} calendar receipt")
     if calendar.get("calendar_eligible") is not True:
         if (
             calendar.get("calendar_eligible") is False
@@ -689,7 +706,17 @@ def _pnl(
 def _round_tick(price: float, tick_size: float, upward: bool) -> float:
     units = price / tick_size
     rounded = math.ceil(units - 1e-12) if upward else math.floor(units + 1e-12)
-    return _money(rounded * tick_size)
+    result = _money(rounded * tick_size)
+    if not math.isfinite(result) or result <= 0:
+        raise FixtureContractError("tick-rounded price must be positive and finite")
+    return result
+
+
+def _nonempty_string_field(raw: Mapping[str, Any], key: str, name: str) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise FixtureContractError(f"{name} is required")
+    return value.strip()
 
 
 def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:

@@ -29,12 +29,15 @@ def _fixture(**overrides: object) -> dict[str, object]:
             "freshness": "fresh",
             "quality": "valid",
             "lineage_ref": "fixture-lineage-001",
+            "receipt_id": "fixture-data-receipt-001",
             "available_at": "2026-07-17T20:59:00+08:00",
             "exchange_calendar": {
                 "trade_date": "20260720",
                 "calendar_eligible": True,
                 "session": "night",
                 "available_at": "2026-07-17T20:59:00+08:00",
+                "calendar_lineage_ref": "fixture-calendar-lineage-001",
+                "receipt_id": "fixture-calendar-receipt-001",
             },
         },
         "contract": {
@@ -78,6 +81,10 @@ def _fixture(**overrides: object) -> dict[str, object]:
         },
     }
     fixture.update(overrides)
+    calendar = fixture["data_evidence"]["exchange_calendar"]
+    if isinstance(calendar, dict):
+        calendar.setdefault("calendar_lineage_ref", "fixture-calendar-lineage-001")
+        calendar.setdefault("receipt_id", "fixture-calendar-receipt-001")
     for event_name in ("bar", "mark", "close"):
         event = fixture[event_name]
         if isinstance(event, dict):
@@ -160,6 +167,10 @@ def test_maintenance_margin_breach_forces_close_and_preserves_simulated_marker()
     assert result["execution"]["orders"][1]["position_effect"] == "forced_liquidation"
     assert result["execution"]["simulation_only"] is True
     assert result["real_trading_enabled"] is False
+    assert result["daily_reconcile"]["fixture_reconciled"] is False
+    assert result["daily_reconcile"]["risk_state"] == "capital_deficit"
+    assert result["daily_reconcile"]["capital_deficit_cny"] > 0
+    assert result["sample_review"]["reason"] == "forced_liquidation_capital_deficit"
 
 
 @pytest.mark.parametrize(
@@ -187,6 +198,49 @@ def test_fixture_evidence_and_live_markers_fail_closed(
 
     with pytest.raises(FixtureContractError):
         run_fixture_closed_loop(fixture)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("data_evidence", "lineage_ref"),
+        ("data_evidence", "receipt_id"),
+        ("bar", "exchange_calendar", "calendar_lineage_ref"),
+        ("mark", "exchange_calendar", "receipt_id"),
+        ("close", "exchange_calendar", "calendar_lineage_ref"),
+    ],
+)
+def test_blank_data_or_calendar_receipts_fail_closed(path: tuple[str, ...]) -> None:
+    fixture = copy.deepcopy(_fixture())
+    target: dict[str, object] = fixture
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[assignment,index]
+    target[path[-1]] = "  "
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(fixture)
+
+
+@pytest.mark.parametrize("trade_date", ["20261399", "20260230"])
+def test_invalid_calendar_trade_date_fails_closed(trade_date: str) -> None:
+    bar = dict(_fixture()["bar"])
+    calendar = dict(bar["exchange_calendar"])
+    calendar["trade_date"] = trade_date
+    bar["exchange_calendar"] = calendar
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(_fixture(bar=bar))
+
+
+def test_tick_rounding_to_zero_fails_closed_for_short_entry_and_long_close() -> None:
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(
+            _fixture(side="short", bar={**_fixture()["bar"], "price": 0.2})
+        )
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(
+            _fixture(side="long", close={**_fixture()["close"], "price": 0.2})
+        )
 
 
 def test_identical_fixture_replay_is_deterministic_and_side_effect_free() -> None:
