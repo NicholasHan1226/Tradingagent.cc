@@ -239,6 +239,63 @@ def test_evidence_and_nested_calendar_reject_authority_spoofing(
         run_fixture_closed_loop(fixture)
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("data_evidence",),
+        ("data_evidence", "exchange_calendar"),
+        ("bar", "exchange_calendar"),
+        ("mark", "exchange_calendar"),
+        ("close", "exchange_calendar"),
+    ],
+)
+@pytest.mark.parametrize("inside_list", [False, True])
+def test_nested_evidence_authority_spoofing_fails_closed_at_every_path(
+    path: tuple[str, ...], inside_list: bool
+) -> None:
+    fixture = copy.deepcopy(_fixture())
+    target: dict[str, object] = fixture
+    for key in path:
+        target = target[key]  # type: ignore[assignment,index]
+    forbidden = {
+        "execution_authority": True,
+        "status": "filled",
+        "capital_commit_id": "commit-x",
+    }
+    target["innocent_note"] = (
+        [{"nested": forbidden}] if inside_list else {"nested": forbidden}
+    )
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(fixture)
+
+
+@pytest.mark.parametrize("bomb_kind", ["cycle", "depth", "node_count"])
+def test_evidence_tree_bombs_fail_closed_without_recursion_error(
+    bomb_kind: str,
+) -> None:
+    fixture = _fixture()
+    evidence = fixture["data_evidence"]
+    assert isinstance(evidence, dict)
+    if bomb_kind == "cycle":
+        cycle: dict[str, object] = {}
+        cycle["self"] = cycle
+        evidence["innocent_note"] = cycle
+    elif bomb_kind == "depth":
+        depth: dict[str, object] = {}
+        cursor = depth
+        for _ in range(17):
+            child: dict[str, object] = {}
+            cursor["child"] = child
+            cursor = child
+        evidence["innocent_note"] = depth
+    else:
+        evidence["innocent_note"] = [{} for _ in range(257)]
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(fixture)
+
+
 def test_data_evidence_output_is_allowlisted_and_normalized() -> None:
     fixture = _fixture()
     evidence = fixture["data_evidence"]
@@ -272,6 +329,33 @@ def test_data_evidence_output_is_allowlisted_and_normalized() -> None:
         "calendar_lineage_ref",
         "receipt_id",
     }
+
+
+def test_ignored_metadata_does_not_change_semantic_lineage_or_order_ids() -> None:
+    baseline = run_fixture_closed_loop(_fixture())
+    decorated = copy.deepcopy(_fixture())
+    decorated["ignored_top_note"] = {"nested": ["metadata"]}
+    evidence = decorated["data_evidence"]
+    assert isinstance(evidence, dict)
+    evidence["ignored_note"] = {"nested": ["metadata"]}
+    calendar = evidence["exchange_calendar"]
+    assert isinstance(calendar, dict)
+    calendar["ignored_note"] = ["metadata"]
+    for event_name in ("bar", "mark", "close"):
+        event = decorated[event_name]
+        assert isinstance(event, dict)
+        event["ignored_note"] = {"nested": ["metadata"]}
+        event_calendar = event["exchange_calendar"]
+        assert isinstance(event_calendar, dict)
+        event_calendar["ignored_note"] = ["metadata"]
+
+    replay = run_fixture_closed_loop(decorated)
+
+    assert replay["fixture_lineage_sha256"] == baseline["fixture_lineage_sha256"]
+    assert replay["candidate"]["intent_id"] == baseline["candidate"]["intent_id"]
+    assert [order["order_id"] for order in replay["execution"]["orders"]] == [
+        order["order_id"] for order in baseline["execution"]["orders"]
+    ]
 
 
 @pytest.mark.parametrize(

@@ -66,6 +66,8 @@ _FORBIDDEN_EVIDENCE_FIELDS = frozenset(
         "outbox",
     }
 )
+_MAX_EVIDENCE_TREE_DEPTH = 16
+_MAX_EVIDENCE_TREE_NODES = 256
 
 
 class FixtureContractError(ValueError):
@@ -193,7 +195,22 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         _validate_followup_event_calendar(
             close, close_timing, contract, trade_date, "close"
         )
-    fixture_lineage_sha256 = _canonical_sha256(fixture)
+    fixture_lineage_sha256 = _canonical_sha256(
+        _semantic_fixture_projection(
+            fixture,
+            contract,
+            evidence,
+            bar,
+            entry_timing,
+            mark,
+            mark_timing,
+            close,
+            close_timing,
+            requested_side,
+            requested_quantity,
+            generation,
+        )
+    )
     intent_id = f"cnf-intent-{fixture_lineage_sha256[:24]}"
     base = _base_result(
         contract,
@@ -414,9 +431,33 @@ def _validate_fixture_evidence(fixture: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _reject_authority_evidence_fields(raw: Mapping[str, Any], name: str) -> None:
-    forbidden = sorted(set(raw).intersection(_FORBIDDEN_EVIDENCE_FIELDS))
-    if forbidden:
-        raise FixtureContractError(f"{name} contains forbidden authority fields")
+    stack: list[tuple[Any, int]] = [(raw, 0)]
+    seen_containers: set[int] = set()
+    node_count = 0
+    while stack:
+        current, depth = stack.pop()
+        if not isinstance(current, (Mapping, list)):
+            continue
+        node_count += 1
+        if node_count > _MAX_EVIDENCE_TREE_NODES:
+            raise FixtureContractError(f"{name} evidence tree is too large")
+        if depth > _MAX_EVIDENCE_TREE_DEPTH:
+            raise FixtureContractError(f"{name} evidence tree is too deep")
+        container_id = id(current)
+        if container_id in seen_containers:
+            raise FixtureContractError(f"{name} evidence tree contains a cycle")
+        seen_containers.add(container_id)
+        if isinstance(current, Mapping):
+            for key, value in current.items():
+                if not isinstance(key, str):
+                    raise FixtureContractError(f"{name} evidence keys must be strings")
+                if key in _FORBIDDEN_EVIDENCE_FIELDS:
+                    raise FixtureContractError(
+                        f"{name} contains forbidden authority fields"
+                    )
+                stack.append((value, depth + 1))
+        else:
+            stack.extend((value, depth + 1) for value in current)
 
 
 def _project_exchange_calendar(raw: Mapping[str, Any], name: str) -> dict[str, Any]:
@@ -437,9 +478,9 @@ def _project_exchange_calendar(raw: Mapping[str, Any], name: str) -> dict[str, A
         "trade_date": trade_date,
         "calendar_eligible": raw["calendar_eligible"],
         "session": _text(raw, "session"),
-        "available_at": _aware_timestamp(
+        "available_at": _normalized_timestamp(
             raw.get("available_at"), f"{name} available_at"
-        ).isoformat(),
+        ),
         "calendar_lineage_ref": _nonempty_string_field(
             raw, "calendar_lineage_ref", f"{name} lineage"
         ),
@@ -464,11 +505,78 @@ def _project_data_evidence(raw: Mapping[str, Any]) -> dict[str, Any]:
         "receipt_id": _nonempty_string_field(
             raw, "receipt_id", "fixture data receipt_id"
         ),
-        "available_at": _aware_timestamp(
+        "available_at": _normalized_timestamp(
             raw.get("available_at"), "data_evidence available_at"
-        ).isoformat(),
+        ),
         "exchange_calendar": _project_exchange_calendar(
             _mapping(raw, "exchange_calendar"), "data_evidence exchange_calendar"
+        ),
+    }
+
+
+def _semantic_fixture_projection(
+    fixture: Mapping[str, Any],
+    contract: FixtureContract,
+    evidence: Mapping[str, Any],
+    bar: Mapping[str, Any],
+    entry_timing: EventTiming,
+    mark: Mapping[str, Any],
+    mark_timing: EventTiming,
+    close: Mapping[str, Any],
+    close_timing: EventTiming,
+    side: str,
+    quantity: int,
+    generation: int,
+) -> dict[str, Any]:
+    return {
+        "fixture_only": True,
+        "generation": generation,
+        "side": side,
+        "quantity": quantity,
+        "stop_distance": _positive(fixture, "stop_distance"),
+        "maximum_loss_cny": _positive(fixture, "maximum_loss_cny"),
+        "raw_heuristic_score": _finite(fixture.get("raw_heuristic_score", 0.0)),
+        "uncalibrated_prior": _finite(fixture.get("uncalibrated_prior", 0.0)),
+        "data_evidence": dict(evidence),
+        "contract": {
+            "symbol": contract.symbol,
+            "active_symbol": contract.active_symbol,
+            "product": contract.product,
+            "multiplier": contract.multiplier,
+            "tick_size": contract.tick_size,
+            "initial_margin_rate": contract.initial_margin_rate,
+            "maintenance_margin_rate": contract.maintenance_margin_rate,
+            "open_fee_rate": contract.open_fee_rate,
+            "close_fee_rate": contract.close_fee_rate,
+            "open_fee_type": contract.open_fee_type,
+            "close_fee_type": contract.close_fee_type,
+            "night_session": contract.night_session,
+            "night_session_end_minute": contract.night_session_end_minute,
+            "session_windows": {
+                name: [list(window) for window in windows]
+                for name, windows in sorted(contract.session_windows.items())
+            },
+            "available_at": _normalized_timestamp(
+                _mapping(fixture, "contract").get("available_at"),
+                "contract available_at",
+            ),
+        },
+        "bar": _semantic_event_projection(bar, entry_timing, "bar"),
+        "mark": _semantic_event_projection(mark, mark_timing, "mark"),
+        "close": _semantic_event_projection(close, close_timing, "close"),
+    }
+
+
+def _semantic_event_projection(
+    raw: Mapping[str, Any], timing: EventTiming, name: str
+) -> dict[str, Any]:
+    return {
+        "timestamp": timing.event_time.astimezone(CN_TZ).isoformat(),
+        "available_at": timing.available_at.astimezone(CN_TZ).isoformat(),
+        "decision_time": timing.decision_time.astimezone(CN_TZ).isoformat(),
+        "price": _positive(raw, "price"),
+        "exchange_calendar": _project_exchange_calendar(
+            _mapping(raw, "exchange_calendar"), f"{name} exchange_calendar"
         ),
     }
 
@@ -628,6 +736,10 @@ def _aware_timestamp(value: Any, name: str) -> datetime:
     if parsed is None:
         raise FixtureContractError(f"{name} must be an ISO-8601 datetime")
     return parsed
+
+
+def _normalized_timestamp(value: Any, name: str) -> str:
+    return _aware_timestamp(value, name).astimezone(CN_TZ).isoformat()
 
 
 def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str:
