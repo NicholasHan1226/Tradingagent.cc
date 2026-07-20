@@ -40,9 +40,9 @@ TradingDatas catalog/query futures bars/spec evidence
 
 `CNFutures.fixture_closed_loop` 是当前唯一可直接运行的期货纵向切片。它只接收显式 `fixture_only=true` 的内存 mock，既不访问 TradingDatas、SQLite 或网络，也不声明或猜测真实 dataset ID。切片依次验证 fixture 数据证据、注入的 exchange trade-date/calendar eligibility、产品 session windows、换月保护、一手保证金/止损预算、多空开平、tick 对齐、费用、逐日 MTM、维持保证金强平风险、平仓和最终 reconcile，并输出独立的样本复盘记录与 lineage hash。
 
-每个 bar、mark、close 必须各自提供可解析的 `timestamp` 与不晚于该时点的 `available_at`，并强制 `entry < mark <= close`；强平可按 mark 成交但仍需 close 时间证据。交易资格只来自 fixture 注入的 `exchange_calendar`，其中 `trade_date`、`calendar_eligible`、`session`、`available_at` 必填；缺失或与合约声明的 product-specific `session_windows`/`night_session_end_minute` 不一致即 fail closed。合约 symbol 必须是与 product 一致的具体合约，不能用泛品种字符串。
+每个 bar、mark、close 必须各自提供可解析的 event `timestamp`、`available_at` 和 `decision_time`，允许且要求 `event_time <= available_at <= decision_time`（相等允许）；整体要求 entry decision 严格早于 mark event，mark decision 不晚于 close event。这样允许正常发布延迟，但 pre-event、future-available、倒序或缺时刻均 fail closed；强平可按 mark 成交但仍需 close 时间证据。contract/calendar 必须在 entry decision 前可用。交易资格只来自 fixture 注入的 `exchange_calendar`，其中 `trade_date`、`calendar_eligible`、`session`、`available_at` 必填；缺失或与合约声明的 product-specific `session_windows`/`night_session_end_minute` 不一致即 fail closed。合约 symbol 必须是与 product 一致的具体合约，不能用泛品种字符串。
 
-fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid` 和非空 lineage；任何旧/provider route、degraded、stale 或 failed 状态均在候选和订单形成前 fail closed。相同 fixture 的重放只产生相同的 lineage/order identity，不产生持久化或外部副作用；schema/dataset 仍等待 TradingDatas fresh manifest。
+fixture 数据证据必须精确声明 `GET /v1/catalog` 与 `POST /v1/query`，并同时保持 `ready`、`degraded=false`、`fresh`、`valid` 和非空 lineage；任何旧/provider route、degraded、stale 或 failed 状态均在候选和订单形成前 fail closed。canonical fixture 先生成稳定 `fixture_lineage_sha256`，再派生 `intent_id` 与不同的 open/close `order_id`，避免循环哈希；相同 fixture 重放的 ID 相同且不产生持久化或外部副作用。schema/dataset 仍等待 TradingDatas fresh manifest。
 
 费用字段同时声明 `open_fee_type`/`close_fee_type`：`rate` 按成交名义金额计算，`fixed_per_lot` 按手数计算。两种费用以及静态/injected 规格都只是 simulation bootstrap，绝非真实交易所、期货公司或 TradingDatas authority。
 

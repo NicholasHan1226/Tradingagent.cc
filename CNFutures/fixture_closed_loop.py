@@ -34,6 +34,13 @@ class FixtureContractError(ValueError):
 
 
 @dataclass(frozen=True)
+class EventTiming:
+    event_time: datetime
+    available_at: datetime
+    decision_time: datetime
+
+
+@dataclass(frozen=True)
 class FixtureContract:
     symbol: str
     product: str
@@ -117,19 +124,19 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     bar = _mapping(fixture, "bar")
     mark = _mapping(fixture, "mark")
     close = _mapping(fixture, "close")
-    timestamp = _event_timestamp(bar, "bar")
-    mark_timestamp = _event_timestamp(mark, "mark")
-    close_timestamp = _event_timestamp(close, "close")
-    if not timestamp < mark_timestamp <= close_timestamp:
-        raise FixtureContractError("entry timestamp must be before mark and close")
+    entry_timing = _event_timing(bar, "bar")
+    mark_timing = _event_timing(mark, "mark")
+    close_timing = _event_timing(close, "close")
+    if not (
+        entry_timing.decision_time < mark_timing.event_time
+        and mark_timing.decision_time <= close_timing.event_time
+    ):
+        raise FixtureContractError("event evidence and decisions are out of PIT order")
     evidence = _mapping(fixture, "data_evidence")
-    _assert_available_no_later_than(evidence, "data_evidence", timestamp)
-    _assert_available_no_later_than(
-        _mapping(fixture, "contract"), "contract", timestamp
+    _assert_available_by(evidence, "data_evidence", entry_timing.decision_time)
+    _assert_available_by(
+        _mapping(fixture, "contract"), "contract", entry_timing.decision_time
     )
-    _assert_available_no_later_than(bar, "bar", timestamp)
-    _assert_available_no_later_than(mark, "mark", mark_timestamp)
-    _assert_available_no_later_than(close, "close", close_timestamp)
     price = _positive(bar, "price")
     requested_side = _text(fixture, "side").lower()
     if requested_side not in {"long", "short"}:
@@ -137,14 +144,22 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     requested_quantity = _whole_positive(fixture, "quantity")
     generation = _whole_positive(fixture, "generation")
 
-    trade_date, session = _trade_date_and_session(timestamp, contract, evidence)
+    trade_date, session = _trade_date_and_session(
+        entry_timing.event_time,
+        entry_timing.decision_time,
+        contract,
+        evidence,
+    )
+    fixture_lineage_sha256 = _canonical_sha256(fixture)
+    intent_id = f"cnf-intent-{fixture_lineage_sha256[:24]}"
     base = _base_result(
         contract,
-        timestamp,
+        entry_timing.event_time,
         trade_date,
         session,
         generation,
         evidence,
+        fixture_lineage_sha256,
     )
     candidate = {
         "symbol": contract.symbol,
@@ -156,6 +171,7 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         "session": session,
         "counterfactual_only": False,
         "execution_eligible": True,
+        "intent_id": intent_id,
     }
     if contract.symbol != contract.active_symbol:
         return _hold(base, candidate, "rollover_guard_active_contract_mismatch")
@@ -203,9 +219,17 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
     realized = _pnl(requested_side, entry, close_price, contract.multiplier, quantity)
     final_cash = cash_after_open + realized - close_fee
     open_order = _order(
-        "open", requested_side, contract, quantity, entry, open_fee, margin
+        intent_id,
+        "open",
+        requested_side,
+        contract,
+        quantity,
+        entry,
+        open_fee,
+        margin,
     )
     close_order = _order(
+        intent_id,
         "forced_liquidation" if liquidation else "close",
         requested_side,
         contract,
@@ -359,22 +383,29 @@ def _fee_type(raw: Mapping[str, Any], key: str) -> str:
     return str(value)
 
 
-def _event_timestamp(raw: Mapping[str, Any], name: str) -> datetime:
-    timestamp = parse_cn_datetime(raw.get("timestamp"))
-    if timestamp is None:
-        raise FixtureContractError(f"{name} timestamp must be an ISO-8601 datetime")
-    _assert_available_no_later_than(raw, name, timestamp)
-    return timestamp
+def _event_timing(raw: Mapping[str, Any], name: str) -> EventTiming:
+    event_time = parse_cn_datetime(raw.get("timestamp"))
+    available_at = parse_cn_datetime(raw.get("available_at"))
+    decision_time = parse_cn_datetime(raw.get("decision_time"))
+    if event_time is None or available_at is None or decision_time is None:
+        raise FixtureContractError(
+            f"{name} timestamp, available_at, and decision_time must be ISO-8601"
+        )
+    if not event_time <= available_at <= decision_time:
+        raise FixtureContractError(
+            f"{name} must satisfy event_time <= available_at <= decision_time"
+        )
+    return EventTiming(event_time, available_at, decision_time)
 
 
-def _assert_available_no_later_than(
-    raw: Mapping[str, Any], name: str, timestamp: datetime
+def _assert_available_by(
+    raw: Mapping[str, Any], name: str, decision_time: datetime
 ) -> None:
     available_at = parse_cn_datetime(raw.get("available_at"))
     if available_at is None:
         raise FixtureContractError(f"{name} available_at must be an ISO-8601 datetime")
-    if available_at > timestamp:
-        raise FixtureContractError(f"{name} became available after its event timestamp")
+    if available_at > decision_time:
+        raise FixtureContractError(f"{name} became available after entry decision")
 
 
 def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str:
@@ -399,7 +430,10 @@ def _fee(
 
 
 def _trade_date_and_session(
-    timestamp: datetime, contract: FixtureContract, evidence: Mapping[str, Any]
+    event_time: datetime,
+    decision_time: datetime,
+    contract: FixtureContract,
+    evidence: Mapping[str, Any],
 ) -> tuple[str, str]:
     calendar = _mapping(evidence, "exchange_calendar")
     trade_date = calendar.get("trade_date")
@@ -408,8 +442,8 @@ def _trade_date_and_session(
     eligible = calendar.get("calendar_eligible")
     if eligible is not True and eligible is not False:
         raise FixtureContractError("exchange calendar eligibility is required")
-    _assert_available_no_later_than(calendar, "exchange_calendar", timestamp)
-    actual_session = _session_for_contract(timestamp, contract)
+    _assert_available_by(calendar, "exchange_calendar", decision_time)
+    actual_session = _session_for_contract(event_time, contract)
     declared_session = calendar.get("session")
     if not isinstance(declared_session, str) or not declared_session:
         raise FixtureContractError("exchange calendar session is required")
@@ -431,6 +465,7 @@ def _base_result(
     session: str,
     generation: int,
     data_evidence: Mapping[str, Any],
+    fixture_lineage_sha256: str,
 ) -> dict[str, Any]:
     return {
         "mode": SIMULATION_MARKER,
@@ -444,6 +479,7 @@ def _base_result(
         },
         "contract": {"symbol": contract.symbol, "product": contract.product},
         "data_evidence": dict(data_evidence),
+        "fixture_lineage_sha256": fixture_lineage_sha256,
         "bar_timestamp": timestamp.astimezone(CN_TZ).isoformat(),
         "trade_date": trade_date,
         "session": session,
@@ -496,6 +532,7 @@ def _with_lineage(
 
 
 def _order(
+    intent_id: str,
     effect: str,
     side: str,
     contract: FixtureContract,
@@ -505,6 +542,8 @@ def _order(
     margin: float,
 ) -> dict[str, Any]:
     return {
+        "intent_id": intent_id,
+        "order_id": f"cnf-order-{_canonical_sha256({'intent_id': intent_id, 'effect': effect})[:24]}",
         "position_effect": effect,
         "side": side,
         "symbol": contract.symbol,
@@ -574,6 +613,20 @@ def _finite(value: Any) -> float:
 
 def _money(value: float) -> float:
     return round(float(value), 8)
+
+
+def _canonical_sha256(value: Any) -> str:
+    try:
+        canonical = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise FixtureContractError("fixture identity must be canonical JSON") from exc
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 __all__ = ["ACCOUNT_ID", "FixtureContractError", "run_fixture_closed_loop"]

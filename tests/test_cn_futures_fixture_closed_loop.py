@@ -59,17 +59,20 @@ def _fixture(**overrides: object) -> dict[str, object]:
         },
         "bar": {
             "timestamp": "2026-07-17T21:05:00+08:00",
-            "available_at": "2026-07-17T21:05:00+08:00",
+            "available_at": "2026-07-17T21:05:01+08:00",
+            "decision_time": "2026-07-17T21:05:02+08:00",
             "price": 3500.2,
         },
         "mark": {
             "timestamp": "2026-07-17T21:10:00+08:00",
-            "available_at": "2026-07-17T21:10:00+08:00",
+            "available_at": "2026-07-17T21:10:01+08:00",
+            "decision_time": "2026-07-17T21:10:02+08:00",
             "price": 3510.0,
         },
         "close": {
             "timestamp": "2026-07-17T21:15:00+08:00",
-            "available_at": "2026-07-17T21:15:00+08:00",
+            "available_at": "2026-07-17T21:15:01+08:00",
+            "decision_time": "2026-07-17T21:15:02+08:00",
             "price": 3512.4,
         },
     }
@@ -86,6 +89,7 @@ def test_fixture_long_round_trip_binds_night_trade_date_tick_margin_and_reconcil
     assert result["trade_date"] == "20260720"
     assert result["session"] == "night"
     assert result["candidate"]["execution_eligible"] is True
+    assert result["candidate"]["intent_id"].startswith("cnf-intent-")
     assert result["execution"]["orders"][0]["price"] == 3501.0
     assert result["execution"]["orders"][0]["margin_cny"] == 9102.6
     assert result["execution"]["orders"][1]["price"] == 3512.0
@@ -96,6 +100,10 @@ def test_fixture_long_round_trip_binds_night_trade_date_tick_margin_and_reconcil
     assert result["daily_reconcile"]["margin_cny"] == 0.0
     assert result["daily_reconcile"]["open_position_quantity"] == 0
     assert result["sample_review"]["sample_class"] == "completed_round_trip"
+    assert (
+        result["execution"]["orders"][0]["order_id"]
+        != result["execution"]["orders"][1]["order_id"]
+    )
 
 
 def test_short_uses_sell_down_buy_up_tick_rounding_and_realizes_profit() -> None:
@@ -181,6 +189,11 @@ def test_identical_fixture_replay_is_deterministic_and_side_effect_free() -> Non
     assert first == second
     assert first["lineage_sha256"] == second["lineage_sha256"]
     assert first["execution"]["orders"] == second["execution"]["orders"]
+    assert first["candidate"]["intent_id"] == second["candidate"]["intent_id"]
+    assert (
+        first["execution"]["orders"][0]["order_id"]
+        == second["execution"]["orders"][0]["order_id"]
+    )
 
 
 def test_weekend_day_bar_is_hold_not_an_order() -> None:
@@ -198,16 +211,19 @@ def test_weekend_day_bar_is_hold_not_an_order() -> None:
             bar={
                 "timestamp": "2026-07-19T10:00:00+08:00",
                 "available_at": "2026-07-19T10:00:00+08:00",
+                "decision_time": "2026-07-19T10:00:00+08:00",
                 "price": 3500.0,
             },
             mark={
                 "timestamp": "2026-07-19T10:05:00+08:00",
                 "available_at": "2026-07-19T10:05:00+08:00",
+                "decision_time": "2026-07-19T10:05:00+08:00",
                 "price": 3510.0,
             },
             close={
                 "timestamp": "2026-07-19T10:10:00+08:00",
                 "available_at": "2026-07-19T10:10:00+08:00",
+                "decision_time": "2026-07-19T10:10:00+08:00",
                 "price": 3512.0,
             },
         )
@@ -223,6 +239,8 @@ def test_weekend_day_bar_is_hold_not_an_order() -> None:
         ("mark", {"timestamp": None}),
         ("mark", {"timestamp": "2026-07-17T21:05:00+08:00"}),
         ("close", {"timestamp": "2026-07-17T21:09:00+08:00"}),
+        ("bar", {"available_at": "2026-07-17T21:04:59+08:00"}),
+        ("bar", {"available_at": "2026-07-17T21:05:03+08:00"}),
         ("mark", {"available_at": "2026-07-17T21:11:00+08:00"}),
     ],
 )
@@ -235,22 +253,32 @@ def test_time_order_and_availability_fail_closed(
         run_fixture_closed_loop(fixture)
 
 
+def test_publish_delay_after_event_is_valid_before_entry_decision() -> None:
+    result = run_fixture_closed_loop(_fixture())
+
+    assert result["bar_timestamp"] == "2026-07-17T21:05:00+08:00"
+    assert result["candidate"]["execution_eligible"] is True
+
+
 def test_saturday_early_night_uses_injected_monday_trade_date() -> None:
     result = run_fixture_closed_loop(
         _fixture(
             bar={
                 "timestamp": "2026-07-18T00:30:00+08:00",
                 "available_at": "2026-07-18T00:30:00+08:00",
+                "decision_time": "2026-07-18T00:30:00+08:00",
                 "price": 3500.0,
             },
             mark={
                 "timestamp": "2026-07-18T00:35:00+08:00",
                 "available_at": "2026-07-18T00:35:00+08:00",
+                "decision_time": "2026-07-18T00:35:00+08:00",
                 "price": 3510.0,
             },
             close={
                 "timestamp": "2026-07-18T00:40:00+08:00",
                 "available_at": "2026-07-18T00:40:00+08:00",
+                "decision_time": "2026-07-18T00:40:00+08:00",
                 "price": 3512.0,
             },
         )
@@ -275,16 +303,19 @@ def test_sunday_night_requires_calendar_and_stays_closed_when_ineligible() -> No
             bar={
                 "timestamp": "2026-07-19T21:05:00+08:00",
                 "available_at": "2026-07-19T21:05:00+08:00",
+                "decision_time": "2026-07-19T21:05:00+08:00",
                 "price": 3500.0,
             },
             mark={
                 "timestamp": "2026-07-19T21:10:00+08:00",
                 "available_at": "2026-07-19T21:10:00+08:00",
+                "decision_time": "2026-07-19T21:10:00+08:00",
                 "price": 3510.0,
             },
             close={
                 "timestamp": "2026-07-19T21:15:00+08:00",
                 "available_at": "2026-07-19T21:15:00+08:00",
+                "decision_time": "2026-07-19T21:15:00+08:00",
                 "price": 3512.0,
             },
         )
