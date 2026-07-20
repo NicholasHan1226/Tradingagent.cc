@@ -36,6 +36,12 @@ TradingDatas catalog/query futures bars/spec evidence
 
 方向预测与可执行性必须分开：不适配 50,000 CNY 账户的一手合约仍可形成 `counterfactual_only=true` 的方向样本和后续标签，但不能伪造成可执行成交。
 
+## Fixture/mock 最小纵向切片
+
+`CNFutures.fixture_closed_loop` 是当前唯一可直接运行的期货纵向切片。它只接收显式 `fixture_only=true` 的内存 mock，既不访问 TradingDatas、SQLite 或网络，也不声明或猜测真实 dataset ID。切片依次验证 fixture 数据证据、夜盘交易日、换月保护、一手保证金/止损预算、多空开平、tick 对齐、费用、逐日 MTM、维持保证金强平风险、平仓和最终 reconcile，并输出独立的样本复盘记录与 lineage hash。
+
+它的静态合约参数仅用于模拟 bootstrap，不能替代 TradingDatas 将来交接的可追溯合约规格。真实 handoff 到位前，任何非 fixture 输入都必须 fail closed；该切片不安装 cron、不连接 broker，也不写入 ledger/outbox 文件。
+
 ## 当前事实源
 
 | 事实 | 路径 |
