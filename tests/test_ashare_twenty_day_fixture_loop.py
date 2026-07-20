@@ -53,6 +53,9 @@ def _days(
                 "suspended": False,
                 "previous_close_cny": row.get("price"),
                 "bar_volume_shares": 100_000 if row.get("volume", 1) else 0,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
                 **row,
             }
             for row in first_rows
@@ -368,6 +371,9 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
                 "suspended": False,
                 "previous_close_cny": 10,
                 "bar_volume_shares": 100_000,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
             }
         ],
         _evidence(days[1].trade_date),
@@ -385,6 +391,9 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
                 "suspended": False,
                 "previous_close_cny": 20,
                 "bar_volume_shares": 100_000,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
             }
         ],
         _evidence(days[2].trade_date),
@@ -618,6 +627,9 @@ def test_zero_tick_rounded_sell_is_rejected_without_cash_mutation() -> None:
                 "suspended": False,
                 "previous_close_cny": 20,
                 "bar_volume_shares": 100_000,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
             }
         ],
         _evidence(days[1].trade_date),
@@ -670,6 +682,9 @@ def test_extreme_sell_quotes_cannot_bypass_price_limits(sell_quote: float) -> No
                 "suspended": False,
                 "previous_close_cny": 20,
                 "bar_volume_shares": 100_000,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
             }
         ],
         _evidence(days[1].trade_date),
@@ -746,6 +761,9 @@ def test_price_limit_boundaries_and_normal_values_can_fill() -> None:
                 "suspended": False,
                 "previous_close_cny": 20,
                 "bar_volume_shares": 100_000,
+                "price_limit_regime": "standard_mainboard",
+                "price_limit_exempt": False,
+                "new_listing": False,
             }
         ],
         _evidence(days[1].trade_date),
@@ -817,3 +835,119 @@ def test_duplicate_universe_symbols_fail_closed_and_ties_are_deterministic() -> 
     )
     assert forward["days"][0] == reversed_rows["days"][0]
     assert forward["days"][0]["simulated_receipt"]["symbol"] == "600000.SH"
+
+
+def test_canonical_alias_and_context_duplicates_fail_closed() -> None:
+    alias_duplicate = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {"symbol": "600000", "price": 20, "volume": 1, "rank_score": 1},
+                {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1},
+            ],
+            first_marks={"600000.SH": 20},
+        )
+    )
+    assert alias_duplicate["days"][0]["reason_code"] == "duplicate_instrument_symbol"
+    context_duplicate = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {"symbol": "399006.SZ", "instrument_type": "index"},
+                {"symbol": "399006.SZ", "instrument_type": "common_stock"},
+            ],
+            first_marks={},
+        )
+    )
+    assert context_duplicate["days"][0]["reason_code"] == "duplicate_instrument_symbol"
+
+
+def test_strict_numeric_and_price_regime_attack_values_fail_closed() -> None:
+    previous_off_tick = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 10,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "previous_close_cny": 10.005,
+                }
+            ],
+            first_marks={"600000.SH": 10},
+        )
+    )
+    assert previous_off_tick["days"][0]["reason_code"] == "price_tick_invalid"
+    enormous_volume = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 10,
+                    "volume": 1,
+                    "rank_score": 1,
+                    "bar_volume_shares": 10**400,
+                }
+            ],
+            first_marks={"600000.SH": 10},
+        )
+    )
+    assert enormous_volume["days"][0]["reason_code"] == "bar_volume_shares_invalid"
+    for override in (
+        {"price_limit_regime": "unknown"},
+        {"price_limit_exempt": True},
+        {"new_listing": True},
+    ):
+        result = run_fixture_twenty_day_loop(
+            _days(
+                first_rows=[
+                    {
+                        "symbol": "600000.SH",
+                        "price": 10,
+                        "volume": 1,
+                        "rank_score": 1,
+                        **override,
+                    }
+                ],
+                first_marks={"600000.SH": 10},
+            )
+        )
+        assert result["days"][0]["reason_code"] == "price_limit_regime_invalid"
+
+
+@pytest.mark.parametrize(
+    ("row_override", "marks", "reason"),
+    [
+        ({"price": True}, {"600000.SH": 10}, "invalid_reference_price"),
+        (
+            {"previous_close_cny": True},
+            {"600000.SH": 10},
+            "price_limit_evidence_missing",
+        ),
+        ({"rank_score": True}, {"600000.SH": 10}, "rank_score_invalid"),
+        ({}, {"600000.SH": True}, "mark_unavailable:600000.SH"),
+        ({"price": float("nan")}, {"600000.SH": 10}, "invalid_reference_price"),
+        (
+            {"previous_close_cny": float("inf")},
+            {"600000.SH": 10},
+            "price_limit_evidence_missing",
+        ),
+    ],
+)
+def test_boolean_and_nonfinite_numeric_inputs_fail_closed(
+    row_override: dict, marks: dict[str, object], reason: str
+) -> None:
+    result = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {
+                    "symbol": "600000.SH",
+                    "price": 10,
+                    "volume": 1,
+                    "rank_score": 1,
+                    **row_override,
+                }
+            ],
+            first_marks=marks,  # type: ignore[arg-type]
+        )
+    )
+    assert result["days"][0]["reason_code"] == reason
+    assert result["days"][0]["simulated_receipt"] is None

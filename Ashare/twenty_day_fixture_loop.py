@@ -26,6 +26,8 @@ _NO_TRADE_SCORE = 0.60
 _AGGREGATE_NAMESPACE = re.compile(r"^(?:SECTOR|INDUSTRY):[A-Z0-9._:-]+$")
 _FIXTURE_SESSION = "ashare_regular"
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
+_STANDARD_PRICE_LIMIT_REGIME = "standard_mainboard"
+_MAX_BAR_VOLUME_SHARES = 10**12
 
 
 @dataclass(frozen=True)
@@ -55,12 +57,19 @@ class FixtureDay:
     mark_prices: Mapping[str, Any] = field(default_factory=dict)
 
 
-def _number(value: Any, default: float = 0.0) -> float:
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        return default
-    return parsed if parsed == parsed and abs(parsed) != float("inf") else default
+        return None
+    return parsed if parsed == parsed and abs(parsed) != float("inf") else None
+
+
+def _number(value: Any, default: float = 0.0) -> float:
+    parsed = _finite_number(value)
+    return default if parsed is None else parsed
 
 
 def _symbol(row: Mapping[str, Any]) -> str:
@@ -88,7 +97,9 @@ def _price_limit_reason(
         return "price_limit_evidence_missing"
     reality = ashare_execution_reality()
     tick = _number(reality.price_tick_cny, -1.0)
-    if not all(_tick_aligned(price, tick) for price in (reference, fill, mark)):
+    if not all(
+        _tick_aligned(price, tick) for price in (previous_close, reference, fill, mark)
+    ):
         return "price_tick_invalid"
     try:
         lower, upper = reality.price_limit_bounds(previous_close, symbol=symbol)
@@ -99,19 +110,38 @@ def _price_limit_reason(
     return None
 
 
+def _price_limit_regime_reason(row: Mapping[str, Any]) -> str | None:
+    if row.get("price_limit_regime") != _STANDARD_PRICE_LIMIT_REGIME:
+        return "price_limit_regime_invalid"
+    if row.get("price_limit_exempt") is not False:
+        return "price_limit_regime_invalid"
+    if row.get("new_listing") is not False:
+        return "price_limit_regime_invalid"
+    return None
+
+
 def _bar_capacity_shares(
     row: Mapping[str, Any], *, lot_size: int
 ) -> tuple[int, str | None]:
     raw_volume = row.get("bar_volume_shares")
-    if type(raw_volume) is not int or raw_volume <= 0:
+    if (
+        type(raw_volume) is not int
+        or raw_volume <= 0
+        or raw_volume > _MAX_BAR_VOLUME_SHARES
+    ):
         return 0, "bar_volume_shares_invalid"
-    participation_cap = _number(
-        ashare_execution_reality().as_engine_config().get("bar_participation_cap"),
-        -1.0,
-    )
-    if not 0.0 < participation_cap <= 1.0 or lot_size <= 0:
+    raw_cap = ashare_execution_reality().as_engine_config().get("bar_participation_cap")
+    if lot_size <= 0:
         return 0, "bar_participation_capacity_unavailable"
-    capacity = int(raw_volume * participation_cap)
+    try:
+        participation_cap = Decimal(str(raw_cap))
+    except (ArithmeticError, ValueError):
+        return 0, "bar_participation_capacity_unavailable"
+    if not participation_cap.is_finite() or not Decimal(
+        "0"
+    ) < participation_cap <= Decimal("1"):
+        return 0, "bar_participation_capacity_unavailable"
+    capacity = int(Decimal(raw_volume) * participation_cap)
     return (capacity // lot_size) * lot_size, None
 
 
@@ -209,15 +239,15 @@ def _mainboard_rows(
     for source in rows:
         row = dict(source)
         raw_symbol = row.get("symbol") or row.get("ts_code") or ""
-        normalized = str(raw_symbol).strip().upper()
-        if normalized in seen_symbols:
-            return [], [], "duplicate_instrument_symbol"
-        seen_symbols.add(normalized)
-        if _restricted_individual(normalized):
-            continue
         eligibility = classify_instrument(
             raw_symbol, instrument_type=_instrument_type(row)
         )
+        canonical_symbol = eligibility.normalized_symbol
+        if canonical_symbol in seen_symbols:
+            return [], [], "duplicate_instrument_symbol"
+        seen_symbols.add(canonical_symbol)
+        if _restricted_individual(canonical_symbol):
+            continue
         is_known_index = eligibility.role in {
             InstrumentRole.CHINEXT_INDEX,
             InstrumentRole.STAR_INDEX,
@@ -243,8 +273,8 @@ def _mark_portfolio(
 ) -> tuple[dict[str, float] | None, str | None]:
     value = unrealized = 0.0
     for symbol, position in positions.items():
-        mark = _number(mark_prices.get(symbol), -1.0)
-        if mark <= 0.0:
+        mark = _finite_number(mark_prices.get(symbol))
+        if mark is None or mark <= 0.0:
             return None, f"mark_unavailable:{symbol}"
         market_value = int(position["quantity"]) * mark
         value += market_value
@@ -462,18 +492,24 @@ def run_fixture_twenty_day_loop(
         elif universe_rows:
             candidate = min(
                 universe_rows,
-                key=lambda row: (-_number(row.get("rank_score")), _symbol(row)),
+                key=lambda row: (
+                    -_number(row.get("rank_score"), float("-inf")),
+                    _symbol(row),
+                ),
             )
             symbol = _symbol(candidate)
             side = str(candidate.get("signal") or "buy").strip().lower()
-            reference = _number(candidate.get("price"), -1.0)
-            previous_close = _number(candidate.get("previous_close_cny"), -1.0)
-            mark_price = _number(day.mark_prices.get(symbol), -1.0)
+            rank_score = _finite_number(candidate.get("rank_score"))
+            reference = _finite_number(candidate.get("price"))
+            previous_close = _finite_number(candidate.get("previous_close_cny"))
+            mark_price = _finite_number(day.mark_prices.get(symbol))
             lot = int(policy.buy_lot_size_shares or 0)
             bar_capacity, capacity_reason = _bar_capacity_shares(
                 candidate, lot_size=lot
             )
-            if _number(candidate.get("rank_score")) < _NO_TRADE_SCORE:
+            if rank_score is None:
+                reason = "rank_score_invalid"
+            elif rank_score < _NO_TRADE_SCORE:
                 reason = "no_trade_band"
             elif candidate.get("suspended") is not False:
                 reason = "instrument_suspended"
@@ -481,19 +517,21 @@ def run_fixture_twenty_day_loop(
                 reason = capacity_reason
             elif bar_capacity < lot:
                 reason = "bar_participation_capacity_not_feasible"
-            elif reference <= 0.0:
+            elif reference is None or reference <= 0.0:
                 reason = "invalid_reference_price"
             elif side not in {"buy", "sell"}:
                 reason = "unsupported_fixture_signal"
-            elif previous_close <= 0.0:
+            elif previous_close is None or previous_close <= 0.0:
                 reason = "price_limit_evidence_missing"
+            elif regime_reason := _price_limit_regime_reason(candidate):
+                reason = regime_reason
             elif side == "sell":
                 holding = positions.get(symbol)
                 if holding is None:
                     reason = "no_position_to_sell"
                 elif holding["acquired_session_index"] >= session_index:
                     reason = "t_plus_1_not_sellable"
-                elif mark_price <= 0.0:
+                elif mark_price is None or mark_price <= 0.0:
                     reason = f"mark_unavailable:{symbol}"
                 else:
                     fill, slippage, _ = _fill_price(reference, side)
@@ -559,7 +597,7 @@ def run_fixture_twenty_day_loop(
                 >= policy.stock_gross_exposure_limit_cny
             ):
                 reason = "gross_exposure_limit_reached"
-            elif mark_price <= 0.0:
+            elif mark_price is None or mark_price <= 0.0:
                 reason = f"mark_unavailable:{symbol}"
             else:
                 fill, slippage, _ = _fill_price(reference, side)

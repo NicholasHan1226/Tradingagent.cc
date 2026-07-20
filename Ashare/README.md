@@ -41,8 +41,11 @@ execution-reality fees plus conservative per-side slippage, a no-trade score
 band, single-name/gross/cash limits, and explicit no-trade reasons. Each
 tradable fixture row must provide a positive finite `previous_close_cny`; the
 canonical price-limit bounds then gate reference price, conservative fill, and
-current mark at valid ticks. New-listing/no-limit and other incomplete trading
-regimes are unsupported and fail closed. Tradable rows must also provide a
+current mark at valid ticks, including the previous close itself. It must also
+explicitly declare `price_limit_regime=standard_mainboard`,
+`price_limit_exempt=false`, and `new_listing=false`; new-listing/no-limit,
+exempt, unknown, and other incomplete trading regimes are unsupported and fail
+closed. Boolean, NaN, and infinite numeric inputs are invalid. Tradable rows must also provide a
 positive integer `bar_volume_shares` in shares; canonical execution-reality
 bar participation capacity caps each simulated fill and capacity below one
 100-share lot fails closed. The
