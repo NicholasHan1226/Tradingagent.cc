@@ -8,8 +8,10 @@ intent receipt or a reason code, reconciliation, and sample/review entries.
 Each day carries a structured fixture Evidence Gate: exact TradingDatas routes
 `GET /v1/catalog` and `POST /v1/query`, `available` state, non-degraded fresh
 and valid quality, lineage/receipt IDs, calendar eligibility/lineage, and a
-timezone-aware available time. Any missing, stale, degraded, failed, or mistyped
-field blocks candidate selection and orders. No dataset ID is invented. It has
+timezone-aware available time plus decision time on the same Shanghai trading
+session. Available evidence must not be later than the decision time. Any
+missing, stale, degraded, failed, future, or mistyped field blocks candidate
+selection and orders. No dataset ID is invented. It has
 no data client, network access, SQLite access, broker, LLM, scheduler, outbox,
 or runtime ledger side effect.
 

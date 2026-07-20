@@ -11,6 +11,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from datetime import datetime
 import re
 from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 from shared.capital.market_policy import MarketPolicy
 from shared.execution.execution_reality import ashare_execution_reality
@@ -38,6 +39,7 @@ class FixtureEvidence:
     calendar_eligible: bool
     calendar_lineage_id: str
     available_at: str
+    decision_time: str
 
 
 @dataclass(frozen=True)
@@ -70,7 +72,7 @@ def _evidence_reason(day: FixtureDay) -> str | None:
         return "evidence_route_invalid"
     if type(evidence.degraded) is not bool or evidence.degraded:
         return "evidence_degraded"
-    if evidence.state != "available":
+    if evidence.state != "ready":
         return "evidence_state_invalid"
     if evidence.freshness != "fresh":
         return "evidence_stale"
@@ -96,11 +98,26 @@ def _evidence_reason(day: FixtureDay) -> str | None:
     if available_at.tzinfo is None:
         return "evidence_available_at_invalid"
     try:
+        decision_time = datetime.fromisoformat(
+            evidence.decision_time.replace("Z", "+00:00")
+        )
+    except (AttributeError, ValueError):
+        return "evidence_decision_time_invalid"
+    if decision_time.tzinfo is None:
+        return "evidence_decision_time_invalid"
+    try:
         session = datetime.strptime(day.trade_date, "%Y%m%d")
     except (TypeError, ValueError):
         return "trade_date_invalid"
     if session.weekday() >= 5:
         return "trade_date_not_weekday"
+    if (
+        decision_time.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+        != day.trade_date
+    ):
+        return "decision_time_trade_date_mismatch"
+    if available_at > decision_time:
+        return "evidence_available_after_decision"
     return None
 
 

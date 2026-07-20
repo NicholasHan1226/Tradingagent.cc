@@ -11,11 +11,12 @@ from Ashare.twenty_day_fixture_loop import (
 )
 
 
-def _evidence(**overrides: object) -> FixtureEvidence:
+def _evidence(trade_date: str = "20260701", **overrides: object) -> FixtureEvidence:
+    date_text = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
     payload: dict[str, object] = {
         "catalog_route": "GET /v1/catalog",
         "query_route": "POST /v1/query",
-        "state": "available",
+        "state": "ready",
         "degraded": False,
         "freshness": "fresh",
         "quality": "valid",
@@ -23,7 +24,8 @@ def _evidence(**overrides: object) -> FixtureEvidence:
         "receipt_id": "fixture-receipt",
         "calendar_eligible": True,
         "calendar_lineage_id": "fixture-calendar-lineage",
-        "available_at": "2026-07-01T08:00:00+08:00",
+        "available_at": f"{date_text}T08:00:00+08:00",
+        "decision_time": f"{date_text}T09:30:00+08:00",
     }
     payload.update(overrides)
     return FixtureEvidence(**payload)  # type: ignore[arg-type]
@@ -46,7 +48,7 @@ def _days(
         FixtureDay(
             trade_date=trade_date,
             instruments=first_rows if index == 0 and first_rows else [],
-            evidence=_evidence(),
+            evidence=_evidence(trade_date),
             mark_prices=first_marks if index == 0 and first_marks else {},
         )
         for index, trade_date in enumerate(_dates())
@@ -83,6 +85,22 @@ def test_fixture_loop_records_fill_with_structured_evidence_slippage_and_policy(
         (_evidence(lineage_id=""), "evidence_lineage_missing"),
         (_evidence(receipt_id=""), "evidence_receipt_missing"),
         (_evidence(calendar_eligible=False), "calendar_ineligible"),
+        (
+            _evidence(available_at="2026-07-01T10:00:00+08:00"),
+            "evidence_available_after_decision",
+        ),
+        (
+            _evidence(available_at="2026-07-01T08:00:00"),
+            "evidence_available_at_invalid",
+        ),
+        (
+            _evidence(decision_time="2026-07-01T09:30:00"),
+            "evidence_decision_time_invalid",
+        ),
+        (
+            _evidence(decision_time="2026-07-02T09:30:00+08:00"),
+            "decision_time_trade_date_mismatch",
+        ),
     ],
 )
 def test_fixture_evidence_gate_fails_closed_before_candidate(
@@ -98,6 +116,31 @@ def test_fixture_evidence_gate_fails_closed_before_candidate(
     result = run_fixture_twenty_day_loop(days)
     assert result["days"][0]["reason_code"] == reason
     assert result["days"][0]["intent_receipt"] is None
+
+
+def test_reconcile_has_one_stable_result_shape() -> None:
+    result = run_fixture_twenty_day_loop(
+        _days(
+            first_rows=[
+                {"symbol": "600000.SH", "price": 20, "volume": 1, "rank_score": 1}
+            ],
+            first_marks={"600000.SH": 20},
+        )
+    )
+    assert set(result["days"][0]["reconcile"]) == {
+        "account_id",
+        "capital_layer",
+        "real_trading_enabled",
+        "cash_cny",
+        "market_value_cny",
+        "gross_exposure_cny",
+        "realized_pnl_cny",
+        "unrealized_pnl_cny",
+        "equity_cny",
+        "position_count",
+        "status",
+        "reason_code",
+    }
 
 
 @pytest.mark.parametrize(
@@ -209,7 +252,7 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
     days[1] = FixtureDay(
         days[1].trade_date,
         [{"symbol": "600001.SH", "price": 10, "volume": 1, "rank_score": 1}],
-        _evidence(),
+        _evidence(days[1].trade_date),
         {"600000.SH": 70},
     )
     days[2] = FixtureDay(
@@ -223,7 +266,7 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
                 "signal": "sell",
             }
         ],
-        _evidence(),
+        _evidence(days[2].trade_date),
         {"600000.SH": 20},
     )
     result = run_fixture_twenty_day_loop(days)
@@ -237,7 +280,7 @@ def test_marks_fail_closed_and_use_current_value_for_mtm_and_limits() -> None:
     missing[1] = FixtureDay(
         missing[1].trade_date,
         [{"symbol": "600001.SH", "price": 20, "volume": 1, "rank_score": 1}],
-        _evidence(),
+        _evidence(missing[1].trade_date),
         {},
     )
     blocked = run_fixture_twenty_day_loop(missing)["days"][1]
