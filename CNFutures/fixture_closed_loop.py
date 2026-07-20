@@ -196,14 +196,20 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
 
     stop_distance = _positive(fixture, "stop_distance")
     maximum_loss = _positive(fixture, "maximum_loss_cny")
-    daily_risk_budget = policy.initial_equity_cny * policy.daily_loss_pause_pct
+    daily_risk_budget = _finite_derived(
+        policy.initial_equity_cny * policy.daily_loss_pause_pct, "daily risk budget"
+    )
     if maximum_loss > daily_risk_budget:
         return _hold(
             base, candidate, policy, "maximum_loss_exceeds_canonical_daily_budget"
         )
     entry = _round_tick(price, contract.tick_size, requested_side in {"long"})
-    one_lot_margin = entry * contract.multiplier * contract.initial_margin_rate
-    one_lot_loss = stop_distance * contract.multiplier
+    one_lot_margin = _finite_derived(
+        entry * contract.multiplier * contract.initial_margin_rate, "one-lot margin"
+    )
+    one_lot_loss = _finite_derived(
+        stop_distance * contract.multiplier, "one-lot stop loss"
+    )
     max_lots_by_margin = int(policy.margin_utilization_limit_cny // one_lot_margin)
     max_lots_by_loss = int(maximum_loss // one_lot_loss)
     quantity = min(requested_quantity, max_lots_by_margin, max_lots_by_loss)
@@ -220,7 +226,9 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         contract.open_fee_rate,
         contract.open_fee_type,
     )
-    margin = entry * contract.multiplier * quantity * contract.initial_margin_rate
+    margin = _finite_derived(
+        entry * contract.multiplier * quantity * contract.initial_margin_rate, "margin"
+    )
     expected_close_fee = _fee(
         entry,
         contract.multiplier,
@@ -228,18 +236,26 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         contract.close_fee_rate,
         contract.close_fee_type,
     )
-    reserved_cash_after_order = (
-        policy.initial_equity_cny - margin - open_fee - expected_close_fee
+    reserved_cash_after_order = _finite_derived(
+        policy.initial_equity_cny - margin - open_fee - expected_close_fee,
+        "reserved cash after order",
     )
-    stop_exposure = one_lot_loss * quantity + open_fee + expected_close_fee
+    stop_exposure = _finite_derived(
+        one_lot_loss * quantity + open_fee + expected_close_fee, "stop exposure"
+    )
     if reserved_cash_after_order < 0 or stop_exposure > daily_risk_budget:
         return _hold(base, candidate, policy, "margin_stop_or_fee_pretrade_ineligible")
-    cash_after_open = policy.initial_equity_cny - open_fee
+    cash_after_open = _finite_derived(
+        policy.initial_equity_cny - open_fee, "cash after open"
+    )
     mark_price = _positive(mark, "price")
     unrealized = _pnl(requested_side, entry, mark_price, contract.multiplier, quantity)
-    equity_before_close = cash_after_open + unrealized
-    maintenance = (
-        mark_price * contract.multiplier * quantity * contract.maintenance_margin_rate
+    equity_before_close = _finite_derived(
+        cash_after_open + unrealized, "equity before close"
+    )
+    maintenance = _finite_derived(
+        mark_price * contract.multiplier * quantity * contract.maintenance_margin_rate,
+        "maintenance margin",
     )
     liquidation = equity_before_close < maintenance
     close_price_raw = mark_price if liquidation else _positive(close, "price")
@@ -253,8 +269,8 @@ def run_fixture_closed_loop(fixture: Mapping[str, Any]) -> dict[str, Any]:
         contract.close_fee_type,
     )
     realized = _pnl(requested_side, entry, close_price, contract.multiplier, quantity)
-    final_cash = cash_after_open + realized - close_fee
-    capital_deficit = max(0.0, -final_cash)
+    final_cash = _finite_derived(cash_after_open + realized - close_fee, "final cash")
+    capital_deficit = _finite_derived(max(0.0, -final_cash), "capital deficit")
     open_order = _order(
         intent_id,
         "open",
@@ -509,7 +525,15 @@ def _session_for_contract(timestamp: datetime, contract: FixtureContract) -> str
     local = timestamp.astimezone(CN_TZ)
     minute = local.hour * 60 + local.minute
     for name, windows in contract.session_windows.items():
-        if any(start <= minute <= end for start, end in windows):
+        if any(
+            start <= minute < end
+            or (
+                minute == end
+                and local.second == 0
+                and local.microsecond == 0
+            )
+            for start, end in windows
+        ):
             return name
     return "closed"
 
@@ -530,6 +554,7 @@ def _event_trade_date_and_session(
         raise FixtureContractError(f"{name} calendar trade_date is invalid") from exc
     _nonempty_string_field(calendar, "calendar_lineage_ref", f"{name} calendar lineage")
     _nonempty_string_field(calendar, "receipt_id", f"{name} calendar receipt")
+    _assert_available_by(calendar, f"{name} exchange_calendar", timing.decision_time)
     if calendar.get("calendar_eligible") is not True:
         if (
             calendar.get("calendar_eligible") is False
@@ -537,7 +562,6 @@ def _event_trade_date_and_session(
         ):
             return trade_date, "closed"
         raise FixtureContractError(f"{name} calendar eligibility is required")
-    _assert_available_by(calendar, f"{name} exchange_calendar", timing.decision_time)
     actual_session = _session_for_contract(timing.event_time, contract)
     if actual_session == "closed" or calendar.get("session") != actual_session:
         raise FixtureContractError(
@@ -566,8 +590,8 @@ def _fee(
     fee_type: str,
 ) -> float:
     if fee_type == "fixed_per_lot":
-        return value * quantity
-    return price * multiplier * quantity * value
+        return _finite_derived(value * quantity, "fee")
+    return _finite_derived(price * multiplier * quantity * value, "fee")
 
 
 def _base_result(
@@ -660,9 +684,16 @@ def _with_lineage(
         "sample_review": sample,
         "daily_reconcile": reconcile,
     }
-    canonical = json.dumps(
-        result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    try:
+        canonical = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise FixtureContractError("fixture output must be canonical JSON") from exc
     result["lineage_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return result
 
@@ -700,11 +731,13 @@ def _pnl(
     side: str, entry: float, exit_price: float, multiplier: float, quantity: int
 ) -> float:
     direction = 1.0 if side == "long" else -1.0
-    return direction * (exit_price - entry) * multiplier * quantity
+    return _finite_derived(
+        direction * (exit_price - entry) * multiplier * quantity, "PnL"
+    )
 
 
 def _round_tick(price: float, tick_size: float, upward: bool) -> float:
-    units = price / tick_size
+    units = _finite_derived(price / tick_size, "tick units")
     rounded = math.ceil(units - 1e-12) if upward else math.floor(units + 1e-12)
     result = _money(rounded * tick_size)
     if not math.isfinite(result) or result <= 0:
@@ -762,8 +795,14 @@ def _finite(value: Any) -> float:
     return float(value)
 
 
+def _finite_derived(value: float, name: str) -> float:
+    if not math.isfinite(float(value)):
+        raise FixtureContractError(f"derived {name} must be finite")
+    return float(value)
+
+
 def _money(value: float) -> float:
-    return round(float(value), 8)
+    return round(_finite_derived(value, "money value"), 8)
 
 
 def _canonical_sha256(value: Any) -> str:

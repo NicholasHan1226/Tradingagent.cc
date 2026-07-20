@@ -82,6 +82,7 @@ append-only review journal、前向标签、actual-cost execution evidence、Sam
 
 ```bash
 REAL_TRADING_ENABLED=false python -m pytest -q \
+  tests/test_cn_futures_fixture_closed_loop.py \
   tests/test_cn_futures_execution_evidence.py \
   tests/test_cn_futures_sim.py \
   tests/test_market_lane_governance.py

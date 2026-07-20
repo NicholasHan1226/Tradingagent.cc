@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -525,6 +526,74 @@ def test_naive_timestamps_fail_closed(path: tuple[str, ...], value: str) -> None
 
     with pytest.raises(FixtureContractError):
         run_fixture_closed_loop(fixture)
+
+
+@pytest.mark.parametrize(
+    "available_at",
+    ["2026-07-17T20:59:00", "2026-07-17T21:05:03+08:00"],
+)
+def test_closed_entry_calendar_still_requires_aware_pit_availability(
+    available_at: str,
+) -> None:
+    bar = copy.deepcopy(_fixture()["bar"])
+    assert isinstance(bar, dict)
+    bar["exchange_calendar"] = {
+        "trade_date": "20260720",
+        "calendar_eligible": False,
+        "session": "closed",
+        "available_at": available_at,
+        "calendar_lineage_ref": "closed-calendar-lineage",
+        "receipt_id": "closed-calendar-receipt",
+    }
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(_fixture(bar=bar))
+
+
+def test_session_end_is_exact_to_seconds_and_microseconds() -> None:
+    fixture = _fixture()
+    fixture.update(
+        {
+            "bar": {
+                **fixture["bar"],
+                "timestamp": "2026-07-18T00:58:00+08:00",
+                "available_at": "2026-07-18T00:58:01+08:00",
+                "decision_time": "2026-07-18T00:58:02+08:00",
+            },
+            "mark": {
+                **fixture["mark"],
+                "timestamp": "2026-07-18T00:59:00+08:00",
+                "available_at": "2026-07-18T00:59:01+08:00",
+                "decision_time": "2026-07-18T00:59:02+08:00",
+            },
+            "close": {
+                **fixture["close"],
+                "timestamp": "2026-07-18T01:00:00+08:00",
+                "available_at": "2026-07-18T01:00:01+08:00",
+                "decision_time": "2026-07-18T01:00:02+08:00",
+            },
+        }
+    )
+    assert run_fixture_closed_loop(fixture)["session"] == "night"
+
+    close = dict(fixture["close"])
+    close["timestamp"] = "2026-07-18T01:00:00.000001+08:00"
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(_fixture(**{**fixture, "close": close}))
+
+
+def test_finite_inputs_with_derived_overflow_fail_closed() -> None:
+    close = dict(_fixture()["close"])
+    close["price"] = 1e308
+
+    with pytest.raises(FixtureContractError):
+        run_fixture_closed_loop(_fixture(close=close))
+
+
+def test_fixture_output_is_strict_json_serializable() -> None:
+    for fixture in (_fixture(), _fixture(maximum_loss_cny=2_000.0)):
+        result = run_fixture_closed_loop(fixture)
+        assert json.dumps(result, ensure_ascii=False, allow_nan=False)
 
 
 def test_fixture_output_never_claims_execution_or_durable_capital_authority() -> None:
