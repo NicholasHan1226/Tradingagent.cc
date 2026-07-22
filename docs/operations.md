@@ -359,21 +359,24 @@ export REAL_TRADING_ENABLED=false
 V1 不提供 TradingDatas 默认地址。仅在 TradingDatas fresh handoff 与上游合同真正冻结、并由获批联调任务提供时，才可显式设置：
 
 ```bash
-export TRADINGDATAS_API_URL='<explicit-http-or-https-base-url>'
+export TRADINGDATAS_API_URL='<explicit-https-or-loopback-ip-http-base-url>'
 export TRADINGDATAS_CATALOG_VERSION='<explicit-frozen-catalog-version>'
 export TRADINGDATAS_ACCESS_POLICY_ID='<explicit-read-only-policy-id>'
 export TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON='<explicit-market-to-dataset-json>'
 export TRADINGDATAS_SCHEMA_MAJOR='<explicit-positive-schema-major>'
 export TRADINGDATAS_RUNTIME_TRANSPORT='http-json-v1'
+export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.token'
 ```
 
-缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`http-json-v1` 只表示显式 TA consumer transport，拒绝 30x 重定向，且不能解除未迁移业务 reader 的 retirement block；当前不授权配置或运行 live endpoint。
+缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`TRADINGDATAS_API_TOKEN_FILE` 只保存 `/run/secrets/tradingagent` 下的仓外绝对路径；checkout/worktree/Git common repo 或任意其它目录中的文件一律拒绝。禁止在环境变量、manifest、fixture、日志或回执中写明文 token。目标文件必须由发布侧独立配置为 TA-scoped credential，精确 `0600`、可信 owner、普通单硬链接文件且整条路径无 symlink；不得复用 TradingDatas bootstrap token。`http-json-v1` transport 只接受无尾随斜杠、path、query、fragment、userinfo、控制字符或反斜杠的 canonical `scheme://host[:port]`，并只向该 authority 上精确的 `GET /v1/catalog` 与 `POST /v1/query` 注入 Bearer header；只接受通用客户端固定生成的 JSON `Accept`/`Content-Type`，调用方添加 Host、forwarding、proxy 或其它 header 会在网络前拒绝。远端 authority 必须使用 HTTPS，明文 HTTP 只接受 `127.0.0.0/8` 或 `::1` 的 IP 字面量 loopback，不接受 `localhost` 等 DNS 名称。不同 authority/path/query/method、调用方自带 Authorization 和 30x 重定向都在发送前拒绝。transport 为 single-flight，并发第二请求在网络前失败；401/403 不读取正文并锁住该 transport，后续请求、重试和任何 legacy/provider fallback 全部拒绝。当前合同完成不等于实际 token 已发放，也不授权配置或运行 live endpoint。
+
+当前发布合同固定服务身份为 `tradingagent-front-api.service` 的 `User=marketgraph`、`Group=marketgraph`，叶文件路径为 `/run/secrets/tradingagent/tradingdatas-read.token`。只有发布侧可创建父目录、生成并注册独立 TA scope token，再以 `marketgraph:marketgraph`、精确 `0600` 和无 symlink/硬链接别名的原子替换安装叶文件；root provisioning 必须可在重启后重建并保留显式回滚。应用候选、测试、manifest、日志与任务消息均不得创建、读取或传递 token 值。发布前若目录或叶文件尚不存在，消费端必须保持 unavailable，不能自行降级到其它 credential、端口或数据源。
 
 ### 2.1 TradingDatas V1 接入验收器
 
 轻量的 `sharedsignals_v1_gate.py` 与 `sharedsignals_v1_integration_probe.py` 保留为兼容文件名：前者负责任务启动前逐 dataset 的即时可用性门，后者负责首次接入、TradingDatas 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读验收。二者均是 TA consumer，不实现或验收 TradingDatas 服务端；两者输出的 reason code 都由 TA 本地状态机推导，上游 `metadata.reasons` 自由文本只保存哈希，不能伪装成本地门禁结论或进入日志。
 
-模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)；该文件名是兼容入口。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。TradingDatas owner 提供 fresh handoff 后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。真实认证协议尚未冻结，验收器不会自行发明 Bearer/Header 或读取 `.env` 密钥。
+模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)；该文件名是兼容入口。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。TradingDatas owner 提供 fresh handoff 后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。验收器只从 root/service 配置的 `TRADINGDATAS_API_TOKEN_FILE` 读取 credential，安全文件门未通过时在创建 HTTP opener 前阻断；不会读取明文 token 环境变量或自行发明其它认证/header/fallback。
 
 首批显式功能角色为：
 

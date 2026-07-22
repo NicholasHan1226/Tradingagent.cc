@@ -13,7 +13,7 @@
 - `review/`：SampleJournal、forward labels、actual-cost KPI、人工 evolution assessment 与市场成熟度。
 - `risk/`：硬门禁、市场独立风控和 exploration 可调策略门槛。
 - `runtime_test/`：只读或隔离副本验收；缺输入不能静默通过。
-- `data/`：mock-first `GET /v1/catalog` + `POST /v1/query` provider-neutral client/Evidence Gate；base URL、catalog version、dataset IDs 与 policy 显式配置。当前不证明生产 TradingDatas runtime，禁止直读兄弟仓文件、旧专用端点或 provider fallback。`SharedSignalsV1*` 等旧名只可作为明确的兼容代码标识，不能表示仍依赖旧 SharedSignals runtime。
+- `data/`：mock-first `GET /v1/catalog` + `POST /v1/query` provider-neutral client/Evidence Gate；base URL、catalog version、dataset IDs 与 policy 显式配置。Bearer只由最终HTTP transport从精确`0600`、可信owner、regular/single-link/no-symlink的仓外TA token file注入；通用client、manifest、明文环境变量、日志和回执不得持有secret。当前不证明生产 TradingDatas runtime，禁止直读兄弟仓文件、旧专用端点或 provider fallback。`SharedSignalsV1*` 等旧名只可作为明确的兼容代码标识，不能表示仍依赖旧 SharedSignals runtime。
 
 ## 事实路径
 
