@@ -7,7 +7,8 @@
 # live crontab or use it to overwrite TradingDatas/MarketGraph entries.
 #
 # To install or update TradingAgent entries, use the merge installer:
-#   sudo python3 tools/merge_tradingagent_crontab.py --apply
+#   sudo python3 tools/merge_tradingagent_crontab.py --apply \
+#     --backup-dir /opt/investment/release-evidence/tradingagent/<release>/cron
 #   (dry-run without --apply to preview; see cron/AGENTS.md for details.)
 #   DO NOT run: crontab shared/crontab.txt or crontab crontab.txt
 #

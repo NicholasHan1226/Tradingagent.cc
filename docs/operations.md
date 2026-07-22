@@ -372,6 +372,54 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 
 长期 A股 observation worker 的发布合同固定为专用 `tradingagent:tradingagent` 服务身份，叶文件路径为 `/run/secrets/tradingagent/tradingdatas-read.token`；`tradingagent-front-api.service` 不读取该 token。只有发布侧可创建父目录、生成并注册独立 TA scope token，再以 `tradingagent:tradingagent`、精确 `0600` 和无 symlink/硬链接别名的原子替换安装叶文件；root provisioning 必须可在重启后重建并保留显式回滚。应用候选、测试、manifest、日志与任务消息均不得创建、读取或传递 token 值。旧 `marketgraph:marketgraph` 身份及其只读 token 只是 2026-07-22 一次性兼容验收的历史证据，不得在长驻 worker、front 或新 state root 中复用。发布前若目录或叶文件尚不存在，消费端必须保持 unavailable，不能自行降级到其它 credential、端口或数据源。
 
+#### 2.0.1 专用服务身份与 installed unit 切换
+
+仓库中的权威安装字节为：
+
+- `deploy/systemd/tradingagent-runtime.sysusers.conf`：创建无登录权限的
+  `tradingagent:tradingagent`；
+- `deploy/systemd/tradingagent-runtime.tmpfiles.conf`：创建相互分离的
+  state/runtime/log 与 secret parent，不创建 token leaf；
+- `deploy/systemd/tradingagent-front-api.service`：localhost-only 前端只读 API；
+- `deploy/systemd/tradingagent-ashare-observation.service`：一次性 A股观察 worker；
+- `deploy/systemd/tradingagent-ashare-observation.timer`：不可 enable 的静态候选，
+  本阶段不安装、不启用。
+
+安装顺序必须是：备份账户数据库、现役 unit/drop-in、两份 crontab、现役仓
+HEAD/status 与路径权限；安装 sysusers 配置并运行 `systemd-sysusers`；读回
+UID/GID/primary group/nologin；安装 tmpfiles 配置并运行
+`systemd-tmpfiles --create`；最后才由 TradingDatas credential publisher 在
+服务器本地生成、注册并原子安装新的 TA-scoped source/runtime token。应用发布
+流程既不能读取身份不明的 `/etc/tradingagent/tradingdatas-read.token`，也不能
+复制旧 `marketgraph` runtime token。任何 token 值或 token 内容哈希都不得进入
+命令行、Git、日志、回执或任务消息。
+
+前端 unit 使用专用 UID/primary group 和 immutable release bytes；迁移期间仅以
+`SupplementaryGroups=marketgraph` 只读历史模拟投影，且没有任何
+`ReadWritePaths`；`InaccessiblePaths=/run/secrets/tradingagent` 进一步隔离
+worker credential，front 即使使用相同主 UID 也不能读取 token。切换前必须先在备用 loopback 端口以该身份启动 canary，比较
+health、snapshot 安全标志与关键投影计数；无法读取历史投影时回滚，不得用放宽
+全树权限掩盖失败。installed base unit 必须与仓库字节一致，历史
+`sharedsignals.conf`/`sim-only.conf` drop-in 必须备份后移出 active unit 目录；
+新 base unit 已固定 simulation-only 并把前端 TradingDatas/MarketGraph URL 留空。
+
+现役 `marketgraph` crontab 的 TradingAgent managed block 必须使用本仓
+`tools/merge_tradingagent_crontab.py` 与 paused 模板生成，原子安装并读回，结果
+应为零条 TA recurring market job。其它项目的 provider/monitor cron 不属于 TA
+写域，不得在本次切换中逐条删除。这样只证明 **TA 活跃消费者不再使用 8082**；
+旧 SharedSignals service、provider/monitor cron 与 8082 的最终退役仍需其 owner
+另行完成持续数据替代、no-use 观察和回滚验收。
+
+`--apply` 必须同时传入仓外绝对 `--backup-dir`（本次使用对应 release 的
+`/opt/investment/release-evidence/tradingagent/.../cron`）；工具会在任何系统写入
+前拒绝 Git checkout 内的备份目录。禁止使用旧的仓内
+`runtime/backups/crontab`，也禁止从脏的现役仓运行会写回代码树的安装方式。
+
+回滚按相反顺序执行：停止新 worker/front；恢复原 front base/drop-in 和原始
+crontab 字节；重启并复核原 PID/8787 health；由 credential publisher 撤销新
+TA scope credential 并重建所需 runtime leaf。不要删除 release、失败证据、旧
+service 或旧 token 作为“回滚”。
+
 ### 2.1 TradingDatas V1 接入验收器
 
 `sharedsignals_v1_gate.py` 与 `sharedsignals_v1_integration_probe.py` 只保留兼容文件名。前者是启动前的轻量 catalog/auth/单次 dataset 可用性 smoke：遇到 non-terminal page 会拒绝，不能声明完整 dataset、research snapshot 或历史 PIT 已通过。后者负责首次接入、TradingDatas 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读 consumer 验收，必须完成 bounded pagination 与同一 observation 双跑。二者均不实现或验收 TradingDatas 服务端；reason code 只由 TA 本地状态机产生，上游 `metadata.reasons` 自由文本只保存哈希。
@@ -406,6 +454,46 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
 回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、raw cursor、异常原文与上游自由文本 reason，只保存 authority/config、catalog/query、source proof、分页/identity、same-observation 与 current-observation hashes 及 TA 受控 reason codes。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA consumer contract，不证明 TradingDatas 服务端整体通过、生产 runtime 已切换、历史 PIT、每日持续健康或交易获授权。schema ID 为 `tradingagent.tradingdatas.integration-readiness.v2`；旧类名/文件名只是代码兼容入口。
 
 每次 catalog/dataset/schema、filters/as-of policy、identity/event mapping、budgets 或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+
+#### 2.1.1 Catalog 全 active-set parity
+
+`shared.runtime_test.tradingdatas_catalog_parity` 是独立于 A股五项 observation
+profile 的 transport/contract 验收器。它从一次 `GET /v1/catalog` 发现 active
+集合，并要求仓外 secret-free manifest 对 `total/active/paused` 数量、active
+dataset ID、`schema_major/default_fields/limits` 精确冻结；集合或合同漂移时在
+发出任何 query 前阻断。每个 active dataset 随后执行两次有界、完整 cursor
+遍历，并复用同一 identity、metadata 与 Evidence Gate 门禁。
+
+回执把结果拆成三项，禁止用一个 HTTP 成功状态概括：
+
+- `transport_contract_pass`：固定 API、分页预算、跨页 identity 和同一
+  observation 双跑均守恒；
+- `ready_set_pass`：manifest 声明为 ready 的 dataset 具有完整 source proof，
+  且被 Evidence Gate 以权重 `1.0` 接受；
+- `impaired_set_accounted`：manifest 声明为 impaired 的 dataset 被逐项拒绝、
+  权重固定 `0.0`，没有进入 research snapshot。
+
+`unobserved/paused/failed/stale/empty/degraded` 合法状态可以没有
+`receipt_id/data_through/observed_at/provider lineage`。对预先声明的 impaired
+dataset，这种缺失必须如实记录为 `source_proof_unavailable`；只要 envelope、
+分页和双跑语义稳定且 Evidence Gate 拒绝，它仍可被“诚实计入”，但绝不能
+晋级研究证据。ready dataset 缺任何 source proof 仍然阻断。若 impaired
+dataset 意外变为 ready，也先阻断并要求更新 manifest，避免无审查自动扩大
+输入范围。
+
+```bash
+export REAL_TRADING_ENABLED=false
+
+python3 -m shared.runtime_test.tradingdatas_catalog_parity \
+  --manifest /etc/tradingagent/tradingdatas-catalog-parity.json \
+  --token-file /run/secrets/tradingagent/tradingdatas-read.token \
+  --output /var/lib/tradingagent/ashare-observation/catalog-parity-receipt.json
+```
+
+退出码固定为 `0=三项均通过`、`2=合同或逐数据集门禁阻断`、
+`64=manifest/token/transport配置无效`。回执是 `non_authority`，不含 URL、
+token、header、row、cursor 或上游自由文本；它不替代五项 A股 observation
+profile，也不授权 timer、订单或真实交易。
 
 ### 2.2 A股 one-shot current-observation runner
 

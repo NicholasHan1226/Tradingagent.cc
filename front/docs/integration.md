@@ -442,32 +442,22 @@ the `Authorization` header as shown above.
 Keep the API as a local service and let Nginx handle only the authenticated
 remote HTTPS surface. Cloudflare Access or equivalent authentication must run
 before this route; Nginx availability alone is not an authorization boundary.
-One practical `systemd` shape:
+The canonical unit is tracked at
+`deploy/systemd/tradingagent-front-api.service`; the installed
+`/etc/systemd/system/tradingagent-front-api.service` must be byte-identical to
+that file and must have no drop-ins.
 
-```ini
-[Unit]
-Description=TradingAgent front snapshot API
-After=network.target
-
-[Service]
-User=marketgraph
-Group=marketgraph
-WorkingDirectory=/opt/investment/tradingagent/front
-Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent
-Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
-Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
-Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://tradingagent.cc
-ExecStart=/opt/investment/tools/node-v24.4.1/bin/node /opt/investment/tradingagent/front/dist-server/server/tradingAgentSnapshotHttp.js
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-ReadWritePaths=/opt/investment/tradingagent
-
-[Install]
-WantedBy=multi-user.target
-```
+The service process uses the dedicated `tradingagent:tradingagent` primary
+identity and executes immutable release bytes. During the legacy projection
+migration it retains `marketgraph` only as a supplementary Unix read group for
+existing simulation artifacts. The systemd sandbox grants no writable legacy
+path and makes `/run/secrets/tradingagent` inaccessible to the front process;
+this compatibility group is not a MarketGraph service/API dependency.
+The front unit explicitly leaves all TradingDatas settings empty and never
+reads `/run/secrets/tradingagent/tradingdatas-read.token`; authenticated
+TradingDatas collection belongs to the separate A-share observation worker.
+Remove the supplementary group only after the front reads a dedicated
+TradingAgent projection root and a fresh snapshot parity check passes.
 
 Production verification:
 

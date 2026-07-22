@@ -30,8 +30,10 @@ tests/test_tradingdatas_market_evidence.py
 tests/test_ashare_paper_planning.py
 tests/test_trusted_runtime_clock.py
 tests/test_ashare_worker_units.py
+tests/test_tradingagent_service_identity.py
 tests/test_ashare_worker_runtime_audit.py
 tests/test_tradingdatas_query_pagination.py
+tests/test_tradingdatas_catalog_parity.py
 tests/test_tradingdatas_bearer_auth.py
 tests/test_data_evidence_gate.py
 tests/test_research_data_snapshot.py
