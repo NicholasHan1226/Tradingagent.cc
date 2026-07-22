@@ -413,6 +413,41 @@ class MergeTests(unittest.TestCase):
             with self.subTest(template="active", marker=marker):
                 self.assertFalse(_ta_coverage_ok(marker + "\n" + active, TA_TEMPLATE))
 
+    def test_coverage_rejects_every_unapproved_managed_block_line(self):
+        merged = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(merged)
+        canonical_schedule = next(
+            line for line in merged.splitlines() if "job_future_catalog_loop.sh" in line
+        )
+        variants = {
+            "appended_command_after_normalized_schedule": merged.replace(
+                canonical_schedule,
+                canonical_schedule
+                + " >> /tmp/ta.log 2>&1 ; /usr/bin/touch /tmp/unexpected",
+                1,
+            ),
+            "non_ta_schedule": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "*/1 * * * * /usr/bin/touch /tmp/unexpected\n"
+                "# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+            "unapproved_environment": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "PATH=/tmp/untrusted\n# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+            "unapproved_comment": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "# unexpected managed content\n# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+        }
+
+        for name, invalid in variants.items():
+            with self.subTest(name=name):
+                self.assertFalse(_ta_coverage_ok(invalid, TA_TEMPLATE))
+
     def test_coverage_retains_exact_env_rejection_and_outside_assignments(self):
         active = merge("", TA_TEMPLATE)
         paused = merge("", PAUSED_TEMPLATE)
@@ -573,6 +608,62 @@ class ApplyWorkflowTests(unittest.TestCase):
                             call("marketgraph", CURRENT),
                         ],
                     )
+
+    def test_unapproved_managed_block_readback_rolls_back_original_bytes(self):
+        merged = merge(CURRENT, TA_TEMPLATE)
+        self.assertIsNotNone(merged)
+        canonical_schedule = next(
+            line for line in merged.splitlines() if "job_future_catalog_loop.sh" in line
+        )
+        variants = {
+            "appended_command_after_normalized_schedule": merged.replace(
+                canonical_schedule,
+                canonical_schedule
+                + " >> /tmp/ta.log 2>&1 ; /usr/bin/touch /tmp/unexpected",
+                1,
+            ),
+            "non_ta_schedule": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "*/1 * * * * /usr/bin/touch /tmp/unexpected\n"
+                "# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+            "unapproved_environment": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "PATH=/tmp/untrusted\n# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+        }
+
+        for name, bad_readback in variants.items():
+            with self.subTest(name=name):
+                reads = iter([(CURRENT, ""), (bad_readback, ""), (CURRENT, "")])
+                with (
+                    patch("tools.merge_tradingagent_crontab._read") as mr,
+                    patch(
+                        "tools.merge_tradingagent_crontab._backup",
+                        return_value=Path("/tmp/backup.txt"),
+                    ),
+                    patch("tools.merge_tradingagent_crontab._write") as mw,
+                ):
+                    mr.side_effect = lambda user: next(reads)
+                    mw.return_value = ("", "")
+
+                    report = apply_merge(
+                        TA_TEMPLATE,
+                        dry_run=False,
+                        backup_dir=EXTERNAL_BACKUP_DIR,
+                    )
+
+                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["failure"], "coverage_mismatch")
+                self.assertEqual(
+                    mw.call_args_list,
+                    [
+                        call("marketgraph", merged),
+                        call("marketgraph", CURRENT),
+                    ],
+                )
 
     def test_apply_success(self):
         merged = merge(CURRENT, TA_TEMPLATE)
