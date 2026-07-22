@@ -1,0 +1,55 @@
+[Unit]
+Description=TradingAgent A-share current-observation worker candidate
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/tradingagent/ashare-worker.env
+ConditionPathExists=/etc/tradingagent/ashare-observation-manifest.json
+ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
+ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py
+ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py
+
+[Service]
+Type=oneshot
+User=tradingagent
+Group=tradingagent
+WorkingDirectory=/opt/investment/releases/tradingagent/current
+EnvironmentFile=/etc/tradingagent/ashare-worker.env
+Environment=REAL_TRADING_ENABLED=false
+Environment=MARKETGRAPH_MODE=mg_off
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/opt/tradingagent/venv/bin/python3 /opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py --release-root /opt/investment/releases/tradingagent/current --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT} --expected-user tradingagent --expected-group tradingagent
+ExecStart=/opt/tradingagent/venv/bin/python3 /opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py --manifest ${ASHARE_OBSERVATION_MANIFEST} --token-file /run/secrets/tradingagent/tradingdatas-read.token --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT}
+TimeoutStartSec=30min
+UMask=0077
+StateDirectory=tradingagent/ashare-observation
+StateDirectoryMode=0700
+RuntimeDirectory=tradingagent/ashare-observation
+RuntimeDirectoryMode=0700
+LogsDirectory=tradingagent/ashare-observation
+LogsDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/etc/tradingagent
+ReadOnlyPaths=/run/secrets/tradingagent
+ReadWritePaths=/var/lib/tradingagent/ashare-observation
+ReadWritePaths=/run/tradingagent/ashare-observation
+ReadWritePaths=/var/log/tradingagent/ashare-observation
+StandardOutput=append:/var/log/tradingagent/ashare-observation/worker.log
+StandardError=append:/var/log/tradingagent/ashare-observation/worker.log
