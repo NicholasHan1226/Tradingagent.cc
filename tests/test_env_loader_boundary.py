@@ -15,6 +15,7 @@ TRADINGDATAS_V1_CONFIG = (
     "TRADINGDATAS_CATALOG_VERSION",
     "TRADINGDATAS_ACCESS_POLICY_ID",
     "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON",
+    "TRADINGDATAS_API_TOKEN_FILE",
 )
 
 
@@ -113,6 +114,7 @@ def _source_loader_v1_config(
 
 def test_env_loader_does_not_export_market_data_provider_secrets() -> None:
     source = ENV_LOADER.read_text(encoding="utf-8")
+    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     forbidden = [
         "TRADINGS_" + "TUSHARE_TOKEN",
         "TRADINGS_" + "ALPACA_API_KEY",
@@ -124,6 +126,13 @@ def test_env_loader_does_not_export_market_data_provider_secrets() -> None:
     ]
 
     assert [token for token in forbidden if token in source] == []
+    for plaintext_name in (
+        "TRADINGDATAS_API_TOKEN=",
+        "TRADINGDATAS_BEARER_TOKEN=",
+        "TRADINGDATAS_TOKEN=",
+    ):
+        assert plaintext_name not in source
+        assert plaintext_name not in env_example
 
 
 def test_env_loader_does_not_reexport_legacy_deepseek_secret_name() -> None:
@@ -195,6 +204,7 @@ def test_env_loader_preserves_explicit_tradingdatas_v1_configuration(
         "TRADINGDATAS_CATALOG_VERSION": "catalog-fixture-v1",
         "TRADINGDATAS_ACCESS_POLICY_ID": "ta-paper-read-v1",
         "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON": '{"ashare":"market-pulse-v1"}',
+        "TRADINGDATAS_API_TOKEN_FILE": "/fixture/tradingdatas/ta.token",
     }
     result = _source_loader_v1_config(tmp_path, inherited_config=explicit_config)
 

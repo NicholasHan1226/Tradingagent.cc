@@ -31,6 +31,34 @@ entries:
       - claim_tradingdatas_runtime_available
       - fallback_to_legacy_endpoint_or_sqlite
     successor: sharedsignals.query_result.v1
+  - entry_id: tradingagent_tradingdatas_bearer_transport
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/data/tradingdatas_auth.py
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - tests/test_tradingdatas_bearer_auth.py
+      - tests/test_sharedsignals_v1_runtime_gate.py
+      - tests/test_sharedsignals_v1_integration_probe.py
+      - docs/data_contract.md
+      - docs/operations.md
+    allowed_uses:
+      - load_dedicated_ta_bearer_from_secure_token_file
+      - authorize_catalog_and_query_on_explicit_v1_transport
+      - fail_closed_fixture_and_contract_testing
+    prohibited_uses:
+      - plaintext_token_environment_or_manifest
+      - repository_internal_token_file
+      - log_receipt_fixture_or_exception_secret_disclosure
+      - caller_supplied_authorization_header
+      - bearer_over_remote_plaintext_http
+      - reuse_tradingdatas_bootstrap_token
+      - retry_or_fallback_after_auth_failure
+      - concurrent_bearer_requests
+      - claim_token_provisioning_or_live_runtime_available
+    successor: tradingagent.tradingdatas.bearer-transport.v1
   - entry_id: tradingagent_sharedsignals_v1_integration_probe
     state: CURRENT_VERIFIED
     layer: repository_contract
@@ -51,6 +79,7 @@ entries:
       - infer_production_or_trading_authority
       - follow_unfrozen_pagination_contract
       - store_credentials_in_probe_manifest_or_receipt
+      - read_plaintext_token_environment
       - fallback_to_legacy_endpoint_sqlite_or_provider
     successor: tradingagent.sharedsignals.integration-readiness.v1
   - entry_id: tradingagent_mainboard_scope

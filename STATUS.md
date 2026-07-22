@@ -6,17 +6,17 @@
 
 功能发布提交 `5158a096a9511cbbee1f4f23ea290292289772c3` 已由 GitHub review #8 普通合并进入 `main`，物理删除 PM/US/HK、旧 Style/Evolution/Exit 执行栈与失效文档，并完成多币种/账户隔离、三市场 lane freshness、Crypto 单一资本权威和旧读侧退役门。
 
-其后 A股20交易日 fixture loop（review #10）、CNFutures fixture closed loop（review #11）和 Crypto fixture opening/旧 direct writer 原子退役（review #12）均已普通合并。服务器首次验证 review #12 时发现一条依赖文件系统遍历顺序的测试，保留失败证据后由 review #13 修复；`b38838a02397cc080160e6cf3dae7c47757d9c85` 是当前已完成目标服务器旁路验收的功能基线。review #14 只更新状态文档；review #15 进一步关闭跨市场调用旧 A股 `local_sim_executor` 的逃逸路径，并修正相关状态文档。review #15 已完成本地全量测试、独立审计和 GitHub CI，但没有对其精确功能字节重复运行服务器 sidecar，因此服务器已验证功能基线仍是 `b38838a...`。当前 GitHub `main` 与三条市场 lane 的精确 SHA 由 fresh Git readback 确认，不把会被下一次文档合并立即改变的主线 SHA 固化为长期事实。已验证基线的 sidecar 保持 loopback-only、network-disabled、simulation-only；任何一次 review 都没有切换现役源码、systemd service、cron、8787 API 或公开入口。
+其后 A股20交易日 fixture loop（review #10）、CNFutures fixture closed loop（review #11）和 Crypto fixture opening/旧 direct writer 原子退役（review #12）均已普通合并。服务器首次验证 review #12 时发现一条依赖文件系统遍历顺序的测试，保留失败证据后由 review #13 修复；`b38838a02397cc080160e6cf3dae7c47757d9c85` 是当前已完成目标服务器旁路验收的功能基线。后续主线继续关闭跨市场旧执行逃逸、同步状态文档，并加入 TradingDatas 阶段性 handoff 与分页 fail-closed 合同；当前仓库合同还固定了只从受限 TA token file 注入 Bearer 的消费侧认证边界。后续字节均完成本地验证，但没有继承或冒充 `b38838a...` 的服务器旁路证据。当前 GitHub `main` 与三条市场 lane 的精确 SHA 由 fresh Git readback 确认，不把会被下一次文档合并立即改变的主线 SHA 固化为长期事实。已验证基线的 sidecar 保持 loopback-only、network-disabled、simulation-only；任何一次 review 都没有切换现役源码、systemd service、cron、8787 API 或公开入口。
 
 全系统继续保持 **fixture/mock-first / simulation-only / 无真实交易权限**，`REAL_TRADING_ENABLED=false`。仓库主线发布、服务器旁路通过和现役生产激活仍是三种不同状态：仓库主线已发布，服务器旁路只覆盖 `b38838a...` 功能基线，现役生产没有激活。
 
 ## 六层事实
 
-| 层级 | 2026-07-21 当前事实 | 不能据此推断 |
+| 层级 | 当前事实 | 不能据此推断 |
 |---|---|---|
 | 本地主线 | 本轮 fresh readback 与 `origin/main` 一致；A股、CNFutures、Crypto 三条长期 lane 的本地与远端均干净同步到同一 SHA，三个 lane validator 对 `origin/main` 均通过 | 本地/远端同步不等于服务器现役切换；本机代码图缓存不属于产品状态或发布证据 |
-| 本地发布候选 | 当前没有待合并功能候选；被新模块化实现覆盖的旧 Crypto 单体原型仅保存在本地 archive commit `c51f957161662dcb37fd6ebe795bd037b35d060b`，不得 merge/cherry-pick | archive 只用于法证和回滚，不是兼容入口或备用 authority |
-| GitHub 主线 | reviews #8/#10/#11/#12/#13/#14/#15 均已普通合并，`main` 与三条远端市场 lane 的 fresh readback 当前一致；精确 SHA 只保存在当次验收证据 | GitHub main 不等于服务器进程已加载；review #15 的功能字节只完成本地/CI验证，不能继承 review #13 的服务器旁路证据 |
+| 本地发布候选 | 短生命周期候选不固化为当前能力；是否存在待合并候选及其精确 SHA、测试与 review 结果只以当次隔离 worktree 的 fresh 验收记录为准。被新模块化实现覆盖的旧 Crypto 单体原型仅保存在本地 archive commit `c51f957161662dcb37fd6ebe795bd037b35d060b`，不得 merge/cherry-pick | 候选存在不等于主线已合并；archive 只用于法证和回滚，不是兼容入口或备用 authority |
+| GitHub 主线 | 已批准功能均经普通评审合并，`main` 与三条远端市场 lane 的 fresh readback 当前一致；精确 SHA 只保存在当次验收证据 | GitHub main 不等于服务器进程已加载；服务器旁路基线之后的功能字节不能继承旧旁路证据 |
 | 服务器旁路 | `/opt/investment/tradingagent-candidates/ta-crypto-fixture-b38838a@b38838a02397cc080160e6cf3dae7c47757d9c85` clean；独立 venv/node_modules、三市场 fixture 检查与 18787 canary 已验证并停止 | 只证明目标服务器环境可安装、测试和旁路运行，不是生产激活、live paper 或真实数据接入 |
 | 服务器现役 | `/opt/investment/tradingagent@6c12fbed29db925019f85a6016774626f63b857a`；`tradingagent-front-api.service=active`，PID `1043`，只监听 `127.0.0.1:8787`，`/healthz` 为 200；18787 无监听 | 现役代码、service、cron 与入口均未切换 |
 | 外部能力 | 未连接 live TradingDatas、accepted DeepSeek evidence、broker、真实账户、邮件、同花顺、GUI、Cloudflare 控制面或公开 API | 不能声称真实数据闭环、真实模型可用或真实交易 |
@@ -25,7 +25,8 @@
 
 ## 当前发布证据
 
-- 本地最终字节：review #15 候选全仓后端 `3296 passed`，架构/退役聚焦集合 `50 passed`；Ruff format/check 和 `git diff --check` 通过。更早 Crypto 原子候选的 Crypto 永久 lane 定向证据为 `144 passed`。
+- 2026-07-22 TradingDatas Bearer 消费合同最新字节：认证/契约聚焦集合 `263 passed`，`full_acceptance --profile quick` 为 `305 passed`，全仓后端 `3360 passed`；本候选 9 个 Python 变更文件的 Ruff format/check、扩展 `compileall`、shell 语法、治理矩阵加载和 `git diff --check` 均通过。仓库既有全量 Ruff 基线仍有 51 项非本候选问题，未在本次跨边界修正。以上仅是离线 fixture/mock 与仓库合同证据，不是 token 已发放、18085 已完成正向认证 parity 或生产已激活。
+- 最近已归档主线证据：review #15 候选全仓后端 `3296 passed`，架构/退役聚焦集合 `50 passed`；Ruff format/check 和 `git diff --check` 通过。更早 Crypto 原子候选的 Crypto 永久 lane 定向证据为 `144 passed`。任何后续候选必须在最新字节上重新运行测试与独立 review；这些旧数字不替代当前候选验收。
 - 独立审计：Crypto 原子候选最终为 `P0=0 / P1=0`；review #15 的架构文档与旧执行退役复核也为 `P0=0 / P1=0`。保留的 P2 是 package-private writer 只防合作式调用、未来多标的需要账户级 PIT mark 完整性，以及祖先目录 symlink 加固，不影响当前 fixture-only 发布门禁。
 - GitHub：reviews #12/#13/#14/#15 的 `front`、`test` CI 均成功；review #13 的 merge commit `b38838a02397cc080160e6cf3dae7c47757d9c85` 是服务器已验证功能字节。review #14 仅修改状态文档；review #15 包含 fail-closed 功能加固，只完成本地与 GitHub CI，不提升服务器旁路或现役状态。当前主线精确 SHA 以 fresh Git readback 为准。
 - 服务器：后端 `3294 passed, 218 subtests passed`；A股/CNFutures fixture 聚焦集合 `167 passed`；前端 44 个测试文件、`297 passed`，lint 为 0 warnings/0 errors，`build:all` 通过；扩展 `compileall` 覆盖 `shared/Ashare/CNFutures/Crypto/tools/scripts`。
@@ -39,7 +40,7 @@
 
 ## 当前架构边界
 
-1. **TradingDatas consumer**：只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query`；八字段 QueryRequest、完整 envelope、逐 dataset evidence gate 与 nullable source proof 均 fail closed。禁止直读数据库、`/tushare`、`/source_status`、provider 专用 route、localhost/file fallback。
+1. **TradingDatas consumer**：只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query`；八字段 QueryRequest、完整 envelope、逐 dataset evidence gate 与 nullable source proof 均 fail closed。Bearer 只由最终 transport 从 `/run/secrets/tradingagent` 下精确 `0600`、可信owner、regular/single-link/no-symlink的TA专用token file注入，并绑定到 canonical authority 上精确的 endpoint、HTTP method 与固定 JSON header；远端只允许 HTTPS，明文 HTTP 只允许 loopback IP 字面量。明文token环境变量、调用方header覆盖、跨 authority/path/method 发送、401/403 后续请求及认证失败fallback均被阻断。禁止直读数据库、`/tushare`、`/source_status`、provider 专用 route、localhost/file fallback。
 2. **A股三层 Universe**：只有沪深主板普通股进入个股分析、候选、预测、模拟仓位与订单；创业板、科创板和北交所个股不分析、不交易，其指数及全市场行业汇总仅作 `context_only` 市场环境证据。
 3. **小资金组合**：A股和 CNFutures 各有独立 50,000 CNY simulated authority；A股保留100股买入单位、卖出零股例外、T+1、费用/滑点、最低经济订单、no-trade band、现金和六维投资论点风险门。Crypto 只有已合并但仍隔离的 10,000 USDT `local_fixture_opening_baseline_only`，没有 current/runtime/live capital authority。以上参数是风险上界，不是收益承诺。
 4. **市场隔离**：A股、CNFutures、Crypto 使用独立 market kernel、账户、原生币种、订单/成交状态与未来 adapter family；只共享机械基础设施，不换汇、不跨市场汇总货币金额/收益/回撤、不净额或复用 broker payload。PM/US/HK 的仓库级 runtime、包装器和专用测试已从主线物理退役；服务器安装态若仍有旧引用，只能进入清理证据链，不能成为兼容回退。
@@ -57,8 +58,9 @@
 
 ## 明确未完成
 
-- TradingDatas 已提供只读阶段性 canary 证据：上游 `main=7b8209e1f426ec33c8cf55982c30d10b3da63289`，隔离五数据集 release `d9d480a37700e6936180cea19f276dfed2cf9c22` 经 fresh independent review 为 `P0/P1/P2=0`；其观察到 `catalog_version=v1-17fd5855f5a68229`、`schema_major=2` 以及 `cn.market.trade_calendar`、`cn.equity.security_master`、`cn.equity.daily`、`cn.dataset.index_classify`、`cn.dataset.sw_daily` 五个 active dataset，逐数据集 metadata 为 ready/success、非 degraded，same-as-of 稳定。该结果仅是上游隔离 canary 证据，不是 TradingAgent 正式 fresh internal handoff、稳定 consumer 配置或 live runtime；其中 `index_classify` 与 `sw_daily` 来自上一已验证 canary 的 byte-exact DB clone，本轮并非五项全部 fresh 重拉。
-- 正式接入仍被阻断：预期正式 loopback `127.0.0.1:18082` 仍由旧 SharedSignals 占用，TradingDatas 正式 API/timer 未激活，installed collector unit 仍是旧内容，独立 TA-scoped token reference、五数据集精确 fields/filters/PIT profile、分页 consumer contract 与 consumer parity handoff 尚未冻结，临时 `18085` 已停止。TA 继续 fixture/mock/contract-only；不得把 canary 证据目录、临时端口、SQLite、旧 `8082` 或 provider 专用 route 当作稳定数据面。
+- TradingDatas owner 已提供不含 secret 的 fresh shadow handoff：其声明 immutable release/current 为 `b395b9017643c61a7f076f02985e9c457cc8d069`，临时 shadow 为 `http://127.0.0.1:18085`，`catalog_version=v1-17fd5855f5a68229`、`schema_major=2`，五个 active dataset 仍为 `cn.market.trade_calendar`、`cn.equity.security_master`、`cn.equity.daily`、`cn.dataset.index_classify`、`cn.dataset.sw_daily`。上游 readback 报告五组 metadata 均 ready/success、非 degraded、fresh/valid 且 lineage/receipt 完整；该 handoff 尚未由 TA 使用自己的 token 和客户端独立复现，不能当作 TA live parity 证据。
+- 上游明确记录查询预算边界：`cn.equity.daily` 首轮 parity 必须使用 `filters={"trade_date":{"eq":"20260722"}}`，同日 5526 行/12 页可完整读取；无 filter 的跨分区全历史查询第二页会因 SQLite progress budget 返回 503。TA 不得依赖无界查询、重试或旧链 fallback。
+- 正式接入仍被阻断：正式服务尚未切换，旧 SharedSignals 继续占用 `127.0.0.1:18082`，shadow `18085` 只是临时只读面；独立 TA-scoped token 尚未在 `/run/secrets/tradingagent` 生成、注册和安装。发布侧只读 handoff 声明生产 `tradingagent-front-api.service` 以 `marketgraph:marketgraph` 运行，计划叶文件固定为 `/run/secrets/tradingagent/tradingdatas-read.token`，由发布侧以 `marketgraph` owner、精确 `0600`、无 symlink 路径和独立 TA scope token 原子安装；当前该目录不存在，本候选没有读取、生成、配置或安装真实token，也未对 `18085` 完成正向认证 parity。该服务身份与路径尚未由本 TA 候选独立读取生产环境复核，不得把 handoff 声明、shadow、旧 `18082`/`8082`、SQLite、provider 专用 route 或旧端点当作 fallback。
 - 尚未安装 current-v1 live paper scheduler，也未积累真实 TradingDatas 驱动的连续 20 个交易日自动模拟和 60–120 个交易日冻结 OOS 样本。
 - 现役服务器仍运行旧源码与旧调度；本轮 sidecar 没有切换 service、cron、页面或公网路由。
 - 没有 accepted DeepSeek evidence、真实 broker/account、公开 ingress 或真实交易授权；`REAL_TRADING_ENABLED=false`。
@@ -66,6 +68,6 @@
 ## 下一阶段入口
 
 1. 三个市场任务此后只在各自长期 lane 写域独立推进；共享合同/治理修改先由单一 shared-kernel owner 合入 `main`，再在干净检查点同步三条 lane，禁止市场线程直接双写 shared/root。
-2. 等待 TradingDatas owner 提供 fresh handoff，再以显式配置运行只读 integration probe；任何 dataset degraded/stale/failed 逐数据集 fail closed。
+2. 认证候选合并后，由发布侧在 `/run/secrets/tradingagent` 独立安装 TA-scoped token，再按 fresh shadow handoff 生成仓外显式 manifest，对 `18085` 运行只读 integration probe；daily 固定同日 `trade_date` filter，任何 401/403、503、dataset degraded/stale/failed 或 cursor 异常均 fail closed，禁止转向 18082/8082。
 3. 完成真实数据 parity 与旧消费者清零后，再独立发布 current-v1 自动模拟 scheduler，并验证 crash/restart、对账、幂等和持续运行。
 4. 连续 20 个交易日工程闭环后评估出口，再积累 60–120 个交易日 OOS/多状态样本。月收益 20% 只作为收益分布上尾指标，不是强制交易、满仓或 PASS 条件。

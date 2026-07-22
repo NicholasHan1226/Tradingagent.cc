@@ -126,6 +126,7 @@ tradingdatas_v1_runtime_gate() {
         TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON
         TRADINGDATAS_SCHEMA_MAJOR
         TRADINGDATAS_RUNTIME_TRANSPORT
+        TRADINGDATAS_API_TOKEN_FILE
     )
     local variable_name=""
     for variable_name in "${required_config[@]}"; do

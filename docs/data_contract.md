@@ -64,7 +64,7 @@ POST /v1/query
 
 `order` 是可选的非空、有序且无重复字符串列表；调用方不指定时必须从请求中省略，排序由 TradingDatas registry 的 dataset 默认值决定，TA 不得猜测或补造 provider 排序。`schema_major`、显式 `order`（如有）均进入 query identity/cache identity。
 
-`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。这里的 `access_policy_id` 只是 TA 本地 cache/receipt 对注入 transport 身份的命名空间，不是 TradingDatas HTTP header 或 credential，绝不直接上 wire；真实 service-token/header 合同由未来 fresh handoff 冻结后在 transport 边界实现。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。当前候选响应 envelope 至少保留：
+`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。这里的 `access_policy_id` 只是 TA 本地 cache/receipt 对 transport 身份的命名空间，不是 TradingDatas HTTP header 或 credential，绝不直接上 wire。HTTP consumer 的认证只允许由最终 transport 从 `TRADINGDATAS_API_TOKEN_FILE` 指向的仓外文件加载，并向 `GET /v1/catalog` 与 `POST /v1/query` 注入 `Authorization: Bearer <token>`；通用 V1 client、manifest 和调用方 header 都不得持有或覆盖该值。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。当前候选响应 envelope 至少保留：
 
 ```yaml
 api_version: v1
@@ -85,6 +85,8 @@ metadata:
 ```
 
 HTTP 200 仅证明 transport 完成，不给 dataset 授权。每个 dataset 根据自己的 requirement policy 被 `ACCEPT / DEWEIGHT / REJECT`；`unobserved/paused/failed/stale/empty/degraded` 等 impaired state 可以如实携带 null `lineage/receipt_id/data_through/observed_at`，客户端不得为通过解析补造证据，Evidence Gate 必须依据 `metadata.state/degraded` 及证据完整性 fail closed。只有带完整 source proof 的 degraded/stale 数据才可能按显式 dataset policy 降权；缺 freshness/quality/lineage/receipt、catalog mismatch、未完整分页和 cursor 重放均不得被“其它 dataset 正常”洗白。只有完整、已验证且具有 receipt 的响应才能缓存；cache key 绑定 query、catalog、schema/receipt watermark 和 access policy。provider 原始字段只能保留在 provenance 中，不能覆盖 registry 的 dataset/provider identity。
+
+token 文件合同固定为：只允许服务管理的 `/run/secrets/tradingagent` 根目录，必须使用该目录下的绝对且规范化路径；因此 TradingAgent checkout/worktree/Git common repo 或任意其它目录中的文件一律拒绝。路径任一层不得为 symlink，leaf 必须是可信 owner（root 或当前服务 euid）拥有的单硬链接普通文件、权限精确 `0600`、内容为单个有界 ASCII bearer token，不接受空文件、换行、`KEY=value`、非 ASCII 或超限内容。实现必须使用 no-follow、descriptor-relative 打开和读前/读后文件身份复核；平台缺少安全打开能力时 fail closed。只配置 token-file 路径，不接受明文 token 环境变量；token 值与路径不得进入 `repr/str`、异常、日志、manifest、回执或 fixture。Bearer transport 必须绑定无尾随斜杠、path、query、fragment、userinfo、控制字符或反斜杠的 canonical `scheme://host[:port]`，只允许 `GET /v1/catalog` 与 `POST /v1/query`，并只接受通用客户端固定生成的 `Accept: application/json` 与 POST 的 `Content-Type: application/json`；调用方自带 Host、forwarding、proxy 或任何其它 header 都必须在创建网络请求前拒绝。任何不同 authority、path、query string 或 method 同样拒绝；远端 authority 只允许 HTTPS，明文 HTTP 仅允许 loopback IP 字面量。transport 为 single-flight，并发第二请求在网络前拒绝；401/403 不读取响应正文并永久锁住本实例，后续请求、重试和端点切换全部拒绝。token 缺失/非法、认证失败、dataset impaired 或分页异常都不得回退到旧端口、SQLite、`/tushare`、`/source_status` 或 provider 专用 route。实际 TA-scoped token 仍由发布侧独立生成、注册和轮换，不能复用 TradingDatas bootstrap token。
 
 当前 endpoint base URL、catalog version 和 dataset IDs 仍只是显式配置/fixture；TradingDatas fresh handoff 冻结前不得臆造生产值。
 

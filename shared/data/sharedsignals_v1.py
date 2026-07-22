@@ -142,9 +142,9 @@ class SharedSignalsV1Config:
     expected_catalog_version: str
     dataset_ids: frozenset[str]
     # TradingAgent-local cache/audit namespace for the injected transport
-    # identity. It is deliberately not emitted as an HTTP header; TradingDatas
-    # authentication remains owned by the transport and is unfrozen until the
-    # fresh handoff.
+    # identity. It is deliberately not emitted as an HTTP header; the final
+    # runtime transport owns bearer authentication without exposing the token
+    # to this provider-neutral request/response contract.
     access_policy_id: str
     timeout_seconds: float = 10.0
     max_limit: int = 10_000
@@ -652,8 +652,9 @@ class SharedSignalsV1Client:
         return tuple(sorted(self._cache))
 
     def _headers(self, *, json_request: bool = False) -> dict[str, str]:
-        # Do not invent an upstream auth or policy header. The injected
-        # transport owns authentication once TradingDatas freezes that contract.
+        # The provider-neutral client never receives credential material.  The
+        # explicit runtime transport adds the frozen Bearer header at the final
+        # wire boundary; fixture transports remain offline and credential-free.
         headers = {"Accept": "application/json"}
         if json_request:
             headers["Content-Type"] = "application/json"

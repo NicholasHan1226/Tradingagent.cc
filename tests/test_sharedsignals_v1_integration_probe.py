@@ -16,6 +16,7 @@ from shared.runtime_test.sharedsignals_v1_integration_probe import (
     run_sharedsignals_integration_probe,
     write_probe_receipt,
 )
+from shared.runtime_test.sharedsignals_v1_gate import TradingDatasAuthenticationError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,6 +192,28 @@ class DoubleRunTransport:
         raise AssertionError(f"unexpected request: {method} {url}")
 
 
+class AuthRejectingQueryTransport(DoubleRunTransport):
+    def __call__(self, **kwargs: Any) -> HTTPResponse:
+        if kwargs["method"] == "POST":
+            self.calls.append(copy.deepcopy(kwargs))
+            raise TradingDatasAuthenticationError(
+                "TradingDatas V1 authentication was rejected"
+            )
+        return super().__call__(**kwargs)
+
+
+class StatusRejectingQueryTransport(DoubleRunTransport):
+    def __init__(self, status_code: int) -> None:
+        super().__init__()
+        self.status_code = status_code
+
+    def __call__(self, **kwargs: Any) -> HTTPResponse:
+        if kwargs["method"] == "POST":
+            self.calls.append(copy.deepcopy(kwargs))
+            return HTTPResponse(status_code=self.status_code, json_body={})
+        return super().__call__(**kwargs)
+
+
 def _load_config(tmp_path: Path, payload: dict[str, Any] | None = None):
     manifest_path = tmp_path / "probe-manifest.json"
     manifest_path.write_text(
@@ -251,6 +274,45 @@ def test_healthy_multidataset_double_run_emits_content_addressed_receipt(
     serialized = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "tradingdatas.fixture.invalid" not in serialized
     assert ACCESS_POLICY_ID not in serialized
+
+
+def test_query_auth_rejection_aborts_remaining_integration_datasets(
+    tmp_path: Path,
+) -> None:
+    config = _load_config(tmp_path)
+    transport = AuthRejectingQueryTransport()
+
+    receipt = run_sharedsignals_integration_probe(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    assert receipt["blocking"] is True
+    assert receipt["reason_codes"] == ["authentication_rejected"]
+    assert receipt["error_type"] == "TradingDatasAuthenticationError"
+    assert len(receipt["datasets"]) == 1
+    assert receipt["datasets"][0]["reason_codes"] == ["authentication_rejected"]
+    assert [
+        (call["method"], call["url"].rsplit("/", 1)[-1]) for call in transport.calls
+    ] == [
+        ("GET", "catalog"),
+        ("POST", "query"),
+    ]
+
+
+@pytest.mark.parametrize("status_code", (401, 403))
+def test_generic_auth_status_also_aborts_remaining_integration_datasets(
+    tmp_path: Path,
+    status_code: int,
+) -> None:
+    config = _load_config(tmp_path)
+    transport = StatusRejectingQueryTransport(status_code)
+
+    receipt = run_sharedsignals_integration_probe(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    assert receipt["blocking"] is True
+    assert receipt["error_type"] == "HTTPStatusError"
+    assert len(receipt["datasets"]) == 1
+    assert len(transport.calls) == 2
 
 
 def test_non_null_cursor_blocks_without_following_unfrozen_pagination(
@@ -550,9 +612,13 @@ def test_cli_uses_explicit_manifest_and_writes_machine_receipt(
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
     output_path = (tmp_path / "cli-receipt.json").resolve()
     transport = DoubleRunTransport()
+    monkeypatch.setenv(
+        "TRADINGDATAS_API_TOKEN_FILE",
+        "/fixture/tradingdatas/ta.token",
+    )
     monkeypatch.setattr(
         "shared.runtime_test.sharedsignals_v1_integration_probe.build_runtime_transport",
-        lambda _transport_id: transport,
+        lambda _transport_id, *, token_file, base_url: transport,
     )
 
     exit_code = main(
@@ -570,6 +636,42 @@ def test_cli_uses_explicit_manifest_and_writes_machine_receipt(
     file_receipt = json.loads(output_path.read_text(encoding="utf-8"))
     assert stdout_receipt == file_receipt
     assert file_receipt["blocking"] is False
+
+
+def test_cli_missing_token_file_config_fails_before_transport_and_redacts_ambient_secret(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    payload = _manifest()
+    payload["transport_id"] = "http-json-v1"
+    manifest_path = tmp_path / "cli-manifest.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.delenv("TRADINGDATAS_API_TOKEN_FILE", raising=False)
+    ambient_secret = "ambient-secret-must-never-be-consumed"
+    monkeypatch.setenv("TRADINGDATAS_API_TOKEN", ambient_secret)
+    monkeypatch.setattr(
+        "shared.runtime_test.sharedsignals_v1_integration_probe.build_runtime_transport",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("transport must not be built")
+        ),
+    )
+
+    exit_code = main(
+        [
+            "--manifest",
+            str(manifest_path.resolve()),
+            "--json",
+        ]
+    )
+
+    assert exit_code == 64
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "fail"
+    assert receipt["blocking"] is True
+    assert receipt["error_type"] == "RuntimeGateConfigurationError"
+    assert receipt["datasets"] == []
+    assert ambient_secret not in json.dumps(receipt, sort_keys=True)
 
 
 def test_checked_in_example_manifest_is_parseable_and_non_live() -> None:

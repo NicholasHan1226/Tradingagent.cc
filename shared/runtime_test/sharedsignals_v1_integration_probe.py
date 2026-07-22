@@ -37,6 +37,7 @@ from shared.data.research_snapshot import (
     build_research_data_snapshot,
 )
 from shared.data.sharedsignals_v1 import (
+    HTTPStatusError,
     HTTPTransport,
     QueryEnvelope,
     QueryRequest,
@@ -44,7 +45,11 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Config,
     SharedSignalsV1Error,
 )
-from shared.runtime_test.sharedsignals_v1_gate import build_runtime_transport
+from shared.runtime_test.sharedsignals_v1_gate import (
+    TradingDatasAuthenticationError,
+    build_runtime_transport,
+    token_file_from_environment,
+)
 
 
 RECEIPT_SCHEMA_ID = "tradingagent.sharedsignals.integration-readiness.v1"
@@ -796,6 +801,10 @@ def run_sharedsignals_integration_probe(
     client = SharedSignalsV1Client(config.to_client_config(), transport=transport)
     try:
         catalog = client.get_catalog()
+    except TradingDatasAuthenticationError as exc:
+        reasons.append("authentication_rejected")
+        receipt["error_type"] = _error_type(exc)
+        return _finalize_receipt(receipt)
     except Exception as exc:
         reasons.append("catalog_contract_or_transport_failure")
         receipt["error_type"] = _error_type(exc)
@@ -825,6 +834,34 @@ def run_sharedsignals_integration_probe(
         try:
             first = client.query(request)
             second = client.query(request)
+        except TradingDatasAuthenticationError as exc:
+            _append_reason(reasons, "authentication_rejected")
+            receipt["error_type"] = _error_type(exc)
+            receipt["datasets"].append(
+                {
+                    "probe_role": spec.probe_role,
+                    "dataset_id": spec.dataset_id,
+                    "schema_major": spec.schema_major,
+                    "query_sha256": request.sha256,
+                    "status": "fail",
+                    "reason_codes": ["authentication_rejected"],
+                }
+            )
+            break
+        except HTTPStatusError as exc:
+            _append_reason(reasons, "query_contract_or_transport_failure")
+            receipt["error_type"] = _error_type(exc)
+            receipt["datasets"].append(
+                {
+                    "probe_role": spec.probe_role,
+                    "dataset_id": spec.dataset_id,
+                    "schema_major": spec.schema_major,
+                    "query_sha256": request.sha256,
+                    "status": "fail",
+                    "reason_codes": ["query_contract_or_transport_failure"],
+                }
+            )
+            break
         except Exception as exc:
             _append_reason(reasons, "query_contract_or_transport_failure")
             if receipt["error_type"] is None:
@@ -1006,7 +1043,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = load_probe_manifest(args.manifest)
-        transport = build_runtime_transport(config.transport_id)
+        transport = build_runtime_transport(
+            config.transport_id,
+            token_file=token_file_from_environment(os.environ),
+            base_url=config.base_url,
+        )
     except (IntegrationProbeConfigurationError, ValueError) as exc:
         receipt = _configuration_failure_receipt(exc)
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))

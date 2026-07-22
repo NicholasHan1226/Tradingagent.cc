@@ -15,7 +15,7 @@ from shared.runtime_test.sharedsignals_v1_gate import (
     RuntimeGateConfigurationError,
     SharedSignalsV1RuntimeGateConfig,
     TradingDatasV1RuntimeGateConfig,
-    UrllibJSONV1Transport,
+    build_runtime_transport,
     check_v1_runtime_gate,
     config_from_environment,
 )
@@ -102,6 +102,7 @@ def _config() -> TradingDatasV1RuntimeGateConfig:
         access_policy_id=ACCESS_POLICY_ID,
         transport_id="fixture-v1",
         timeout_seconds=3.0,
+        token_file=Path("/fixture/tradingdatas/ta.token"),
     )
 
 
@@ -119,6 +120,7 @@ def _environment() -> dict[str, str]:
         ),
         "TRADINGDATAS_SCHEMA_MAJOR": str(SCHEMA_MAJOR),
         "TRADINGDATAS_RUNTIME_TRANSPORT": "http-json-v1",
+        "TRADINGDATAS_API_TOKEN_FILE": "/fixture/tradingdatas/ta.token",
         "TRADINGDATAS_API_TIMEOUT": "3",
     }
 
@@ -132,6 +134,7 @@ def _environment() -> dict[str, str]:
         "TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON",
         "TRADINGDATAS_SCHEMA_MAJOR",
         "TRADINGDATAS_RUNTIME_TRANSPORT",
+        "TRADINGDATAS_API_TOKEN_FILE",
     ],
 )
 def test_environment_config_requires_every_v1_authority_field(
@@ -142,6 +145,28 @@ def test_environment_config_requires_every_v1_authority_field(
 
     with pytest.raises(RuntimeGateConfigurationError, match=missing_name):
         config_from_environment(environment, market="us")
+
+
+@pytest.mark.parametrize(
+    "plaintext_name",
+    (
+        "TRADINGDATAS_API_TOKEN",
+        "TRADINGDATAS_BEARER_TOKEN",
+        "TRADINGDATAS_TOKEN",
+    ),
+)
+def test_plaintext_token_environment_is_rejected_even_with_token_file_config(
+    plaintext_name: str,
+) -> None:
+    environment = _environment()
+    environment[plaintext_name] = "ambient-secret-must-be-rejected"
+
+    with pytest.raises(RuntimeGateConfigurationError) as caught:
+        config_from_environment(environment, market="us")
+
+    rendered = str(caught.value)
+    assert "plaintext TradingDatas token" in rendered
+    assert environment[plaintext_name] not in rendered
 
 
 def test_environment_config_selects_only_the_explicit_market_dataset() -> None:
@@ -251,7 +276,10 @@ def test_runtime_http_transport_refuses_redirects() -> None:
     assert redirected is None
 
 
-def test_runtime_http_transport_disables_environment_proxy(monkeypatch) -> None:
+def test_runtime_http_transport_disables_environment_proxy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     captured_handlers: list[object] = []
 
     def fake_build_opener(*handlers):
@@ -259,8 +287,19 @@ def test_runtime_http_transport_disables_environment_proxy(monkeypatch) -> None:
         return object()
 
     monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
+    monkeypatch.setattr(
+        "shared.data.tradingdatas_auth._service_secret_roots",
+        lambda: (tmp_path,),
+    )
 
-    UrllibJSONV1Transport()
+    token_file = tmp_path / "ta.token"
+    token_file.write_text("fixture-token-value", encoding="ascii")
+    token_file.chmod(0o600)
+    build_runtime_transport(
+        "http-json-v1",
+        token_file=token_file,
+        base_url="https://tradingdatas.fixture.invalid",
+    )
 
     proxy_handlers = [
         handler
@@ -408,8 +447,10 @@ def test_runtime_v1_authority_variables_are_declared_without_live_defaults() -> 
     for name in (
         "TRADINGDATAS_SCHEMA_MAJOR",
         "TRADINGDATAS_RUNTIME_TRANSPORT",
+        "TRADINGDATAS_API_TOKEN_FILE",
     ):
         assert f'export {name}="${{{name}:-}}"' in env_loader
         assert f"{name}=" in env_example
     assert "TRADINGDATAS_SCHEMA_MAJOR=1" not in env_example
     assert "TRADINGDATAS_RUNTIME_TRANSPORT=http-json-v1" not in env_example
+    assert "TRADINGDATAS_API_TOKEN_FILE=/" not in env_example
