@@ -564,6 +564,10 @@ def test_token_file_change_during_read_fails_closed(
         return chunk
 
     monkeypatch.setattr("shared.data.tradingdatas_auth.os.read", mutating_read)
+    monkeypatch.setattr(
+        "shared.data.tradingdatas_auth._security_identity",
+        lambda _metadata: (1,),
+    )
 
     with pytest.raises(TradingDatasTokenFileError) as caught:
         TradingDatasTokenFile(token_path).read_token()

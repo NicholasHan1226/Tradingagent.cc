@@ -132,6 +132,18 @@ def _security_identity(metadata: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def _read_bounded(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = _MAX_TOKEN_BYTES + 1
+    while remaining > 0:
+        chunk = os.read(descriptor, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 class TradingDatasBearerToken:
     """In-memory secret with a permanently redacted public representation."""
 
@@ -187,15 +199,7 @@ class TradingDatasTokenFile:
             if before.st_size <= 0 or before.st_size > _MAX_TOKEN_BYTES:
                 raise _token_error("tradingdatas_token_size_invalid")
 
-            chunks: list[bytes] = []
-            remaining = _MAX_TOKEN_BYTES + 1
-            while remaining > 0:
-                chunk = os.read(leaf_descriptor, remaining)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            raw = b"".join(chunks)
+            raw = _read_bounded(leaf_descriptor)
             after = os.fstat(leaf_descriptor)
             try:
                 named = os.stat(
@@ -209,6 +213,29 @@ class TradingDatasTokenFile:
                 len(raw) > _MAX_TOKEN_BYTES
                 or _security_identity(before) != _security_identity(after)
                 or (named.st_dev, named.st_ino) != (after.st_dev, after.st_ino)
+            ):
+                raise _token_error("tradingdatas_token_changed_during_read")
+
+            try:
+                os.lseek(leaf_descriptor, 0, os.SEEK_SET)
+                verified_raw = _read_bounded(leaf_descriptor)
+                verified_after = os.fstat(leaf_descriptor)
+                verified_named = os.stat(
+                    self._path.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                raise _token_error(
+                    "tradingdatas_token_changed_during_read"
+                ) from None
+            if (
+                raw != verified_raw
+                or len(verified_raw) > _MAX_TOKEN_BYTES
+                or _security_identity(after)
+                != _security_identity(verified_after)
+                or (verified_named.st_dev, verified_named.st_ino)
+                != (verified_after.st_dev, verified_after.st_ino)
             ):
                 raise _token_error("tradingdatas_token_changed_during_read")
         finally:
