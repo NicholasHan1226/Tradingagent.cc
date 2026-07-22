@@ -410,10 +410,12 @@ def _payloads() -> dict[RunStage, dict[str, Any]]:
         },
         RunStage.EVIDENCE_READY: {
             "profile_id": "mainboard-paper-mvp-input-v1",
+            "profile_contract_sha256": _digest("f"),
             "catalog_version": "fixture-catalog-v1",
             "decision_as_of": "2026-07-16T01:05:00+00:00",
             "snapshot_sha256": _digest("e"),
             "execution_eligible": True,
+            "historical_pit_eligible": False,
             "blocking_reasons": [],
             "datasets": [
                 {
@@ -424,8 +426,26 @@ def _payloads() -> dict[RunStage, dict[str, Any]]:
                     "effective_weight": 1.0,
                     "receipt_id": "receipt-daily-1",
                     "row_count": 1,
-                    "row_pit_sha256": _digest("d"),
-                    "max_row_available_time": "2026-07-16T01:00:00+00:00",
+                    "source_proof_complete": True,
+                    "lineage_sha256": _digest("a"),
+                    "source_proof_sha256": _digest("b"),
+                    "observation_mode": "current_observation",
+                    "historical_pit_eligible": False,
+                    "identity_fields": ["ts_code", "trade_date"],
+                    "identity_sha256": _digest("c"),
+                    "row_observation_sha256": _digest("d"),
+                    "data_through": "2026-07-16T00:00:00+00:00",
+                    "observed_at": "2026-07-16T01:00:00+00:00",
+                    "max_row_observed_at": "2026-07-16T01:00:00+00:00",
+                    "minimum_row_count": 1,
+                    "max_pages": 20,
+                    "max_rows": 100_000,
+                    "page_count": 1,
+                    "pagination_trace_sha256": _digest("e"),
+                    "pagination_semantic_sha256": _digest("f"),
+                    "page_request_set_sha256": _digest("2"),
+                    "page_response_set_sha256": _digest("3"),
+                    "cursor_chain_sha256": _digest("1"),
                 }
             ],
         },
@@ -952,8 +972,26 @@ def test_optional_context_can_deweight_without_unblocking_required_data() -> Non
             "effective_weight": 0.25,
             "receipt_id": "receipt-growth-context-1",
             "row_count": 1,
-            "row_pit_sha256": _digest("e"),
-            "max_row_available_time": "2026-07-16T01:00:00+00:00",
+            "source_proof_complete": True,
+            "lineage_sha256": _digest("2"),
+            "source_proof_sha256": _digest("3"),
+            "observation_mode": "current_observation",
+            "historical_pit_eligible": False,
+            "identity_fields": ["ts_code", "trade_date"],
+            "identity_sha256": _digest("4"),
+            "row_observation_sha256": _digest("5"),
+            "data_through": "2026-07-16T00:00:00+00:00",
+            "observed_at": "2026-07-16T01:00:00+00:00",
+            "max_row_observed_at": "2026-07-16T01:00:00+00:00",
+            "minimum_row_count": 1,
+            "max_pages": 20,
+            "max_rows": 100_000,
+            "page_count": 1,
+            "pagination_trace_sha256": _digest("6"),
+            "pagination_semantic_sha256": _digest("7"),
+            "page_request_set_sha256": _digest("9"),
+            "page_response_set_sha256": _digest("a"),
+            "cursor_chain_sha256": _digest("8"),
         }
     )
     ports = {stage: _Port(stage, payloads[stage]) for stage in STAGE_ORDER}
@@ -975,6 +1013,107 @@ def test_optional_only_evidence_can_never_self_declare_execution_eligible() -> N
 
     assert bundle.stop_new_risk is True
     assert "required_dataset_evidence_missing" in bundle.block_reasons
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("row_count", 0),
+        ("source_proof_complete", False),
+        ("lineage_sha256", "invalid"),
+        ("source_proof_sha256", None),
+        ("observation_mode", "historical_point_in_time"),
+        ("historical_pit_eligible", True),
+        ("identity_fields", []),
+        ("identity_sha256", "invalid"),
+        ("row_observation_sha256", "invalid"),
+        ("data_through", "2026-07-16T01:00:01+00:00"),
+        ("observed_at", "2026-07-16T00:59:59+00:00"),
+        ("max_row_observed_at", "2026-07-16T01:05:01+00:00"),
+        ("minimum_row_count", -1),
+        ("minimum_row_count", 2),
+        ("max_pages", 0),
+        ("max_rows", 0),
+        ("page_count", 0),
+        ("pagination_trace_sha256", "invalid"),
+        ("pagination_semantic_sha256", "invalid"),
+        ("page_request_set_sha256", "invalid"),
+        ("page_response_set_sha256", "invalid"),
+        ("cursor_chain_sha256", "invalid"),
+    ],
+)
+def test_provider_native_current_observation_contract_fails_closed(
+    field: str,
+    value: object,
+) -> None:
+    payloads = _payloads()
+    payloads[RunStage.EVIDENCE_READY]["datasets"][0][field] = value
+    ports = {stage: _Port(stage, payloads[stage]) for stage in STAGE_ORDER}
+
+    bundle = _loop(ports).run(_context())
+
+    assert bundle.stop_new_risk is True
+    assert "dataset_row_observation_invalid" in bundle.block_reasons
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("profile_contract_sha256", "invalid"),
+        ("historical_pit_eligible", True),
+        ("decision_as_of", "not-an-instant"),
+    ],
+)
+def test_research_snapshot_v2_top_level_contract_fails_closed(
+    field: str,
+    value: object,
+) -> None:
+    payloads = _payloads()
+    payloads[RunStage.EVIDENCE_READY][field] = value
+    ports = {stage: _Port(stage, payloads[stage]) for stage in STAGE_ORDER}
+
+    bundle = _loop(ports).run(_context())
+
+    assert bundle.stop_new_risk is True
+    assert "research_snapshot_contract_invalid" in bundle.block_reasons
+
+
+def test_legacy_row_pit_fields_cannot_substitute_current_observation_contract() -> None:
+    payloads = _payloads()
+    dataset = payloads[RunStage.EVIDENCE_READY]["datasets"][0]
+    for field in (
+        "source_proof_complete",
+        "lineage_sha256",
+        "source_proof_sha256",
+        "observation_mode",
+        "historical_pit_eligible",
+        "identity_fields",
+        "identity_sha256",
+        "row_observation_sha256",
+        "data_through",
+        "observed_at",
+        "max_row_observed_at",
+        "minimum_row_count",
+        "max_pages",
+        "max_rows",
+        "page_count",
+        "pagination_trace_sha256",
+        "pagination_semantic_sha256",
+        "page_request_set_sha256",
+        "page_response_set_sha256",
+        "cursor_chain_sha256",
+    ):
+        dataset.pop(field)
+    dataset.update(
+        row_pit_sha256=_digest("9"),
+        max_row_available_time="2026-07-16T01:00:00+00:00",
+    )
+    ports = {stage: _Port(stage, payloads[stage]) for stage in STAGE_ORDER}
+
+    bundle = _loop(ports).run(_context())
+
+    assert bundle.stop_new_risk is True
+    assert "dataset_row_observation_invalid" in bundle.block_reasons
 
 
 @pytest.mark.parametrize(

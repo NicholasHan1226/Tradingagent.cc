@@ -20,7 +20,8 @@ from shared.data.research_snapshot_store import (
     ResearchSnapshotStoreConflict,
     ResearchSnapshotStoreCorruption,
 )
-from shared.data.sharedsignals_v1 import parse_query_envelope
+from shared.data.sharedsignals_v1 import QueryRequest, parse_query_envelope
+from shared.data.tradingdatas_pagination import bind_complete_page
 
 
 CATALOG = "fixture-catalog-2026-07-16"
@@ -34,6 +35,8 @@ def _envelope(
     *,
     receipt_id: str,
     rows: list[dict],
+    data_through: str = "2026-07-15T07:00:00+00:00",
+    observed_at: str = "2026-07-16T01:00:00+00:00",
 ):
     state = "ready" if dataset_id == PRICE_DATASET else "degraded"
     return parse_query_envelope(
@@ -51,8 +54,8 @@ def _envelope(
                 "quality": {"state": "valid", "valid": True},
                 "lineage": {"complete": True, "provider_neutral": True},
                 "receipt_id": receipt_id,
-                "data_through": "2026-07-15T07:00:00+00:00",
-                "observed_at": "2026-07-16T01:00:00+00:00",
+                "data_through": data_through,
+                "observed_at": observed_at,
                 "reasons": [] if state == "ready" else ["context_partial"],
             },
         }
@@ -77,46 +80,67 @@ def _decision(
     )
 
 
-def _snapshot(*, close: float = 10.5):
+def _snapshot(
+    *,
+    close: float = 10.5,
+    data_through: str = "2026-07-15T07:00:00+00:00",
+    observed_at: str = "2026-07-16T01:00:00+00:00",
+):
     profile = ResearchDataProfile(
         profile_id="mainboard-paper-mvp-input-v1",
         catalog_version=CATALOG,
         requirements=(
-            DatasetRequirement(PRICE_DATASET, role="required_execution"),
-            DatasetRequirement(CONTEXT_DATASET, role="optional_context"),
+            DatasetRequirement(
+                PRICE_DATASET,
+                role="required_execution",
+                identity_fields=("ts_code", "trade_date"),
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+            ),
+            DatasetRequirement(
+                CONTEXT_DATASET,
+                role="optional_context",
+                identity_fields=("sector_id", "trade_date"),
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+            ),
         ),
+    )
+    price = _envelope(
+        PRICE_DATASET,
+        receipt_id="price-receipt-v1",
+        rows=[
+            {
+                "ts_code": "600000.SH",
+                "trade_date": "20260715",
+                "close": close,
+            }
+        ],
+        data_through=data_through,
+        observed_at=observed_at,
+    )
+    context = _envelope(
+        CONTEXT_DATASET,
+        receipt_id="context-receipt-v1",
+        rows=[
+            {
+                "sector_id": "sw801080",
+                "trade_date": "20260715",
+                "breadth": 0.65,
+            }
+        ],
+        data_through=data_through,
+        observed_at=observed_at,
     )
     return build_research_data_snapshot(
         profile=profile,
-        envelopes=(
-            _envelope(
-                PRICE_DATASET,
-                receipt_id="price-receipt-v1",
-                rows=[
-                    {
-                        "ts_code": "600000.SH",
-                        "close": close,
-                        "event_time": "2026-07-15T07:00:00+00:00",
-                        "available_time": "2026-07-15T07:05:00+00:00",
-                        "revision_id": "price-revision-v1",
-                        "receipt_id": "price-row-receipt-v1",
-                    }
-                ],
-            ),
-            _envelope(
-                CONTEXT_DATASET,
-                receipt_id="context-receipt-v1",
-                rows=[
-                    {
-                        "sector_id": "sw801080",
-                        "breadth": 0.65,
-                        "event_time": "2026-07-15T07:00:00+00:00",
-                        "available_time": "2026-07-15T07:05:00+00:00",
-                        "revision_id": "context-revision-v1",
-                        "receipt_id": "context-row-receipt-v1",
-                    }
-                ],
-            ),
+        page_runs=(
+            _run(price, identity_fields=("ts_code", "trade_date")),
+            _run(context, identity_fields=("sector_id", "trade_date")),
         ),
         decisions=(
             _decision(
@@ -141,8 +165,24 @@ def _null_proof_snapshot():
         profile_id="mainboard-paper-mvp-input-v1-null-proof",
         catalog_version=CATALOG,
         requirements=(
-            DatasetRequirement(PRICE_DATASET, role="required_execution"),
-            DatasetRequirement(CONTEXT_DATASET, role="optional_context"),
+            DatasetRequirement(
+                PRICE_DATASET,
+                role="required_execution",
+                identity_fields=("ts_code", "trade_date"),
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+            ),
+            DatasetRequirement(
+                CONTEXT_DATASET,
+                role="optional_context",
+                identity_fields=("sector_id", "trade_date"),
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+            ),
         ),
     )
     impaired = parse_query_envelope(
@@ -151,7 +191,13 @@ def _null_proof_snapshot():
             "catalog_version": CATALOG,
             "request_id": f"request-{PRICE_DATASET}-unobserved",
             "dataset_id": PRICE_DATASET,
-            "data": [{"ts_code": "600000.SH", "close": 10.5}],
+            "data": [
+                {
+                    "ts_code": "600000.SH",
+                    "trade_date": "20260715",
+                    "close": 10.5,
+                }
+            ],
             "next_cursor": None,
             "metadata": {
                 "state": "unobserved",
@@ -172,17 +218,17 @@ def _null_proof_snapshot():
         rows=[
             {
                 "sector_id": "sw801080",
+                "trade_date": "20260715",
                 "breadth": 0.65,
-                "event_time": "2026-07-15T07:00:00+00:00",
-                "available_time": "2026-07-15T07:05:00+00:00",
-                "revision_id": "context-revision-v1",
-                "receipt_id": "context-row-receipt-v1",
             }
         ],
     )
     return build_research_data_snapshot(
         profile=profile,
-        envelopes=(impaired, context),
+        page_runs=(
+            _run(impaired, identity_fields=("ts_code", "trade_date")),
+            _run(context, identity_fields=("sector_id", "trade_date")),
+        ),
         decisions=(
             EvidenceDecision(
                 dataset_id=PRICE_DATASET,
@@ -209,6 +255,18 @@ def _receipt_ids() -> dict[str, str]:
         PRICE_DATASET: "price-receipt-v1",
         CONTEXT_DATASET: "context-receipt-v1",
     }
+
+
+def _run(envelope, *, identity_fields: tuple[str, ...]):
+    return bind_complete_page(
+        request=QueryRequest(
+            dataset_id=envelope.dataset_id,
+            schema_major=2,
+            as_of=DECISION_AS_OF.isoformat(),
+        ),
+        envelope=envelope,
+        identity_fields=identity_fields,
+    )
 
 
 def test_null_proof_blocked_snapshot_round_trips_as_content_addressed_audit(
@@ -309,14 +367,19 @@ def test_round_trip_survives_new_instance_with_rows_and_exact_evidence(
     assert recovered == snapshot
     assert recovered.datasets[0].decoded_rows() == [
         {
-            "available_time": "2026-07-15T07:05:00+00:00",
             "close": 10.5,
-            "event_time": "2026-07-15T07:00:00+00:00",
-            "receipt_id": "price-row-receipt-v1",
-            "revision_id": "price-revision-v1",
+            "trade_date": "20260715",
             "ts_code": "600000.SH",
         }
     ]
+    assert recovered.historical_pit_eligible is False
+    assert recovered.datasets[0].observation_mode == "current_observation"
+    assert recovered.datasets[0].historical_pit_eligible is False
+    assert recovered.datasets[0].max_row_observed_at == (
+        "2026-07-16T01:00:00+00:00"
+    )
+    assert recovered.datasets[0].max_row_event_value == "2026-07-15"
+    assert recovered.datasets[0].page_count == 1
     assert recovered.datasets[1].evidence_state == "degraded"
     assert recovered.datasets[1].evidence_action == "deweight"
     assert recovered.datasets[1].weight == 0.25
@@ -326,20 +389,53 @@ def test_round_trip_survives_new_instance_with_rows_and_exact_evidence(
     assert artifact["identity"] == {
         "catalog_version": CATALOG,
         "decision_as_of": "2026-07-16T01:05:00+00:00",
+        "profile_contract_sha256": snapshot.profile_contract_sha256,
         "profile_id": snapshot.profile_id,
         "snapshot_sha256": snapshot.snapshot_sha256,
     }
+    assert artifact["schema_version"] == 2
+    assert artifact["artifact_type"] == "research_data_snapshot.v2"
     assert artifact["evidence_projection"] == snapshot.to_evidence_payload()
     assert artifact["datasets"][0]["rows"] == [
         {
-            "available_time": "2026-07-15T07:05:00+00:00",
             "close": 10.5,
-            "event_time": "2026-07-15T07:00:00+00:00",
-            "receipt_id": "price-row-receipt-v1",
-            "revision_id": "price-revision-v1",
+            "trade_date": "20260715",
             "ts_code": "600000.SH",
         }
     ]
+    assert artifact["datasets"][0]["observation_mode"] == "current_observation"
+    assert artifact["datasets"][0]["historical_pit_eligible"] is False
+    assert artifact["datasets"][0]["source_proof_sha256"] == (
+        snapshot.datasets[0].source_proof_sha256
+    )
+    assert artifact["datasets"][0]["row_observation_sha256"] == (
+        snapshot.datasets[0].row_observation_sha256
+    )
+
+
+def test_round_trip_normalizes_source_proof_timestamps_before_hashing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot(
+        data_through="2026-07-15T15:00:00+08:00",
+        observed_at="2026-07-16T09:00:00+08:00",
+    )
+    store = FileResearchSnapshotStore(root)
+
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    recovered = FileResearchSnapshotStore(root).load(
+        profile_id=snapshot.profile_id,
+        decision_as_of=DECISION_AS_OF,
+        expected_snapshot_sha256=snapshot.snapshot_sha256,
+        catalog_version=CATALOG,
+        receipt_ids=_receipt_ids(),
+    )
+
+    assert recovered == snapshot
+    for dataset in recovered.datasets:
+        assert dataset.data_through == "2026-07-15T07:00:00+00:00"
+        assert dataset.observed_at == "2026-07-16T01:00:00+00:00"
 
 
 def test_bound_decision_recovery_uses_the_immutable_binding_as_replay_authority(
@@ -543,6 +639,7 @@ def test_forged_healthy_snapshot_and_incomplete_page_are_rejected(
     optional = snapshot.datasets[1]
     optional_only_payload = {
         "profile_id": snapshot.profile_id,
+        "profile_contract_sha256": snapshot.profile_contract_sha256,
         "catalog_version": snapshot.catalog_version,
         "decision_as_of": snapshot.decision_as_of,
         "datasets": [

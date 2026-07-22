@@ -861,6 +861,8 @@ def test_auth_failure_is_redacted_single_attempt_and_has_no_fallback(
         "status": "critical",
         "blocking": True,
         "reason": "v1_contract_or_transport_failure",
+        "scope": "transport_metadata_smoke",
+        "research_contract_verified": False,
         "datasets": [],
         "error_type": "TradingDatasAuthenticationError",
     }

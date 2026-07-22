@@ -18,9 +18,9 @@
 
 ## 当前关键边界
 
-- TradingDatas `GET /v1/catalog` 和 `POST /v1/query` 由上游唯一 writer/reviewer 负责；TA 只实现可配置 fixture/port consumer，不读取或修改 TradingDatas 仓，也不把 HTTP 200 当成 dataset 可用。TA 的 Bearer transport 合同只接受 `/run/secrets/tradingagent` 下的绝对路径、精确`0600`、可信owner、regular/single-link/no-symlink专用token file，并将header绑定到 canonical authority 的精确method/path和固定JSON header；远端只允许HTTPS，明文HTTP只允许loopback IP字面量。401/403与文件门失败均单次fail closed且无fallback；这只证明仓库消费合同，不证明正式TA token已发放。fresh handoff 前只允许 fixture/mock-first，不臆造 base URL、catalog version 或 dataset ID；旧 SharedSignals runtime/route/dual-registry 不是新架构依赖。
+- TradingDatas `GET /v1/catalog` 和 `POST /v1/query` 由上游唯一 writer/reviewer 负责；TA 只实现可配置 consumer，不读取或修改 TradingDatas 仓，也不把 HTTP 200 当成 dataset 可用。TA 的 Bearer transport 合同只接受受限 TA token file，并将 header 绑定到 canonical authority 的精确 method/path；认证失败无 fallback。上游 handoff 已声明 formal loopback 的 provider-native shape，但 TA 尚未联网、读取 token 或独立 readback，所以当前仍只是 `repository_contract`，不是 production verification。旧 SharedSignals runtime/route/dual-registry 不是新架构依赖。
 - A股资本、执行 lineage 与 SampleJournal 是仓库契约层当前能力；它们不证明生产 runtime、cron 或真实市场样本已验证。
-- 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast 合同、三风格 shadow router、LLM evidence、accepted/rejected物理隔离结果Journal与独立provider-invocation仲裁Journal组成的本地CAS provenance router、无密钥DeepSeek候选配置、默认关闭的DeepSeek HTTPS transport候选、V1 client、V1 integration-readiness probe、小资金 optimizer、六维投资论点风险authority、canonical simulated account authority、当前Champion/数值PIT特征绑定、mark/quote evidence authority、逐副作用trusted clock、fixture evolution clock、固定trust-root metrics verifier、authority-bound plan、negative-only evolution、automatic day loop、capital-backed paper composition、fixture CLI、RunBundle store、Decision Ledger和label maturity属于已合入 `main` 的仓库合同集合；是否已进入服务器现役 runtime 仍须逐项以服务器只读证据核对，不能从 Git 主线批量推断。这些合同都不表示预测有效、概率已校准、阶段通过、scheduler、live TradingDatas、真实paper session、accepted DeepSeek evidence或生产可用。integration probe只生成非authority回执；未获准的live endpoint不会被调用，分页receipt/排序/snapshot语义未冻结时继续阻断。coverage/industry score/account/thesis-risk/calendar/market evidence/Champion registry/feature/metrics/clock 的生产 verifier 均未接入；本地proof只证明完整输入绑定，不是外部签名、外部密封或真实市场/账户readback。行业薄切片只动态选择 1 个深研行业和 2 个观察行业；新增机会/预测/风格链只输出shadow审计，均不能改变 Champion、仓位、风险或订单。
+- 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast、三风格 router、LLM evidence/journals、V1 client、小资金与资本/风险/执行合同是仓库级能力；服务器现役必须逐项另验。provider-native/pagination 仓库合同要求 rows 原样保存，envelope receipt/data-through/observed-at/完整 lineage 组成 source proof；dataset-specific identity/domain-event 映射不冒充可知时间；缺 first-seen/revision 链时固定 `current_observation` 与 `historical_pit_eligible=false`；完整 probe 在显式 page/row budgets 内遍历 opaque cursor、检查 loop/metadata drift/duplicate identity/order，并做同一 observation 双跑。TA 尚未联网或发布该合同，不能声明 live TradingDatas、历史 PIT、scheduler、真实 paper session 或生产可用。轻量 runtime gate也不能替代完整 probe/research acceptance。
 - 当前 DeepSeek 候选接受两种精确transport：同时绑定request/outbound identity的冻结离线响应fixture，以及默认关闭、固定官方HTTPS地址、禁代理/重定向/自动重试的`DeepSeekHTTPTransport`。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding被本地schema拒绝；没有accepted receipt、Journal或生产切换。当前代码另有互斥的audit-only rejected-attempt receipt合同和独立audit Journal，A股v2 Prompt只完成离线fixture验证，二者都不能追溯包装该旧canary。Bull/Bear provider模式要求显式typed recorder、稳定request ID、同source verifier，以及由一个显式绝对accepted锚点派生的canonical accepted/rejected/provider-invocation Journal family；invocation逻辑键不依赖调用方ID，网络前落`in_flight`并持跨进程锁至唯一终态。非canonical family、相对路径、Unicode/大小写/真实路径或物理别名、未知mode、伪recorder、换ID重发、冲突、未知in-flight或持久化失败均fail closed。三类readback只属`local-integrity-only`；跨主机/生产worker共享同一锚点尚未装配验证，accepted evidence、认证稳定性、quota/限流/成本、数据留存和生产可用性仍未验证。
 - `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。模板已移除显式旧A股调度；仍保留的wrapper由不可环境覆盖的kill switch阻断（退出码78），只能用于识别历史安装依赖与退役审计。2026-07-19 已对 `/opt/investment/tradingagent`、现役 service/loopback health 和安装态 cron 做只读摘要 readback；另在 detached 候选目录完成一次已停止的 loopback sidecar 验收。因此现役只在 `production_runtime_read_only_snapshot` 层标记新鲜，旁路候选只在 `server_validated_non_authority_simulation_only` 层标记新鲜；两者均保持 `production_verified=false`，候选未激活。
 - Mini/Hermes webhook、file consumer 与 `RealSignalQueue` 在仓库合同层已退役并由 `tradingagent_mini_hermes_retirement` 阻止恢复；A股只保留`tradingagent.ashare.paper_broker.v1`的server-local模拟合同。`ASHARE_SIM_HERMES_ENABLED=0`和`ASHARE_SIM_WEBHOOK_ENABLED=0`仅是安装态清理墓碑，不代表服务器或Mini上的cron、env、process、port已经清零；这些仍需独立只读readback。
@@ -31,10 +31,10 @@
 
 | 对象 | 仓库观察 | YAML 门禁 | 当前可用范围 |
 |---|---|---|---|
-| TradingDatas V1 upstream query | TA不写TradingDatas；等待上游唯一owner冻结fresh handoff | `TARGET_CONTRACT` | 不代表TradingDatas runtime |
+| TradingDatas V1 upstream query | TA不写TradingDatas；上游已声明 formal provider-native handoff，但TA尚未独立readback | `TARGET_CONTRACT` | 不代表TA已接入或生产通过 |
 | TA TradingDatas V1 client + Evidence Gate | 实现与契约测试已进入仓库；兼容代码符号仍含`SharedSignalsV1*` | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture/contract；不代表TradingDatas runtime |
 | TA TradingDatas Bearer transport (`tradingagent_tradingdatas_bearer_transport`) | 最终transport只从`/run/secrets/tradingagent`受限token file注入header；精确绑定canonical authority/method/path与固定JSON header，远端只允许HTTPS；禁止明文env、调用方覆盖、secret回执/日志、认证重试和旧链fallback | `CURRENT_VERIFIED / repository_contract / production=false` | 仅消费侧文件/header合同；实际TA-scoped token、哈希注册和live认证readback仍未完成 |
-| TA TradingDatas V1 integration-readiness probe | 显式manifest、统一`as_of`双跑、必需字段/行级PIT/receipt/内容哈希与脱敏回执；`next_cursor`在跨页合同冻结前阻断 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture或另行授权的只读联调；不是TradingDatas验收owner、每日监控、生产或交易authority |
+| TA TradingDatas V1 integration-readiness probe | v2显式manifest；逐dataset filters/as-of/identity/event/budgets；provider-native rows、envelope source proof、bounded cursor、跨页守恒与same-observation双跑 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture或另行授权的只读联调；current observation不是历史PIT，也不是生产或交易authority |
 | 主板三层 Universe | policy/snapshots/zero-leakage 合同已进入仓库；环境宽度由内容寻址CoverageReceipt及外部verifier派生，过期/数量/双创聚合/authority缺口降级 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅模拟scope与cash+policy upper bound；真实coverage verifier、broker和ledger订单量均未证明 |
 | Phase 1.5 行业 shadow 薄切片 | PIT taxonomy、成分、score方法/有效期、score/coverage receipts和独立proof绑定；动态 1 深研 + 2 观察 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture研究聚焦；真实score verifier缺失；无个股、无position effect、无晋级资格 |
 | 50k optimizer + plan binding | 可行池负责cash+policy上界；无默认account verifier复核账户；Champion score另绑定当前selection/artifact/model/spec与经独立port复核的数值PIT特征；plan再绑定T+1、cost、现金顺序、零股卖出与订单量 | `CURRENT_VERIFIED / repository_contract / production=false` | rank只排序、固定probe sizing；fixture proof不证明真实账户、Champion/feature registry或broker |
@@ -60,10 +60,10 @@
 
 | `entry_id` | 状态 / layer | 人工说明 |
 |---|---|---|
-| `sharedsignals_v1_query` | `TARGET_CONTRACT / repository_contract` | 保留的机器条目ID；上游 TradingDatas owner 负责，TA 仅等待冻结合同 |
-| `tradingagent_sharedsignals_v1_client` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；mock-first TradingDatas V1 consumer，不证明 live TradingDatas |
+| `sharedsignals_v1_query` | `TARGET_CONTRACT / repository_contract` | 保留的机器条目ID；上游 TradingDatas owner 负责，formal handoff声明不替代TA独立readback |
+| `tradingagent_sharedsignals_v1_client` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；provider-native envelope consumer，不证明 live TradingDatas |
 | `tradingagent_tradingdatas_bearer_transport` | `CURRENT_VERIFIED / repository_contract` | 受限TA token file到两个固定V1 endpoint的Bearer注入；实际token发放、注册和live认证readback仍未完成 |
-| `tradingagent_sharedsignals_v1_integration_probe` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；显式manifest的同`as_of`只读接入门与非authority回执，未运行live TradingDatas，分页合同未冻结时阻断 |
+| `tradingagent_sharedsignals_v1_integration_probe` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；v2 bounded-pagination、source-proof、identity守恒与same-observation只读接入门；未运行formal TradingDatas |
 | `tradingagent_mainboard_scope` | `CURRENT_VERIFIED / repository_contract` | 主板个股；双创指数与行业聚合仅环境参考；覆盖 authority 需外部复核 |
 | `tradingagent_small_account_optimizer` | `CURRENT_VERIFIED / repository_contract` | 50k、账户输入/proof绑定、整数股/零股卖出、费用与现金的模拟优化器；不证明真实账户 |
 | `tradingagent_thesis_risk_authority` | `CURRENT_VERIFIED / repository_contract` | 行业/论点/原材料/政策事件/拥挤/模型家族六维风险完整性门；fixture policy/proof不可晋级 |
@@ -113,7 +113,7 @@
 ## 阶段出口前的必需证据
 
 1. 本地精确 diff、聚焦/全后端/前端检查、离线端到端、crash/restart 和独立 review；
-2. TradingDatas 上游 fresh handoff 冻结的 catalog version、dataset IDs、auth、receipt authority 和真实 runtime readback；
+2. TradingDatas 上游 handoff 冻结的 catalog version、dataset IDs、schema/query policy、auth、receipt authority，以及TA使用自身token/client得到的fresh runtime readback；
 3. A股消费者同 `as_of` parity、V1 cutover、旧 import/URL/env/cron/front 引用清零与 runtime no-fallback 负例；
 4. 生产market-evidence、Champion/feature registry、六维论点风险policy/exposure-set verifier、metrics重算与可信时钟authority接入并完成readback；本地fixture proof不得被复用为生产凭证；
 5. 当前本地候选状态已写入机器YAML；冻结候选前仍须复核代码、测试、文档、YAML evidence和精确diff一致，任何后续变化继续在同一变更中对齐。

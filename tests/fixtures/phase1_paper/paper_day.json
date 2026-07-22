@@ -1,10 +1,10 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "offline_fixture": true,
   "config": {
     "trade_date": "2026-07-16",
     "decision_as_of": "2026-07-16T09:05:00+08:00",
-    "tradingdatas_v1_base_url": "http://tradingdatas.fixture.invalid:8082",
+    "tradingdatas_v1_base_url": "http://tradingdatas.fixture.invalid",
     "tradingdatas_catalog_version": "fixture-catalog-2026-07-16",
     "tradingdatas_access_policy_id": "ta-paper-read-v1",
     "capital_authority_id": "ashare-phase1-offline-fixture-capital-v1",
@@ -18,11 +18,20 @@
     "datasets": [
       {
         "dataset_id": "fixture.cn.equity.daily.mainboard.v1",
-        "schema_major": 1,
+        "schema_major": 2,
         "role": "required_execution",
-        "fields": ["ts_code", "close"],
-        "filters": {},
-        "as_of": "2026-07-16T01:05:00+00:00",
+        "fields": ["ts_code", "trade_date", "close"],
+        "filters": {"trade_date": {"eq": "20260715"}},
+        "identity_fields": ["ts_code", "trade_date"],
+        "observation_mode": "current_observation",
+        "query_as_of_mode": "decision_as_of",
+        "row_event_time_field": "trade_date",
+        "row_event_time_format": "yyyymmdd",
+        "row_event_timezone": "Asia/Shanghai",
+        "row_event_time_semantic": "session",
+        "minimum_row_count": 1,
+        "max_pages": 2,
+        "max_rows": 1000,
         "limit": 1000,
         "cursor": null,
         "evidence_policy": {
@@ -34,11 +43,20 @@
       },
       {
         "dataset_id": "fixture.cn.equity.sector.full-market-context.v1",
-        "schema_major": 1,
+        "schema_major": 2,
         "role": "optional_context",
-        "fields": ["sector_id", "breadth"],
-        "filters": {},
-        "as_of": "2026-07-16T01:05:00+00:00",
+        "fields": ["sector_id", "trade_date", "breadth"],
+        "filters": {"trade_date": {"eq": "20260715"}},
+        "identity_fields": ["sector_id", "trade_date"],
+        "observation_mode": "current_observation",
+        "query_as_of_mode": "decision_as_of",
+        "row_event_time_field": "trade_date",
+        "row_event_time_format": "yyyymmdd",
+        "row_event_timezone": "Asia/Shanghai",
+        "row_event_time_semantic": "session",
+        "minimum_row_count": 1,
+        "max_pages": 2,
+        "max_rows": 1000,
         "limit": 1000,
         "cursor": null,
         "evidence_policy": {
@@ -213,11 +231,11 @@
         "data": [
           {
             "dataset_id": "fixture.cn.equity.daily.mainboard.v1",
-            "fields": ["ts_code", "close"]
+            "fields": ["ts_code", "trade_date", "close"]
           },
           {
             "dataset_id": "fixture.cn.equity.sector.full-market-context.v1",
-            "fields": ["sector_id", "breadth"]
+            "fields": ["sector_id", "trade_date", "breadth"]
           }
         ]
       }
@@ -233,11 +251,8 @@
           "data": [
             {
               "ts_code": "000001.SZ",
-              "close": 10.0,
-              "event_time": "2026-07-15T07:00:00+00:00",
-              "available_time": "2026-07-16T00:59:00+00:00",
-              "revision_id": "r1",
-              "receipt_id": "row-price-receipt-1"
+              "trade_date": "20260715",
+              "close": 10.0
             }
           ],
           "next_cursor": null,
@@ -264,11 +279,8 @@
           "data": [
             {
               "sector_id": "full-market",
-              "breadth": 0.55,
-              "event_time": "2026-07-15T07:00:00+00:00",
-              "available_time": "2026-07-16T00:59:00+00:00",
-              "revision_id": "r1",
-              "receipt_id": "row-context-receipt-1"
+              "trade_date": "20260715",
+              "breadth": 0.55
             }
           ],
           "next_cursor": null,

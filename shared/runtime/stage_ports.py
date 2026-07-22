@@ -1,8 +1,8 @@
 """Strict adapters from frozen research and learning authorities into a day run.
 
 These ports have no implicit endpoint, storage root, clock, broker or fallback.
-They are suitable for isolated paper replays and for contract testing while the
-TradingDatas V1 producer contract remains externally owned and unfrozen.
+They are suitable for isolated paper replays and for the frozen TradingDatas V1
+consumer contract. Producer ownership remains external to TradingAgent.
 """
 
 from __future__ import annotations
@@ -27,6 +27,10 @@ from shared.data.research_snapshot_store import (
     ResearchSnapshotStoreCorruption,
 )
 from shared.data.sharedsignals_v1 import QueryRequest, SharedSignalsV1Client
+from shared.data.tradingdatas_pagination import (
+    PaginationContractError,
+    collect_query_pages,
+)
 from shared.review.decision_ledger import (
     DecisionExposureRecord,
     ExposureDisposition,
@@ -108,12 +112,11 @@ def _mapping_rows(value: object, *, field_name: str) -> list[dict[str, Any]]:
 
 
 class SharedSignalsResearchEvidencePort:
-    """Build one immutable PIT snapshot from only catalog/query V1 responses.
+    """Build one immutable current-observation snapshot from V1 responses.
 
-    Pagination is deliberately fail-closed in this first adapter. A caller
-    must not use a first page as a complete decision dataset. A future
-    pagination contract can replace this adapter only after page receipt and
-    snapshot identities are frozen by the upstream owner.
+    Provider-native rows are traversed to a bounded terminal page and bound to
+    their envelope receipt, lineage and observation metadata. This adapter does
+    not promote current observations to historical point-in-time evidence.
     """
 
     def __init__(
@@ -159,12 +162,15 @@ class SharedSignalsResearchEvidencePort:
                 raise ValueError("request_dataset_identity_mismatch")
             if query.cursor is not None:
                 raise ValueError("initial_request_cursor_forbidden")
-            if (
-                query.as_of is None
-                or _aware_utc(query.as_of, field_name="request_as_of")
-                != decision_instant
-            ):
-                raise ValueError("request_decision_as_of_mismatch")
+            if requirement.query_as_of_mode == "decision_as_of":
+                if (
+                    query.as_of is None
+                    or _aware_utc(query.as_of, field_name="request_as_of")
+                    != decision_instant
+                ):
+                    raise ValueError("request_decision_as_of_mismatch")
+            elif query.as_of is not None:
+                raise ValueError("request_as_of_must_be_omitted")
             ordered[requirement.dataset_id] = query
 
         self.identity = identity
@@ -204,20 +210,25 @@ class SharedSignalsResearchEvidencePort:
         if catalog.catalog_version != self._profile.catalog_version:
             raise StagePortContractError("catalog_version_mismatch")
 
-        envelopes = []
+        page_runs = []
         decisions = []
         for requirement in self._profile.requirements:
-            envelope = self._client.query(self._requests[requirement.dataset_id])
-            if envelope.next_cursor is not None:
-                raise StagePortContractError(
-                    f"pagination_incomplete:{requirement.dataset_id}"
+            try:
+                page_run = collect_query_pages(
+                    client=self._client,
+                    request=self._requests[requirement.dataset_id],
+                    identity_fields=requirement.identity_fields,
+                    max_pages=requirement.max_pages,
+                    max_rows=requirement.max_rows,
                 )
-            envelopes.append(envelope)
-            decisions.append(self._evidence_gate.evaluate(envelope))
+            except PaginationContractError as exc:
+                raise StagePortContractError(str(exc)) from exc
+            page_runs.append(page_run)
+            decisions.append(self._evidence_gate.evaluate(page_run.envelope))
 
         snapshot = build_research_data_snapshot(
             profile=self._profile,
-            envelopes=tuple(envelopes),
+            page_runs=tuple(page_runs),
             decisions=tuple(decisions),
             decision_as_of=self._decision_as_of,
         )

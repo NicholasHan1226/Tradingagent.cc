@@ -735,6 +735,11 @@ class SharedSignalsV1Client:
     def _store(self, request: QueryRequest, envelope: QueryEnvelope) -> None:
         if self.config.cache_ttl_seconds <= 0:
             return
+        # An opaque cursor means this is only an intermediate page.  Caching it
+        # could make a later same-as-of traversal reuse a partial chain and is
+        # therefore forbidden; only terminal pages may enter the local cache.
+        if envelope.next_cursor is not None:
+            return
         if envelope.metadata.degraded or envelope.metadata.state.lower() != "ready":
             return
         if any(
@@ -762,7 +767,7 @@ class SharedSignalsV1Client:
         )
         self._query_cache_index[self._lookup_key(request)] = cache_key
 
-    def query(self, request: QueryRequest) -> QueryEnvelope:
+    def _query(self, request: QueryRequest, *, use_cache: bool) -> QueryEnvelope:
         if not isinstance(request, QueryRequest):
             raise ContractViolation("query request must be a QueryRequest")
         if request.dataset_id not in self.config.dataset_ids:
@@ -772,9 +777,10 @@ class SharedSignalsV1Client:
         if request.limit > self.config.max_limit:
             raise ContractViolation("limit exceeds configured max_limit")
 
-        cached = self._cached(request)
-        if cached is not None:
-            return cached
+        if use_cache:
+            cached = self._cached(request)
+            if cached is not None:
+                return cached
 
         payload = self._send(
             method="POST",
@@ -802,8 +808,19 @@ class SharedSignalsV1Client:
                 )
 
         # Cache only after the complete response has passed strict validation.
-        self._store(request, envelope)
+        if use_cache:
+            self._store(request, envelope)
         return envelope
+
+    def query(self, request: QueryRequest) -> QueryEnvelope:
+        """Read one page with the configured terminal-page cache policy."""
+
+        return self._query(request, use_cache=True)
+
+    def query_uncached(self, request: QueryRequest) -> QueryEnvelope:
+        """Read one page directly for bounded traversal and replay checks."""
+
+        return self._query(request, use_cache=False)
 
 
 __all__ = [

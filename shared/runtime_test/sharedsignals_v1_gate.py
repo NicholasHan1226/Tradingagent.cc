@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Fail-closed TradingAgent runtime gate for the frozen TradingDatas V1 API.
+"""Fail-closed TradingDatas V1 transport/metadata smoke for TradingAgent.
 
 This module is a consumer only.  It delegates all contract parsing to the
 provider-neutral V1 client and all dataset decisions to ``DataEvidenceGate``.
-There is no local database, provider adapter, or legacy endpoint fallback.
+It does not prove provider-native row identity, bounded pagination or research
+snapshot readiness; the integration probe owns those checks.  There is no
+local database, provider adapter, or legacy endpoint fallback.
 """
 
 from __future__ import annotations
@@ -539,6 +541,8 @@ def _critical_result(reason: str, *, error: Exception | None = None) -> dict[str
         "status": "critical",
         "blocking": True,
         "reason": reason,
+        "scope": "transport_metadata_smoke",
+        "research_contract_verified": False,
         "datasets": [],
     }
     if error is not None:
@@ -608,7 +612,7 @@ def check_v1_runtime_gate(
     *,
     transport: HTTPTransport | None,
 ) -> dict[str, Any]:
-    """Probe every configured dataset and reject any non-ready evidence."""
+    """Smoke-test catalog/query transport and reject non-ready metadata."""
 
     if not isinstance(config, TradingDatasV1RuntimeGateConfig):
         raise TypeError("config must be a TradingDatasV1RuntimeGateConfig")
@@ -640,7 +644,7 @@ def check_v1_runtime_gate(
             pagination_complete = envelope.next_cursor is None
             reason_codes = _controlled_reason_codes(envelope, decision)
             if not pagination_complete:
-                reason_codes.append("pagination_contract_unfrozen")
+                reason_codes.append("runtime_smoke_requires_terminal_page")
             dataset_results.append(
                 {
                     "dataset_id": dataset_id,
@@ -673,6 +677,8 @@ def check_v1_runtime_gate(
         "catalog_version": catalog.catalog_version,
         "schema_major": config.schema_major,
         "transport_id": config.transport_id,
+        "scope": "transport_metadata_smoke",
+        "research_contract_verified": False,
         "datasets": dataset_results,
     }
 

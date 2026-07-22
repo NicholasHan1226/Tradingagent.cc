@@ -1,108 +1,127 @@
 {
-  "access_policy_id": "fixture-read-only-policy-v1",
+  "access_policy_id": "fixture-read-only-policy-v2",
   "as_of": "2026-07-17T09:25:00+08:00",
   "base_url": "https://tradingdatas.fixture.invalid",
   "catalog_version": "fixture-catalog-replace-after-handoff",
   "datasets": [
     {
-      "dataset_id": "fixture.cn.trade-calendar.v1",
+      "dataset_id": "fixture.cn.market.trade-calendar.v2",
       "fields": [
         "market",
-        "trade_date",
-        "is_open",
-        "event_time",
-        "available_time",
-        "revision_id",
-        "receipt_id"
+        "cal_date",
+        "is_open"
       ],
       "filters": {
         "market": "CN"
       },
+      "identity_fields": [
+        "market",
+        "cal_date"
+      ],
       "limit": 100,
+      "max_pages": 3,
+      "max_rows": 300,
       "minimum_row_count": 1,
+      "observation_mode": "current_observation",
       "probe_role": "trade_calendar",
+      "query_as_of_mode": "decision_as_of",
       "requirement_role": "required_execution",
-      "row_available_time_field": "available_time",
-      "row_event_time_field": "event_time",
-      "row_receipt_id_field": "receipt_id",
-      "row_revision_id_field": "revision_id",
-      "schema_major": 1
+      "row_event_time_field": "cal_date",
+      "row_event_time_format": "yyyymmdd",
+      "row_event_time_semantic": "scheduled",
+      "row_event_timezone": "Asia/Shanghai",
+      "schema_major": 2
     },
     {
-      "dataset_id": "fixture.cn.equity-master.mainboard.v1",
+      "dataset_id": "fixture.cn.equity.security-master.v2",
       "fields": [
+        "ts_code",
         "symbol",
-        "board",
-        "listing_status",
-        "event_time",
-        "available_time",
-        "revision_id",
-        "receipt_id"
+        "name",
+        "market",
+        "list_date",
+        "delist_date"
       ],
       "filters": {
-        "board": "mainboard"
+        "market_scope": "mainboard"
       },
-      "limit": 5000,
+      "identity_fields": [
+        "ts_code"
+      ],
+      "limit": 1000,
+      "max_pages": 20,
+      "max_rows": 10000,
       "minimum_row_count": 1,
+      "observation_mode": "current_observation",
       "probe_role": "equity_master",
+      "query_as_of_mode": "omit",
       "requirement_role": "required_execution",
-      "row_available_time_field": "available_time",
-      "row_event_time_field": "event_time",
-      "row_receipt_id_field": "receipt_id",
-      "row_revision_id_field": "revision_id",
-      "schema_major": 1
+      "schema_major": 2
     },
     {
-      "dataset_id": "fixture.cn.equity-daily.mainboard.v1",
+      "dataset_id": "fixture.cn.equity.daily.v2",
       "fields": [
-        "symbol",
+        "ts_code",
+        "trade_date",
         "open",
         "high",
         "low",
         "close",
-        "volume",
-        "event_time",
-        "available_time",
-        "revision_id",
-        "receipt_id"
+        "vol",
+        "amount"
       ],
       "filters": {
-        "board": "mainboard"
+        "trade_date": {
+          "eq": "20260716"
+        }
       },
-      "limit": 5000,
+      "identity_fields": [
+        "ts_code",
+        "trade_date"
+      ],
+      "limit": 500,
+      "max_pages": 20,
+      "max_rows": 10000,
       "minimum_row_count": 1,
+      "observation_mode": "current_observation",
       "probe_role": "daily_bars",
+      "query_as_of_mode": "decision_as_of",
       "requirement_role": "required_execution",
-      "row_available_time_field": "available_time",
-      "row_event_time_field": "event_time",
-      "row_receipt_id_field": "receipt_id",
-      "row_revision_id_field": "revision_id",
-      "schema_major": 1
+      "row_event_time_field": "trade_date",
+      "row_event_time_format": "yyyymmdd",
+      "row_event_time_semantic": "session",
+      "row_event_timezone": "Asia/Shanghai",
+      "schema_major": 2
     },
     {
-      "dataset_id": "fixture.cn.industry-context.full-market.v1",
+      "dataset_id": "fixture.cn.industry.daily-context.v2",
       "fields": [
-        "industry_id",
-        "market_scope",
-        "breadth",
-        "event_time",
-        "available_time",
-        "revision_id",
-        "receipt_id"
+        "index_code",
+        "trade_date",
+        "close"
       ],
       "filters": {
-        "aggregation": "industry_and_board_indices",
-        "individual_security_output": false
+        "trade_date": {
+          "eq": "20260716"
+        }
       },
-      "limit": 1000,
+      "identity_fields": [
+        "index_code",
+        "trade_date"
+      ],
+      "limit": 500,
+      "max_pages": 5,
+      "max_rows": 2000,
       "minimum_row_count": 1,
+      "observation_mode": "current_observation",
       "probe_role": "industry_context",
+      "query_as_of_mode": "decision_as_of",
       "requirement_role": "optional_context",
-      "row_available_time_field": "available_time",
-      "row_event_time_field": "event_time",
-      "row_receipt_id_field": "receipt_id",
-      "row_revision_id_field": "revision_id",
-      "schema_major": 1
+      "row_event_time_field": "trade_date",
+      "row_event_time_format": "yyyymmdd",
+      "row_event_time_semantic": "session",
+      "row_event_timezone": "Asia/Shanghai",
+      "schema_major": 2
     }
   ],
   "expected_probe_roles": [
@@ -111,8 +130,8 @@
     "daily_bars",
     "industry_context"
   ],
-  "manifest_version": 1,
-  "profile_id": "ashare-mainboard-phase1-integration-v1",
+  "manifest_version": 2,
+  "profile_id": "ashare-mainboard-phase1-integration-v2",
   "timeout_seconds": 10,
   "transport_id": "http-json-v1"
 }

@@ -11,6 +11,7 @@ from typing import Any, Mapping
 import pytest
 
 from shared.data.evidence_gate import DatasetEvidencePolicy, EvidenceAction
+from shared.data.research_snapshot import DatasetRequirement, ResearchDataProfile
 from shared.data.research_snapshot_store import FileResearchSnapshotStore
 from shared.data.sharedsignals_v1 import QueryRequest
 from shared.data.sharedsignals_v1 import HTTPResponse
@@ -76,7 +77,7 @@ def _config_kwargs() -> dict[str, Any]:
     return {
         "trade_date": "2026-07-16",
         "decision_as_of": datetime.fromisoformat(DECISION_AS_OF),
-        "tradingdatas_v1_base_url": "http://tradingdatas.fixture.invalid:8082",
+        "tradingdatas_v1_base_url": "http://tradingdatas.fixture.invalid",
         "tradingdatas_catalog_version": CATALOG,
         "tradingdatas_access_policy_id": "ta-paper-read-v1",
         "dataset_profile": _profile(),
@@ -822,6 +823,87 @@ def test_decision_as_of_is_normalized_into_context_run_id_and_bundle(
     )
     projection = json.loads(result.publication.latest_path.read_text(encoding="utf-8"))
     assert projection["context"]["decision_as_of"] == ("2026-07-16T09:05:00+08:00")
+
+
+def test_dataset_request_as_of_is_validated_per_profile_mode() -> None:
+    module = _module()
+    values = _config_kwargs()
+    base_profile = values["dataset_profile"]
+    assert isinstance(base_profile, ResearchDataProfile)
+    price_requirement, context_requirement = base_profile.requirements
+    values["dataset_profile"] = ResearchDataProfile(
+        profile_id=base_profile.profile_id,
+        catalog_version=base_profile.catalog_version,
+        requirements=(
+            price_requirement,
+            DatasetRequirement(
+                dataset_id=context_requirement.dataset_id,
+                role=context_requirement.role,
+                identity_fields=context_requirement.identity_fields,
+                observation_mode="current_observation",
+                query_as_of_mode="omit",
+                row_event_time_field=context_requirement.row_event_time_field,
+                row_event_time_format=context_requirement.row_event_time_format,
+                row_event_timezone=context_requirement.row_event_timezone,
+                row_event_time_semantic=context_requirement.row_event_time_semantic,
+                minimum_row_count=context_requirement.minimum_row_count,
+                max_pages=context_requirement.max_pages,
+                max_rows=context_requirement.max_rows,
+            ),
+        ),
+    )
+    requests = dict(values["dataset_requests"])
+    context_request = requests[CONTEXT_DATASET]
+    requests[CONTEXT_DATASET] = QueryRequest(
+        dataset_id=context_request.dataset_id,
+        schema_major=context_request.schema_major,
+        fields=context_request.fields,
+        filters=context_request.filters,
+        as_of=None,
+        order=context_request.order,
+        limit=context_request.limit,
+    )
+    values["dataset_requests"] = requests
+
+    config = module.PaperRuntimeConfig(**values)
+
+    assert config.dataset_requests[PRICE_DATASET].as_of == DECISION_AS_OF
+    assert config.dataset_requests[CONTEXT_DATASET].as_of is None
+
+
+def test_dataset_request_as_of_mode_mismatch_fails_closed() -> None:
+    module = _module()
+    values = _config_kwargs()
+    base_profile = values["dataset_profile"]
+    assert isinstance(base_profile, ResearchDataProfile)
+    price_requirement, context_requirement = base_profile.requirements
+    values["dataset_profile"] = ResearchDataProfile(
+        profile_id=base_profile.profile_id,
+        catalog_version=base_profile.catalog_version,
+        requirements=(
+            DatasetRequirement(
+                dataset_id=price_requirement.dataset_id,
+                role=price_requirement.role,
+                identity_fields=price_requirement.identity_fields,
+                observation_mode="current_observation",
+                query_as_of_mode="omit",
+                row_event_time_field=price_requirement.row_event_time_field,
+                row_event_time_format=price_requirement.row_event_time_format,
+                row_event_timezone=price_requirement.row_event_timezone,
+                row_event_time_semantic=price_requirement.row_event_time_semantic,
+                minimum_row_count=price_requirement.minimum_row_count,
+                max_pages=price_requirement.max_pages,
+                max_rows=price_requirement.max_rows,
+            ),
+            context_requirement,
+        ),
+    )
+
+    with pytest.raises(
+        module.PaperRuntimeConfigurationError,
+        match=f"dataset_request_as_of_mode_invalid:{PRICE_DATASET}",
+    ):
+        module.PaperRuntimeConfig(**values)
 
 
 def test_decision_as_of_with_wrong_shanghai_trade_date_fails_closed() -> None:
