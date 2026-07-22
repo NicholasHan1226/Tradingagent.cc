@@ -1,0 +1,9 @@
+[Unit]
+Description=TradingAgent A-share observation timer candidate (not enableable)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 18:30:00 Asia/Shanghai
+AccuracySec=1min
+RandomizedDelaySec=30s
+Persistent=false
+Unit=tradingagent-ashare-observation.service

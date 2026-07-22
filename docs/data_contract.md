@@ -100,7 +100,7 @@ access_policy_id: explicit-identity-not-a-secret
 transport_id: http-json-v1
 timeout_seconds: 10
 as_of: timezone-aware-decision-time
-expected_probe_roles: [trade_calendar, equity_master, daily_bars, industry_context]
+expected_probe_roles: [trade_calendar, security_master, daily_bars, industry_context]
 datasets:
   - probe_role: daily_bars
     dataset_id: provider-neutral-id
@@ -173,7 +173,44 @@ receipt_sha256: sha256
 
 回执不得包含 base URL、access policy 原值、raw cursor、manifest 正文、HTTP header、credential、异常原文或上游自由文本 reasons。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID。完整 integration probe / research snapshot 是 provider-native rows、source proof、分页、identity 与 current-observation eligibility 的权威消费侧门；轻量 runtime gate 只做启动前 catalog/auth/单次 dataset 可用性 smoke，不能替代跨页双跑、research snapshot 或历史 PIT 验收。
 
+#### A股 Phase 1 current-observation binding
+
+`shared.runtime.ashare_observation` 是完整 integration probe 之后的最小 A股观察绑定器，不是模拟订单或交易 authority。调用方必须显式提供仓外绝对 manifest、TA-scoped token-file 和 fresh state root，并固定 `REAL_TRADING_ENABLED=false`、`marketgraph_mode=mg_off`。首次绑定严格按以下顺序执行：
+
+1. 加载并校验 secret-free v2 manifest；`daily_bars` 必须使用与 `decision_as_of` 上海交易日一致的精确 `trade_date={"eq": "YYYYMMDD"}` filter；
+2. 对每个 dataset 做受 `max_pages/max_rows` 约束的双跑 integration probe，并要求 terminal cursor、跨页 identity 守恒和 same-observation semantic match；
+3. 再读取一次完整 dataset set，且它的 semantic response、semantic pagination trace、identity、页数和行数必须与已通过 probe 的 observation 完全相同；
+4. 证券范围必须同时绑定 `security_master` 与 `daily_bars`，并以两者 symbol 并集作为观察 denominator：master 固定请求 `ts_code/name/list_status/list_date` 且过滤 `list_status={eq:L}`；仅非 ST/退市风险、上市满 30 日、当日 `close>0`、`vol>0` 且 `amount>0` 的沪深主板普通股进入 `observation_universe`；主数据中有效但当日日线缺失、日线孤儿、停牌/零成交和非主板个股都必须以稳定 reason code 显式记录，不得从 denominator 静默消失；
+5. 仅在以上门禁通过后，先持久化不可覆盖的 transaction intent，再依次冻结 integration probe receipt、`ResearchDataSnapshot`、aggregate observation receipt 与逐股 membership ledger；四项内容全部精确读回后才写 transaction-complete commit marker；
+6. 新契约的可消费权威是“四项数据证据 + 一项 commit proof”的五项绑定。精确重放必须同时验证五项内容、身份与完成标记，且不再次创建 transport 或联网。没有 intent/complete marker、membership ledger 或任一精确内容的旧/半写状态必须显式阻断；崩溃恢复只允许在 session 锁内修复同 inode、同 owner、`0600`、canonical exact payload 的唯一 publish 临时硬链接，不得从旧 receipt 或今日数据反推、补写或回填。
+
+下游不得用调用方传入的 mapping、hash 或直接构造 dataclass 自授 observation eligibility。唯一可晋级入口是 `load_verified_ashare_runtime_authority_bundle`：它只从同一 `0700`、当前服务身份所有的 state root，在 writer 的 session lock 内读取并重验 snapshot、probe receipt、observation receipt、membership ledger 与 transaction-complete marker；公共 `build_ashare_runtime_authority_bundle` 仅作关闭式合同诊断，永远附带 `verified_observation_state_required`，不能生成 eligible bundle。history、planner 与日线估值 adapter 只接受 loader 产生的 verified typed bundle；日线 mark 的 source lineage 还必须组合绑定 membership 与 complete hash。
+
+观察结果 schema 为 `tradingagent.ashare.current-observation.v1`，至少包含 `snapshot_sha256`、`probe_receipt_sha256`、`observation_receipt_sha256`、`observation_ledger_sha256`、`observation_transaction_complete_sha256`、`profile_id/catalog_version/decision_as_of`、`observation_session`、`observation_universe_count/hash`、排除原因计数、`context_probe_roles` 和 `idempotent_replay`。结果固定：
+
+```text
+mode=observation_only
+marketgraph_mode=mg_off
+real_trading_enabled=false
+historical_pit_eligible=false
+execution_authority=false
+```
+
+`daily_bars` 原始快照可以保留全市场 provider-native rows，以免环境样本只剩主板；每行 `trade_date` 必须与上海时区决策日完全一致。`observation_universe` 只是观察初筛，不是 Account Tradable Universe、Small-Capital Feasible Universe、候选、仓位或订单池；观察资格不授予任何资金或执行 authority。membership ledger 中的 excluded row 只作 denominator/排除法证，不得进入 Feature、Candidate、Forecast、Position、Order、LLM 或任意外部逐股输出。
+
+旧 receipt 中的 `tradable_universe_count/hash` 仅是限时兼容别名，其语义与 `observation_universe_count/hash` 相同，绝不表示 broker permission 或订单资格。新 writer/reader 不得再使用该别名作 authority；它仅为旧回执读回保留，待旧消费者和服务器状态根完成 parity 与清零证据后退役。
+
+创业板、科创板和北交所个股只进入受控排除计数，绝不能进入候选、仓位或订单。`optional_context` probe role 只接受关闭集合 `industry_classification/industry_daily_context/industry_context/index_context/market_breadth/sector_context`；任意个股候选、子串伪装或不明 role 均 fail closed。当前 `index_classify` 与 `sw_daily` 只能证明行业分类/行业指数环境观测，没有成分股 denominator 与 coverage authority 时不得称为完整行业宽度。观察绑定不导入或调用 capital、portfolio、order、outbox、reconcile、broker 或 SampleJournal writer，也不存在数据库、旧 route 或 provider fallback。
+
 `as_of`、domain event-time 和 envelope `observed_at` 都不是防止回填偏差的充分条件。任何进入 predictive validation 的 dataset 仍须由独立上游证据提供首次可见 `available_at`、release/revision 链、first-seen receipt 和训练时 vintage；缺这些历史事实时一律保持 `current_observation` 与 `historical_pit_eligible=false`。
+
+#### A股 forward-observation history 与 paper-planning 停止线
+
+每个 session 的主板 history 必须逐日绑定上述五项已提交证据，且 target symbol 必须在当日 membership ledger 中为 `observed/phase1_mainboard_observed`。缺 transaction-complete hash 的四项半写状态不是历史样本。输入顺序就是收集顺序；不得重排、修复、补日、从今日 master 回填历史成员，也不得把 `current_observation` 升级为历史 PIT。`momentum_20d` 与 20 日波动需要至少 21 个 forward-collected session 才具备最小数学覆盖；但在独立交易日连续性 authority 和公司行动/复权 authority 缺失时，`prospective_history_eligible`、各数值 feature readiness 与预测资格仍必须为 false，不能只因 session count 达到 21 而解锁。
+
+Phase 1 membership ledger 当前 `label_horizons=[]`，`learning_eligible=false`。盘后 T 日日线没有 T 日分钟锚点，也没有自动获得 T+1 交易会话；因此不得从日线自动生成 `m30/m60/close/1d/3d/5d` 标签请求。只有未来冻结且独立验证的 calendar/minute/market-truth/adjustment authority 才能为新样本预先注册目标会话；不得反向补标历史 ledger。
+
+当前 daily-only paper planner 固定输出 `status=completed_with_blocks`、`action=abstain`、`authority=non_authority`、`paper_trade_session=null`，其 decision/artifact/day binding 必须继续绑定 transaction-complete hash，并至少保留 `next_trade_session_authority_unavailable`、`champion_numeric_features_unavailable` 和 `minute_execution_evidence_unavailable` blockers。T 日收盘 observation 只能在预测前冻结的交易日历证明下映射到 T+1；在此之前绝不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用，也不得把日线 close 冒充成分钟/L1 价格或可成交证据。
 
 ### A股三层 Universe 契约
 
