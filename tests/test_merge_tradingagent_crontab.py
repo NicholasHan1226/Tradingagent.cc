@@ -395,6 +395,24 @@ class MergeTests(unittest.TestCase):
                     )
                 )
 
+    def test_coverage_rejects_schedule_state_markers_outside_managed_block(self):
+        paused = merge("", PAUSED_TEMPLATE)
+        active = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(paused)
+        self.assertIsNotNone(active)
+
+        for marker in (
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
+            "# TRADINGAGENT_SCHEDULE_STATE=active",
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_wrong",
+        ):
+            with self.subTest(template="paused", marker=marker):
+                self.assertFalse(
+                    _ta_coverage_ok(marker + "\n" + paused, PAUSED_TEMPLATE)
+                )
+            with self.subTest(template="active", marker=marker):
+                self.assertFalse(_ta_coverage_ok(marker + "\n" + active, TA_TEMPLATE))
+
     def test_coverage_retains_exact_env_rejection_and_outside_assignments(self):
         active = merge("", TA_TEMPLATE)
         paused = merge("", PAUSED_TEMPLATE)
@@ -413,10 +431,37 @@ class MergeTests(unittest.TestCase):
                 )
 
         outside = "\n".join(
-            expected for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS
+            expected
+            for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS
+            if not expected.startswith("BASH_ENV=")
         )
         self.assertTrue(_ta_coverage_ok(outside + "\n" + active, TA_TEMPLATE))
         self.assertTrue(_ta_coverage_ok(outside + "\n" + paused, PAUSED_TEMPLATE))
+
+    def test_merge_preserves_other_repo_env_and_sanitizes_orphan_ta_bash_env(self):
+        ta_bash_env = "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh"
+        preserved_lines = [
+            "# TradingDatas runtime environment",
+            *(
+                expected
+                for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS
+                if not expected.startswith("BASH_ENV=")
+            ),
+            "BASH_ENV=/opt/investment/tradingdatas/runtime/env_loader.sh",
+            "*/5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh",
+        ]
+        current = "\n".join([*preserved_lines[:-1], ta_bash_env, preserved_lines[-1]])
+
+        result = merge(current + "\n", PAUSED_TEMPLATE)
+
+        self.assertIsNotNone(result)
+        unmanaged, marker, _managed = result.partition(
+            "# BEGIN TRADINGAGENT MANAGED CRON"
+        )
+        self.assertEqual(marker, "# BEGIN TRADINGAGENT MANAGED CRON")
+        self.assertEqual(unmanaged, "\n".join(preserved_lines) + "\n")
+        self.assertEqual(result.count(ta_bash_env), 1)
+        self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
 
 
 class ApplyWorkflowTests(unittest.TestCase):

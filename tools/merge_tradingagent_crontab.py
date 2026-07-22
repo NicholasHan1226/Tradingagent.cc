@@ -294,16 +294,23 @@ def _ta_coverage_ok(text: str, template_text: str) -> bool:
     ):
         return False
     explicitly_paused = TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_text
-    state_markers = []
-    for line in managed_lines:
-        candidate = line[1:].strip() if line.startswith("#") else line
-        variable, separator, _value = candidate.partition("=")
-        if separator and variable.strip() == "TRADINGAGENT_SCHEDULE_STATE":
-            state_markers.append(line)
+
+    def schedule_state_markers(candidate_lines: list[str]) -> list[str]:
+        state_markers = []
+        for line in candidate_lines:
+            candidate = line[1:].strip() if line.startswith("#") else line
+            variable, separator, _value = candidate.partition("=")
+            if separator and variable.strip() == "TRADINGAGENT_SCHEDULE_STATE":
+                state_markers.append(line)
+        return state_markers
+
     expected_state_markers = (
         [TRADINGAGENT_SCHEDULE_PAUSED_MARKER] if explicitly_paused else []
     )
-    if state_markers != expected_state_markers:
+    if (
+        schedule_state_markers(lines) != expected_state_markers
+        or schedule_state_markers(managed_lines) != expected_state_markers
+    ):
         return False
     return not expected if explicitly_paused else bool(expected)
 
