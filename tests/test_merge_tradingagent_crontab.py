@@ -47,6 +47,8 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 # TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff
 """
 
+EXTERNAL_BACKUP_DIR = Path("/opt/investment/release-evidence/tradingagent/test/cron")
+
 CURRENT = """\
 # TradingDatas market data
 */5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh >> /opt/investment/tradingdatas/logs/provider_transport.log 2>&1
@@ -336,7 +338,11 @@ class ApplyWorkflowTests(unittest.TestCase):
                 "tools.merge_tradingagent_crontab._backup",
                 side_effect=OSError("disk full"),
             ):
-                report = apply_merge(TA_TEMPLATE, dry_run=False)
+                report = apply_merge(
+                    TA_TEMPLATE,
+                    dry_run=False,
+                    backup_dir=EXTERNAL_BACKUP_DIR,
+                )
                 self.assertEqual(report["status"], "fail")
                 self.assertEqual(report["failure"], "backup_failed")
                 mw.assert_not_called()
@@ -350,7 +356,11 @@ class ApplyWorkflowTests(unittest.TestCase):
             ):
                 with patch("tools.merge_tradingagent_crontab._write") as mw:
                     mw.return_value = ("", "permission denied")
-                    report = apply_merge(TA_TEMPLATE, dry_run=False)
+                    report = apply_merge(
+                        TA_TEMPLATE,
+                        dry_run=False,
+                        backup_dir=EXTERNAL_BACKUP_DIR,
+                    )
                     self.assertEqual(report["status"], "fail")
                     self.assertEqual(report["failure"], "install_failed")
                     mw.assert_called_once_with(
@@ -369,10 +379,14 @@ class ApplyWorkflowTests(unittest.TestCase):
             ) as mb:
                 with patch("tools.merge_tradingagent_crontab._write") as mw:
                     mw.return_value = ("", "")
-                    report = apply_merge(TA_TEMPLATE, dry_run=False)
+                    report = apply_merge(
+                        TA_TEMPLATE,
+                        dry_run=False,
+                        backup_dir=EXTERNAL_BACKUP_DIR,
+                    )
                     self.assertEqual(report["status"], "fail")
                     self.assertEqual(report["failure"], "readback_failed")
-                    mb.assert_called_once_with("")
+                    mb.assert_called_once_with("", EXTERNAL_BACKUP_DIR)
                     self.assertEqual(
                         mw.call_args_list,
                         [call("marketgraph", merged), call("marketgraph", "")],
@@ -393,7 +407,11 @@ class ApplyWorkflowTests(unittest.TestCase):
             ):
                 with patch("tools.merge_tradingagent_crontab._write") as mw:
                     mw.return_value = ("", "")
-                    report = apply_merge(TA_TEMPLATE, dry_run=False)
+                    report = apply_merge(
+                        TA_TEMPLATE,
+                        dry_run=False,
+                        backup_dir=EXTERNAL_BACKUP_DIR,
+                    )
                     self.assertEqual(report["status"], "fail")
                     self.assertEqual(report["failure"], "coverage_mismatch")
                     self.assertEqual(
@@ -416,10 +434,78 @@ class ApplyWorkflowTests(unittest.TestCase):
             ):
                 with patch("tools.merge_tradingagent_crontab._write") as mw:
                     mw.return_value = ("", "")
-                    report = apply_merge(TA_TEMPLATE, dry_run=False)
+                    report = apply_merge(
+                        TA_TEMPLATE,
+                        dry_run=False,
+                        backup_dir=EXTERNAL_BACKUP_DIR,
+                    )
                     self.assertEqual(report["status"], "pass")
                     self.assertEqual(report["action"], "apply")
                     mw.assert_called_once_with("marketgraph", merged)
+
+    def test_apply_requires_external_backup_directory_before_system_write(self):
+        with (
+            patch("tools.merge_tradingagent_crontab._read") as mr,
+            patch("tools.merge_tradingagent_crontab._backup") as mb,
+            patch("tools.merge_tradingagent_crontab._write") as mw,
+        ):
+            mr.return_value = (CURRENT, "")
+
+            report = apply_merge(TA_TEMPLATE, dry_run=False)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["failure"], "backup_dir_required")
+            mb.assert_not_called()
+            mw.assert_not_called()
+
+    def test_apply_rejects_repository_local_backup_directory(self):
+        repo_local = _HERE.parent / "runtime" / "backups" / "crontab"
+        with (
+            patch("tools.merge_tradingagent_crontab._read") as mr,
+            patch("tools.merge_tradingagent_crontab._backup") as mb,
+            patch("tools.merge_tradingagent_crontab._write") as mw,
+        ):
+            mr.return_value = (CURRENT, "")
+
+            report = apply_merge(
+                TA_TEMPLATE,
+                dry_run=False,
+                backup_dir=repo_local,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["failure"], "backup_dir_invalid")
+            mb.assert_not_called()
+            mw.assert_not_called()
+
+    def test_apply_rejects_symlinked_parent_into_repository(self):
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            repository = root / "repo"
+            repository.mkdir()
+            (repository / ".git").mkdir()
+            runtime = repository / "runtime"
+            runtime.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(runtime, target_is_directory=True)
+            backup_dir = alias / "evidence"
+            with (
+                patch("tools.merge_tradingagent_crontab._read") as mr,
+                patch("tools.merge_tradingagent_crontab._backup") as mb,
+                patch("tools.merge_tradingagent_crontab._write") as mw,
+            ):
+                mr.return_value = (CURRENT, "")
+
+                report = apply_merge(
+                    TA_TEMPLATE,
+                    dry_run=False,
+                    backup_dir=backup_dir,
+                )
+
+                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["failure"], "backup_dir_invalid")
+                mb.assert_not_called()
+                mw.assert_not_called()
 
 
 class FileModeTests(unittest.TestCase):

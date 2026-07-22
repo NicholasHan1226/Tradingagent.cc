@@ -114,7 +114,10 @@ TradingAgent signals / positions / review / risk
   `marketPulses[]` 为空并保留 `marketPulseCoverage` 的 unavailable/degraded 状态；绝不调用旧端点。
   `TRADINGDATAS_ACCESS_POLICY_ID` 只是服务端 reader 的本地 cache/audit 命名空间，
   不作为 HTTP header 发给 TradingDatas，也不是 credential。真实 service-token/header
-  合同必须等待 fresh handoff 后由独立 transport 实现；当前 reader 不臆造认证协议。
+  合同必须等待 fresh handoff 后由独立 transport 实现；当前 Node reader
+  不实现 Bearer token-file，因此生产 front unit 固定把这些配置留空，不能
+  直连正式 `18082`。真实数据先由专用 A股 observation worker 验收并冻结为
+  本地只读投影，front 不读取或转发 TradingDatas credential。
 - `shared/runtime/run_bundles/latest.json`（可选本地候选快照）：只展示
   RunBundle 阶段、数据证据、候选/决策、模拟订单/成交、风险阻断、Champion
   清单和 LLM 证据角色。必须同时存在字节一致的

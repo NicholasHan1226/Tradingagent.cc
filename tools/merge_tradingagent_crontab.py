@@ -12,12 +12,14 @@ Usage
 -----
     python3 tools/merge_tradingagent_crontab.py               # dry-run
     python3 tools/merge_tradingagent_crontab.py --current-file /tmp/cron.txt
-    sudo python3 tools/merge_tradingagent_crontab.py --apply  # production
+    sudo python3 tools/merge_tradingagent_crontab.py --apply \
+      --backup-dir /opt/investment/release-evidence/tradingagent/<release>/cron
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -40,7 +42,6 @@ from shared.runtime_test.cron_coverage import (
 )
 
 TEMPLATE_PATH = ROOT / "shared" / "crontab.txt"
-BACKUP_DIR = ROOT / "runtime" / "backups" / "crontab"
 USER = "marketgraph"
 TRADINGAGENT_BASH_ENV = f"BASH_ENV={TRADINGAGENT_BASH_ENV_PATH}"
 TRADINGAGENT_MANAGED_BLOCK_BEGIN = "# BEGIN TRADINGAGENT MANAGED CRON"
@@ -219,11 +220,36 @@ def _write(user: str, text: str) -> tuple[str, str]:
     return _crontab(user, ["-"], stdin=text)
 
 
-def _backup(text: str) -> Path:
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+def _external_backup_dir(value: Path | None) -> Path:
+    if value is None:
+        raise ValueError("backup directory is required")
+    if not isinstance(value, Path) or not value.is_absolute():
+        raise ValueError("backup directory must be absolute")
+    normalized = Path(os.path.abspath(value))
+    if normalized.resolve(strict=False) != normalized:
+        raise ValueError("backup directory must not contain symlink components")
+    for ancestor in (normalized, *normalized.parents):
+        git_marker = ancestor / ".git"
+        if git_marker.exists() or git_marker.is_symlink():
+            raise ValueError("backup directory must be outside every Git checkout")
+    return normalized
+
+
+def _backup(text: str, backup_dir: Path) -> Path:
+    backup_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if (
+        backup_dir.is_symlink()
+        or not backup_dir.is_dir()
+        or backup_dir.resolve(strict=True) != backup_dir
+    ):
+        raise OSError("backup directory is not a regular directory")
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = BACKUP_DIR / f"marketgraph_crontab_{ts}.txt"
-    path.write_text(text, encoding="utf-8")
+    path = backup_dir / f"marketgraph_crontab_{ts}.txt"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
     return path
 
 
@@ -254,8 +280,23 @@ def apply_merge(
     user: str = USER,
     dry_run: bool = True,
     output_path: str | None = None,
+    backup_dir: Path | None = None,
 ) -> dict:
     report: dict = {"action": "dry_run" if dry_run else "apply", "user": user}
+
+    if not dry_run:
+        try:
+            backup_dir = _external_backup_dir(backup_dir)
+        except ValueError:
+            return {
+                **report,
+                "status": "fail",
+                "failure": (
+                    "backup_dir_required"
+                    if backup_dir is None
+                    else "backup_dir_invalid"
+                ),
+            }
 
     current, err = _read(user)
     if err:
@@ -275,7 +316,8 @@ def apply_merge(
 
     # --apply: backup -> install -> readback verification -> rollback on failure
     try:
-        report["backup_path"] = str(_backup(current))
+        assert backup_dir is not None
+        report["backup_path"] = str(_backup(current, backup_dir))
     except OSError as exc:
         return {
             **report,
@@ -321,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--current-file")
     parser.add_argument("--output", "-o")
+    parser.add_argument("--backup-dir", type=Path)
     parser.add_argument("--user", default=USER)
     args = parser.parse_args(argv)
 
@@ -328,6 +371,15 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "ERROR: --apply and --current-file are mutually exclusive.", file=sys.stderr
         )
+        return 2
+    if args.apply and args.backup_dir is None:
+        print(
+            "ERROR: --apply requires --backup-dir outside every Git checkout.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.backup_dir is not None and not args.apply:
+        print("ERROR: --backup-dir is only valid with --apply.", file=sys.stderr)
         return 2
 
     template_text = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -347,7 +399,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     report = apply_merge(
-        template_text, user=args.user, dry_run=not args.apply, output_path=args.output
+        template_text,
+        user=args.user,
+        dry_run=not args.apply,
+        output_path=args.output,
+        backup_dir=args.backup_dir,
     )
     if report["status"] == "pass":
         print("status: pass")

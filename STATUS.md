@@ -1,12 +1,14 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-22 CST。本文件只记录当前代码、服务器旁路、现役 runtime 与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史候选、旧测试数字与作废证据从 Git 和服务器只读证据目录审计，不在这里维护流水账。
+> 最后更新：2026-07-23 CST。本文件只记录当前代码、服务器旁路、现役 runtime 与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史候选、旧测试数字与作废证据从 Git 和服务器只读证据目录审计，不在这里维护流水账。
 
 ## 当前结论
 
 功能发布提交 `5158a096a9511cbbee1f4f23ea290292289772c3` 已由 GitHub review #8 普通合并进入 `main`，物理删除 PM/US/HK、旧 Style/Evolution/Exit 执行栈与失效文档，并完成多币种/账户隔离、三市场 lane freshness、Crypto 单一资本权威和旧读侧退役门。
 
 其后 A股20交易日 fixture loop（review #10）、CNFutures fixture closed loop（review #11）和 Crypto fixture opening/旧 direct writer 原子退役（review #12）均已普通合并。服务器首次验证 review #12 时发现一条依赖文件系统遍历顺序的测试，保留失败证据后由 review #13 修复。2026-07-22，A股五项 committed observation binding、strict loader、forward-history readiness 与 daily-only abstain planner 经 review #20 合并；其首次服务器候选暴露 ext4 粗时间戳下 token 文件原地改写无法稳定被元数据识别的问题，失败证据保留后由 review #21 修复。`0dfcb6d737943f33059ca8289b3b825ced0b00cf` 已完成新的目标服务器旁路验收。当前 GitHub `main` 与三条市场 lane 的精确 SHA 由 fresh Git readback 确认。已验证 sidecar 保持 loopback-only、network-disabled、simulation-only；任何一次 review 都没有切换现役源码、systemd service、timer/cron、8787 API、secret 或公开入口。
+
+2026-07-23 的隔离本地候选正在收口两项尚未发布的 `TARGET_CONTRACT`：一是 catalog-driven TradingDatas parity，只消费固定 `GET /v1/catalog` 与 `POST /v1/query`，以外部无密钥 manifest 精确核对 190 total / 9 active / 181 paused 的目录形态，并将 5 个 declared-ready 与 4 个 declared-impaired 数据集分层验收；二是专用 `tradingagent:tradingagent` sysusers/front unit 与安全 cron 迁移合同。parity receipt 永不直接授予 research snapshot 资格；front 显式不可读取 `/run/secrets/tradingagent`，`SupplementaryGroups=marketgraph` 仅是读取旧投影的临时兼容。上述候选尚未提交、合并、部署或切流，服务器 UID/GID、TA-scoped token、unit、cron 与 runtime 状态均未因此改变。
 
 全系统继续保持 **simulation-only / 无真实交易权限**，`REAL_TRADING_ENABLED=false`。fixture/mock 仍是研发默认；2026-07-22 A股隔离候选另完成了一次 TradingDatas formal API authenticated read-only observation 和精确幂等重放。仓库主线发布、服务器旁路验证、单次真实数据读取、现役生产激活和交易 authority 是不同状态：本轮 A股功能与认证修复已合并并完成旁路验收，但没有安装或激活专用 worker/timer，现役生产没有切换。
 
@@ -15,7 +17,7 @@
 | 层级 | 当前事实 | 不能据此推断 |
 |---|---|---|
 | 本地主线 | 本轮 fresh readback 与 `origin/main` 一致；A股、CNFutures、Crypto 三条长期 lane 的本地与远端均已同步到 review #21 的功能检查点 | 主线与 lane 一致不等于服务器现役切换；本机代码图缓存不属于产品状态或发布证据 |
-| 本地发布候选 | A股 intent、四项 observation 数据证据与 transaction-complete commit proof 的五项绑定、strict committed-state loader、逐日 forward-history readiness 和 daily-only abstain planner 已进入主线并完成服务器旁路验收 | 普通 mapping/hash/dataclass 仍不能自授资格；没有 complete marker 的半写状态不具消费资格，新 ledger/history/planner 不得继承 `a7488e9` 的旧服务器 one-shot 证据 |
+| 本地发布候选 | 既有 A股五项 committed observation 已进入主线并完成旁路验收；另有尚未提交的 catalog parity、专用服务身份、front unit 与 cron 安全迁移本地候选，机器状态保持 `TARGET_CONTRACT / production=false` | 候选文件和测试不等于主线、服务器 UID/GID、TA token、service/cron切换或研究快照资格；不得继承 `a7488e9` 的旧服务器 one-shot 证据 |
 | GitHub 主线 | review #20 与 #21 已普通合并，`front` 与 `test` CI 均成功；三条远端市场 lane 已在该功能检查点同步 | GitHub main 不等于服务器进程已加载，也不等于 timer、真实数据持续采集或模拟成交已激活 |
 | 服务器旁路 | `/opt/investment/tradingagent-candidates/ta-token-reread-0dfcb6d` 精确对应 `0dfcb6d...`，完成全后端、三市场 fixture、前端与 18787 loopback canary；formal TradingDatas 未在本次 sidecar 中调用 | 只证明冻结主线字节可在目标服务器隔离安装、测试和只读启动；不是专用服务激活、历史PIT、自动模拟成交或生产切换 |
 | 服务器现役 | `/opt/investment/tradingagent@6c12fbed29db925019f85a6016774626f63b857a`；`tradingagent-front-api.service=active`，PID `1043`，只监听 `127.0.0.1:8787`，`/healthz` 为 200；18787 无监听 | 现役代码、service、cron 与入口均未切换 |
@@ -24,6 +26,8 @@
 本地主线与远端主线的 fresh readback 统一使用 `git rev-parse HEAD origin/main`；结果只写入当次验收证据，不把会被下一次提交立即作废的提交号固化进上表两行。
 
 ## 当前发布证据
+
+- 2026-07-23 catalog parity/identity 本地候选只在 fixture 与静态合同层存在：九个 active ID 的 schema/fields/limits/health 由外部 manifest 显式冻结，目录计数测试为 190/9/181，5 ready 仅标记 `parity_data_accepted=true`，4 impaired 固定零权重，全部 `research_snapshot_eligible=false`。tracked sysusers/front unit 目标为 `tradingagent:tradingagent`，front token 路径不可见；服务器尚未创建该身份，也没有安装或读取 TA token。
 
 - 2026-07-22 TradingDatas Bearer 消费合同已完成离线 fixture/mock 与仓库合同验收；此前记录的聚焦、quick 与全仓数字只对应当时冻结字节，不替代后续候选 fresh 测试。它不证明 TA token 已发放、formal endpoint 已由 TA 读取或生产已激活。
 - 2026-07-22 新 A股候选使用现有 `marketgraph` 只读 token 仅完成一次 formal 18082 compatibility observation：五数据集 bounded/same-observation probe、3041只主板投影和 exact replay 均通过；snapshot `6c44ab3d...`，未产生 capital/order/fill/outbox/reconcile/journal。完整读回见 `docs/reports/2026-07-22-ashare-observation-readback.md`。这不授权长期复用该身份或 token。

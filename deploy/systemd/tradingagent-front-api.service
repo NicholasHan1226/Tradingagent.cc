@@ -1,0 +1,53 @@
+[Unit]
+Description=TradingAgent internal read-only snapshot API
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/opt/investment/releases/tradingagent/current/front/dist-server/server/tradingAgentSnapshotHttp.js
+ConditionPathExists=/opt/investment/tools/node-v24.4.1/bin/node
+
+[Service]
+Type=simple
+User=tradingagent
+Group=tradingagent
+# Temporary read-only compatibility for historical simulation artifacts still
+# owned by the legacy runtime group. It grants no write path or service link.
+SupplementaryGroups=marketgraph
+WorkingDirectory=/opt/investment/releases/tradingagent/current/front
+Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent
+Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
+Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
+Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://tradingagent.cc
+Environment=REAL_TRADING_ENABLED=false
+Environment=TRADINGDATAS_API_URL=
+Environment=TRADINGDATAS_CATALOG_VERSION=
+Environment=TRADINGDATAS_ACCESS_POLICY_ID=
+Environment=TRADINGDATAS_SCHEMA_MAJOR=
+Environment=TRADINGDATAS_MARKET_PULSE_DATASET_IDS_JSON=
+Environment=MARKETGRAPH_API_URL=
+ExecStart=/opt/investment/tools/node-v24.4.1/bin/node /opt/investment/releases/tradingagent/current/front/dist-server/server/tradingAgentSnapshotHttp.js
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+InaccessiblePaths=/run/secrets/tradingagent
+ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/opt/investment/tradingagent
+
+[Install]
+WantedBy=multi-user.target

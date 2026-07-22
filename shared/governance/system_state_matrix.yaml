@@ -100,6 +100,55 @@ entries:
       - read_plaintext_token_environment
       - fallback_to_legacy_storage_route_or_provider
     successor: tradingagent.tradingdatas.integration-readiness.v2
+  - entry_id: tradingagent_tradingdatas_catalog_parity
+    state: TARGET_CONTRACT
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/runtime_test/tradingdatas_catalog_parity.py
+    production_verified: false
+    last_verified_at: "2026-07-23"
+    evidence:
+      - tests/test_tradingdatas_catalog_parity.py
+      - docs/data_contract.md
+      - docs/operations.md
+      - STATUS.md
+    allowed_uses:
+      - discover_and_match_the_exact_active_catalog_set_from_v1_catalog
+      - run_two_bounded_same_observation_queries_per_active_dataset
+      - accept_declared_ready_data_and_account_for_declared_impaired_data_at_zero_weight
+      - emit_secret_free_transport_parity_receipts_without_rows_or_cursors
+    prohibited_uses:
+      - promote_parity_receipt_to_research_snapshot
+      - infer_historical_pit_or_revision_authority
+      - infer_ta_scoped_token_service_identity_or_runtime_activation
+      - query_sqlite_tushare_source_status_or_provider_specific_routes
+      - fallback_after_auth_catalog_query_or_pagination_failure
+    successor: tradingagent.tradingdatas.catalog-parity.v1
+  - entry_id: tradingagent_dedicated_service_identity_candidate
+    state: TARGET_CONTRACT
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: deploy/systemd/tradingagent-runtime.sysusers.conf
+    production_verified: false
+    last_verified_at: "2026-07-23"
+    evidence:
+      - deploy/systemd/tradingagent-runtime.sysusers.conf
+      - deploy/systemd/tradingagent-front-api.service
+      - tests/test_tradingagent_service_identity.py
+      - docs/operations.md
+      - STATUS.md
+    allowed_uses:
+      - review_tracked_tradingagent_user_group_and_front_unit_contract
+      - prepare_non_sensitive_uid_gid_handoff_before_token_provisioning
+      - keep_front_read_only_simulation_only_and_unable_to_read_tradingdatas_secret
+      - preserve_temporary_read_only_marketgraph_projection_group_during_migration
+    prohibited_uses:
+      - claim_server_uid_gid_or_token_installed
+      - claim_front_service_cutover_or_runtime_activation
+      - expose_token_content_hash_or_authorization_header
+      - enable_observation_timer_or_real_trading
+      - infer_marketgraph_as_a_tradingagent_service_identity
+    successor: tradingagent.dedicated-service-identity.v1
   - entry_id: tradingagent_ashare_observation_runtime
     state: CURRENT_VERIFIED
     layer: repository_contract

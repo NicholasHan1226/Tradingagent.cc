@@ -76,6 +76,16 @@ metadata:
 
 HTTP 200 仅证明 transport 完成。每个 dataset 根据自己的 policy 独立 `ACCEPT / DEWEIGHT / REJECT`；`unobserved/paused/failed/stale/empty/degraded` 等 impaired state 可以如实携带 null `lineage/receipt_id/data_through/observed_at`，TA 不得补造。只有 `lineage.complete=true`、`lineage.provider_neutral=true`，且 envelope 的 `receipt_id/data_through/observed_at` 均完整时，才可形成 source proof；该 proof 绑定 dataset、catalog、receipt、完整 lineage hash、data-through 与 observed-at。无 source proof 的 dataset 固定 REJECT，不能因另一个 dataset 健康而放行。
 
+Catalog 全 active-set parity 与 A股研究 profile 是两个不同对象。前者的
+`tradingagent.tradingdatas.catalog-parity.v1` 回执只证明 manifest 冻结的 active
+集合逐项完成固定 API、有界分页与同一 observation 双跑，并分别输出
+`transport_contract_pass/ready_set_pass/impaired_set_accounted`。其中 ready
+dataset 必须具备完整 source proof 并 `ACCEPT/weight=1.0`；预先声明的 impaired
+dataset 必须 `REJECT/weight=0.0`，合法 null proof 只记为 unavailable accounting
+事实，绝不进入 research snapshot。A股 observation profile 仍只消费其显式五项
+角色；新增 active dataset 在完成业务映射和研究验证前不能因 catalog 激活而自动
+进入 Universe、特征、候选或策略。
+
 TradingDatas 返回的 `data[]` 是 **provider-native rows**，TA 原样保存，不把 envelope metadata 复制进每一行，也不生成虚假的 `available_time/revision_id/receipt_id`。dataset requirement 只声明：
 
 - `identity_fields`：用于跨页唯一性与守恒检查；

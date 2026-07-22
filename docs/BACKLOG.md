@@ -31,3 +31,11 @@
 - 按消费者批次移除旧 `TradingagentDataReader` 的隐式 localhost 配置；每批同时迁移 adapter、screening、research、wrapper/runtime-test、环境变量、测试和文档，不做长期双轨。
 - 旧 `SharedSignalsAPIClient` 的类级缓存键尚未绑定 `base_url` 与访问身份，存在不同 endpoint 同查询串用缓存的隔离风险。该客户端应随旧专用端点一起退役；若退役前必须继续使用，则先补 endpoint/identity 绑定与跨端点负例。
 - 退役完成前，服务器旁路测试必须显式把 `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 设为空，禁止测试进程读取本机现役服务。
+
+## 6. TradingDatas catalog parity 加固
+
+- 当前 declared-impaired dataset 无论上游 effective state 为何都会保持
+  `REJECT/weight=0/research_snapshot_eligible=false`，不会进入研究快照；后续应把可
+  “诚实记账”的状态收紧到 TradingDatas 冻结的已知 impaired state 白名单。遇到
+  未知 state 必须整体阻断并要求 catalog/manifest 复核，避免状态枚举漂移被静默
+  归入 impaired。该项是 P2 合同可观测性加固，不阻断当前 sim-only 候选。

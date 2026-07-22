@@ -210,6 +210,8 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert {
         "sharedsignals_v1_query",
         "tradingagent_sharedsignals_v1_client",
+        "tradingagent_tradingdatas_catalog_parity",
+        "tradingagent_dedicated_service_identity_candidate",
         "tradingagent_mainboard_scope",
         "tradingagent_small_account_optimizer",
         "tradingagent_thesis_risk_authority",
@@ -250,6 +252,25 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert entries["sharedsignals_v1_query"].state == "TARGET_CONTRACT"
     assert entries["sharedsignals_v1_query"].production_verified is False
     assert entries["tradingagent_sharedsignals_v1_client"].state == ("CURRENT_VERIFIED")
+    assert entries["tradingagent_tradingdatas_catalog_parity"].state == (
+        "TARGET_CONTRACT"
+    )
+    assert (
+        entries["tradingagent_tradingdatas_catalog_parity"].production_verified is False
+    )
+    assert "promote_parity_receipt_to_research_snapshot" in (
+        entries["tradingagent_tradingdatas_catalog_parity"].prohibited_uses
+    )
+    assert entries["tradingagent_dedicated_service_identity_candidate"].state == (
+        "TARGET_CONTRACT"
+    )
+    assert (
+        entries["tradingagent_dedicated_service_identity_candidate"].production_verified
+        is False
+    )
+    assert "claim_server_uid_gid_or_token_installed" in (
+        entries["tradingagent_dedicated_service_identity_candidate"].prohibited_uses
+    )
     assert entries["tradingagent_small_account_optimizer"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_thesis_risk_authority"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_thesis_risk_authority"].production_verified is False
