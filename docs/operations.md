@@ -405,7 +405,29 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
 
 回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、raw cursor、异常原文与上游自由文本 reason，只保存 authority/config、catalog/query、source proof、分页/identity、same-observation 与 current-observation hashes 及 TA 受控 reason codes。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA consumer contract，不证明 TradingDatas 服务端整体通过、生产 runtime 已切换、历史 PIT、每日持续健康或交易获授权。schema ID 为 `tradingagent.tradingdatas.integration-readiness.v2`；旧类名/文件名只是代码兼容入口。
 
-未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，本候选也没有调用 formal TradingDatas 地址。每次 catalog/dataset/schema、filters/as-of policy、identity/event mapping、budgets 或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+每次 catalog/dataset/schema、filters/as-of policy、identity/event mapping、budgets 或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+
+### 2.2 A股 one-shot current-observation runner
+
+仓库候选提供一个 observation-only runner，把上一节的完整双跑 probe 作为不可绕过的写入前门禁，再冻结一次同语义的 provider-native research snapshot。runner 同时要求 `security_master` 与 `daily_bars`，排除 ST/退市风险、新股、停牌/零成交和非主板个股，并写入不可覆盖的 observation receipt，将 probe、snapshot、范围投影和固定非交易 authority 绑定。它不生成候选、资本预约、订单、成交、对账或 SampleJournal 样本，也不表示自动模拟 scheduler 已安装。
+
+运行时必须显式提供仓外 manifest、state/runtime/log roots；token-file 可由参数或服务环境中的 `TRADINGDATAS_API_TOKEN_FILE` 指定，二者都只允许绝对路径。`runtime-root` 与 `log-root` 是 dedicated worker 的安装边界，当前 runner 不在其中创建第二业务 authority；唯一业务写入是 `state-root/research-snapshots` 下的不可变 current-observation binding 和配套 probe receipt。
+
+```bash
+export REAL_TRADING_ENABLED=false
+export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.token'
+
+python3 tools/run_ashare_observation.py \
+  --manifest /absolute/path/ashare-observation-v2.json \
+  --state-root /absolute/path/ashare-observation-state \
+  --runtime-root /absolute/path/ashare-observation-run \
+  --log-root /absolute/path/ashare-observation-log \
+  --json
+```
+
+也可显式传入 `--token-file /absolute/path/to/tradingdatas-read.token`；禁止两种方式包含明文 token，且出现 `TRADINGDATAS_API_TOKEN`、`TRADINGDATAS_BEARER_TOKEN` 或 `TRADINGDATAS_TOKEN` 时即使 token-file 合法也会拒绝运行。runner 固定 `mg_off`，不会读取 `MARKETGRAPH_API_URL`。首次运行只有在 bounded pagination、same-observation 双跑、probe 后快照语义守恒、source proof、current-observation、证券主数据与主板 scope 投影全部通过后才写入；同一 profile/decision 的精确重放只读回不可变 snapshot/probe/observation receipt binding，不创建 transport、不再次请求数据。创业板、科创板和北交所个股可保留在原始全市场观察中，但只计入排除原因，不能进入 `tradable_universe`；行业、指数、板块宽度只能是 `optional_context`。
+
+退出码：`0=观察绑定或精确重放通过`、`2=数据/范围/存储门禁阻断`、`64=参数、manifest、token-file或transport配置无效`。stdout 只输出 secret-free 摘要；systemd/journal 日志不得把 token、Authorization、manifest正文或 provider自由文本 reason 写出。当前文档只登记 one-shot 代码入口；在 dedicated worker 身份、unit/timer、仓外 manifest、服务 token、正式 endpoint parity 和回滚验收同时通过前，不得声称每日自动观察、自动模拟或生产激活。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 

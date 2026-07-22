@@ -173,6 +173,28 @@ receipt_sha256: sha256
 
 回执不得包含 base URL、access policy 原值、raw cursor、manifest 正文、HTTP header、credential、异常原文或上游自由文本 reasons。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID。完整 integration probe / research snapshot 是 provider-native rows、source proof、分页、identity 与 current-observation eligibility 的权威消费侧门；轻量 runtime gate 只做启动前 catalog/auth/单次 dataset 可用性 smoke，不能替代跨页双跑、research snapshot 或历史 PIT 验收。
 
+#### A股 Phase 1 current-observation binding
+
+`shared.runtime.ashare_observation` 是完整 integration probe 之后的最小 A股观察绑定器，不是模拟订单或交易 authority。调用方必须显式提供仓外绝对 manifest、TA-scoped token-file 和 state root，并固定 `REAL_TRADING_ENABLED=false`、`marketgraph_mode=mg_off`。首次绑定严格按以下顺序执行：
+
+1. 加载并校验 secret-free v2 manifest；`daily_bars` 必须使用与 `decision_as_of` 上海交易日一致的精确 `trade_date={"eq": "YYYYMMDD"}` filter；
+2. 对每个 dataset 做受 `max_pages/max_rows` 约束的双跑 integration probe，并要求 terminal cursor、跨页 identity 守恒和 same-observation semantic match；
+3. 再读取一次完整 dataset set，且它的 semantic response、semantic pagination trace、identity、页数和行数必须与已通过 probe 的 observation 完全相同；
+4. 证券范围必须同时绑定 `security_master` 与 `daily_bars`：仅 `list_status=L`、非 ST/退市风险、上市满 30 日、当日 `close>0` 且 `vol>0` 的沪深主板普通股进入初步可交易投影；它仍不是最终流动性与小额资金可行池；
+5. 仅在以上门禁通过后，以 `FileResearchSnapshotStore` 冻结 provider-native rows、envelope source proof 与 decision binding，并另写不可覆盖的 observation receipt，将 snapshot、probe receipt、主板投影、排除原因和固定非交易 authority 标志绑定；精确重放必须同时验证三者，且不再次创建 transport 或联网。
+
+观察结果 schema 为 `tradingagent.ashare.current-observation.v1`，至少包含 `snapshot_sha256`、`probe_receipt_sha256`、`profile_id/catalog_version/decision_as_of`、`tradable_universe_count/hash`、非主板排除原因计数、`context_probe_roles` 和 `idempotent_replay`。结果固定：
+
+```text
+mode=observation_only
+marketgraph_mode=mg_off
+real_trading_enabled=false
+historical_pit_eligible=false
+execution_authority=false
+```
+
+`daily_bars` 原始快照可以保留全市场 provider-native rows，以免环境宽度失真；每行 `trade_date` 必须与上海时区决策日完全一致，且只有同时通过 canonical mainboard policy 与上述证券主数据/当日可交易性门禁的沪深主板普通股才能进入内存中的 `tradable_symbols` 投影。创业板、科创板和北交所个股只进入受控排除计数，绝不能进入候选、仓位或订单。`optional_context` probe role 只接受关闭集合 `industry_classification/industry_daily_context/industry_context/index_context/market_breadth/sector_context`；任意个股候选、子串伪装或不明 role 均 fail closed。观察绑定不导入或调用 capital、portfolio、order、outbox、reconcile、broker 或 SampleJournal writer，也不存在数据库、旧 route 或 provider fallback。
+
 `as_of`、domain event-time 和 envelope `observed_at` 都不是防止回填偏差的充分条件。任何进入 predictive validation 的 dataset 仍须由独立上游证据提供首次可见 `available_at`、release/revision 链、first-seen receipt 和训练时 vintage；缺这些历史事实时一律保持 `current_observation` 与 `historical_pit_eligible=false`。
 
 ### A股三层 Universe 契约
