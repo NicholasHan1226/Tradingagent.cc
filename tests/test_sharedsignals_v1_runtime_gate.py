@@ -170,6 +170,23 @@ def test_runtime_gate_uses_only_catalog_and_query_with_schema_major() -> None:
     assert "order" not in query_payload
 
 
+def test_runtime_gate_rejects_truncated_first_page_until_pagination_is_frozen() -> None:
+    payload = _ready_query_payload()
+    payload["next_cursor"] = "opaque-next-page"
+
+    result = check_v1_runtime_gate(
+        _config(),
+        transport=RecordingTransport(payload),
+    )
+
+    assert result["status"] == "critical"
+    assert result["blocking"] is True
+    assert result["datasets"][0]["eligible"] is False
+    assert result["datasets"][0]["action"] == "reject"
+    assert result["datasets"][0]["pagination_complete"] is False
+    assert "pagination_contract_unfrozen" in result["datasets"][0]["reasons"]
+
+
 @pytest.mark.parametrize(
     ("state", "degraded", "expected_reason"),
     [
