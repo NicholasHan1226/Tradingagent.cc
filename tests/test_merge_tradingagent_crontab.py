@@ -49,6 +49,19 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
 EXTERNAL_BACKUP_DIR = Path("/opt/investment/release-evidence/tradingagent/test/cron")
 
+CONTROLLED_ENVIRONMENT_ASSIGNMENTS = (
+    ("SHELL=/bin/bash", "SHELL=/bin/sh"),
+    ("CRON_TZ=Asia/Shanghai", "CRON_TZ=UTC"),
+    ("TZ=Asia/Shanghai", "TZ=UTC"),
+    ("REAL_TRADING_ENABLED=false", "REAL_TRADING_ENABLED=true"),
+    ("ASHARE_SIM_HERMES_ENABLED=0", "ASHARE_SIM_HERMES_ENABLED=1"),
+    ("ASHARE_SIM_WEBHOOK_ENABLED=0", "ASHARE_SIM_WEBHOOK_ENABLED=1"),
+    (
+        "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
+        "BASH_ENV=/wrong/loader.sh",
+    ),
+)
+
 CURRENT = """\
 # TradingDatas market data
 */5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh >> /opt/investment/tradingdatas/logs/provider_transport.log 2>&1
@@ -311,6 +324,180 @@ class MergeTests(unittest.TestCase):
         )
         self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
 
+    def test_paused_coverage_preserves_other_project_shell_assignment(self):
+        current = (
+            "# TradingDatas runtime environment\n"
+            "SHELL=/bin/bash\n"
+            "*/5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh\n"
+        )
+
+        result = merge(current, PAUSED_TEMPLATE)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.count("SHELL=/bin/bash"), 2)
+        self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
+
+    def test_coverage_rejects_extra_controlled_assignment_inside_managed_block(self):
+        result = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(result)
+
+        for expected, wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS:
+            variants = {
+                "before_expected": result.replace(
+                    expected + "\n", wrong + "\n" + expected + "\n", 1
+                ),
+                "after_expected": result.replace(
+                    expected + "\n", expected + "\n" + wrong + "\n", 1
+                ),
+                "after_jobs": result.replace(
+                    "# END TRADINGAGENT MANAGED CRON",
+                    wrong + "\n# END TRADINGAGENT MANAGED CRON",
+                    1,
+                ),
+            }
+            for position, invalid in variants.items():
+                with self.subTest(
+                    variable=expected.split("=", 1)[0], position=position
+                ):
+                    self.assertFalse(_ta_coverage_ok(invalid, TA_TEMPLATE))
+
+    def test_coverage_rejects_schedule_state_namespace_variants(self):
+        paused = merge("", PAUSED_TEMPLATE)
+        active = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(paused)
+        self.assertIsNotNone(active)
+        expected_marker = (
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
+        )
+
+        for value in ("active", "paused_wrong"):
+            variant = f"# TRADINGAGENT_SCHEDULE_STATE={value}"
+            with self.subTest(template="paused", value=value):
+                self.assertFalse(
+                    _ta_coverage_ok(
+                        paused.replace(
+                            expected_marker,
+                            expected_marker + "\n" + variant,
+                            1,
+                        ),
+                        PAUSED_TEMPLATE,
+                    )
+                )
+            with self.subTest(template="active", value=value):
+                self.assertFalse(
+                    _ta_coverage_ok(
+                        active.replace(
+                            "# END TRADINGAGENT MANAGED CRON",
+                            variant + "\n# END TRADINGAGENT MANAGED CRON",
+                            1,
+                        ),
+                        TA_TEMPLATE,
+                    )
+                )
+
+    def test_coverage_rejects_schedule_state_markers_outside_managed_block(self):
+        paused = merge("", PAUSED_TEMPLATE)
+        active = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(paused)
+        self.assertIsNotNone(active)
+
+        for marker in (
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
+            "# TRADINGAGENT_SCHEDULE_STATE=active",
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_wrong",
+        ):
+            with self.subTest(template="paused", marker=marker):
+                self.assertFalse(
+                    _ta_coverage_ok(marker + "\n" + paused, PAUSED_TEMPLATE)
+                )
+            with self.subTest(template="active", marker=marker):
+                self.assertFalse(_ta_coverage_ok(marker + "\n" + active, TA_TEMPLATE))
+
+    def test_coverage_rejects_every_unapproved_managed_block_line(self):
+        merged = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(merged)
+        canonical_schedule = next(
+            line for line in merged.splitlines() if "job_future_catalog_loop.sh" in line
+        )
+        variants = {
+            "appended_command_after_normalized_schedule": merged.replace(
+                canonical_schedule,
+                canonical_schedule
+                + " >> /tmp/ta.log 2>&1 ; /usr/bin/touch /tmp/unexpected",
+                1,
+            ),
+            "non_ta_schedule": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "*/1 * * * * /usr/bin/touch /tmp/unexpected\n"
+                "# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+            "unapproved_environment": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "PATH=/tmp/untrusted\n# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+            "unapproved_comment": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "# unexpected managed content\n# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+        }
+
+        for name, invalid in variants.items():
+            with self.subTest(name=name):
+                self.assertFalse(_ta_coverage_ok(invalid, TA_TEMPLATE))
+
+    def test_coverage_retains_exact_env_rejection_and_outside_assignments(self):
+        active = merge("", TA_TEMPLATE)
+        paused = merge("", PAUSED_TEMPLATE)
+        self.assertIsNotNone(active)
+        self.assertIsNotNone(paused)
+
+        for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS:
+            with self.subTest(variable=expected.split("=", 1)[0]):
+                self.assertFalse(
+                    _ta_coverage_ok(
+                        active.replace(
+                            expected + "\n", expected + "\n" + expected + "\n", 1
+                        ),
+                        TA_TEMPLATE,
+                    )
+                )
+
+        outside = "\n".join(
+            expected
+            for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS
+            if not expected.startswith("BASH_ENV=")
+        )
+        self.assertTrue(_ta_coverage_ok(outside + "\n" + active, TA_TEMPLATE))
+        self.assertTrue(_ta_coverage_ok(outside + "\n" + paused, PAUSED_TEMPLATE))
+
+    def test_merge_preserves_other_repo_env_and_sanitizes_orphan_ta_bash_env(self):
+        ta_bash_env = "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh"
+        preserved_lines = [
+            "# TradingDatas runtime environment",
+            *(
+                expected
+                for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS
+                if not expected.startswith("BASH_ENV=")
+            ),
+            "BASH_ENV=/opt/investment/tradingdatas/runtime/env_loader.sh",
+            "*/5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh",
+        ]
+        current = "\n".join([*preserved_lines[:-1], ta_bash_env, preserved_lines[-1]])
+
+        result = merge(current + "\n", PAUSED_TEMPLATE)
+
+        self.assertIsNotNone(result)
+        unmanaged, marker, _managed = result.partition(
+            "# BEGIN TRADINGAGENT MANAGED CRON"
+        )
+        self.assertEqual(marker, "# BEGIN TRADINGAGENT MANAGED CRON")
+        self.assertEqual(unmanaged, "\n".join(preserved_lines) + "\n")
+        self.assertEqual(result.count(ta_bash_env), 1)
+        self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
+
 
 class ApplyWorkflowTests(unittest.TestCase):
     """apply_merge with mocked system calls."""
@@ -421,6 +608,62 @@ class ApplyWorkflowTests(unittest.TestCase):
                             call("marketgraph", CURRENT),
                         ],
                     )
+
+    def test_unapproved_managed_block_readback_rolls_back_original_bytes(self):
+        merged = merge(CURRENT, TA_TEMPLATE)
+        self.assertIsNotNone(merged)
+        canonical_schedule = next(
+            line for line in merged.splitlines() if "job_future_catalog_loop.sh" in line
+        )
+        variants = {
+            "appended_command_after_normalized_schedule": merged.replace(
+                canonical_schedule,
+                canonical_schedule
+                + " >> /tmp/ta.log 2>&1 ; /usr/bin/touch /tmp/unexpected",
+                1,
+            ),
+            "non_ta_schedule": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "*/1 * * * * /usr/bin/touch /tmp/unexpected\n"
+                "# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+            "unapproved_environment": merged.replace(
+                "# END TRADINGAGENT MANAGED CRON",
+                "PATH=/tmp/untrusted\n# END TRADINGAGENT MANAGED CRON",
+                1,
+            ),
+        }
+
+        for name, bad_readback in variants.items():
+            with self.subTest(name=name):
+                reads = iter([(CURRENT, ""), (bad_readback, ""), (CURRENT, "")])
+                with (
+                    patch("tools.merge_tradingagent_crontab._read") as mr,
+                    patch(
+                        "tools.merge_tradingagent_crontab._backup",
+                        return_value=Path("/tmp/backup.txt"),
+                    ),
+                    patch("tools.merge_tradingagent_crontab._write") as mw,
+                ):
+                    mr.side_effect = lambda user: next(reads)
+                    mw.return_value = ("", "")
+
+                    report = apply_merge(
+                        TA_TEMPLATE,
+                        dry_run=False,
+                        backup_dir=EXTERNAL_BACKUP_DIR,
+                    )
+
+                self.assertEqual(report["status"], "fail")
+                self.assertEqual(report["failure"], "coverage_mismatch")
+                self.assertEqual(
+                    mw.call_args_list,
+                    [
+                        call("marketgraph", merged),
+                        call("marketgraph", CURRENT),
+                    ],
+                )
 
     def test_apply_success(self):
         merged = merge(CURRENT, TA_TEMPLATE)

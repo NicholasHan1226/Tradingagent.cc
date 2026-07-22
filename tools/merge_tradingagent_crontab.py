@@ -261,17 +261,70 @@ def _backup(text: str, backup_dir: Path) -> Path:
 def _ta_coverage_ok(text: str, template_text: str) -> bool:
     expected = tradingagent_entries(template_text)
     actual = tradingagent_entries(text)
-    if actual != expected or _tradingagent_environment_mismatches(text):
+    lines = [line.strip() for line in text.splitlines()]
+    if (
+        lines.count(TRADINGAGENT_MANAGED_BLOCK_BEGIN) != 1
+        or lines.count(TRADINGAGENT_MANAGED_BLOCK_END) != 1
+    ):
         return False
-    if TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_text:
-        lines = [line.strip() for line in text.splitlines()]
-        return (
-            lines.count(TRADINGAGENT_MANAGED_BLOCK_BEGIN) == 1
-            and lines.count(TRADINGAGENT_MANAGED_BLOCK_END) == 1
-            and lines.count(TRADINGAGENT_SCHEDULE_PAUSED_MARKER) == 1
-            and all(lines.count(line) == 1 for line in TRADINGAGENT_ENVIRONMENT_LINES)
+    begin = lines.index(TRADINGAGENT_MANAGED_BLOCK_BEGIN)
+    end = lines.index(TRADINGAGENT_MANAGED_BLOCK_END)
+    if begin >= end:
+        return False
+    managed_lines = lines[begin + 1 : end]
+    template_lines = [line.strip() for line in template_text.splitlines()]
+    explicitly_paused = TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_lines
+    expected_managed_lines = [
+        *TRADINGAGENT_ENVIRONMENT_LINES,
+        *([TRADINGAGENT_SCHEDULE_PAUSED_MARKER] if explicitly_paused else []),
+        *(
+            line.strip()
+            for line in template_text.splitlines()
+            if _is_ta_schedule_line(line.strip())
+        ),
+    ]
+    if managed_lines != expected_managed_lines:
+        return False
+    managed_text = "\n".join(managed_lines)
+    expected_environment = {
+        line.split("=", 1)[0]: line for line in TRADINGAGENT_ENVIRONMENT_LINES
+    }
+    managed_environment = {variable: [] for variable in expected_environment}
+    for line in managed_lines:
+        if "=" not in line or line.startswith("#"):
+            continue
+        variable = line.split("=", 1)[0].strip()
+        if variable in managed_environment:
+            managed_environment[variable].append(line)
+    if (
+        actual != expected
+        or tradingagent_entries(managed_text) != expected
+        or _tradingagent_environment_mismatches(managed_text)
+        or any(
+            managed_environment[variable] != [expected_assignment]
+            for variable, expected_assignment in expected_environment.items()
         )
-    return bool(expected)
+    ):
+        return False
+
+    def schedule_state_markers(candidate_lines: list[str]) -> list[str]:
+        state_markers = []
+        for line in candidate_lines:
+            candidate = line[1:].strip() if line.startswith("#") else line
+            variable, separator, _value = candidate.partition("=")
+            if separator and variable.strip() == "TRADINGAGENT_SCHEDULE_STATE":
+                state_markers.append(line)
+        return state_markers
+
+    expected_state_markers = (
+        [TRADINGAGENT_SCHEDULE_PAUSED_MARKER] if explicitly_paused else []
+    )
+    if (
+        schedule_state_markers(lines) != expected_state_markers
+        or schedule_state_markers(managed_lines) != expected_state_markers
+    ):
+        return False
+    return not expected if explicitly_paused else bool(expected)
 
 
 def apply_merge(
