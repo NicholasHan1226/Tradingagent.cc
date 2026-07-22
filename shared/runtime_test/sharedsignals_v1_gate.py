@@ -399,18 +399,27 @@ def check_v1_runtime_gate(
                 )
             )
             decision = evidence_gate.evaluate(envelope)
+            pagination_complete = envelope.next_cursor is None
+            reason_codes = _controlled_reason_codes(envelope, decision)
+            if not pagination_complete:
+                reason_codes.append("pagination_contract_unfrozen")
             dataset_results.append(
                 {
                     "dataset_id": dataset_id,
                     "state": envelope.metadata.state,
                     "degraded": envelope.metadata.degraded,
                     "effective_state": decision.effective_state,
-                    "action": decision.action.value,
-                    "eligible": decision.eligible,
+                    "action": (
+                        decision.action.value
+                        if pagination_complete
+                        else EvidenceAction.REJECT.value
+                    ),
+                    "eligible": decision.eligible and pagination_complete,
+                    "pagination_complete": pagination_complete,
                     "receipt_id": envelope.metadata.receipt_id,
                     "data_through": envelope.metadata.data_through,
                     "observed_at": envelope.metadata.observed_at,
-                    "reasons": _controlled_reason_codes(envelope, decision),
+                    "reasons": reason_codes,
                     "reasons_sha256": _reason_digest(decision),
                 }
             )

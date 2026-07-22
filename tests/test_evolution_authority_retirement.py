@@ -45,7 +45,7 @@ def test_active_python_has_no_legacy_numeric_epoch_authority_imports() -> None:
     for path in ROOT.rglob("*.py"):
         if path == Path(__file__).resolve():
             continue
-        if any(part in {".git", "__pycache__"} for part in path.parts):
+        if any(part in {".git", ".worktrees", "__pycache__"} for part in path.parts):
             continue
         source = path.read_text(encoding="utf-8", errors="replace")
         if any(marker in source for marker in forbidden):

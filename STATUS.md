@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-21 CST。本文件只记录当前代码、服务器旁路、现役 runtime 与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史候选、旧测试数字与作废证据从 Git 和服务器只读证据目录审计，不在这里维护流水账。
+> 最后更新：2026-07-22 CST。本文件只记录当前代码、服务器旁路、现役 runtime 与外部依赖的分层事实；长期规则见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。历史候选、旧测试数字与作废证据从 Git 和服务器只读证据目录审计，不在这里维护流水账。
 
 ## 当前结论
 
@@ -57,7 +57,8 @@
 
 ## 明确未完成
 
-- TradingDatas clean-slate 重构尚未提供冻结的 fresh internal handoff、catalog version、dataset IDs、service token、receipt authority、分页/排序语义与 runtime readback；旧 SharedSignals runtime/route/dual-registry 不能替代。
+- TradingDatas 已提供只读阶段性 canary 证据：上游 `main=7b8209e1f426ec33c8cf55982c30d10b3da63289`，隔离五数据集 release `d9d480a37700e6936180cea19f276dfed2cf9c22` 经 fresh independent review 为 `P0/P1/P2=0`；其观察到 `catalog_version=v1-17fd5855f5a68229`、`schema_major=2` 以及 `cn.market.trade_calendar`、`cn.equity.security_master`、`cn.equity.daily`、`cn.dataset.index_classify`、`cn.dataset.sw_daily` 五个 active dataset，逐数据集 metadata 为 ready/success、非 degraded，same-as-of 稳定。该结果仅是上游隔离 canary 证据，不是 TradingAgent 正式 fresh internal handoff、稳定 consumer 配置或 live runtime；其中 `index_classify` 与 `sw_daily` 来自上一已验证 canary 的 byte-exact DB clone，本轮并非五项全部 fresh 重拉。
+- 正式接入仍被阻断：预期正式 loopback `127.0.0.1:18082` 仍由旧 SharedSignals 占用，TradingDatas 正式 API/timer 未激活，installed collector unit 仍是旧内容，独立 TA-scoped token reference、五数据集精确 fields/filters/PIT profile、分页 consumer contract 与 consumer parity handoff 尚未冻结，临时 `18085` 已停止。TA 继续 fixture/mock/contract-only；不得把 canary 证据目录、临时端口、SQLite、旧 `8082` 或 provider 专用 route 当作稳定数据面。
 - 尚未安装 current-v1 live paper scheduler，也未积累真实 TradingDatas 驱动的连续 20 个交易日自动模拟和 60–120 个交易日冻结 OOS 样本。
 - 现役服务器仍运行旧源码与旧调度；本轮 sidecar 没有切换 service、cron、页面或公网路由。
 - 没有 accepted DeepSeek evidence、真实 broker/account、公开 ingress 或真实交易授权；`REAL_TRADING_ENABLED=false`。

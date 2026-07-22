@@ -396,7 +396,7 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
 
 验收器只调用一次 `GET /v1/catalog`，随后对每个数据角色用同一显式 `as_of`、fields、filters、schema major、limit 与默认 registry order 连续执行两次 `POST /v1/query`。它复用 `DataEvidenceGate` 与 `ResearchDataProfile` 检查 metadata、source proof、精确字段投影、最小行数和行级 `event_time / available_time / revision_id / receipt_id`，并比较排除 transport request ID 后的完整响应语义哈希。缺少显式字段或出现未声明字段均阻断；后者只保存数量与字段集合哈希，避免行业聚合响应夹带个股字段或把未知字段写进回执。
 
-当前跨页 receipt、默认排序快照和拼页 identity 仍由 TradingDatas owner 待冻结。因此任一响应出现 `next_cursor != null` 时，首版固定返回 `pagination_contract_unfrozen` 并阻断；不会抓第二页后自行拼成研究快照。TradingDatas 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
+当前跨页 receipt、默认排序快照和拼页 identity 仍由 TradingDatas owner 待冻结。因此任一响应出现 `next_cursor != null` 时，完整 integration probe 固定返回 `pagination_contract_unfrozen` 并阻断；轻量 runtime gate 也必须把该 dataset 标为 `pagination_complete=false`、`eligible=false`，不能把截断的第一页误判为健康。两者都不会抓第二页后自行拼成研究快照。TradingDatas 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
 
 回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、cursor、异常原文与上游自由文本 reason，只保存其 authority/config 哈希、catalog/query trace、dataset evidence、双跑一致性、PIT/内容哈希和 TA 受控 reason codes；上游 reason 原文只参与哈希。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA 接入合同，不证明 TradingDatas 服务端整体通过、生产 runtime 已切换、旧链 parity 已完成、每日数据持续健康或交易获授权。回执 schema ID `tradingagent.sharedsignals.integration-readiness.v1` 保持不变。
 
