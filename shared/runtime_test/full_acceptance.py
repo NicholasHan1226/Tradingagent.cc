@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 KEY_TESTS = [
     "tests/test_sharedsignals_v1.py",
+    "tests/test_tradingdatas_query_pagination.py",
     "tests/test_tradingdatas_bearer_auth.py",
     "tests/test_sharedsignals_v1_runtime_gate.py",
     "tests/test_sharedsignals_v1_integration_probe.py",

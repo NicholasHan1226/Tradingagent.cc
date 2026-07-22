@@ -932,23 +932,19 @@ class ASharePaperDayLoop:
     ) -> _Validation:
         del bundle
         reasons: list[str] = []
-        snapshot_contract_valid = all(
-            (
-                _text(payload.get("profile_id")),
-                _text(payload.get("catalog_version")),
-                _sha256_text(payload.get("snapshot_sha256")),
+        parsed_as_of = _aware_instant(payload.get("decision_as_of"))
+        snapshot_contract_valid = bool(
+            all(
+                (
+                    _text(payload.get("profile_id")),
+                    _sha256_text(payload.get("profile_contract_sha256")),
+                    _text(payload.get("catalog_version")),
+                    _sha256_text(payload.get("snapshot_sha256")),
+                )
             )
+            and _native_bool(payload.get("historical_pit_eligible"), False)
+            and parsed_as_of is not None
         )
-        decision_as_of = _text(payload.get("decision_as_of"))
-        try:
-            parsed_as_of = datetime.fromisoformat(decision_as_of.replace("Z", "+00:00"))
-            snapshot_contract_valid = bool(
-                snapshot_contract_valid
-                and parsed_as_of.tzinfo is not None
-                and parsed_as_of.utcoffset() is not None
-            )
-        except (TypeError, ValueError):
-            snapshot_contract_valid = False
         execution_eligible = payload.get("execution_eligible")
         blocking_reasons = _strings(payload.get("blocking_reasons"))
         if type(execution_eligible) is not bool or blocking_reasons is None:
@@ -992,29 +988,58 @@ class ASharePaperDayLoop:
                 required_count += 1
 
             row_count = dataset.get("row_count")
-            row_pit_sha256 = _sha256_text(dataset.get("row_pit_sha256"))
-            max_row_available = _text(dataset.get("max_row_available_time"))
-            row_pit_valid = (
+            page_count = dataset.get("page_count")
+            minimum_row_count = dataset.get("minimum_row_count")
+            max_pages = dataset.get("max_pages")
+            max_rows = dataset.get("max_rows")
+            identity_fields = _strings(dataset.get("identity_fields"))
+            data_through = _aware_instant(dataset.get("data_through"))
+            observed_at = _aware_instant(dataset.get("observed_at"))
+            max_row_observed_at = _aware_instant(
+                dataset.get("max_row_observed_at")
+            )
+            row_observation_valid = (
                 not isinstance(row_count, bool)
                 and isinstance(row_count, int)
                 and row_count > 0
-                and bool(row_pit_sha256)
-                and bool(max_row_available)
+                and not isinstance(page_count, bool)
+                and isinstance(page_count, int)
+                and page_count > 0
+                and not isinstance(minimum_row_count, bool)
+                and isinstance(minimum_row_count, int)
+                and minimum_row_count >= 0
+                and not isinstance(max_pages, bool)
+                and isinstance(max_pages, int)
+                and max_pages > 0
+                and not isinstance(max_rows, bool)
+                and isinstance(max_rows, int)
+                and max_rows > 0
+                and minimum_row_count <= row_count <= max_rows
+                and page_count <= max_pages
+                and bool(identity_fields)
+                and _text(dataset.get("observation_mode"))
+                == "current_observation"
+                and _native_bool(dataset.get("historical_pit_eligible"), False)
+                and _native_bool(dataset.get("source_proof_complete"), True)
+                and bool(_sha256_text(dataset.get("lineage_sha256")))
+                and bool(_sha256_text(dataset.get("source_proof_sha256")))
+                and bool(_sha256_text(dataset.get("identity_sha256")))
+                and bool(_sha256_text(dataset.get("row_observation_sha256")))
+                and bool(_sha256_text(dataset.get("pagination_trace_sha256")))
+                and bool(_sha256_text(dataset.get("pagination_semantic_sha256")))
+                and bool(_sha256_text(dataset.get("page_request_set_sha256")))
+                and bool(_sha256_text(dataset.get("page_response_set_sha256")))
+                and bool(_sha256_text(dataset.get("cursor_chain_sha256")))
+                and data_through is not None
+                and observed_at is not None
+                and max_row_observed_at is not None
+                and parsed_as_of is not None
+                and data_through <= observed_at
+                and observed_at == max_row_observed_at
+                and max_row_observed_at <= parsed_as_of
             )
-            if row_pit_valid:
-                try:
-                    row_available_instant = datetime.fromisoformat(
-                        max_row_available.replace("Z", "+00:00")
-                    )
-                    row_pit_valid = bool(
-                        row_available_instant.tzinfo is not None
-                        and row_available_instant.utcoffset() is not None
-                        and row_available_instant <= parsed_as_of
-                    )
-                except (TypeError, ValueError):
-                    row_pit_valid = False
-            if not row_pit_valid:
-                reasons.append("dataset_row_pit_invalid")
+            if not row_observation_valid:
+                reasons.append("dataset_row_observation_invalid")
                 dataset_contract_valid = False
                 if role == "required_execution":
                     required_accepted = False

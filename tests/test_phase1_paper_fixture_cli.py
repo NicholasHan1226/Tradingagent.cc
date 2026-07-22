@@ -227,6 +227,93 @@ def test_cli_runs_complete_offline_fixture_to_validated_report(
     }
     assert len(risk["drift_constraint_sha256"]) == 64
 
+    evidence = next(
+        receipt["payload"]
+        for receipt in projection["stage_receipts"]
+        if receipt["stage"] == "evidence_ready"
+    )
+    assert evidence["historical_pit_eligible"] is False
+    datasets = {item["dataset_id"]: item for item in evidence["datasets"]}
+    daily = datasets["fixture.cn.equity.daily.mainboard.v1"]
+    assert daily["observation_mode"] == "current_observation"
+    assert daily["historical_pit_eligible"] is False
+    assert daily["identity_fields"] == ["ts_code", "trade_date"]
+    assert daily["row_event_time_field"] == "trade_date"
+    assert daily["row_event_time_format"] == "yyyymmdd"
+    assert daily["row_event_time_semantic"] == "session"
+    assert daily["row_event_timezone"] == "Asia/Shanghai"
+    assert daily["minimum_row_count"] == 1
+    assert daily["max_pages"] == 2
+    assert daily["max_rows"] == 1000
+    assert daily["source_proof_complete"] is True
+    assert len(daily["source_proof_sha256"]) == 64
+    assert len(daily["row_observation_sha256"]) == 64
+
+
+def test_fixture_uses_provider_native_current_observation_dataset_contract() -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+    assert raw["schema_version"] == 2
+    assert ":8082" not in raw["config"]["tradingdatas_v1_base_url"]
+    decision_as_of = datetime.fromisoformat(raw["config"]["decision_as_of"])
+    dataset_configs = {
+        item["dataset_id"]: item for item in raw["config"]["datasets"]
+    }
+    parsed = fixture_cli._parse_fixture(fixture_cli._load_fixture(FIXTURE))
+    requirements = {
+        item.dataset_id: item for item in parsed.config.dataset_profile.requirements
+    }
+
+    forbidden_row_evidence = {
+        "event_time",
+        "available_time",
+        "revision_id",
+        "receipt_id",
+    }
+    for dataset_id, dataset_config in dataset_configs.items():
+        assert "as_of" not in dataset_config
+        assert dataset_config["observation_mode"] == "current_observation"
+        assert dataset_config["query_as_of_mode"] == "decision_as_of"
+        requirement = requirements[dataset_id]
+        assert requirement.identity_fields == tuple(dataset_config["identity_fields"])
+        assert requirement.minimum_row_count == dataset_config["minimum_row_count"]
+        assert requirement.max_pages == dataset_config["max_pages"]
+        assert requirement.max_rows == dataset_config["max_rows"]
+        assert datetime.fromisoformat(parsed.requests[dataset_id].as_of) == (
+            decision_as_of
+        )
+
+        response = raw["transport_responses"]["queries"][dataset_id]["json_body"]
+        assert all(
+            not forbidden_row_evidence.intersection(row) for row in response["data"]
+        )
+        metadata = response["metadata"]
+        assert metadata["receipt_id"]
+        assert metadata["data_through"]
+        assert metadata["observed_at"]
+        assert metadata["lineage"]["complete"] is True
+        assert metadata["lineage"]["provider_neutral"] is True
+
+
+def test_cli_rejects_provider_native_row_missing_declared_identity(
+    tmp_path: Path,
+) -> None:
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    daily = raw["transport_responses"]["queries"][
+        "fixture.cn.equity.daily.mainboard.v1"
+    ]["json_body"]
+    del daily["data"][0]["trade_date"]
+    invalid_fixture = tmp_path / "missing-provider-identity.json"
+    invalid_fixture.write_text(json.dumps(raw), encoding="utf-8")
+
+    result = _run_cli(tmp_path / "paper-run", fixture=invalid_fixture)
+
+    assert result.returncode == 2
+    failure = json.loads(result.stderr)
+    assert failure["status"] == "failed"
+    assert failure["error"] == "pagination_row_identity_missing"
+    assert failure["real_trading_enabled"] is False
+
 
 def test_cli_repeat_is_byte_stable_and_does_not_replay_fixture_transport(
     tmp_path: Path,

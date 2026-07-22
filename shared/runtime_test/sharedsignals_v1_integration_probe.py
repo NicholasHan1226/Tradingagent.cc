@@ -17,7 +17,7 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import sys
@@ -45,6 +45,11 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Config,
     SharedSignalsV1Error,
 )
+from shared.data.tradingdatas_pagination import (
+    PagedQueryRun,
+    PaginationContractError,
+    collect_query_pages,
+)
 from shared.runtime_test.sharedsignals_v1_gate import (
     TradingDatasAuthenticationError,
     build_runtime_transport,
@@ -52,8 +57,8 @@ from shared.runtime_test.sharedsignals_v1_gate import (
 )
 
 
-RECEIPT_SCHEMA_ID = "tradingagent.sharedsignals.integration-readiness.v1"
-PROBE_VERSION = 1
+RECEIPT_SCHEMA_ID = "tradingagent.tradingdatas.integration-readiness.v2"
+PROBE_VERSION = 2
 MAX_MANIFEST_BYTES = 1_048_576
 _PROBE_ROLE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SECRET_VALUE_RE = re.compile(r"(?i)(?:^|[^a-z0-9])sk-[a-z0-9_-]{16,}")
@@ -188,10 +193,15 @@ class DatasetProbeSpec:
     filters: Mapping[str, Any]
     limit: int
     minimum_row_count: int
-    row_event_time_field: str
-    row_available_time_field: str
-    row_revision_id_field: str
-    row_receipt_id_field: str
+    identity_fields: tuple[str, ...]
+    observation_mode: str
+    query_as_of_mode: str
+    max_pages: int
+    max_rows: int
+    row_event_time_field: str | None = None
+    row_event_time_format: str | None = None
+    row_event_timezone: str | None = None
+    row_event_time_semantic: str | None = None
     order: tuple[str, ...] | None = None
     degraded_action: EvidenceAction = EvidenceAction.REJECT
     stale_action: EvidenceAction = EvidenceAction.REJECT
@@ -215,16 +225,29 @@ class DatasetProbeSpec:
             raise IntegrationProbeConfigurationError(
                 "limit must be between 1 and 10000"
             )
+        if (
+            isinstance(self.max_rows, bool)
+            or not isinstance(self.max_rows, int)
+            or self.limit > self.max_rows
+        ):
+            raise IntegrationProbeConfigurationError(
+                "limit must not exceed max_rows"
+            )
 
         try:
             requirement = DatasetRequirement(
                 dataset_id=self.dataset_id,
                 role=self.requirement_role,
+                identity_fields=self.identity_fields,
+                observation_mode=self.observation_mode,
+                query_as_of_mode=self.query_as_of_mode,
                 row_event_time_field=self.row_event_time_field,
-                row_available_time_field=self.row_available_time_field,
-                row_revision_id_field=self.row_revision_id_field,
-                row_receipt_id_field=self.row_receipt_id_field,
+                row_event_time_format=self.row_event_time_format,
+                row_event_timezone=self.row_event_timezone,
+                row_event_time_semantic=self.row_event_time_semantic,
                 minimum_row_count=self.minimum_row_count,
+                max_pages=self.max_pages,
+                max_rows=self.max_rows,
             )
             request = QueryRequest(
                 dataset_id=self.dataset_id,
@@ -244,20 +267,39 @@ class DatasetProbeSpec:
         except (TypeError, ValueError, SharedSignalsV1Error) as exc:
             raise IntegrationProbeConfigurationError(str(exc)) from exc
 
-        pit_fields = {
-            requirement.row_event_time_field,
-            requirement.row_available_time_field,
-            requirement.row_revision_id_field,
-            requirement.row_receipt_id_field,
-        }
-        missing_pit_fields = pit_fields.difference(request.fields)
-        if missing_pit_fields:
+        required_fields = set(requirement.identity_fields)
+        if requirement.row_event_time_field is not None:
+            required_fields.add(requirement.row_event_time_field)
+        if required_fields.difference(request.fields):
             raise IntegrationProbeConfigurationError(
-                "fields must explicitly include every row PIT field"
+                "fields must include identity and configured row event fields"
             )
 
         object.__setattr__(self, "dataset_id", requirement.dataset_id)
         object.__setattr__(self, "requirement_role", requirement.role)
+        object.__setattr__(self, "identity_fields", requirement.identity_fields)
+        object.__setattr__(self, "observation_mode", requirement.observation_mode)
+        object.__setattr__(self, "query_as_of_mode", requirement.query_as_of_mode)
+        object.__setattr__(
+            self,
+            "row_event_time_field",
+            requirement.row_event_time_field,
+        )
+        object.__setattr__(
+            self,
+            "row_event_time_format",
+            requirement.row_event_time_format,
+        )
+        object.__setattr__(
+            self,
+            "row_event_timezone",
+            requirement.row_event_timezone,
+        )
+        object.__setattr__(
+            self,
+            "row_event_time_semantic",
+            requirement.row_event_time_semantic,
+        )
         object.__setattr__(self, "fields", request.fields)
         object.__setattr__(self, "filters", request.filters)
         object.__setattr__(self, "order", request.order)
@@ -269,11 +311,16 @@ class DatasetProbeSpec:
         return DatasetRequirement(
             dataset_id=self.dataset_id,
             role=self.requirement_role,
+            identity_fields=self.identity_fields,
+            observation_mode=self.observation_mode,
+            query_as_of_mode=self.query_as_of_mode,
             row_event_time_field=self.row_event_time_field,
-            row_available_time_field=self.row_available_time_field,
-            row_revision_id_field=self.row_revision_id_field,
-            row_receipt_id_field=self.row_receipt_id_field,
+            row_event_time_format=self.row_event_time_format,
+            row_event_timezone=self.row_event_timezone,
+            row_event_time_semantic=self.row_event_time_semantic,
             minimum_row_count=self.minimum_row_count,
+            max_pages=self.max_pages,
+            max_rows=self.max_rows,
         )
 
     def policy(self) -> DatasetEvidencePolicy:
@@ -291,7 +338,7 @@ class DatasetProbeSpec:
             schema_major=self.schema_major,
             fields=self.fields,
             filters=json.loads(self._filters_json),
-            as_of=as_of,
+            as_of=as_of if self.query_as_of_mode == "decision_as_of" else None,
             order=self.order,
             limit=self.limit,
         )
@@ -306,10 +353,11 @@ class DatasetProbeSpec:
             "filters": json.loads(self._filters_json),
             "limit": self.limit,
             "minimum_row_count": self.minimum_row_count,
-            "row_event_time_field": self.row_event_time_field,
-            "row_available_time_field": self.row_available_time_field,
-            "row_revision_id_field": self.row_revision_id_field,
-            "row_receipt_id_field": self.row_receipt_id_field,
+            "identity_fields": list(self.identity_fields),
+            "observation_mode": self.observation_mode,
+            "query_as_of_mode": self.query_as_of_mode,
+            "max_pages": self.max_pages,
+            "max_rows": self.max_rows,
             "degraded_action": self.degraded_action.value,
             "stale_action": self.stale_action.value,
             "degraded_weight": self.degraded_weight,
@@ -317,6 +365,11 @@ class DatasetProbeSpec:
         }
         if self.order is not None:
             payload["order"] = list(self.order)
+        if self.row_event_time_field is not None:
+            payload["row_event_time_field"] = self.row_event_time_field
+            payload["row_event_time_format"] = self.row_event_time_format
+            payload["row_event_timezone"] = self.row_event_timezone
+            payload["row_event_time_semantic"] = self.row_event_time_semantic
         return payload
 
 
@@ -465,15 +518,20 @@ _DATASET_REQUIRED_KEYS = frozenset(
         "filters",
         "limit",
         "minimum_row_count",
-        "row_event_time_field",
-        "row_available_time_field",
-        "row_revision_id_field",
-        "row_receipt_id_field",
+        "identity_fields",
+        "observation_mode",
+        "query_as_of_mode",
+        "max_pages",
+        "max_rows",
     }
 )
 _DATASET_OPTIONAL_KEYS = frozenset(
     {
         "order",
+        "row_event_time_field",
+        "row_event_time_format",
+        "row_event_timezone",
+        "row_event_time_semantic",
         "degraded_action",
         "stale_action",
         "degraded_weight",
@@ -492,10 +550,15 @@ def _dataset_spec(payload: object, *, index: int) -> DatasetProbeSpec:
         field_name=f"datasets[{index}]",
     )
     raw_fields = payload["fields"]
+    raw_identity_fields = payload["identity_fields"]
     raw_order = payload.get("order")
     if not isinstance(raw_fields, list):
         raise IntegrationProbeConfigurationError(
             f"datasets[{index}].fields must be a list"
+        )
+    if not isinstance(raw_identity_fields, list):
+        raise IntegrationProbeConfigurationError(
+            f"datasets[{index}].identity_fields must be a list"
         )
     if raw_order is not None and not isinstance(raw_order, list):
         raise IntegrationProbeConfigurationError(
@@ -511,10 +574,15 @@ def _dataset_spec(payload: object, *, index: int) -> DatasetProbeSpec:
         order=None if raw_order is None else tuple(raw_order),
         limit=payload["limit"],
         minimum_row_count=payload["minimum_row_count"],
-        row_event_time_field=payload["row_event_time_field"],
-        row_available_time_field=payload["row_available_time_field"],
-        row_revision_id_field=payload["row_revision_id_field"],
-        row_receipt_id_field=payload["row_receipt_id_field"],
+        identity_fields=tuple(raw_identity_fields),
+        observation_mode=payload["observation_mode"],
+        query_as_of_mode=payload["query_as_of_mode"],
+        max_pages=payload["max_pages"],
+        max_rows=payload["max_rows"],
+        row_event_time_field=payload.get("row_event_time_field"),
+        row_event_time_format=payload.get("row_event_time_format"),
+        row_event_timezone=payload.get("row_event_timezone"),
+        row_event_time_semantic=payload.get("row_event_time_semantic"),
         degraded_action=_action(
             payload.get("degraded_action", "reject"),
             field_name=f"datasets[{index}].degraded_action",
@@ -582,38 +650,51 @@ def load_probe_manifest(path: Path) -> SharedSignalsIntegrationProbeConfig:
     )
 
 
-def _semantic_envelope_payload(envelope: QueryEnvelope) -> dict[str, Any]:
-    return {
-        "api_version": envelope.api_version,
-        "catalog_version": envelope.catalog_version,
-        "dataset_id": envelope.dataset_id,
-        "data": list(envelope.data),
-        "next_cursor": envelope.next_cursor,
-        "metadata": {
-            "state": envelope.metadata.state,
-            "degraded": envelope.metadata.degraded,
-            "freshness": envelope.metadata.freshness,
-            "quality": envelope.metadata.quality,
-            "lineage": envelope.metadata.lineage,
-            "receipt_id": envelope.metadata.receipt_id,
-            "data_through": envelope.metadata.data_through,
-            "observed_at": envelope.metadata.observed_at,
-            "reasons": list(envelope.metadata.reasons),
-        },
-    }
-
-
 def _source_proof_complete(envelope: QueryEnvelope) -> bool:
     metadata = envelope.metadata
+    lineage = metadata.lineage
     return bool(
-        isinstance(metadata.lineage, Mapping)
-        and metadata.lineage
+        isinstance(lineage, Mapping)
+        and lineage
+        and type(lineage.get("complete")) is bool
+        and lineage.get("complete") is True
+        and type(lineage.get("provider_neutral")) is bool
+        and lineage.get("provider_neutral") is True
         and isinstance(metadata.receipt_id, str)
         and metadata.receipt_id
         and isinstance(metadata.data_through, str)
         and metadata.data_through
         and isinstance(metadata.observed_at, str)
         and metadata.observed_at
+    )
+
+
+def _source_proof_sha256(envelope: QueryEnvelope) -> str | None:
+    if not _source_proof_complete(envelope):
+        return None
+    lineage = envelope.metadata.lineage
+    assert lineage is not None
+    assert envelope.metadata.data_through is not None
+    assert envelope.metadata.observed_at is not None
+    return _sha256(
+        {
+            "dataset_id": envelope.dataset_id,
+            "catalog_version": envelope.catalog_version,
+            "receipt_id": envelope.metadata.receipt_id,
+            "lineage_sha256": _sha256(lineage),
+            "data_through": _aware_datetime(
+                envelope.metadata.data_through,
+                field_name="metadata.data_through",
+            )
+            .astimezone(timezone.utc)
+            .isoformat(),
+            "observed_at": _aware_datetime(
+                envelope.metadata.observed_at,
+                field_name="metadata.observed_at",
+            )
+            .astimezone(timezone.utc)
+            .isoformat(),
+        }
     )
 
 
@@ -695,13 +776,15 @@ def _dataset_receipt(
     *,
     spec: DatasetProbeSpec,
     request: QueryRequest,
-    first: QueryEnvelope,
-    second: QueryEnvelope,
+    first_run: PagedQueryRun,
+    second_run: PagedQueryRun,
     first_decision: EvidenceDecision,
     second_decision: EvidenceDecision,
 ) -> dict[str, Any]:
-    first_semantic = _sha256(_semantic_envelope_payload(first))
-    second_semantic = _sha256(_semantic_envelope_payload(second))
+    first = first_run.envelope
+    second = second_run.envelope
+    first_semantic = first_run.semantic_sha256
+    second_semantic = second_run.semantic_sha256
     reasons: list[str] = []
     for envelope, decision in (
         (first, first_decision),
@@ -733,23 +816,48 @@ def _dataset_receipt(
     )
     if unexpected_fields:
         _append_reason(reasons, "undeclared_field_present")
-    pagination_complete = first.next_cursor is None and second.next_cursor is None
-    if not pagination_complete:
-        _append_reason(reasons, "pagination_contract_unfrozen")
-    same_as_of_match = first_semantic == second_semantic
+    pagination_complete = True
+    same_as_of_match = bool(
+        first_semantic == second_semantic
+        and first_run.semantic_trace_sha256 == second_run.semantic_trace_sha256
+    )
     if not same_as_of_match:
         _append_reason(reasons, "same_as_of_semantic_mismatch")
     if not first_decision.eligible or not second_decision.eligible:
         _append_reason(reasons, "dataset_evidence_rejected")
 
     lineage = first.metadata.lineage
+    dataset_eligible = bool(
+        not reasons
+        and first_decision.eligible
+        and second_decision.eligible
+        and same_as_of_match
+    )
+    effective_action = (
+        first_decision.action.value if dataset_eligible else EvidenceAction.REJECT.value
+    )
+    effective_weight = first_decision.weight if dataset_eligible else 0.0
+    pagination = first_run.to_receipt_payload()
     return {
         "probe_role": spec.probe_role,
         "dataset_id": spec.dataset_id,
         "schema_major": spec.schema_major,
         "requirement_role": spec.requirement_role,
+        "observation_mode": spec.observation_mode,
+        "query_as_of_mode": spec.query_as_of_mode,
+        "historical_pit_eligible": False,
+        "minimum_row_count": spec.minimum_row_count,
+        "max_pages": spec.max_pages,
+        "max_rows": spec.max_rows,
+        "identity_fields_sha256": _sha256(list(spec.identity_fields)),
+        "row_event_time_field": spec.row_event_time_field,
+        "row_event_time_format": spec.row_event_time_format,
+        "row_event_timezone": spec.row_event_timezone,
+        "row_event_time_semantic": spec.row_event_time_semantic,
         "query_sha256": request.sha256,
-        "request_ids": [first.request_id, second.request_id],
+        "request_id_set_sha256": _sha256(
+            [list(first_run.request_ids), list(second_run.request_ids)]
+        ),
         "state": first.metadata.state,
         "degraded": first.metadata.degraded,
         "freshness_state": first.metadata.freshness.get("state"),
@@ -764,19 +872,27 @@ def _dataset_receipt(
         "data_through": first.metadata.data_through,
         "observed_at": first.metadata.observed_at,
         "source_proof_complete": _source_proof_complete(first),
-        "evidence_action": first_decision.action.value,
+        "source_proof_sha256": _source_proof_sha256(first),
+        "evidence_action": effective_action,
         "effective_state": first_decision.effective_state,
-        "eligible": first_decision.eligible,
-        "effective_weight": first_decision.weight,
+        "eligible": dataset_eligible,
+        "effective_weight": effective_weight,
         "evidence_reasons_sha256": _sha256(
             [list(first_decision.reasons), list(second_decision.reasons)]
         ),
-        "row_count": len(first.data),
+        "row_count": first_run.row_count,
         "requested_fields_sha256": _sha256(list(spec.fields)),
         "missing_requested_fields": missing_fields,
         "unexpected_field_count": len(unexpected_fields),
         "unexpected_fields_sha256": _sha256(unexpected_fields),
         "pagination_complete": pagination_complete,
+        "page_count": first_run.page_count,
+        "identity_sha256": first_run.identity_sha256,
+        "pagination_trace_sha256": first_run.pagination_trace_sha256,
+        "pagination_semantic_sha256": first_run.semantic_trace_sha256,
+        "page_request_set_sha256": pagination["page_request_set_sha256"],
+        "page_response_set_sha256": pagination["page_response_set_sha256"],
+        "cursor_chain_sha256": first_run.cursor_chain_sha256,
         "same_as_of_match": same_as_of_match,
         "semantic_response_sha256": first_semantic,
         "reason_codes": reasons,
@@ -788,7 +904,7 @@ def run_sharedsignals_integration_probe(
     *,
     transport: HTTPTransport | None,
 ) -> dict[str, Any]:
-    """Run catalog plus two identical as-of reads for every profile dataset."""
+    """Run catalog plus two identical current-observation reads per dataset."""
 
     if not isinstance(config, SharedSignalsIntegrationProbeConfig):
         raise TypeError("config must be SharedSignalsIntegrationProbeConfig")
@@ -824,16 +940,28 @@ def run_sharedsignals_integration_probe(
     gate = DataEvidenceGate(
         {spec.dataset_id: spec.policy() for spec in config.datasets}
     )
-    first_envelopes: list[QueryEnvelope] = []
-    second_envelopes: list[QueryEnvelope] = []
+    first_runs: list[PagedQueryRun] = []
+    second_runs: list[PagedQueryRun] = []
     first_decisions: list[EvidenceDecision] = []
     second_decisions: list[EvidenceDecision] = []
 
     for spec in config.datasets:
         request = spec.query(as_of=config.as_of)
         try:
-            first = client.query(request)
-            second = client.query(request)
+            first_run = collect_query_pages(
+                client=client,
+                request=request,
+                identity_fields=spec.identity_fields,
+                max_pages=spec.max_pages,
+                max_rows=spec.max_rows,
+            )
+            second_run = collect_query_pages(
+                client=client,
+                request=request,
+                identity_fields=spec.identity_fields,
+                max_pages=spec.max_pages,
+                max_rows=spec.max_rows,
+            )
         except TradingDatasAuthenticationError as exc:
             _append_reason(reasons, "authentication_rejected")
             receipt["error_type"] = _error_type(exc)
@@ -848,6 +976,23 @@ def run_sharedsignals_integration_probe(
                 }
             )
             break
+        except PaginationContractError as exc:
+            code = str(exc)
+            _append_reason(reasons, code)
+            receipt["error_type"] = _error_type(exc)
+            receipt["datasets"].append(
+                {
+                    "probe_role": spec.probe_role,
+                    "dataset_id": spec.dataset_id,
+                    "schema_major": spec.schema_major,
+                    "query_sha256": request.sha256,
+                    "status": "fail",
+                    "eligible": False,
+                    "evidence_action": EvidenceAction.REJECT.value,
+                    "reason_codes": [code],
+                }
+            )
+            continue
         except HTTPStatusError as exc:
             _append_reason(reasons, "query_contract_or_transport_failure")
             receipt["error_type"] = _error_type(exc)
@@ -878,44 +1023,40 @@ def run_sharedsignals_integration_probe(
             )
             continue
 
-        first_decision = gate.evaluate(first)
-        second_decision = gate.evaluate(second)
+        first_decision = gate.evaluate(first_run.envelope)
+        second_decision = gate.evaluate(second_run.envelope)
         dataset_result = _dataset_receipt(
             spec=spec,
             request=request,
-            first=first,
-            second=second,
+            first_run=first_run,
+            second_run=second_run,
             first_decision=first_decision,
             second_decision=second_decision,
         )
         receipt["datasets"].append(dataset_result)
         for reason in dataset_result["reason_codes"]:
-            if reason in {
-                "requested_field_missing",
-                "undeclared_field_present",
-                "pagination_contract_unfrozen",
-                "same_as_of_semantic_mismatch",
-                "dataset_evidence_rejected",
-            }:
-                _append_reason(reasons, reason)
-        first_envelopes.append(first)
-        second_envelopes.append(second)
+            _append_reason(reasons, reason)
+        first_runs.append(first_run)
+        second_runs.append(second_run)
         first_decisions.append(first_decision)
         second_decisions.append(second_decision)
 
-    complete_dataset_set = len(first_envelopes) == len(config.datasets)
-    if complete_dataset_set:
+    complete_dataset_set = len(first_runs) == len(config.datasets)
+    datasets_contract_eligible = complete_dataset_set and all(
+        item.get("eligible") is True for item in receipt["datasets"]
+    )
+    if datasets_contract_eligible:
         try:
             snapshots = (
                 build_research_data_snapshot(
                     profile=config.to_profile(),
-                    envelopes=tuple(first_envelopes),
+                    page_runs=tuple(first_runs),
                     decisions=tuple(first_decisions),
                     decision_as_of=_aware_datetime(config.as_of, field_name="as_of"),
                 ),
                 build_research_data_snapshot(
                     profile=config.to_profile(),
-                    envelopes=tuple(second_envelopes),
+                    page_runs=tuple(second_runs),
                     decisions=tuple(second_decisions),
                     decision_as_of=_aware_datetime(config.as_of, field_name="as_of"),
                 ),
@@ -928,6 +1069,8 @@ def run_sharedsignals_integration_probe(
                 {
                     "snapshot_sha256": snapshot.snapshot_sha256,
                     "execution_eligible": snapshot.execution_eligible,
+                    "historical_pit_eligible": snapshot.historical_pit_eligible,
+                    "profile_contract_sha256": snapshot.profile_contract_sha256,
                     "blocking_reasons": list(snapshot.blocking_reasons),
                 }
                 for snapshot in snapshots
@@ -942,12 +1085,17 @@ def run_sharedsignals_integration_probe(
                         "catalog_version": config.catalog_version,
                         "as_of": config.as_of,
                         "datasets": [
-                            _sha256(_semantic_envelope_payload(envelope))
-                            for envelope in envelopes
+                            {
+                                "semantic_sha256": page_run.semantic_sha256,
+                                "pagination_trace_sha256": (
+                                    page_run.semantic_trace_sha256
+                                ),
+                            }
+                            for page_run in page_runs
                         ],
                     }
                 )
-                for envelopes in (first_envelopes, second_envelopes)
+                for page_runs in (first_runs, second_runs)
             ]
             receipt["semantic_snapshot_sha256"] = semantic_snapshots[0]
             if semantic_snapshots[0] != semantic_snapshots[1]:

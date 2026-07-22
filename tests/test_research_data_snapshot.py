@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -11,7 +12,12 @@ from shared.data.research_snapshot import (
     ResearchDataProfile,
     build_research_data_snapshot,
 )
-from shared.data.sharedsignals_v1 import parse_query_envelope
+from shared.data.sharedsignals_v1 import (
+    ContractViolation,
+    QueryRequest,
+    parse_query_envelope,
+)
+from shared.data.tradingdatas_pagination import bind_complete_page
 
 
 CATALOG = "fixture-catalog-2026-07-16"
@@ -31,22 +37,12 @@ def _envelope(
     state: str = "ready",
     degraded: bool = False,
     lineage: dict | None = None,
-    enrich_rows: bool = True,
 ):
     source_rows = rows if rows is not None else [{"value": 1}]
-    if enrich_rows:
-        source_rows = [
-            {
-                **row,
-                "event_time": row.get("event_time", "2026-07-15T07:00:00+00:00"),
-                "available_time": row.get(
-                    "available_time", "2026-07-16T00:59:00+00:00"
-                ),
-                "revision_id": row.get("revision_id", "r1"),
-                "receipt_id": row.get("receipt_id", f"row-{receipt_id}"),
-            }
-            for row in source_rows
-        ]
+    source_rows = [
+        {"entity_id": row.get("entity_id", f"row-{index}"), **row}
+        for index, row in enumerate(source_rows)
+    ]
     return parse_query_envelope(
         {
             "api_version": "v1",
@@ -97,13 +93,36 @@ def _profile() -> ResearchDataProfile:
         profile_id="mainboard-paper-mvp-input-v1",
         catalog_version=CATALOG,
         requirements=(
-            DatasetRequirement(PRICE_DATASET, role="required_execution"),
-            DatasetRequirement(CONTEXT_DATASET, role="optional_context"),
+            DatasetRequirement(
+                PRICE_DATASET,
+                role="required_execution",
+                identity_fields=("entity_id",),
+            ),
+            DatasetRequirement(
+                CONTEXT_DATASET,
+                role="optional_context",
+                identity_fields=("entity_id",),
+            ),
         ),
     )
 
 
-def test_required_ready_and_deweighted_context_form_one_pit_snapshot() -> None:
+def _runs(*envelopes):
+    return tuple(
+        bind_complete_page(
+            request=QueryRequest(
+                dataset_id=envelope.dataset_id,
+                schema_major=1,
+                as_of=DECISION_AS_OF.isoformat(),
+            ),
+            envelope=envelope,
+            identity_fields=("entity_id",),
+        )
+        for envelope in envelopes
+    )
+
+
+def test_required_ready_and_deweighted_context_form_current_observation_snapshot() -> None:
     price = _envelope(
         PRICE_DATASET,
         receipt_id="price-receipt",
@@ -116,7 +135,7 @@ def test_required_ready_and_deweighted_context_form_one_pit_snapshot() -> None:
     )
     snapshot = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(context, price),
+        page_runs=_runs(context, price),
         decisions=(
             _decision(
                 CONTEXT_DATASET,
@@ -143,52 +162,26 @@ def test_required_ready_and_deweighted_context_form_one_pit_snapshot() -> None:
     ]
     assert snapshot.datasets[1].weight == 0.25
     assert snapshot.datasets[0].decoded_rows() == [
-        {
-            "available_time": "2026-07-16T00:59:00+00:00",
-            "close": 10.5,
-            "event_time": "2026-07-15T07:00:00+00:00",
-            "receipt_id": "row-price-receipt",
-            "revision_id": "r1",
-            "ts_code": "600000.SH",
-        }
+        {"entity_id": "row-0", "ts_code": "600000.SH", "close": 10.5}
     ]
+    assert snapshot.historical_pit_eligible is False
+    assert snapshot.datasets[0].observation_mode == "current_observation"
+    assert snapshot.datasets[0].historical_pit_eligible is False
+    assert snapshot.datasets[0].max_row_observed_at == (
+        "2026-07-16T01:00:00+00:00"
+    )
+    assert snapshot.datasets[0].max_row_event_value is None
     assert len(snapshot.snapshot_sha256) == 64
-    assert snapshot.to_evidence_payload() == {
-        "profile_id": "mainboard-paper-mvp-input-v1",
-        "catalog_version": CATALOG,
-        "decision_as_of": "2026-07-16T01:05:00+00:00",
-        "snapshot_sha256": snapshot.snapshot_sha256,
-        "execution_eligible": True,
-        "blocking_reasons": [],
-        "datasets": [
-            {
-                "dataset_id": PRICE_DATASET,
-                "role": "required_execution",
-                "state": "ready",
-                "evidence_action": "accept",
-                "effective_weight": 1.0,
-                "source_proof_complete": True,
-                "receipt_id": "price-receipt",
-                "row_count": 1,
-                "row_pit_sha256": snapshot.datasets[0].row_pit_sha256,
-                "max_row_available_time": "2026-07-16T00:59:00+00:00",
-                "reasons": [],
-            },
-            {
-                "dataset_id": CONTEXT_DATASET,
-                "role": "optional_context",
-                "state": "degraded",
-                "evidence_action": "deweight",
-                "effective_weight": 0.25,
-                "source_proof_complete": True,
-                "receipt_id": "context-receipt",
-                "row_count": 1,
-                "row_pit_sha256": snapshot.datasets[1].row_pit_sha256,
-                "max_row_available_time": "2026-07-16T00:59:00+00:00",
-                "reasons": ["dataset_degraded"],
-            },
-        ],
-    }
+    evidence = snapshot.to_evidence_payload()
+    assert evidence["profile_contract_sha256"] == snapshot.profile_contract_sha256
+    assert evidence["historical_pit_eligible"] is False
+    assert evidence["datasets"][0]["row_observation_sha256"] == (
+        snapshot.datasets[0].row_observation_sha256
+    )
+    assert evidence["datasets"][0]["source_proof_sha256"] == (
+        snapshot.datasets[0].source_proof_sha256
+    )
+    assert evidence["datasets"][0]["page_count"] == 1
 
 
 def test_required_dataset_rejection_blocks_execution_but_preserves_evidence() -> None:
@@ -196,7 +189,7 @@ def test_required_dataset_rejection_blocks_execution_but_preserves_evidence() ->
     context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
     snapshot = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(price, context),
+        page_runs=_runs(price, context),
         decisions=(
             _decision(
                 PRICE_DATASET,
@@ -233,7 +226,7 @@ def test_null_source_proof_forms_a_deterministic_audit_snapshot_without_rows() -
     context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
     snapshot = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(price, context),
+        page_runs=_runs(price, context),
         decisions=(
             EvidenceDecision(
                 dataset_id=PRICE_DATASET,
@@ -265,21 +258,15 @@ def test_null_source_proof_forms_a_deterministic_audit_snapshot_without_rows() -
     assert impaired.data_through is None
     assert impaired.observed_at is None
     assert impaired.row_count == 0
-    assert impaired.max_row_available_time is None
+    assert impaired.max_row_observed_at is None
+    assert impaired.source_proof_sha256 is None
     assert impaired.decoded_rows() == []
-    assert snapshot.to_evidence_payload()["datasets"][0] == {
-        "dataset_id": PRICE_DATASET,
-        "role": "required_execution",
-        "state": "failed",
-        "evidence_action": "reject",
-        "effective_weight": 0.0,
-        "source_proof_complete": False,
-        "receipt_id": None,
-        "row_count": 0,
-        "row_pit_sha256": impaired.row_pit_sha256,
-        "max_row_available_time": None,
-        "reasons": ["provider_not_observed", "dataset_failed"],
-    }
+    evidence = snapshot.to_evidence_payload()["datasets"][0]
+    assert evidence["dataset_id"] == PRICE_DATASET
+    assert evidence["evidence_action"] == "reject"
+    assert evidence["source_proof_complete"] is False
+    assert evidence["historical_pit_eligible"] is False
+    assert evidence["row_observation_sha256"] == impaired.row_observation_sha256
 
 
 def test_optional_rejection_does_not_block_but_required_deweight_does() -> None:
@@ -288,7 +275,7 @@ def test_optional_rejection_does_not_block_but_required_deweight_does() -> None:
 
     optional_rejected = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(price, context),
+        page_runs=_runs(price, context),
         decisions=(
             _decision(
                 PRICE_DATASET,
@@ -310,7 +297,7 @@ def test_optional_rejection_does_not_block_but_required_deweight_does() -> None:
 
     required_deweighted = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(price, context),
+        page_runs=_runs(price, context),
         decisions=(
             _decision(
                 PRICE_DATASET,
@@ -376,8 +363,36 @@ def test_dataset_set_and_receipt_identity_fail_closed(problem: str) -> None:
     with pytest.raises(ResearchDataContractError):
         build_research_data_snapshot(
             profile=_profile(),
-            envelopes=tuple(envelopes),
+            page_runs=_runs(*envelopes),
             decisions=tuple(decisions),
+            decision_as_of=DECISION_AS_OF,
+        )
+
+
+def test_tampered_pagination_trace_fails_before_snapshot_acceptance() -> None:
+    price = _envelope(PRICE_DATASET, receipt_id="price-receipt")
+    context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
+    price_run, context_run = _runs(price, context)
+    tampered = replace(price_run, ordered_rows_sha256="0" * 64)
+
+    with pytest.raises(ResearchDataContractError, match="pagination_trace_mismatch"):
+        build_research_data_snapshot(
+            profile=_profile(),
+            page_runs=(tampered, context_run),
+            decisions=(
+                _decision(
+                    PRICE_DATASET,
+                    "price-receipt",
+                    action=EvidenceAction.ACCEPT,
+                    weight=1.0,
+                ),
+                _decision(
+                    CONTEXT_DATASET,
+                    "context-receipt",
+                    action=EvidenceAction.ACCEPT,
+                    weight=1.0,
+                ),
+            ),
             decision_as_of=DECISION_AS_OF,
         )
 
@@ -406,54 +421,37 @@ def test_late_observation_and_catalog_drift_fail_closed() -> None:
     with pytest.raises(ResearchDataContractError, match="observed_after_decision"):
         build_research_data_snapshot(
             profile=_profile(),
-            envelopes=(late, context),
+            page_runs=_runs(late, context),
             decisions=decisions,
             decision_as_of=DECISION_AS_OF,
         )
 
 
-@pytest.mark.parametrize(
-    ("row", "reason"),
-    [
-        (
-            {
-                "value": 1,
-                "event_time": "2026-07-15T07:00:00+00:00",
-                "available_time": "2026-07-16T01:05:01+00:00",
-                "revision_id": "r1",
-                "receipt_id": "row-price-receipt",
-            },
-            "row_available_after_decision",
+def test_current_observation_does_not_invent_revision_and_future_session_fails() -> None:
+    profile = ResearchDataProfile(
+        profile_id="provider-native-session-v2",
+        catalog_version=CATALOG,
+        requirements=(
+            DatasetRequirement(
+                PRICE_DATASET,
+                role="required_execution",
+                identity_fields=("entity_id",),
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+            ),
+            DatasetRequirement(
+                CONTEXT_DATASET,
+                role="optional_context",
+                identity_fields=("entity_id",),
+            ),
         ),
-        (
-            {
-                "value": 1,
-                "event_time": "2026-07-15T07:00:00+00:00",
-                "revision_id": "r1",
-                "receipt_id": "row-price-receipt",
-            },
-            "available_time",
-        ),
-        (
-            {
-                "value": 1,
-                "event_time": "2026-07-15T07:00:00+00:00",
-                "available_time": "2026-07-16T00:59:00+00:00",
-                "receipt_id": "row-price-receipt",
-            },
-            "revision_id",
-        ),
-    ],
-)
-def test_hidden_future_or_unversioned_row_cannot_be_laundered_by_early_envelope(
-    row: dict,
-    reason: str,
-) -> None:
+    )
     price = _envelope(
         PRICE_DATASET,
         receipt_id="price-receipt",
-        rows=[row],
-        enrich_rows=False,
+        rows=[{"value": 1, "trade_date": "20260717"}],
     )
     context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
     decisions = (
@@ -471,23 +469,204 @@ def test_hidden_future_or_unversioned_row_cannot_be_laundered_by_early_envelope(
         ),
     )
 
-    with pytest.raises(ResearchDataContractError, match=reason):
+    with pytest.raises(ResearchDataContractError, match="row_event_after_observation"):
         build_research_data_snapshot(
-            profile=_profile(),
-            envelopes=(price, context),
+            profile=profile,
+            page_runs=_runs(price, context),
             decisions=decisions,
             decision_as_of=DECISION_AS_OF,
         )
 
+
+def test_future_scheduled_date_is_domain_time_not_forged_availability() -> None:
+    profile = ResearchDataProfile(
+        profile_id="provider-native-calendar-v2",
+        catalog_version=CATALOG,
+        requirements=(
+            DatasetRequirement(
+                PRICE_DATASET,
+                role="required_execution",
+                identity_fields=("entity_id", "cal_date"),
+                row_event_time_field="cal_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="scheduled",
+            ),
+        ),
+    )
+    calendar = _envelope(
+        PRICE_DATASET,
+        receipt_id="calendar-receipt",
+        rows=[{"cal_date": "20260717", "is_open": True}],
+    )
+
+    snapshot = build_research_data_snapshot(
+        profile=profile,
+        page_runs=(
+            bind_complete_page(
+                request=QueryRequest(
+                    dataset_id=calendar.dataset_id,
+                    schema_major=1,
+                    as_of=DECISION_AS_OF.isoformat(),
+                ),
+                envelope=calendar,
+                identity_fields=("entity_id", "cal_date"),
+            ),
+        ),
+        decisions=(
+            _decision(
+                PRICE_DATASET,
+                "calendar-receipt",
+                action=EvidenceAction.ACCEPT,
+                weight=1.0,
+            ),
+        ),
+        decision_as_of=DECISION_AS_OF,
+    )
+
+    dataset = snapshot.datasets[0]
+    assert dataset.max_row_event_value == "2026-07-17"
+    assert dataset.max_row_observed_at == "2026-07-16T01:00:00+00:00"
+    assert dataset.historical_pit_eligible is False
+
+
+def test_manual_accept_cannot_launder_incomplete_lineage() -> None:
+    price = _envelope(
+        PRICE_DATASET,
+        receipt_id="price-receipt",
+        lineage={"complete": False, "provider_neutral": False},
+    )
+    context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
+
+    with pytest.raises(
+        ResearchDataContractError,
+        match="incomplete_source_proof_must_reject",
+    ):
+        build_research_data_snapshot(
+            profile=_profile(),
+            page_runs=_runs(price, context),
+            decisions=(
+                _decision(
+                    PRICE_DATASET,
+                    "price-receipt",
+                    action=EvidenceAction.ACCEPT,
+                    weight=1.0,
+                ),
+                _decision(
+                    CONTEXT_DATASET,
+                    "context-receipt",
+                    action=EvidenceAction.ACCEPT,
+                    weight=1.0,
+                ),
+            ),
+            decision_as_of=DECISION_AS_OF,
+        )
+
+
+def test_envelope_receipt_lineage_and_observation_fields_bind_source_proof() -> None:
+    context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
+
+    def proof(
+        *,
+        receipt_id: str,
+        lineage: dict,
+        observed_at: str,
+        data_through: str,
+    ) -> str:
+        price = _envelope(
+            PRICE_DATASET,
+            receipt_id=receipt_id,
+            lineage=lineage,
+            observed_at=observed_at,
+            data_through=data_through,
+        )
+        snapshot = build_research_data_snapshot(
+            profile=_profile(),
+            page_runs=_runs(price, context),
+            decisions=(
+                _decision(
+                    PRICE_DATASET,
+                    receipt_id,
+                    action=EvidenceAction.ACCEPT,
+                    weight=1.0,
+                ),
+                _decision(
+                    CONTEXT_DATASET,
+                    "context-receipt",
+                    action=EvidenceAction.ACCEPT,
+                    weight=1.0,
+                ),
+            ),
+            decision_as_of=DECISION_AS_OF,
+        )
+        source_proof = snapshot.datasets[0].source_proof_sha256
+        assert source_proof is not None
+        return source_proof
+
+    baseline = {
+        "receipt_id": "receipt-a",
+        "lineage": {
+            "complete": True,
+            "provider_neutral": True,
+            "provider": "fixture-a",
+        },
+        "observed_at": "2026-07-16T01:00:00+00:00",
+        "data_through": "2026-07-16T00:59:00+00:00",
+    }
+    proofs = {
+        proof(**baseline),
+        proof(**{**baseline, "receipt_id": "receipt-b"}),
+        proof(
+            **{
+                **baseline,
+                "lineage": {**baseline["lineage"], "provider": "fixture-b"},
+            }
+        ),
+        proof(**{**baseline, "observed_at": "2026-07-16T01:01:00+00:00"}),
+        proof(**{**baseline, "data_through": "2026-07-16T00:58:00+00:00"}),
+    }
+    assert len(proofs) == 5
+
+
+def test_data_through_after_observation_fails_closed() -> None:
+    with pytest.raises(
+        ContractViolation,
+        match="metadata.data_through must not be after observed_at",
+    ):
+        _envelope(
+            PRICE_DATASET,
+            receipt_id="price-receipt",
+            observed_at="2026-07-16T01:00:00+00:00",
+            data_through="2026-07-16T01:01:00+00:00",
+        )
+
+
+
+def test_catalog_drift_fails_closed() -> None:
     wrong_catalog = _envelope(
         PRICE_DATASET,
         receipt_id="price-receipt",
         catalog_version="wrong",
     )
+    context = _envelope(CONTEXT_DATASET, receipt_id="context-receipt")
+    decisions = (
+        _decision(
+            PRICE_DATASET,
+            "price-receipt",
+            action=EvidenceAction.ACCEPT,
+            weight=1.0,
+        ),
+        _decision(
+            CONTEXT_DATASET,
+            "context-receipt",
+            action=EvidenceAction.ACCEPT,
+            weight=1.0,
+        ),
+    )
     with pytest.raises(ResearchDataContractError, match="catalog_version"):
         build_research_data_snapshot(
             profile=_profile(),
-            envelopes=(wrong_catalog, context),
+            page_runs=_runs(wrong_catalog, context),
             decisions=decisions,
             decision_as_of=DECISION_AS_OF,
         )
@@ -512,13 +691,13 @@ def test_snapshot_is_order_independent_and_rows_are_copy_on_read() -> None:
     )
     left = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(price, context),
+        page_runs=_runs(price, context),
         decisions=decisions,
         decision_as_of=DECISION_AS_OF,
     )
     right = build_research_data_snapshot(
         profile=_profile(),
-        envelopes=(context, price),
+        page_runs=_runs(context, price),
         decisions=tuple(reversed(decisions)),
         decision_as_of=DECISION_AS_OF,
     )

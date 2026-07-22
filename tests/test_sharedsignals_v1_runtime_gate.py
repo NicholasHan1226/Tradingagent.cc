@@ -195,7 +195,7 @@ def test_runtime_gate_uses_only_catalog_and_query_with_schema_major() -> None:
     assert "order" not in query_payload
 
 
-def test_runtime_gate_rejects_truncated_first_page_until_pagination_is_frozen() -> None:
+def test_runtime_smoke_rejects_nonterminal_page_without_claiming_research_readiness() -> None:
     payload = _ready_query_payload()
     payload["next_cursor"] = "opaque-next-page"
 
@@ -209,7 +209,9 @@ def test_runtime_gate_rejects_truncated_first_page_until_pagination_is_frozen() 
     assert result["datasets"][0]["eligible"] is False
     assert result["datasets"][0]["action"] == "reject"
     assert result["datasets"][0]["pagination_complete"] is False
-    assert "pagination_contract_unfrozen" in result["datasets"][0]["reasons"]
+    assert "runtime_smoke_requires_terminal_page" in result["datasets"][0]["reasons"]
+    assert result["scope"] == "transport_metadata_smoke"
+    assert result["research_contract_verified"] is False
 
 
 @pytest.mark.parametrize(

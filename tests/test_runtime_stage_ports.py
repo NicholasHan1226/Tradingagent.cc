@@ -134,8 +134,14 @@ def _catalog_response() -> HTTPResponse:
             "catalog_version": CATALOG,
             "request_id": "catalog-request-1",
             "data": [
-                {"dataset_id": PRICE_DATASET, "fields": ["ts_code", "close"]},
-                {"dataset_id": CONTEXT_DATASET, "fields": ["sector_id", "breadth"]},
+                {
+                    "dataset_id": PRICE_DATASET,
+                    "fields": ["ts_code", "trade_date", "close"],
+                },
+                {
+                    "dataset_id": CONTEXT_DATASET,
+                    "fields": ["sector_id", "trade_date", "breadth"],
+                },
             ],
         },
     )
@@ -152,16 +158,6 @@ def _query_response(
 ) -> HTTPResponse:
     freshness_state = "degraded" if degraded else "fresh"
     quality_state = "degraded" if degraded else "valid"
-    pit_rows = [
-        {
-            **row,
-            "event_time": row.get("event_time", "2026-07-15T07:00:00+00:00"),
-            "available_time": row.get("available_time", "2026-07-16T00:59:00+00:00"),
-            "revision_id": row.get("revision_id", "r1"),
-            "receipt_id": row.get("receipt_id", f"row-{receipt_id}"),
-        }
-        for row in rows
-    ]
     return HTTPResponse(
         status_code=200,
         json_body={
@@ -169,7 +165,7 @@ def _query_response(
             "catalog_version": CATALOG,
             "request_id": f"query-{dataset_id}",
             "dataset_id": dataset_id,
-            "data": pit_rows,
+            "data": deepcopy(rows),
             "next_cursor": next_cursor,
             "metadata": {
                 "state": state,
@@ -189,7 +185,7 @@ def _query_response(
 def _client(transport: _Transport) -> SharedSignalsV1Client:
     return SharedSignalsV1Client(
         SharedSignalsV1Config(
-            base_url="http://tradingdatas.fixture.invalid:8082",
+            base_url="http://tradingdatas.fixture.invalid",
             expected_catalog_version=CATALOG,
             dataset_ids=frozenset({PRICE_DATASET, CONTEXT_DATASET}),
             access_policy_id="ta-paper-read-v1",
@@ -199,13 +195,41 @@ def _client(transport: _Transport) -> SharedSignalsV1Client:
     )
 
 
-def _profile() -> ResearchDataProfile:
+def _profile(
+    *,
+    price_max_pages: int = 4,
+    price_max_rows: int = 1_000,
+) -> ResearchDataProfile:
     return ResearchDataProfile(
         profile_id="mainboard-paper-mvp-input-v1",
         catalog_version=CATALOG,
         requirements=(
-            DatasetRequirement(PRICE_DATASET, role="required_execution"),
-            DatasetRequirement(CONTEXT_DATASET, role="optional_context"),
+            DatasetRequirement(
+                PRICE_DATASET,
+                role="required_execution",
+                identity_fields=("ts_code", "trade_date"),
+                observation_mode="current_observation",
+                query_as_of_mode="decision_as_of",
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+                max_pages=price_max_pages,
+                max_rows=price_max_rows,
+            ),
+            DatasetRequirement(
+                CONTEXT_DATASET,
+                role="optional_context",
+                identity_fields=("sector_id", "trade_date"),
+                observation_mode="current_observation",
+                query_as_of_mode="decision_as_of",
+                row_event_time_field="trade_date",
+                row_event_time_format="yyyymmdd",
+                row_event_timezone="Asia/Shanghai",
+                row_event_time_semantic="session",
+                max_pages=4,
+                max_rows=1_000,
+            ),
         ),
     )
 
@@ -214,7 +238,12 @@ def _evidence_port(
     transport: _Transport,
     *,
     snapshot_store: FileResearchSnapshotStore,
+    profile: ResearchDataProfile | None = None,
 ) -> SharedSignalsResearchEvidencePort:
+    resolved_profile = profile or _profile()
+    requirements = {
+        item.dataset_id: item for item in resolved_profile.requirements
+    }
     return SharedSignalsResearchEvidencePort(
         identity=ComponentIdentity(
             stage=RunStage.EVIDENCE_READY,
@@ -223,19 +252,23 @@ def _evidence_port(
             artifact_sha256=_digest("2"),
         ),
         client=_client(transport),
-        profile=_profile(),
+        profile=resolved_profile,
         requests={
             PRICE_DATASET: QueryRequest(
                 dataset_id=PRICE_DATASET,
-                schema_major=1,
-                fields=("ts_code", "close"),
+                schema_major=2,
+                fields=("ts_code", "trade_date", "close"),
+                filters={"trade_date": {"eq": "20260715"}},
                 as_of=DECISION_AS_OF,
+                limit=min(1_000, requirements[PRICE_DATASET].max_rows),
             ),
             CONTEXT_DATASET: QueryRequest(
                 dataset_id=CONTEXT_DATASET,
-                schema_major=1,
-                fields=("sector_id", "breadth"),
+                schema_major=2,
+                fields=("sector_id", "trade_date", "breadth"),
+                filters={"trade_date": {"eq": "20260715"}},
                 as_of=DECISION_AS_OF,
+                limit=min(1_000, requirements[CONTEXT_DATASET].max_rows),
             ),
         },
         evidence_gate=DataEvidenceGate(
@@ -635,6 +668,7 @@ def _ports(
     transport: _Transport,
     journal_path: Path,
     snapshot_store: FileResearchSnapshotStore,
+    profile: ResearchDataProfile | None = None,
 ) -> dict[RunStage, Any]:
     payloads = _payloads()
     ports: dict[RunStage, Any] = {
@@ -643,6 +677,7 @@ def _ports(
     ports[RunStage.EVIDENCE_READY] = _evidence_port(
         transport,
         snapshot_store=snapshot_store,
+        profile=profile,
     )
     ports[RunStage.LEARNING_RECORDED] = SampleJournalLearningPort(
         identity=ComponentIdentity(
@@ -814,19 +849,30 @@ def _paper_loop(
     )
 
 
-def _transport_responses(*, next_cursor: str | None = None) -> list[HTTPResponse]:
+def _transport_responses() -> list[HTTPResponse]:
     return [
         _catalog_response(),
         _query_response(
             PRICE_DATASET,
             receipt_id="price-receipt-1",
-            rows=[{"ts_code": "000001.SZ", "close": 10.0}],
-            next_cursor=next_cursor,
+            rows=[
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260715",
+                    "close": 10.0,
+                }
+            ],
         ),
         _query_response(
             CONTEXT_DATASET,
             receipt_id="context-receipt-1",
-            rows=[{"sector_id": "full-market", "breadth": 0.55}],
+            rows=[
+                {
+                    "sector_id": "full-market",
+                    "trade_date": "20260715",
+                    "breadth": 0.55,
+                }
+            ],
             state="degraded",
             degraded=True,
         ),
@@ -843,7 +889,13 @@ def _null_proof_transport_responses() -> list[HTTPResponse]:
                 "catalog_version": CATALOG,
                 "request_id": f"query-{PRICE_DATASET}-unobserved",
                 "dataset_id": PRICE_DATASET,
-                "data": [{"ts_code": "000001.SZ", "close": 10.0}],
+                "data": [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260715",
+                        "close": 10.0,
+                    }
+                ],
                 "next_cursor": None,
                 "metadata": {
                     "state": "unobserved",
@@ -861,7 +913,13 @@ def _null_proof_transport_responses() -> list[HTTPResponse]:
         _query_response(
             CONTEXT_DATASET,
             receipt_id="context-receipt-1",
-            rows=[{"sector_id": "full-market", "breadth": 0.55}],
+            rows=[
+                {
+                    "sector_id": "full-market",
+                    "trade_date": "20260715",
+                    "breadth": 0.55,
+                }
+            ],
             state="degraded",
             degraded=True,
         ),
@@ -901,7 +959,10 @@ def test_null_proof_required_dataset_is_persisted_as_blocked_evidence_stage(
     assert price["source_proof_complete"] is False
     assert price["receipt_id"] is None
     assert price["row_count"] == 0
-    assert price["max_row_available_time"] is None
+    assert price["observation_mode"] == "current_observation"
+    assert price["historical_pit_eligible"] is False
+    assert price["max_row_observed_at"] is None
+    assert price["max_row_event_value"] is None
 
     recovered = FileResearchSnapshotStore(
         tmp_path / "research-snapshots"
@@ -934,34 +995,55 @@ def test_v1_snapshot_to_durable_day_loop_and_sample_journal_closed_loop(
     assert bundle.status == "completed", bundle.block_reasons
     evidence = bundle.receipt_for(RunStage.EVIDENCE_READY).payload
     assert evidence["execution_eligible"] is True
-    assert evidence["datasets"] == [
-        {
-            "dataset_id": PRICE_DATASET,
-            "role": "required_execution",
-            "state": "ready",
-            "evidence_action": "accept",
-            "effective_weight": 1.0,
-            "reasons": [],
-            "source_proof_complete": True,
-            "receipt_id": "price-receipt-1",
-            "row_count": 1,
-            "row_pit_sha256": evidence["datasets"][0]["row_pit_sha256"],
-            "max_row_available_time": "2026-07-16T00:59:00+00:00",
-        },
-        {
-            "dataset_id": CONTEXT_DATASET,
-            "role": "optional_context",
-            "state": "degraded",
-            "evidence_action": "deweight",
-            "effective_weight": 0.25,
-            "reasons": ["context_partial", "dataset_degraded"],
-            "source_proof_complete": True,
-            "receipt_id": "context-receipt-1",
-            "row_count": 1,
-            "row_pit_sha256": evidence["datasets"][1]["row_pit_sha256"],
-            "max_row_available_time": "2026-07-16T00:59:00+00:00",
-        },
-    ]
+    assert evidence["historical_pit_eligible"] is False
+    assert len(evidence["profile_contract_sha256"]) == 64
+    price, context = evidence["datasets"]
+    assert price["dataset_id"] == PRICE_DATASET
+    assert price["role"] == "required_execution"
+    assert price["state"] == "ready"
+    assert price["evidence_action"] == "accept"
+    assert price["effective_weight"] == 1.0
+    assert price["reasons"] == []
+    assert price["source_proof_complete"] is True
+    assert price["receipt_id"] == "price-receipt-1"
+    assert price["row_count"] == 1
+    assert price["observation_mode"] == "current_observation"
+    assert price["historical_pit_eligible"] is False
+    assert price["query_as_of_mode"] == "decision_as_of"
+    assert price["identity_fields"] == ["ts_code", "trade_date"]
+    assert price["row_event_time_field"] == "trade_date"
+    assert price["row_event_time_format"] == "yyyymmdd"
+    assert price["row_event_timezone"] == "Asia/Shanghai"
+    assert price["row_event_time_semantic"] == "session"
+    assert price["max_row_observed_at"] == "2026-07-16T01:00:00+00:00"
+    assert price["max_row_event_value"] == "2026-07-15"
+    assert price["page_count"] == 1
+    assert context["dataset_id"] == CONTEXT_DATASET
+    assert context["role"] == "optional_context"
+    assert context["state"] == "degraded"
+    assert context["evidence_action"] == "deweight"
+    assert context["effective_weight"] == 0.25
+    assert context["reasons"] == ["context_partial", "dataset_degraded"]
+    assert context["source_proof_complete"] is True
+    assert context["receipt_id"] == "context-receipt-1"
+    assert context["row_count"] == 1
+    assert context["observation_mode"] == "current_observation"
+    assert context["historical_pit_eligible"] is False
+    assert context["query_as_of_mode"] == "decision_as_of"
+    assert context["identity_fields"] == ["sector_id", "trade_date"]
+    assert context["max_row_observed_at"] == "2026-07-16T01:00:00+00:00"
+    assert context["max_row_event_value"] == "2026-07-15"
+    assert context["page_count"] == 1
+    for dataset in (price, context):
+        for field_name in (
+            "lineage_sha256",
+            "source_proof_sha256",
+            "identity_sha256",
+            "row_observation_sha256",
+            "pagination_trace_sha256",
+            "pagination_semantic_sha256",
+        ):
+            assert len(dataset[field_name]) == 64
     assert [
         (call["method"], call["url"].rsplit("/", 2)[-2:]) for call in transport.calls
     ] == [
@@ -969,9 +1051,21 @@ def test_v1_snapshot_to_durable_day_loop_and_sample_journal_closed_loop(
         ("POST", ["v1", "query"]),
         ("POST", ["v1", "query"]),
     ]
+    for call in transport.calls[1:]:
+        assert call["json_body"]["schema_major"] == 2
+        assert call["json_body"]["filters"] == {
+            "trade_date": {"eq": "20260715"}
+        }
+        assert call["json_body"]["as_of"] == DECISION_AS_OF
     assert all(
         forbidden not in str(transport.calls).lower()
-        for forbidden in ("sqlite", "/tushare", "shared_signals_api")
+        for forbidden in (
+            "sqlite",
+            "/tushare",
+            "/source_status",
+            "shared_signals_api",
+            ":8082",
+        )
     )
 
     events = SampleJournal(journal_path).read_events()
@@ -1460,21 +1554,242 @@ def test_learning_readback_is_bound_to_run_not_bare_order_id(
     )
 
 
-def test_evidence_port_rejects_an_unconsumed_cursor_instead_of_using_partial_data(
+def test_evidence_port_consumes_all_pages_before_persisting_complete_snapshot(
     tmp_path: Path,
 ) -> None:
-    transport = _Transport(_transport_responses(next_cursor="next-page"))
+    transport = _Transport(
+        [
+            _catalog_response(),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-paged",
+                rows=[
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260715",
+                        "close": 10.0,
+                    }
+                ],
+                next_cursor="price-page-2",
+            ),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-paged",
+                rows=[
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260715",
+                        "close": 9.0,
+                    }
+                ],
+            ),
+            _query_response(
+                CONTEXT_DATASET,
+                receipt_id="context-receipt-1",
+                rows=[
+                    {
+                        "sector_id": "full-market",
+                        "trade_date": "20260715",
+                        "breadth": 0.55,
+                    }
+                ],
+                state="degraded",
+                degraded=True,
+            ),
+        ]
+    )
+    snapshot_store = FileResearchSnapshotStore(tmp_path / "research-snapshots")
+    ports = _ports(
+        transport=transport,
+        journal_path=tmp_path / "review" / "sample_journal.jsonl",
+        snapshot_store=snapshot_store,
+    )
+
+    bundle = _paper_loop(
+        ports=ports,
+        store=FileRunBundleStore(tmp_path / "run-bundles"),
+    ).run_until(_context(), through_stage=RunStage.EVIDENCE_READY)
+
+    evidence = bundle.receipt_for(RunStage.EVIDENCE_READY).payload
+    price = evidence["datasets"][0]
+    assert price["dataset_id"] == PRICE_DATASET
+    assert price["row_count"] == 2
+    assert price["page_count"] == 2
+    assert price["observation_mode"] == "current_observation"
+    assert price["historical_pit_eligible"] is False
+    assert len(price["identity_sha256"]) == 64
+    assert len(price["pagination_trace_sha256"]) == 64
+    assert len(price["pagination_semantic_sha256"]) == 64
+    recovered = snapshot_store.load_bound_decision(
+        profile_id="mainboard-paper-mvp-input-v1",
+        decision_as_of=DECISION_AS_OF,
+        catalog_version=CATALOG,
+    )
+    assert recovered is not None
+    assert recovered.datasets[0].decoded_rows() == [
+        {"close": 10.0, "trade_date": "20260715", "ts_code": "000001.SZ"},
+        {"close": 9.0, "trade_date": "20260715", "ts_code": "600000.SH"},
+    ]
+    assert "price-page-2" not in json.dumps(evidence, sort_keys=True)
+    assert not (tmp_path / "review" / "sample_journal.jsonl").exists()
+
+
+def test_evidence_port_fails_closed_on_cursor_cycle_before_journal_write(
+    tmp_path: Path,
+) -> None:
+    transport = _Transport(
+        [
+            _catalog_response(),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-cycle",
+                rows=[
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260715",
+                        "close": 10.0,
+                    }
+                ],
+                next_cursor="cursor-a",
+            ),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-cycle",
+                rows=[
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260715",
+                        "close": 9.0,
+                    }
+                ],
+                next_cursor="cursor-b",
+            ),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-cycle",
+                rows=[
+                    {
+                        "ts_code": "600001.SH",
+                        "trade_date": "20260715",
+                        "close": 8.0,
+                    }
+                ],
+                next_cursor="cursor-a",
+            ),
+        ]
+    )
     ports = _ports(
         transport=transport,
         journal_path=tmp_path / "review" / "sample_journal.jsonl",
         snapshot_store=FileResearchSnapshotStore(tmp_path / "research-snapshots"),
     )
 
-    with pytest.raises(StagePortContractError, match="pagination_incomplete"):
+    with pytest.raises(StagePortContractError, match="pagination_cursor_cycle"):
         _paper_loop(
             ports=ports,
             store=FileRunBundleStore(tmp_path / "run-bundles"),
-        ).run(_context())
+        ).run_until(_context(), through_stage=RunStage.EVIDENCE_READY)
+
+    assert not (tmp_path / "review" / "sample_journal.jsonl").exists()
+
+
+def test_evidence_port_fails_closed_on_page_budget_before_journal_write(
+    tmp_path: Path,
+) -> None:
+    transport = _Transport(
+        [
+            _catalog_response(),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-page-budget",
+                rows=[
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260715",
+                        "close": 10.0,
+                    }
+                ],
+                next_cursor="cursor-a",
+            ),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-page-budget",
+                rows=[
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260715",
+                        "close": 9.0,
+                    }
+                ],
+                next_cursor="cursor-b",
+            ),
+        ]
+    )
+    ports = _ports(
+        transport=transport,
+        journal_path=tmp_path / "review" / "sample_journal.jsonl",
+        snapshot_store=FileResearchSnapshotStore(tmp_path / "research-snapshots"),
+        profile=_profile(price_max_pages=2),
+    )
+
+    with pytest.raises(
+        StagePortContractError,
+        match="pagination_page_budget_exceeded",
+    ):
+        _paper_loop(
+            ports=ports,
+            store=FileRunBundleStore(tmp_path / "run-bundles"),
+        ).run_until(_context(), through_stage=RunStage.EVIDENCE_READY)
+
+    assert not (tmp_path / "review" / "sample_journal.jsonl").exists()
+
+
+def test_evidence_port_fails_closed_on_row_budget_before_journal_write(
+    tmp_path: Path,
+) -> None:
+    transport = _Transport(
+        [
+            _catalog_response(),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-row-budget",
+                rows=[
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260715",
+                        "close": 10.0,
+                    }
+                ],
+                next_cursor="cursor-a",
+            ),
+            _query_response(
+                PRICE_DATASET,
+                receipt_id="price-receipt-row-budget",
+                rows=[
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260715",
+                        "close": 9.0,
+                    }
+                ],
+            ),
+        ]
+    )
+    ports = _ports(
+        transport=transport,
+        journal_path=tmp_path / "review" / "sample_journal.jsonl",
+        snapshot_store=FileResearchSnapshotStore(tmp_path / "research-snapshots"),
+        profile=_profile(price_max_rows=1),
+    )
+
+    with pytest.raises(
+        StagePortContractError,
+        match="pagination_row_budget_exceeded",
+    ):
+        _paper_loop(
+            ports=ports,
+            store=FileRunBundleStore(tmp_path / "run-bundles"),
+        ).run_until(_context(), through_stage=RunStage.EVIDENCE_READY)
 
     assert not (tmp_path / "review" / "sample_journal.jsonl").exists()
 

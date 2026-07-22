@@ -25,7 +25,8 @@
 
 ## 当前发布证据
 
-- 2026-07-22 TradingDatas Bearer 消费合同最新字节：认证/契约聚焦集合 `263 passed`，`full_acceptance --profile quick` 为 `305 passed`，全仓后端 `3360 passed`；本候选 9 个 Python 变更文件的 Ruff format/check、扩展 `compileall`、shell 语法、治理矩阵加载和 `git diff --check` 均通过。仓库既有全量 Ruff 基线仍有 51 项非本候选问题，未在本次跨边界修正。以上仅是离线 fixture/mock 与仓库合同证据，不是 token 已发放、18085 已完成正向认证 parity 或生产已激活。
+- 2026-07-22 TradingDatas Bearer 消费合同已完成离线 fixture/mock 与仓库合同验收；此前记录的聚焦、quick 与全仓数字只对应当时冻结字节，不替代后续候选 fresh 测试。它不证明 TA token 已发放、formal endpoint 已由 TA 读取或生产已激活。
+- 仓库 consumer 合同已把 provider-native rows 与 envelope source proof 对齐：rows 不再被要求携带伪造的 `available_time/revision_id/receipt_id`；dataset-specific identity/domain-event 映射、`current_observation`、`historical_pit_eligible=false`、受 `max_pages/max_rows` 限制的 opaque-cursor 遍历、跨页 metadata/identity/顺序守恒和同一 observation 双跑均由仓库测试门禁覆盖。本次合同验收没有联网、读取 token、部署或触碰 TradingDatas；主线与远端状态仍以本轮发布后的 fresh Git readback 为准。
 - 最近已归档主线证据：review #15 候选全仓后端 `3296 passed`，架构/退役聚焦集合 `50 passed`；Ruff format/check 和 `git diff --check` 通过。更早 Crypto 原子候选的 Crypto 永久 lane 定向证据为 `144 passed`。任何后续候选必须在最新字节上重新运行测试与独立 review；这些旧数字不替代当前候选验收。
 - 独立审计：Crypto 原子候选最终为 `P0=0 / P1=0`；review #15 的架构文档与旧执行退役复核也为 `P0=0 / P1=0`。保留的 P2 是 package-private writer 只防合作式调用、未来多标的需要账户级 PIT mark 完整性，以及祖先目录 symlink 加固，不影响当前 fixture-only 发布门禁。
 - GitHub：reviews #12/#13/#14/#15 的 `front`、`test` CI 均成功；review #13 的 merge commit `b38838a02397cc080160e6cf3dae7c47757d9c85` 是服务器已验证功能字节。review #14 仅修改状态文档；review #15 包含 fail-closed 功能加固，只完成本地与 GitHub CI，不提升服务器旁路或现役状态。当前主线精确 SHA 以 fresh Git readback 为准。
@@ -40,7 +41,7 @@
 
 ## 当前架构边界
 
-1. **TradingDatas consumer**：只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query`；八字段 QueryRequest、完整 envelope、逐 dataset evidence gate 与 nullable source proof 均 fail closed。Bearer 只由最终 transport 从 `/run/secrets/tradingagent` 下精确 `0600`、可信owner、regular/single-link/no-symlink的TA专用token file注入，并绑定到 canonical authority 上精确的 endpoint、HTTP method 与固定 JSON header；远端只允许 HTTPS，明文 HTTP 只允许 loopback IP 字面量。明文token环境变量、调用方header覆盖、跨 authority/path/method 发送、401/403 后续请求及认证失败fallback均被阻断。禁止直读数据库、`/tushare`、`/source_status`、provider 专用 route、localhost/file fallback。
+1. **TradingDatas consumer**：只消费显式配置的 `GET /v1/catalog` 与 `POST /v1/query`。八字段 QueryRequest、完整 envelope、逐 dataset filters/as-of policy、nullable source proof、provider-native rows、identity/event mapping 和 page/row budgets 均 fail closed。receipt/data-through/observed-at/lineage 只从 envelope 绑定；domain event-time 不冒充可知时间，缺 first-seen/revision authority 时固定 current-observation、禁止历史训练资格。完整 probe 透明遍历 cursor 到 terminal page并双跑；循环、metadata drift、重复 identity、预算超限或顺序漂移均拒绝。Bearer 只由最终 transport 从受限 TA token file 注入；认证失败及 dataset 异常无旧链、文件或 provider fallback。
 2. **A股三层 Universe**：只有沪深主板普通股进入个股分析、候选、预测、模拟仓位与订单；创业板、科创板和北交所个股不分析、不交易，其指数及全市场行业汇总仅作 `context_only` 市场环境证据。
 3. **小资金组合**：A股和 CNFutures 各有独立 50,000 CNY simulated authority；A股保留100股买入单位、卖出零股例外、T+1、费用/滑点、最低经济订单、no-trade band、现金和六维投资论点风险门。Crypto 只有已合并但仍隔离的 10,000 USDT `local_fixture_opening_baseline_only`，没有 current/runtime/live capital authority。以上参数是风险上界，不是收益承诺。
 4. **市场隔离**：A股、CNFutures、Crypto 使用独立 market kernel、账户、原生币种、订单/成交状态与未来 adapter family；只共享机械基础设施，不换汇、不跨市场汇总货币金额/收益/回撤、不净额或复用 broker payload。PM/US/HK 的仓库级 runtime、包装器和专用测试已从主线物理退役；服务器安装态若仍有旧引用，只能进入清理证据链，不能成为兼容回退。
@@ -58,9 +59,9 @@
 
 ## 明确未完成
 
-- TradingDatas owner 已提供不含 secret 的 fresh shadow handoff：其声明 immutable release/current 为 `b395b9017643c61a7f076f02985e9c457cc8d069`，临时 shadow 为 `http://127.0.0.1:18085`，`catalog_version=v1-17fd5855f5a68229`、`schema_major=2`，五个 active dataset 仍为 `cn.market.trade_calendar`、`cn.equity.security_master`、`cn.equity.daily`、`cn.dataset.index_classify`、`cn.dataset.sw_daily`。上游 readback 报告五组 metadata 均 ready/success、非 degraded、fresh/valid 且 lineage/receipt 完整；该 handoff 尚未由 TA 使用自己的 token 和客户端独立复现，不能当作 TA live parity 证据。
-- 上游明确记录查询预算边界：`cn.equity.daily` 首轮 parity 必须使用 `filters={"trade_date":{"eq":"20260722"}}`，同日 5526 行/12 页可完整读取；无 filter 的跨分区全历史查询第二页会因 SQLite progress budget 返回 503。TA 不得依赖无界查询、重试或旧链 fallback。
-- 正式接入仍被阻断：正式服务尚未切换，旧 SharedSignals 继续占用 `127.0.0.1:18082`，shadow `18085` 只是临时只读面；独立 TA-scoped token 尚未在 `/run/secrets/tradingagent` 生成、注册和安装。发布侧只读 handoff 声明生产 `tradingagent-front-api.service` 以 `marketgraph:marketgraph` 运行，计划叶文件固定为 `/run/secrets/tradingagent/tradingdatas-read.token`，由发布侧以 `marketgraph` owner、精确 `0600`、无 symlink 路径和独立 TA scope token 原子安装；当前该目录不存在，本候选没有读取、生成、配置或安装真实token，也未对 `18085` 完成正向认证 parity。该服务身份与路径尚未由本 TA 候选独立读取生产环境复核，不得把 handoff 声明、shadow、旧 `18082`/`8082`、SQLite、provider 专用 route 或旧端点当作 fallback。
+- TradingDatas owner 的上游 handoff 已声明 formal loopback `127.0.0.1:18082` 提供冻结的 provider-native row shape、schema major 2 与五个 active dataset；这只是上游声明。本次仓库合同验收未联网、未读取 TA token、未独立重放 catalog/query 或 same-observation parity，因此不能把 handoff 写成 TA live acceptance、生产 readback 或部署证据。
+- 上游 handoff 同时声明日线首轮 parity 必须使用精确 `trade_date` filter，受控日期分区可完整分页，而无界跨分区查询会超过上游进度预算。TA 必须通过显式 filters、`max_pages/max_rows` 与 terminal cursor 证明完整读取，不允许无界重试、第一页截断或其它数据路径。
+- 正式 TA 接入仍缺独立 credential/服务身份 readback 与 authenticated consumer parity。本次变更没有生成、配置或安装 token，也没有修改 service、cron、生产文件或入口；任何后续联调仍须使用发布侧独立 TA-scoped token 和仓外 manifest，且全程 simulation-only、无 fallback。
 - 尚未安装 current-v1 live paper scheduler，也未积累真实 TradingDatas 驱动的连续 20 个交易日自动模拟和 60–120 个交易日冻结 OOS 样本。
 - 现役服务器仍运行旧源码与旧调度；本轮 sidecar 没有切换 service、cron、页面或公网路由。
 - 没有 accepted DeepSeek evidence、真实 broker/account、公开 ingress 或真实交易授权；`REAL_TRADING_ENABLED=false`。
@@ -68,6 +69,6 @@
 ## 下一阶段入口
 
 1. 三个市场任务此后只在各自长期 lane 写域独立推进；共享合同/治理修改先由单一 shared-kernel owner 合入 `main`，再在干净检查点同步三条 lane，禁止市场线程直接双写 shared/root。
-2. 认证候选合并后，由发布侧在 `/run/secrets/tradingagent` 独立安装 TA-scoped token，再按 fresh shadow handoff 生成仓外显式 manifest，对 `18085` 运行只读 integration probe；daily 固定同日 `trade_date` filter，任何 401/403、503、dataset degraded/stale/failed 或 cursor 异常均 fail closed，禁止转向 18082/8082。
+2. 下一独立阶段由发布侧安装 TA-scoped token、生成仓外显式 v2 manifest，并对 handoff 的 formal endpoint 运行只读 integration probe；daily 固定同日 `trade_date` filter，任何认证、dataset、source-proof、cursor、metadata、identity 或预算异常均 fail closed且不切换数据路径。本轮仓库合同通过不替代该联调证据。
 3. 完成真实数据 parity 与旧消费者清零后，再独立发布 current-v1 自动模拟 scheduler，并验证 crash/restart、对账、幂等和持续运行。
 4. 连续 20 个交易日工程闭环后评估出口，再积累 60–120 个交易日 OOS/多状态样本。月收益 20% 只作为收益分布上尾指标，不是强制交易、满仓或 PASS 条件。

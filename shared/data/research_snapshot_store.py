@@ -23,9 +23,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 from .research_snapshot import (
+    DatasetRequirement,
     ResearchDataContractError,
+    ResearchDataProfile,
     ResearchDataSnapshot,
     ResearchDatasetSnapshot,
 )
@@ -45,9 +48,17 @@ _ARTIFACT_KEYS = frozenset(
     }
 )
 _IDENTITY_KEYS = frozenset(
-    {"profile_id", "catalog_version", "decision_as_of", "snapshot_sha256"}
+    {
+        "profile_id",
+        "profile_contract_sha256",
+        "catalog_version",
+        "decision_as_of",
+        "snapshot_sha256",
+    }
 )
-_SNAPSHOT_STATE_KEYS = frozenset({"execution_eligible", "blocking_reasons"})
+_SNAPSHOT_STATE_KEYS = frozenset(
+    {"execution_eligible", "historical_pit_eligible", "blocking_reasons"}
+)
 _DATASET_KEYS = frozenset(
     {
         "dataset_id",
@@ -62,12 +73,33 @@ _DATASET_KEYS = frozenset(
         "weight",
         "reasons",
         "source_proof_complete",
+        "lineage_sha256",
+        "source_proof_sha256",
         "data_through",
         "observed_at",
         "next_cursor",
         "row_count",
-        "row_pit_sha256",
-        "max_row_available_time",
+        "observation_mode",
+        "historical_pit_eligible",
+        "query_as_of_mode",
+        "minimum_row_count",
+        "max_pages",
+        "max_rows",
+        "identity_fields",
+        "row_event_time_field",
+        "row_event_time_format",
+        "row_event_timezone",
+        "row_event_time_semantic",
+        "identity_sha256",
+        "row_observation_sha256",
+        "max_row_observed_at",
+        "max_row_event_value",
+        "page_count",
+        "pagination_trace_sha256",
+        "pagination_semantic_sha256",
+        "page_request_set_sha256",
+        "page_response_set_sha256",
+        "cursor_chain_sha256",
         "response_sha256",
         "rows",
         "rows_sha256",
@@ -329,12 +361,33 @@ def _dataset_payload(dataset: ResearchDatasetSnapshot) -> dict[str, Any]:
         "weight": dataset.weight,
         "reasons": list(dataset.reasons),
         "source_proof_complete": dataset.source_proof_complete,
+        "lineage_sha256": dataset.lineage_sha256,
+        "source_proof_sha256": dataset.source_proof_sha256,
         "data_through": dataset.data_through,
         "observed_at": dataset.observed_at,
         "next_cursor": dataset.next_cursor,
         "row_count": dataset.row_count,
-        "row_pit_sha256": dataset.row_pit_sha256,
-        "max_row_available_time": dataset.max_row_available_time,
+        "observation_mode": dataset.observation_mode,
+        "historical_pit_eligible": dataset.historical_pit_eligible,
+        "query_as_of_mode": dataset.query_as_of_mode,
+        "minimum_row_count": dataset.minimum_row_count,
+        "max_pages": dataset.max_pages,
+        "max_rows": dataset.max_rows,
+        "identity_fields": list(dataset.identity_fields),
+        "row_event_time_field": dataset.row_event_time_field,
+        "row_event_time_format": dataset.row_event_time_format,
+        "row_event_timezone": dataset.row_event_timezone,
+        "row_event_time_semantic": dataset.row_event_time_semantic,
+        "identity_sha256": dataset.identity_sha256,
+        "row_observation_sha256": dataset.row_observation_sha256,
+        "max_row_observed_at": dataset.max_row_observed_at,
+        "max_row_event_value": dataset.max_row_event_value,
+        "page_count": dataset.page_count,
+        "pagination_trace_sha256": dataset.pagination_trace_sha256,
+        "pagination_semantic_sha256": dataset.pagination_semantic_sha256,
+        "page_request_set_sha256": dataset.page_request_set_sha256,
+        "page_response_set_sha256": dataset.page_response_set_sha256,
+        "cursor_chain_sha256": dataset.cursor_chain_sha256,
         "response_sha256": dataset.response_sha256,
         "rows": json.loads(rows_json),
         "rows_sha256": _sha256_text(rows_json),
@@ -346,6 +399,7 @@ def _dataset_payload(dataset: ResearchDatasetSnapshot) -> dict[str, Any]:
 def _expected_snapshot_hash(
     *,
     profile_id: str,
+    profile_contract_sha256: str,
     catalog_version: str,
     decision_as_of: str,
     datasets: list[ResearchDatasetSnapshot],
@@ -354,6 +408,7 @@ def _expected_snapshot_hash(
     return _sha256_value(
         {
             "profile_id": profile_id,
+            "profile_contract_sha256": profile_contract_sha256,
             "catalog_version": catalog_version,
             "decision_as_of": decision_as_of,
             "datasets": [
@@ -376,16 +431,18 @@ def _artifact_payload(snapshot: ResearchDataSnapshot) -> dict[str, Any]:
         )
     dataset_payloads = [_dataset_payload(item) for item in snapshot.datasets]
     unsigned: dict[str, Any] = {
-        "schema_version": 1,
-        "artifact_type": "research_data_snapshot.v1",
+        "schema_version": 2,
+        "artifact_type": "research_data_snapshot.v2",
         "identity": {
             "profile_id": snapshot.profile_id,
+            "profile_contract_sha256": snapshot.profile_contract_sha256,
             "catalog_version": snapshot.catalog_version,
             "decision_as_of": snapshot.decision_as_of,
             "snapshot_sha256": snapshot.snapshot_sha256,
         },
         "snapshot_state": {
             "execution_eligible": snapshot.execution_eligible,
+            "historical_pit_eligible": snapshot.historical_pit_eligible,
             "blocking_reasons": list(snapshot.blocking_reasons),
         },
         "datasets": dataset_payloads,
@@ -462,6 +519,44 @@ def _decode_dataset(
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_source_proof_semantics_invalid"
         )
+    raw_lineage_sha256 = raw.get("lineage_sha256")
+    lineage_sha256 = (
+        None
+        if raw_lineage_sha256 is None
+        else _sha256(raw_lineage_sha256, field_name="lineage_sha256")
+    )
+    raw_source_proof_sha256 = raw.get("source_proof_sha256")
+    source_proof_sha256 = (
+        None
+        if raw_source_proof_sha256 is None
+        else _sha256(
+            raw_source_proof_sha256,
+            field_name="source_proof_sha256",
+        )
+    )
+    if source_proof_complete:
+        if lineage_sha256 is None or source_proof_sha256 is None:
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_source_proof_semantics_invalid"
+            )
+        expected_source_proof = _sha256_value(
+            {
+                "dataset_id": dataset_id,
+                "catalog_version": catalog_version,
+                "receipt_id": receipt_id,
+                "lineage_sha256": lineage_sha256,
+                "data_through": data_through,
+                "observed_at": observed_at,
+            }
+        )
+        if source_proof_sha256 != expected_source_proof:
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_source_proof_hash_mismatch"
+            )
+    elif lineage_sha256 is not None or source_proof_sha256 is not None:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_source_proof_semantics_invalid"
+        )
     if not source_proof_complete and raw.get("evidence_action") != "reject":
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_source_proof_semantics_invalid"
@@ -478,6 +573,13 @@ def _decode_dataset(
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_observed_after_decision"
         )
+    if data_through is not None and observed_at is not None and (
+        _aware_instant(data_through, field_name="data_through")
+        > _aware_instant(observed_at, field_name="observed_at")
+    ):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_data_through_after_observation"
+        )
     if raw.get("next_cursor") is not None:
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_pagination_incomplete"
@@ -487,36 +589,67 @@ def _decode_dataset(
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_row_count_invalid"
         )
-    row_pit_sha256 = _sha256(raw.get("row_pit_sha256"), field_name="row_pit_sha256")
-    raw_max_row_available_time = raw.get("max_row_available_time")
-    max_row_available_time: str | None
-    if raw_max_row_available_time is None:
-        max_row_available_time = None
-        if row_count != 0:
-            raise ResearchSnapshotStoreCorruption(
-                "research_snapshot_store_max_row_available_time_missing"
-            )
-    else:
-        max_row_available_time = _normalized_instant(
-            raw_max_row_available_time,
-            field_name="max_row_available_time",
+    observation_mode = _nonempty_string(
+        raw.get("observation_mode"),
+        field_name="observation_mode",
+    )
+    historical_pit_eligible = raw.get("historical_pit_eligible")
+    if observation_mode != "current_observation" or (
+        type(historical_pit_eligible) is not bool or historical_pit_eligible
+    ):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_observation_semantics_invalid"
         )
-        if raw_max_row_available_time != max_row_available_time or row_count == 0:
-            raise ResearchSnapshotStoreCorruption(
-                "research_snapshot_store_max_row_available_time_invalid"
-            )
-        max_available = _aware_instant(
-            max_row_available_time,
-            field_name="max_row_available_time",
+    raw_identity_fields = raw.get("identity_fields")
+    if not isinstance(raw_identity_fields, list):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_identity_fields_invalid"
         )
-        if (
-            observed_at is None
-            or max_available > decision_instant
-            or (max_available > _aware_instant(observed_at, field_name="observed_at"))
-        ):
-            raise ResearchSnapshotStoreCorruption(
-                "research_snapshot_store_max_row_available_time_after_boundary"
-            )
+    try:
+        requirement = DatasetRequirement(
+            dataset_id=dataset_id,
+            role=role,
+            identity_fields=tuple(raw_identity_fields),
+            observation_mode=observation_mode,
+            query_as_of_mode=raw.get("query_as_of_mode"),
+            row_event_time_field=raw.get("row_event_time_field"),
+            row_event_time_format=raw.get("row_event_time_format"),
+            row_event_timezone=raw.get("row_event_timezone"),
+            row_event_time_semantic=raw.get("row_event_time_semantic"),
+            minimum_row_count=raw.get("minimum_row_count"),
+            max_pages=raw.get("max_pages"),
+            max_rows=raw.get("max_rows"),
+        )
+    except ResearchDataContractError as exc:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_observation_semantics_invalid"
+        ) from exc
+    identity_sha256 = _sha256(
+        raw.get("identity_sha256"),
+        field_name="identity_sha256",
+    )
+    row_observation_sha256 = _sha256(
+        raw.get("row_observation_sha256"),
+        field_name="row_observation_sha256",
+    )
+    raw_max_row_observed_at = raw.get("max_row_observed_at")
+    max_row_observed_at = (
+        None
+        if raw_max_row_observed_at is None
+        else _normalized_instant(
+            raw_max_row_observed_at,
+            field_name="max_row_observed_at",
+        )
+    )
+    raw_max_row_event_value = raw.get("max_row_event_value")
+    max_row_event_value = (
+        None
+        if raw_max_row_event_value is None
+        else _nonempty_string(
+            raw_max_row_event_value,
+            field_name="max_row_event_value",
+        )
+    )
     response_sha256 = _sha256(raw.get("response_sha256"), field_name="response_sha256")
     rows = raw.get("rows")
     if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
@@ -530,11 +663,164 @@ def _decode_dataset(
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_rows_hash_mismatch"
         )
+    row_identities: list[dict[str, Any]] = []
+    row_observations: list[dict[str, Any]] = []
+    seen_identities: set[str] = set()
+    computed_max_event: str | None = None
+    for index, row in enumerate(rows):
+        identity: dict[str, Any] = {}
+        for field_name in requirement.identity_fields:
+            if field_name not in row or row[field_name] is None:
+                raise ResearchSnapshotStoreCorruption(
+                    "research_snapshot_store_row_identity_missing"
+                )
+            identity[field_name] = row[field_name]
+        identity_json = _canonical_json(identity)
+        if identity_json in seen_identities:
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_duplicate_row_identity"
+            )
+        seen_identities.add(identity_json)
+        row_identities.append(identity)
+        event_value: str | None = None
+        if requirement.row_event_time_field is not None:
+            field_name = requirement.row_event_time_field
+            if field_name not in row:
+                raise ResearchSnapshotStoreCorruption(
+                    "research_snapshot_store_row_event_missing"
+                )
+            if requirement.row_event_time_format == "iso8601":
+                event_instant = _aware_instant(
+                    row[field_name],
+                    field_name=f"rows[{index}].{field_name}",
+                )
+                if (
+                    requirement.row_event_time_semantic == "session"
+                    and (
+                        observed_at is None
+                        or event_instant
+                        > min(
+                            decision_instant,
+                            _aware_instant(observed_at, field_name="observed_at"),
+                        )
+                    )
+                ):
+                    raise ResearchSnapshotStoreCorruption(
+                        "research_snapshot_store_row_event_after_boundary"
+                    )
+                event_value = event_instant.isoformat()
+            else:
+                event_text = _nonempty_string(
+                    row[field_name],
+                    field_name=f"rows[{index}].{field_name}",
+                )
+                if not re.fullmatch(r"[0-9]{8}", event_text):
+                    raise ResearchSnapshotStoreCorruption(
+                        "research_snapshot_store_row_event_invalid"
+                    )
+                try:
+                    event_date = datetime.strptime(event_text, "%Y%m%d").date()
+                except ValueError as exc:
+                    raise ResearchSnapshotStoreCorruption(
+                        "research_snapshot_store_row_event_invalid"
+                    ) from exc
+                assert requirement.row_event_timezone is not None
+                zone = ZoneInfo(requirement.row_event_timezone)
+                if (
+                    requirement.row_event_time_semantic == "session"
+                    and (
+                        observed_at is None
+                        or event_date
+                        > min(
+                            decision_instant.astimezone(zone).date(),
+                            _aware_instant(
+                                observed_at,
+                                field_name="observed_at",
+                            ).astimezone(zone).date(),
+                        )
+                    )
+                ):
+                    raise ResearchSnapshotStoreCorruption(
+                        "research_snapshot_store_row_event_after_boundary"
+                    )
+                event_value = event_date.isoformat()
+        if event_value is not None and (
+            computed_max_event is None or event_value > computed_max_event
+        ):
+            computed_max_event = event_value
+        row_observations.append(
+            {
+                "identity": identity,
+                "event_value": event_value,
+                "observation_mode": observation_mode,
+                "observed_at": observed_at,
+                "envelope_receipt_id": receipt_id,
+                "row_sha256": _sha256_value(row),
+            }
+        )
+    if identity_sha256 != _sha256_value(row_identities):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_identity_hash_mismatch"
+        )
+    if row_observation_sha256 != _sha256_value(row_observations):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_observation_hash_mismatch"
+        )
+    if computed_max_event != max_row_event_value:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_max_row_event_mismatch"
+        )
+    if row_count > 0:
+        if observed_at is None or max_row_observed_at != observed_at:
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_max_row_observed_at_invalid"
+            )
+    elif max_row_observed_at is not None or max_row_event_value is not None:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_empty_observation_invalid"
+        )
+    page_count = raw.get("page_count")
+    if (
+        isinstance(page_count, bool)
+        or not isinstance(page_count, int)
+        or page_count <= 0
+        or page_count > requirement.max_pages
+        or row_count > requirement.max_rows
+    ):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_page_count_invalid"
+        )
+    if source_proof_complete and row_count < requirement.minimum_row_count:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_row_count_below_minimum"
+        )
+    pagination_trace_sha256 = _sha256(
+        raw.get("pagination_trace_sha256"),
+        field_name="pagination_trace_sha256",
+    )
+    pagination_semantic_sha256 = _sha256(
+        raw.get("pagination_semantic_sha256"),
+        field_name="pagination_semantic_sha256",
+    )
+    page_request_set_sha256 = _sha256(
+        raw.get("page_request_set_sha256"),
+        field_name="page_request_set_sha256",
+    )
+    page_response_set_sha256 = _sha256(
+        raw.get("page_response_set_sha256"),
+        field_name="page_response_set_sha256",
+    )
+    cursor_chain_sha256 = _sha256(
+        raw.get("cursor_chain_sha256"),
+        field_name="cursor_chain_sha256",
+    )
     if not source_proof_complete and (
         row_count != 0
         or rows
-        or max_row_available_time is not None
-        or row_pit_sha256 != _sha256_value([])
+        or max_row_observed_at is not None
+        or max_row_event_value is not None
+        or identity_sha256 != _sha256_value([])
+        or row_observation_sha256 != _sha256_value([])
     ):
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_source_proof_semantics_invalid"
@@ -558,12 +844,33 @@ def _decode_dataset(
         weight=float(raw["weight"]),
         reasons=tuple(normalized_reasons),
         source_proof_complete=source_proof_complete,
+        lineage_sha256=lineage_sha256,
+        source_proof_sha256=source_proof_sha256,
         data_through=data_through,
         observed_at=observed_at,
         next_cursor=None,
         row_count=row_count,
-        row_pit_sha256=row_pit_sha256,
-        max_row_available_time=max_row_available_time,
+        observation_mode=observation_mode,
+        historical_pit_eligible=False,
+        query_as_of_mode=requirement.query_as_of_mode,
+        minimum_row_count=requirement.minimum_row_count,
+        max_pages=requirement.max_pages,
+        max_rows=requirement.max_rows,
+        identity_fields=requirement.identity_fields,
+        row_event_time_field=requirement.row_event_time_field,
+        row_event_time_format=requirement.row_event_time_format,
+        row_event_timezone=requirement.row_event_timezone,
+        row_event_time_semantic=requirement.row_event_time_semantic,
+        identity_sha256=identity_sha256,
+        row_observation_sha256=row_observation_sha256,
+        max_row_observed_at=max_row_observed_at,
+        max_row_event_value=max_row_event_value,
+        page_count=page_count,
+        pagination_trace_sha256=pagination_trace_sha256,
+        pagination_semantic_sha256=pagination_semantic_sha256,
+        page_request_set_sha256=page_request_set_sha256,
+        page_response_set_sha256=page_response_set_sha256,
+        cursor_chain_sha256=cursor_chain_sha256,
         response_sha256=response_sha256,
         _rows_json=rows_json,
     )
@@ -574,8 +881,8 @@ def _decode_artifact(raw: object) -> tuple[ResearchDataSnapshot, str]:
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_artifact_fields_invalid"
         )
-    if raw.get("schema_version") != 1 or raw.get("artifact_type") != (
-        "research_data_snapshot.v1"
+    if raw.get("schema_version") != 2 or raw.get("artifact_type") != (
+        "research_data_snapshot.v2"
     ):
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_artifact_schema_invalid"
@@ -592,6 +899,10 @@ def _decode_artifact(raw: object) -> tuple[ResearchDataSnapshot, str]:
             "research_snapshot_store_identity_fields_invalid"
         )
     profile_id = _nonempty_string(identity.get("profile_id"), field_name="profile_id")
+    profile_contract_sha256 = _sha256(
+        identity.get("profile_contract_sha256"),
+        field_name="profile_contract_sha256",
+    )
     catalog_version = _nonempty_string(
         identity.get("catalog_version"), field_name="catalog_version"
     )
@@ -613,6 +924,13 @@ def _decode_artifact(raw: object) -> tuple[ResearchDataSnapshot, str]:
     if type(state.get("execution_eligible")) is not bool:
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_execution_eligible_invalid"
+        )
+    if (
+        type(state.get("historical_pit_eligible")) is not bool
+        or state.get("historical_pit_eligible") is not False
+    ):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_historical_pit_invalid"
         )
     raw_blocking = state.get("blocking_reasons")
     if not isinstance(raw_blocking, list):
@@ -645,6 +963,36 @@ def _decode_artifact(raw: object) -> tuple[ResearchDataSnapshot, str]:
         raise ResearchSnapshotStoreCorruption(
             "research_snapshot_store_required_dataset_missing"
         )
+    try:
+        reconstructed_profile = ResearchDataProfile(
+            profile_id=profile_id,
+            catalog_version=catalog_version,
+            requirements=tuple(
+                DatasetRequirement(
+                    dataset_id=item.dataset_id,
+                    role=item.role,
+                    identity_fields=item.identity_fields,
+                    observation_mode=item.observation_mode,
+                    query_as_of_mode=item.query_as_of_mode,
+                    row_event_time_field=item.row_event_time_field,
+                    row_event_time_format=item.row_event_time_format,
+                    row_event_timezone=item.row_event_timezone,
+                    row_event_time_semantic=item.row_event_time_semantic,
+                    minimum_row_count=item.minimum_row_count,
+                    max_pages=item.max_pages,
+                    max_rows=item.max_rows,
+                )
+                for item in datasets
+            ),
+        )
+    except ResearchDataContractError as exc:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_profile_contract_invalid"
+        ) from exc
+    if reconstructed_profile.contract_sha256 != profile_contract_sha256:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_profile_contract_mismatch"
+        )
     expected_blocking: list[str] = []
     for dataset in datasets:
         if dataset.role == "required_execution" and dataset.evidence_action != "accept":
@@ -668,6 +1016,7 @@ def _decode_artifact(raw: object) -> tuple[ResearchDataSnapshot, str]:
         )
     expected_snapshot_sha = _expected_snapshot_hash(
         profile_id=profile_id,
+        profile_contract_sha256=profile_contract_sha256,
         catalog_version=catalog_version,
         decision_as_of=decision_as_of,
         datasets=datasets,
@@ -679,10 +1028,12 @@ def _decode_artifact(raw: object) -> tuple[ResearchDataSnapshot, str]:
         )
     recovered = ResearchDataSnapshot(
         profile_id=profile_id,
+        profile_contract_sha256=profile_contract_sha256,
         catalog_version=catalog_version,
         decision_as_of=decision_as_of,
         datasets=tuple(datasets),
         execution_eligible=bool(state["execution_eligible"]),
+        historical_pit_eligible=False,
         blocking_reasons=tuple(blocking_reasons),
         snapshot_sha256=snapshot_sha256,
     )

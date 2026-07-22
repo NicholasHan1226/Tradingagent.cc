@@ -181,7 +181,16 @@ _DATASET_FIELDS = frozenset(
         "role",
         "fields",
         "filters",
-        "as_of",
+        "identity_fields",
+        "observation_mode",
+        "query_as_of_mode",
+        "row_event_time_field",
+        "row_event_time_format",
+        "row_event_timezone",
+        "row_event_time_semantic",
+        "minimum_row_count",
+        "max_pages",
+        "max_rows",
         "limit",
         "cursor",
         "evidence_policy",
@@ -549,7 +558,7 @@ def _load_fixture(path: Path) -> dict[str, Any]:
         field_name="fixture",
         exact_fields=_TOP_LEVEL_FIELDS,
     )
-    if fixture["schema_version"] != 1:
+    if fixture["schema_version"] != 2:
         raise FixtureCLIError("fixture_schema_version_invalid")
     if type(fixture["offline_fixture"]) is not bool or not fixture["offline_fixture"]:
         raise FixtureCLIError("offline_fixture_must_be_native_true")
@@ -910,6 +919,10 @@ def _parse_fixture(fixture: Mapping[str, Any]) -> _ParsedFixture:
         config_raw["network_enabled"],
         field_name="network_enabled",
     )
+    decision_as_of = _instant(
+        config_raw["decision_as_of"],
+        field_name="decision_as_of",
+    )
 
     requirements: list[DatasetRequirement] = []
     requests: dict[str, QueryRequest] = {}
@@ -929,6 +942,21 @@ def _parse_fixture(fixture: Mapping[str, Any]) -> _ParsedFixture:
             DatasetRequirement(
                 dataset_id=dataset_id,
                 role=dataset["role"],
+                identity_fields=tuple(
+                    _sequence(
+                        dataset["identity_fields"],
+                        field_name=f"{dataset_id}.identity_fields",
+                    )
+                ),
+                observation_mode=dataset["observation_mode"],
+                query_as_of_mode=dataset["query_as_of_mode"],
+                row_event_time_field=dataset["row_event_time_field"],
+                row_event_time_format=dataset["row_event_time_format"],
+                row_event_timezone=dataset["row_event_timezone"],
+                row_event_time_semantic=dataset["row_event_time_semantic"],
+                minimum_row_count=dataset["minimum_row_count"],
+                max_pages=dataset["max_pages"],
+                max_rows=dataset["max_rows"],
             )
         )
         fields = _sequence(dataset["fields"], field_name=f"{dataset_id}.fields")
@@ -937,7 +965,11 @@ def _parse_fixture(fixture: Mapping[str, Any]) -> _ParsedFixture:
             schema_major=dataset["schema_major"],
             fields=tuple(fields),
             filters=_object(dataset["filters"], field_name=f"{dataset_id}.filters"),
-            as_of=dataset["as_of"],
+            as_of=(
+                decision_as_of.isoformat()
+                if dataset["query_as_of_mode"] == "decision_as_of"
+                else None
+            ),
             limit=dataset["limit"],
             cursor=dataset["cursor"],
         )
@@ -963,10 +995,6 @@ def _parse_fixture(fixture: Mapping[str, Any]) -> _ParsedFixture:
         profile_id=config_raw["profile_id"],
         catalog_version=config_raw["tradingdatas_catalog_version"],
         requirements=tuple(requirements),
-    )
-    decision_as_of = _instant(
-        config_raw["decision_as_of"],
-        field_name="decision_as_of",
     )
     config = PaperRuntimeConfig(
         trade_date=config_raw["trade_date"],

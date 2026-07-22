@@ -1360,16 +1360,29 @@ class PaperRuntimeConfig:
                 raise PaperRuntimeConfigurationError("dataset_request_set_incomplete")
             if set(policies) != expected_datasets:
                 raise PaperRuntimeConfigurationError("evidence_policy_set_incomplete")
+            requirements = {
+                requirement.dataset_id: requirement
+                for requirement in self.dataset_profile.requirements
+            }
             for dataset_id in self.dataset_profile.dataset_ids:
                 request = requests[dataset_id]
                 policy = policies[dataset_id]
+                requirement = requirements[dataset_id]
                 if (
                     not isinstance(request, QueryRequest)
                     or request.dataset_id != dataset_id
-                    or _request_instant(request) != decision_as_of
                 ):
                     raise PaperRuntimeConfigurationError(
                         f"dataset_request_invalid:{dataset_id}"
+                    )
+                request_instant = _request_instant(request)
+                if requirement.query_as_of_mode == "decision_as_of":
+                    query_time_valid = request_instant == decision_as_of
+                else:
+                    query_time_valid = request.as_of is None
+                if not query_time_valid:
+                    raise PaperRuntimeConfigurationError(
+                        f"dataset_request_as_of_mode_invalid:{dataset_id}"
                     )
                 if (
                     not isinstance(policy, DatasetEvidencePolicy)

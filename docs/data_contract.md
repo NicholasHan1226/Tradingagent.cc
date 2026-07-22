@@ -27,19 +27,9 @@
 
 ### TradingDatas
 
-`SHAREDSIGNALS_API_URL` + `shared.data.reader.TradingagentDataReader` 是待退役的旧 SharedSignals
-源码/库接口，不是本地 V1 候选的 canonical client。A股旧 wrapper、调度和直接诊断入口已经在
-进入旧 reader 前 fail closed；adapter、screening、research、review/runtime-test 中仍可见的旧引用
-只属于 `COMPATIBILITY_TIMEBOXED` / `RETIREMENT_PENDING_VERIFICATION` 清单和法证回归，不能被
-current-v1 composition、风险或订单链调用。前端 market pulse 本地候选已经改为严格 V1
-catalog/query；这既不证明剩余旧源码已物理删除，也不证明 TradingDatas live runtime 已冻结。新链的边界是
-TradingAgent 不导入 TradingDatas 内部模块、不扫描兄弟仓目录、不打开其 SQLite、不现场调用
-数据商，也不在 V1 失败时回退旧链。TradingDatas fresh handoff 前只允许 fixture/mock-first；旧
-SharedSignals runtime、route 与 dual-registry 不再是新架构依赖。旧 reader 与 MarketGraph 兼容
-client 的默认 URL 固定为空；未显式注入 fixture/port 或仓外受控配置时必须保持关闭，不能自动
-发现 `127.0.0.1:8082`、`127.0.0.1:8080` 或任何文件/SQLite 后备入口。
+`SHAREDSIGNALS_API_URL` 与 `shared.data.reader.TradingagentDataReader` 是待退役的旧源码/库接口，不是 current-v1 canonical client。兼容代码符号、schema ID 和文件名中仍可保留 `SharedSignalsV1*`，但不表示依赖旧 runtime。current-v1 的唯一数据边界是 TradingDatas V1 HTTP consumer：TradingAgent 不导入 TradingDatas 内部模块、不扫描兄弟仓目录、不读取其存储、不现场调用 provider，也不在读取失败时回退旧链、文件或本地拼装。
 
-新查询接口的 canonical contract ID 是 `sharedsignals.query_result.v1`；这是产品重命名后继续保留的 immutable wire/schema ID，不代表旧 SharedSignals runtime 仍受支持。当前实现状态必须从 `shared/governance/system_state_matrix.yaml` 读取：TradingDatas upstream query仍是`TARGET_CONTRACT`；TA client已是`CURRENT_VERIFIED`，仅限`layer=repository_contract`、`production_verified=false`和fixture/contract allowed uses。两者都不能证明生产runtime已切换。V1读取失败、数据陈旧、lineage不完整或dataset未注册时一律fail closed；A股路径不得静默回退到Tushare、兄弟仓SQLite、`/tushare`、`/source_status`、provider专用route、旧HTTP shape或本地缓存拼装。
+wire contract ID `sharedsignals.query_result.v1` 是产品重命名后保留的 immutable compatibility ID。机器状态仍把 upstream 与 TA consumer 分层记录：上游是否正式可用必须由 TradingDatas handoff 与 TA 自己的 readback 证明；本仓 repository contract、fixture 或 HTTP 200 均不能替代该证据。
 
 V1 唯一路由为：
 
@@ -53,18 +43,18 @@ POST /v1/query
 ```json
 {
   "dataset_id": "explicit-configured-id",
-  "schema_major": 1,
+  "schema_major": 2,
   "fields": ["field_a", "field_b"],
-  "filters": {"canonical_key": "value"},
+  "filters": {"trade_date": {"eq": "20260722"}},
   "as_of": "2026-07-16T09:25:00+08:00",
   "limit": 1000,
   "cursor": null
 }
 ```
 
-`order` 是可选的非空、有序且无重复字符串列表；调用方不指定时必须从请求中省略，排序由 TradingDatas registry 的 dataset 默认值决定，TA 不得猜测或补造 provider 排序。`schema_major`、显式 `order`（如有）均进入 query identity/cache identity。
+`order` 是可选的非空、有序且无重复字符串列表；未配置时从请求中省略，排序由 TradingDatas registry 默认值决定。`filters` 与 `as_of` 也按 dataset 显式配置：例如分区日线必须携带精确 `trade_date` filter；`query_as_of_mode=decision_as_of` 时发送决策时点，`query_as_of_mode=omit` 时不发送 `as_of`。TA 不得猜测默认排序、删除过滤条件或把一个 dataset 的查询方式复制给另一个 dataset。
 
-`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。这里的 `access_policy_id` 只是 TA 本地 cache/receipt 对 transport 身份的命名空间，不是 TradingDatas HTTP header 或 credential，绝不直接上 wire。HTTP consumer 的认证只允许由最终 transport 从 `TRADINGDATAS_API_TOKEN_FILE` 指向的仓外文件加载，并向 `GET /v1/catalog` 与 `POST /v1/query` 注入 `Authorization: Bearer <token>`；通用 V1 client、manifest 和调用方 header 都不得持有或覆盖该值。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。当前候选响应 envelope 至少保留：
+`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。`access_policy_id` 只是 TA 本地 cache/receipt 对 transport 身份的命名空间，不是 credential。HTTP 认证只允许最终 transport 从 `TRADINGDATAS_API_TOKEN_FILE` 指向的仓外受限文件加载，再向两个固定端点注入 Bearer；通用 client、manifest、日志和调用方 header 都不得持有或覆盖 token。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。响应 envelope 至少保留：
 
 ```yaml
 api_version: v1
@@ -84,18 +74,25 @@ metadata:
   reasons: []
 ```
 
-HTTP 200 仅证明 transport 完成，不给 dataset 授权。每个 dataset 根据自己的 requirement policy 被 `ACCEPT / DEWEIGHT / REJECT`；`unobserved/paused/failed/stale/empty/degraded` 等 impaired state 可以如实携带 null `lineage/receipt_id/data_through/observed_at`，客户端不得为通过解析补造证据，Evidence Gate 必须依据 `metadata.state/degraded` 及证据完整性 fail closed。只有带完整 source proof 的 degraded/stale 数据才可能按显式 dataset policy 降权；缺 freshness/quality/lineage/receipt、catalog mismatch、未完整分页和 cursor 重放均不得被“其它 dataset 正常”洗白。只有完整、已验证且具有 receipt 的响应才能缓存；cache key 绑定 query、catalog、schema/receipt watermark 和 access policy。provider 原始字段只能保留在 provenance 中，不能覆盖 registry 的 dataset/provider identity。
+HTTP 200 仅证明 transport 完成。每个 dataset 根据自己的 policy 独立 `ACCEPT / DEWEIGHT / REJECT`；`unobserved/paused/failed/stale/empty/degraded` 等 impaired state 可以如实携带 null `lineage/receipt_id/data_through/observed_at`，TA 不得补造。只有 `lineage.complete=true`、`lineage.provider_neutral=true`，且 envelope 的 `receipt_id/data_through/observed_at` 均完整时，才可形成 source proof；该 proof 绑定 dataset、catalog、receipt、完整 lineage hash、data-through 与 observed-at。无 source proof 的 dataset 固定 REJECT，不能因另一个 dataset 健康而放行。
+
+TradingDatas 返回的 `data[]` 是 **provider-native rows**，TA 原样保存，不把 envelope metadata 复制进每一行，也不生成虚假的 `available_time/revision_id/receipt_id`。dataset requirement 只声明：
+
+- `identity_fields`：用于跨页唯一性与守恒检查；
+- `observation_mode=current_observation`：当前唯一允许模式；
+- `query_as_of_mode=decision_as_of|omit`；
+- 可选 `row_event_time_field/format/timezone/semantic`：把 provider-native 的业务日期或时刻解释为 `session/scheduled/effective` domain event。
+
+domain event-time 不是历史可知时间。`session` 事件不得晚于 envelope `observed_at` 或本轮 `decision_as_of`；`scheduled` 可以指向未来计划。只要上游不能提供当时首次可见时间与 revision 链，dataset 和完整 research snapshot 都必须标记 `historical_pit_eligible=false`，只能作为当前 observation、风险或模拟输入，不能回填历史训练样本。
 
 token 文件合同固定为：只允许服务管理的 `/run/secrets/tradingagent` 根目录，必须使用该目录下的绝对且规范化路径；因此 TradingAgent checkout/worktree/Git common repo 或任意其它目录中的文件一律拒绝。路径任一层不得为 symlink，leaf 必须是可信 owner（root 或当前服务 euid）拥有的单硬链接普通文件、权限精确 `0600`、内容为单个有界 ASCII bearer token，不接受空文件、换行、`KEY=value`、非 ASCII 或超限内容。实现必须使用 no-follow、descriptor-relative 打开和读前/读后文件身份复核；平台缺少安全打开能力时 fail closed。只配置 token-file 路径，不接受明文 token 环境变量；token 值与路径不得进入 `repr/str`、异常、日志、manifest、回执或 fixture。Bearer transport 必须绑定无尾随斜杠、path、query、fragment、userinfo、控制字符或反斜杠的 canonical `scheme://host[:port]`，只允许 `GET /v1/catalog` 与 `POST /v1/query`，并只接受通用客户端固定生成的 `Accept: application/json` 与 POST 的 `Content-Type: application/json`；调用方自带 Host、forwarding、proxy 或任何其它 header 都必须在创建网络请求前拒绝。任何不同 authority、path、query string 或 method 同样拒绝；远端 authority 只允许 HTTPS，明文 HTTP 仅允许 loopback IP 字面量。transport 为 single-flight，并发第二请求在网络前拒绝；401/403 不读取响应正文并永久锁住本实例，后续请求、重试和端点切换全部拒绝。token 缺失/非法、认证失败、dataset impaired 或分页异常都不得回退到旧端口、SQLite、`/tushare`、`/source_status` 或 provider 专用 route。实际 TA-scoped token 仍由发布侧独立生成、注册和轮换，不能复用 TradingDatas bootstrap token。
 
-当前 endpoint base URL、catalog version 和 dataset IDs 仍只是显式配置/fixture；TradingDatas fresh handoff 冻结前不得臆造生产值。
-
 #### TA integration-readiness profile 与回执
 
-`tradingagent.sharedsignals.integration-readiness.v1` 是产品重命名后继续保留的 immutable schema ID，用于 TA 对冻结 TradingDatas V1 consumer 合同的只读验收回执；它不是 TradingDatas 服务端 receipt、生产健康证明或交易 authority。输入 manifest 必须显式且 secret-free，至少绑定：
+完整验收回执使用 `tradingagent.tradingdatas.integration-readiness.v2`。旧 `SharedSignalsIntegrationProbe*` 只保留为代码兼容符号。它不是 TradingDatas 服务端 receipt、生产健康证明或交易 authority。secret-free manifest 必须逐 dataset 绑定查询与研究合同，例如：
 
 ```yaml
-manifest_version: 1
+manifest_version: 2
 profile_id: explicit-profile-id
 base_url: explicit-authority-url
 catalog_version: explicit-frozen-version
@@ -105,31 +102,42 @@ timeout_seconds: 10
 as_of: timezone-aware-decision-time
 expected_probe_roles: [trade_calendar, equity_master, daily_bars, industry_context]
 datasets:
-  - probe_role: trade_calendar
+  - probe_role: daily_bars
     dataset_id: provider-neutral-id
-    schema_major: 1
+    schema_major: 2
     requirement_role: required_execution
-    fields: [market, trade_date, is_open, event_time, available_time, revision_id, receipt_id]
-    filters: {}
-    limit: 100
+    fields: [ts_code, trade_date, open, high, low, close, vol, amount]
+    filters: {trade_date: {eq: "20260722"}}
+    limit: 500
     minimum_row_count: 1
-    row_event_time_field: event_time
-    row_available_time_field: available_time
-    row_revision_id_field: revision_id
-    row_receipt_id_field: receipt_id
+    identity_fields: [ts_code, trade_date]
+    observation_mode: current_observation
+    query_as_of_mode: decision_as_of
+    row_event_time_field: trade_date
+    row_event_time_format: yyyymmdd
+    row_event_timezone: Asia/Shanghai
+    row_event_time_semantic: session
+    max_pages: 20
+    max_rows: 10000
 ```
 
-`expected_probe_roles` 与 `datasets[].probe_role` 的顺序和集合必须完全相等；dataset ID 唯一，limit 为 `1..10000`，四个行级 PIT 字段必须全部显式包含在 `fields` 中，`order` 未配置时从 QueryRequest 省略。响应每行也必须与显式 fields 精确投影一致：缺字段以`requested_field_missing`阻断，多出任何未声明字段以`undeclared_field_present`阻断且只保存字段集合哈希，不把上游未知字段名或值写入回执。`industry_context` 可标为 `optional_context`，但它仍必须通过显式 dataset policy；无 proof 的 optional response 不能被健康必需数据洗白，聚合查询也不能夹带个股字段。
+`expected_probe_roles` 与 `datasets[].probe_role` 的顺序和集合必须完全相等；dataset ID 唯一；`limit` 为 `1..10000` 且不得超过 `max_rows`；`identity_fields` 和可选 domain event field 必须包含在 `fields` 中。响应行保留 provider-native shape 并与显式 fields 精确投影；未知字段只以受控 reason/hash 报告，不写入回执。
 
-验收器对每个 dataset 使用同一 QueryRequest 连续读取两次。双跑语义比较包含 data、`next_cursor` 和完整 metadata，排除每次 transport 独有的 `request_id`；因此 request ID 变化不造成误报，而 receipt、lineage、data-through、observed-at、行值、默认排序或状态变化都会触发 `same_as_of_semantic_mismatch`。两次 exact response identity 仍分别保留在 snapshot SHA 中，不能用稳定语义哈希替代原始 trace。
+完整 probe 对每个 dataset 做两次相同 observation read。每次从 `cursor=null` 开始，以 uncached 请求透明跟随 TradingDatas 返回的 opaque cursor，直到 terminal page；TA 不解析、记录或持久化 raw cursor。遍历同时受 dataset `max_pages/max_rows` 与代码 hard ceiling 双重约束，并执行：
 
-当前 research port 不具备经 TradingDatas owner 冻结的跨页 receipt/排序/snapshot identity。`next_cursor` 非空时只能输出 `pagination_complete=false` 与 `pagination_contract_unfrozen`，不得自动拼页、截取第一页或本地重排。待上游合同冻结后，分页扩展必须继续绑定每页 query identity、cursor 连续性、统一 source snapshot 与完整 readback。
+- 跨页 envelope identity 全等：api/catalog/dataset 与完整 metadata 不漂移；
+- cursor self-loop、A-B-A cycle、页数/行数超限立即 fail closed；
+- `identity_fields` 跨页唯一，重复或缺失拒绝；
+- 保留服务端原始页序与行序，不本地排序、去重或截断；
+- 每页 query/response、cursor chain、完整 ordered rows、有序 identity sequence 与 metadata 形成 exact audit hash；非 terminal page 不进入 client cache。
+
+两次完整遍历再比较排除 transport request IDs 与 opaque cursor 值的 semantic trace；metadata、receipt、lineage、data-through、observed-at、页结构、顺序或行值变化都会令兼容字段 `same_as_of_match=false`。cursor 只负责续页，服务端可在内容相同的两次遍历中返回不同 opaque 值；每次 exact trace 仍分别绑定自己的 request IDs、cursor-chain hash 与 cursor-bearing request hash，不能用 semantic hash 替代原始运行证据。这里的 “same-as-of” 是兼容术语：当 dataset 配置 `query_as_of_mode=omit` 时，实际证明的是同一 manifest/observation 双跑，而不是服务端历史 PIT。
 
 回执至少包含：
 
 ```yaml
-schema_id: tradingagent.sharedsignals.integration-readiness.v1
-probe_version: 1
+schema_id: tradingagent.tradingdatas.integration-readiness.v2
+probe_version: 2
 authority: non_authority
 production_verified: false
 real_trading_enabled: false
@@ -141,16 +149,19 @@ catalog:
   request_id: trace-id
   catalog_sha256: sha256
 datasets:
-  - probe_role: trade_calendar
+  - probe_role: daily_bars
     dataset_id: provider-neutral-id
-    schema_major: 1
+    schema_major: 2
     query_sha256: sha256
-    request_ids: [first, second]
+    request_id_set_sha256: sha256
     state: ready
     evidence_action: accept
     receipt_id: source-receipt
     source_proof_complete: true
-    row_count: 1
+    page_count: 2
+    row_count: 1234
+    identity_sha256: sha256
+    pagination_trace_sha256: sha256
     semantic_response_sha256: sha256
     same_as_of_match: true
     pagination_complete: true
@@ -160,9 +171,9 @@ blocking: false
 receipt_sha256: sha256
 ```
 
-回执不得包含 base URL、access policy 原值、cursor、manifest正文、HTTP header、credential、异常原文或上游自由文本 `metadata.reasons`。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID；任一 authority/config/source/data/PIT/状态变化必须改变对应哈希或阻断。
+回执不得包含 base URL、access policy 原值、raw cursor、manifest 正文、HTTP header、credential、异常原文或上游自由文本 reasons。自由文本只进入 `evidence_reasons_sha256` 与完整响应语义哈希；对外 `reason_codes` 只保留 TA Evidence Gate 产生的受控代码。`receipt_sha256`覆盖除自身外的 canonical JSON，并绑定本次 request trace；完全相同的 trace 产生相同回执，新的 request ID 会形成新的精确回执。跨重试的业务一致性看 `semantic_snapshot_sha256` 与每个 dataset 的 `semantic_response_sha256`，它们排除 request ID。完整 integration probe / research snapshot 是 provider-native rows、source proof、分页、identity 与 current-observation eligibility 的权威消费侧门；轻量 runtime gate 只做启动前 catalog/auth/单次 dataset 可用性 smoke，不能替代跨页双跑、research snapshot 或历史 PIT 验收。
 
-`as_of` 不是防止回填偏差的充分条件。任何进入predictive validation的dataset还必须保存首次可见`available_at`、release ID、revision ID、每次修订链、first-seen receipt和训练时实际可见vintage；供应商事后批量回填但无法还原历史发布版本时，只能作当前观察或风险证据，不能回写历史训练样本。cache、ResearchDataSnapshot、ValidationPlan和label truth都必须绑定所用vintage/revision identity。
+`as_of`、domain event-time 和 envelope `observed_at` 都不是防止回填偏差的充分条件。任何进入 predictive validation 的 dataset 仍须由独立上游证据提供首次可见 `available_at`、release/revision 链、first-seen receipt 和训练时 vintage；缺这些历史事实时一律保持 `current_observation` 与 `historical_pit_eligible=false`。
 
 ### A股三层 Universe 契约
 

@@ -31,7 +31,7 @@ DATASETS = {
 
 def _manifest() -> dict[str, Any]:
     return {
-        "manifest_version": 1,
+        "manifest_version": 2,
         "profile_id": "ashare-mainboard-integration-v1",
         "base_url": "https://tradingdatas.fixture.invalid",
         "catalog_version": CATALOG_VERSION,
@@ -48,20 +48,21 @@ def _manifest() -> dict[str, Any]:
                 "requirement_role": "required_execution",
                 "fields": [
                     "market",
-                    "trade_date",
+                    "cal_date",
                     "is_open",
-                    "event_time",
-                    "available_time",
-                    "revision_id",
-                    "receipt_id",
                 ],
                 "filters": {"market": "CN"},
                 "limit": 100,
                 "minimum_row_count": 1,
-                "row_event_time_field": "event_time",
-                "row_available_time_field": "available_time",
-                "row_revision_id_field": "revision_id",
-                "row_receipt_id_field": "receipt_id",
+                "identity_fields": ["market", "cal_date"],
+                "observation_mode": "current_observation",
+                "query_as_of_mode": "decision_as_of",
+                "max_pages": 3,
+                "max_rows": 500,
+                "row_event_time_field": "cal_date",
+                "row_event_time_format": "yyyymmdd",
+                "row_event_timezone": "Asia/Shanghai",
+                "row_event_time_semantic": "scheduled",
             },
             {
                 "probe_role": "daily_bars",
@@ -69,40 +70,35 @@ def _manifest() -> dict[str, Any]:
                 "schema_major": 2,
                 "requirement_role": "required_execution",
                 "fields": [
-                    "symbol",
+                    "ts_code",
+                    "trade_date",
                     "close",
-                    "event_time",
-                    "available_time",
-                    "revision_id",
-                    "receipt_id",
                 ],
-                "filters": {"board": "mainboard"},
+                "filters": {"trade_date": {"eq": "20260716"}},
                 "limit": 500,
                 "minimum_row_count": 1,
-                "row_event_time_field": "event_time",
-                "row_available_time_field": "available_time",
-                "row_revision_id_field": "revision_id",
-                "row_receipt_id_field": "receipt_id",
+                "identity_fields": ["ts_code", "trade_date"],
+                "observation_mode": "current_observation",
+                "query_as_of_mode": "decision_as_of",
+                "max_pages": 20,
+                "max_rows": 10_000,
+                "row_event_time_field": "trade_date",
+                "row_event_time_format": "yyyymmdd",
+                "row_event_timezone": "Asia/Shanghai",
+                "row_event_time_semantic": "session",
             },
         ],
     }
 
 
 def _row(dataset_id: str) -> dict[str, Any]:
-    common = {
-        "event_time": "2026-07-16T15:00:00+08:00",
-        "available_time": "2026-07-16T15:01:00+08:00",
-        "revision_id": "revision-1",
-        "receipt_id": f"row-{dataset_id}",
-    }
     if dataset_id == DATASETS["trade_calendar"]:
         return {
-            **common,
             "market": "CN",
-            "trade_date": "2026-07-16",
+            "cal_date": "20260716",
             "is_open": True,
         }
-    return {**common, "symbol": "600000.SH", "close": 10.5}
+    return {"ts_code": "600000.SH", "trade_date": "20260716", "close": 10.5}
 
 
 def _ready_query_payload(
@@ -110,6 +106,7 @@ def _ready_query_payload(
     *,
     request_id: str,
     row: dict[str, Any] | None = None,
+    rows: list[dict[str, Any]] | None = None,
     next_cursor: str | None = None,
 ) -> dict[str, Any]:
     return {
@@ -117,7 +114,7 @@ def _ready_query_payload(
         "catalog_version": CATALOG_VERSION,
         "request_id": request_id,
         "dataset_id": dataset_id,
-        "data": [copy.deepcopy(row or _row(dataset_id))],
+        "data": copy.deepcopy(rows if rows is not None else [row or _row(dataset_id)]),
         "next_cursor": next_cursor,
         "metadata": {
             "state": "ready",
@@ -257,6 +254,19 @@ def test_healthy_multidataset_double_run_emits_content_addressed_receipt(
     ]
     assert all(dataset["same_as_of_match"] for dataset in receipt["datasets"])
     assert all(dataset["pagination_complete"] for dataset in receipt["datasets"])
+    assert all(
+        dataset["observation_mode"] == "current_observation"
+        and dataset["historical_pit_eligible"] is False
+        and len(dataset["source_proof_sha256"]) == 64
+        and len(dataset["page_request_set_sha256"]) == 64
+        and len(dataset["page_response_set_sha256"]) == 64
+        for dataset in receipt["datasets"]
+    )
+    assert all(
+        snapshot["historical_pit_eligible"] is False
+        and len(snapshot["profile_contract_sha256"]) == 64
+        for snapshot in receipt["snapshot_runs"]
+    )
     assert [call["url"].rsplit("/", 2)[-2:] for call in transport.calls] == [
         ["v1", "catalog"],
         ["v1", "query"],
@@ -270,10 +280,38 @@ def test_healthy_multidataset_double_run_emits_content_addressed_receipt(
         assert payload["as_of"] == AS_OF
         assert payload["cursor"] is None
         assert "order" not in payload
-
     serialized = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "tradingdatas.fixture.invalid" not in serialized
     assert ACCESS_POLICY_ID not in serialized
+
+
+def test_query_as_of_mode_is_applied_per_dataset(tmp_path: Path) -> None:
+    payload = _manifest()
+    payload["datasets"][0]["query_as_of_mode"] = "omit"
+    config = _load_config(tmp_path, payload)
+    transport = DoubleRunTransport()
+
+    receipt = run_sharedsignals_integration_probe(config, transport=transport)
+
+    assert receipt["status"] == "pass"
+    query_calls = [call for call in transport.calls if call["method"] == "POST"]
+    calendar_calls = [
+        call
+        for call in query_calls
+        if call["json_body"]["dataset_id"] == DATASETS["trade_calendar"]
+    ]
+    daily_calls = [
+        call
+        for call in query_calls
+        if call["json_body"]["dataset_id"] == DATASETS["daily_bars"]
+    ]
+    assert [call["json_body"]["as_of"] for call in calendar_calls] == [None, None]
+    assert [call["json_body"]["as_of"] for call in daily_calls] == [AS_OF, AS_OF]
+    calendar_receipt = next(
+        item for item in receipt["datasets"] if item["probe_role"] == "trade_calendar"
+    )
+    assert calendar_receipt["query_as_of_mode"] == "omit"
+    assert calendar_receipt["historical_pit_eligible"] is False
 
 
 def test_query_auth_rejection_aborts_remaining_integration_datasets(
@@ -315,27 +353,81 @@ def test_generic_auth_status_also_aborts_remaining_integration_datasets(
     assert len(transport.calls) == 2
 
 
-def test_non_null_cursor_blocks_without_following_unfrozen_pagination(
+def test_non_null_cursor_is_followed_with_bounded_double_run_and_never_leaked(
     tmp_path: Path,
 ) -> None:
     config = _load_config(tmp_path)
     transport = DoubleRunTransport()
-    for run_number in (1, 2):
-        transport.overrides[(DATASETS["daily_bars"], run_number)] = (
+    for call_number, cursor in (
+        (1, "opaque-secret-cursor-first-run"),
+        (3, "opaque-secret-cursor-second-run"),
+    ):
+        transport.overrides[(DATASETS["daily_bars"], call_number)] = (
             _ready_query_payload(
                 DATASETS["daily_bars"],
-                request_id=f"paged-{run_number}",
-                next_cursor="opaque-secret-cursor",
+                request_id=f"paged-first-{call_number}",
+                rows=[
+                    {"ts_code": "000001.SZ", "trade_date": "20260716", "close": 10.0}
+                ],
+                next_cursor=cursor,
+            )
+        )
+    for call_number in (2, 4):
+        transport.overrides[(DATASETS["daily_bars"], call_number)] = (
+            _ready_query_payload(
+                DATASETS["daily_bars"],
+                request_id=f"paged-last-{call_number}",
+                rows=[
+                    {"ts_code": "600000.SH", "trade_date": "20260716", "close": 20.0}
+                ],
+                next_cursor=None,
             )
         )
 
     receipt = run_sharedsignals_integration_probe(config, transport=transport)
 
+    dataset = next(
+        item for item in receipt["datasets"] if item["probe_role"] == "daily_bars"
+    )
+    assert receipt["status"] == "pass"
+    assert receipt["blocking"] is False
+    assert dataset["page_count"] == 2
+    assert dataset["row_count"] == 2
+    assert dataset["pagination_complete"] is True
+    assert transport.query_counts[DATASETS["daily_bars"]] == 4
+    encoded = json.dumps(receipt, sort_keys=True)
+    assert "opaque-secret-cursor-first-run" not in encoded
+    assert "opaque-secret-cursor-second-run" not in encoded
+
+
+def test_cursor_cycle_fails_closed_without_leaking_cursor(tmp_path: Path) -> None:
+    config = _load_config(tmp_path)
+    transport = DoubleRunTransport()
+    cursor = "opaque-cycle-secret"
+    transport.overrides[(DATASETS["daily_bars"], 1)] = _ready_query_payload(
+        DATASETS["daily_bars"],
+        request_id="cycle-first",
+        rows=[{"ts_code": "000001.SZ", "trade_date": "20260716", "close": 10.0}],
+        next_cursor=cursor,
+    )
+    transport.overrides[(DATASETS["daily_bars"], 2)] = _ready_query_payload(
+        DATASETS["daily_bars"],
+        request_id="cycle-second",
+        rows=[{"ts_code": "600000.SH", "trade_date": "20260716", "close": 20.0}],
+        next_cursor=cursor,
+    )
+
+    receipt = run_sharedsignals_integration_probe(config, transport=transport)
+
     assert receipt["status"] == "fail"
     assert receipt["blocking"] is True
-    assert "pagination_contract_unfrozen" in receipt["reason_codes"]
-    assert transport.query_counts[DATASETS["daily_bars"]] == 2
-    assert "opaque-secret-cursor" not in json.dumps(receipt, sort_keys=True)
+    assert "pagination_cursor_cycle" in receipt["reason_codes"]
+    dataset = next(
+        item for item in receipt["datasets"] if item["probe_role"] == "daily_bars"
+    )
+    assert dataset["eligible"] is False
+    assert dataset["reason_codes"] == ["pagination_cursor_cycle"]
+    assert cursor not in json.dumps(receipt, sort_keys=True)
 
 
 @pytest.mark.parametrize(
@@ -412,14 +504,14 @@ def test_same_as_of_semantic_drift_blocks_even_when_transport_succeeds(
     assert "same_as_of_semantic_mismatch" in dataset["reason_codes"]
 
 
-def test_missing_requested_field_and_future_pit_data_fail_closed(
+def test_missing_requested_field_and_future_session_date_fail_closed(
     tmp_path: Path,
 ) -> None:
     config = _load_config(tmp_path)
     transport = DoubleRunTransport()
     bad_row = _row(DATASETS["daily_bars"])
     bad_row.pop("close")
-    bad_row["available_time"] = "2026-07-17T09:26:00+08:00"
+    bad_row["trade_date"] = "20260717"
     for run_number in (1, 2):
         transport.overrides[(DATASETS["daily_bars"], run_number)] = (
             _ready_query_payload(
@@ -433,7 +525,7 @@ def test_missing_requested_field_and_future_pit_data_fail_closed(
 
     assert receipt["blocking"] is True
     assert "requested_field_missing" in receipt["reason_codes"]
-    assert "research_snapshot_contract_failure" in receipt["reason_codes"]
+    assert receipt["snapshot_runs"] == []
 
 
 def test_undeclared_response_field_blocks_without_emitting_untrusted_name(
@@ -519,7 +611,7 @@ def test_provider_reason_text_is_hashed_not_emitted(tmp_path: Path) -> None:
             {"base_url": "https://user:password@tradingdatas.invalid"}
         ),
         lambda payload: payload["datasets"][0].update({"limit": 10_001}),
-        lambda payload: payload["datasets"][0]["fields"].remove("event_time"),
+        lambda payload: payload["datasets"][0]["fields"].remove("cal_date"),
         lambda payload: payload["datasets"][0]["filters"].update(
             {"opaque_value": "sk-0123456789abcdef0123456789abcdef"}
         ),

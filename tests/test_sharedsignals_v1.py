@@ -35,7 +35,7 @@ def _config(
     dataset_ids: frozenset[str] = frozenset({DATASET_ID}),
 ) -> SharedSignalsV1Config:
     return SharedSignalsV1Config(
-        base_url="http://tradingdatas.fixture.invalid:8082",
+        base_url="https://tradingdatas.fixture.invalid",
         expected_catalog_version=CATALOG_VERSION,
         dataset_ids=dataset_ids,
         access_policy_id=access_policy_id,
@@ -68,6 +68,7 @@ def _query_payload(
     degraded: bool = False,
     receipt_id: str = "receipt-001",
     catalog_version: str = CATALOG_VERSION,
+    next_cursor: str | None = "cursor-next",
 ) -> dict[str, Any]:
     return {
         "api_version": "v1",
@@ -75,7 +76,7 @@ def _query_payload(
         "request_id": "request-001",
         "dataset_id": DATASET_ID,
         "data": [{"ts_code": "600000.SH", "close": 10.5}],
-        "next_cursor": "cursor-next",
+        "next_cursor": next_cursor,
         "metadata": _metadata(
             state=state,
             degraded=degraded,
@@ -177,7 +178,7 @@ def test_catalog_uses_only_v1_catalog_and_validates_configured_datasets() -> Non
     assert transport.calls == [
         {
             "method": "GET",
-            "url": "http://tradingdatas.fixture.invalid:8082/v1/catalog",
+            "url": "https://tradingdatas.fixture.invalid/v1/catalog",
             "headers": {
                 "Accept": "application/json",
             },
@@ -558,7 +559,9 @@ def test_query_rejects_data_through_after_observed_at() -> None:
 
 
 def test_cache_only_contains_validated_envelopes_and_binds_full_identity() -> None:
-    transport = FakeTransport([HTTPResponse(200, _query_payload())])
+    transport = FakeTransport(
+        [HTTPResponse(200, _query_payload(next_cursor=None))]
+    )
     client = SharedSignalsV1Client(_config(), transport=transport)
     request = QueryRequest(
         dataset_id=DATASET_ID,
@@ -583,7 +586,9 @@ def test_cache_only_contains_validated_envelopes_and_binds_full_identity() -> No
 
 
 def test_cached_envelope_cannot_be_mutated_through_a_prior_result() -> None:
-    transport = FakeTransport([HTTPResponse(200, _query_payload())])
+    transport = FakeTransport(
+        [HTTPResponse(200, _query_payload(next_cursor=None))]
+    )
     client = SharedSignalsV1Client(_config(), transport=transport)
     request = QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
 
@@ -647,10 +652,20 @@ def test_catalog_envelope_recursively_snapshots_nested_fields() -> None:
 
 def test_access_policy_is_local_cache_identity_not_an_invented_wire_header() -> None:
     left_transport = FakeTransport(
-        [HTTPResponse(200, _query_payload(receipt_id="receipt-left"))]
+        [
+            HTTPResponse(
+                200,
+                _query_payload(receipt_id="receipt-left", next_cursor=None),
+            )
+        ]
     )
     right_transport = FakeTransport(
-        [HTTPResponse(200, _query_payload(receipt_id="receipt-right"))]
+        [
+            HTTPResponse(
+                200,
+                _query_payload(receipt_id="receipt-right", next_cursor=None),
+            )
+        ]
     )
     request = QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
     left = SharedSignalsV1Client(
@@ -673,6 +688,25 @@ def test_access_policy_is_local_cache_identity_not_an_invented_wire_header() -> 
         "Content-Type": "application/json",
     }
     assert "X-Access-Policy" not in inspect.getsource(SharedSignalsV1Client._headers)
+
+
+def test_nonterminal_page_is_never_cached_and_uncached_reads_bypass_cache() -> None:
+    transport = FakeTransport(
+        [
+            HTTPResponse(200, _query_payload(next_cursor="opaque-next")),
+            HTTPResponse(200, _query_payload(next_cursor=None)),
+            HTTPResponse(200, _query_payload(next_cursor=None)),
+        ]
+    )
+    client = SharedSignalsV1Client(_config(), transport=transport)
+    request = QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
+
+    assert client.query(request).next_cursor == "opaque-next"
+    assert client.cache_keys == ()
+    assert client.query(request).next_cursor is None
+    assert len(client.cache_keys) == 1
+    assert client.query_uncached(request).next_cursor is None
+    assert len(transport.calls) == 3
 
 
 def test_client_source_contains_no_legacy_or_direct_storage_fallbacks() -> None:

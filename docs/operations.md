@@ -374,7 +374,7 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 
 ### 2.1 TradingDatas V1 接入验收器
 
-轻量的 `sharedsignals_v1_gate.py` 与 `sharedsignals_v1_integration_probe.py` 保留为兼容文件名：前者负责任务启动前逐 dataset 的即时可用性门，后者负责首次接入、TradingDatas 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读验收。二者均是 TA consumer，不实现或验收 TradingDatas 服务端；两者输出的 reason code 都由 TA 本地状态机推导，上游 `metadata.reasons` 自由文本只保存哈希，不能伪装成本地门禁结论或进入日志。
+`sharedsignals_v1_gate.py` 与 `sharedsignals_v1_integration_probe.py` 只保留兼容文件名。前者是启动前的轻量 catalog/auth/单次 dataset 可用性 smoke：遇到 non-terminal page 会拒绝，不能声明完整 dataset、research snapshot 或历史 PIT 已通过。后者负责首次接入、TradingDatas 发布或 catalog/profile 变化、消费者切换和故障恢复后的完整只读 consumer 验收，必须完成 bounded pagination 与同一 observation 双跑。二者均不实现或验收 TradingDatas 服务端；reason code 只由 TA 本地状态机产生，上游 `metadata.reasons` 自由文本只保存哈希。
 
 模板见 [sharedsignals_v1_integration_probe.example.json](examples/sharedsignals_v1_integration_probe.example.json)；该文件名是兼容入口。模板中的 `.invalid` 地址、`fixture.*` dataset ID、catalog 与 policy 只用于说明结构，不是生产默认值。TradingDatas owner 提供 fresh handoff 后，应复制到仓外绝对路径并逐项替换；manifest 只允许保存 base URL 与访问策略**身份**，禁止写 API key、token、密码或其它 credential。验收器只从 root/service 配置的 `TRADINGDATAS_API_TOKEN_FILE` 读取 credential，安全文件门未通过时在创建 HTTP opener 前阻断；不会读取明文 token 环境变量或自行发明其它认证/header/fallback。
 
@@ -382,7 +382,7 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 
 - `trade_calendar`：交易日历，执行必需；
 - `equity_master`：主板证券主数据与历史可交易状态，执行必需；
-- `daily_bars`：主板日线与行级 PIT，执行必需；
+- `daily_bars`：主板 provider-native 日线当前观察，执行必需；没有历史 first-seen/revision authority 时不得称为历史 PIT；
 - `industry_context`：全市场行业及创业板/科创板指数聚合，只作环境上下文，不允许输出双创个股。
 
 获批只读联调时，从目标 TA 隔离工作树执行：
@@ -397,13 +397,15 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
   --json
 ```
 
-验收器只调用一次 `GET /v1/catalog`，随后对每个数据角色用同一显式 `as_of`、fields、filters、schema major、limit 与默认 registry order 连续执行两次 `POST /v1/query`。它复用 `DataEvidenceGate` 与 `ResearchDataProfile` 检查 metadata、source proof、精确字段投影、最小行数和行级 `event_time / available_time / revision_id / receipt_id`，并比较排除 transport request ID 后的完整响应语义哈希。缺少显式字段或出现未声明字段均阻断；后者只保存数量与字段集合哈希，避免行业聚合响应夹带个股字段或把未知字段写进回执。
+完整验收器只调用一次 `GET /v1/catalog`。每个 dataset 的 manifest 必须分别指定 `fields/filters/schema_major/limit/identity_fields/observation_mode/query_as_of_mode/max_pages/max_rows`，可选配置 provider-native domain event field 的 format/timezone/semantic；`order` 未配置时从请求中省略，使用 registry 默认排序。`query_as_of_mode=decision_as_of` 才发送 manifest 决策时点，`omit` 则不发送 `as_of`。例如日线必须使用精确 `trade_date` filter，禁止无界查询后重试或切换数据路径。
 
-当前跨页 receipt、默认排序快照和拼页 identity 仍由 TradingDatas owner 待冻结。因此任一响应出现 `next_cursor != null` 时，完整 integration probe 固定返回 `pagination_contract_unfrozen` 并阻断；轻量 runtime gate 也必须把该 dataset 标为 `pagination_complete=false`、`eligible=false`，不能把截断的第一页误判为健康。两者都不会抓第二页后自行拼成研究快照。TradingDatas 合同补齐前，不得通过增大 limit、截取第一页或本地排序绕过。
+每次 query run 从 `cursor=null` 开始，以 uncached 请求透明跟随 opaque `next_cursor` 到 terminal page；raw cursor 不进入日志、异常或回执。遍历同时受 `max_pages/max_rows` 与代码 hard ceiling 约束，并要求跨页完整 metadata identity 不变、dataset-specific row identity 唯一、服务端页序/行序原样保留。cursor self-loop或A-B-A cycle、metadata drift、缺/重 identity、页/行预算超限、非 terminal 截断均 fail closed；禁止本地排序、去重、增大 limit 或只取第一页。
 
-回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、cursor、异常原文与上游自由文本 reason，只保存其 authority/config 哈希、catalog/query trace、dataset evidence、双跑一致性、PIT/内容哈希和 TA 受控 reason codes；上游 reason 原文只参与哈希。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA 接入合同，不证明 TradingDatas 服务端整体通过、生产 runtime 已切换、旧链 parity 已完成、每日数据持续健康或交易获授权。回执 schema ID `tradingagent.sharedsignals.integration-readiness.v1` 保持不变。
+同一 dataset 完成两次相同 manifest/observation 的完整遍历。semantic trace 排除 transport request ID 与 opaque cursor 值，但包含 envelope metadata、source proof、页结构、ordered rows 与 identity；任一业务语义漂移阻断。exact trace 仍分别绑定每页 request ID、cursor-chain hash 与 cursor-bearing request hash，因此游标值变化不造成业务误报，也不会丢失单次运行的精确审计证据。TradingDatas rows 原样保存；`receipt_id/data_through/observed_at` 与完整 lineage 只从 envelope 形成 source proof，不复制成行级 `available_time/revision_id/receipt_id`。可选 domain event-time 不是可知时间；缺历史 first-seen/revision chain 时 research snapshot 固定 `current_observation`、`historical_pit_eligible=false`。
 
-未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，也未调用任何 live TradingDatas 地址。每次 catalog/dataset/schema、PIT 字段或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
+回执固定标注 `authority=non_authority`、`production_verified=false`、`real_trading_enabled=false`，隐藏 base URL、access policy 值、raw cursor、异常原文与上游自由文本 reason，只保存 authority/config、catalog/query、source proof、分页/identity、same-observation 与 current-observation hashes 及 TA 受控 reason codes。退出码为：`0=通过`、`2=数据或合同阻断`、`64=manifest/transport配置无效`、`74=回执落盘失败`。回执通过只证明该次显式只读输入满足 TA consumer contract，不证明 TradingDatas 服务端整体通过、生产 runtime 已切换、历史 PIT、每日持续健康或交易获授权。schema ID 为 `tradingagent.tradingdatas.integration-readiness.v2`；旧类名/文件名只是代码兼容入口。
+
+未来可把该命令放在自动模拟盘启动前作为 fail-closed 前置门，但当前没有注册 scheduler/cron，本候选也没有调用 formal TradingDatas 地址。每次 catalog/dataset/schema、filters/as-of policy、identity/event mapping、budgets 或 access policy identity 变化都必须生成新 manifest 与新回执，不能复用旧 PASS。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 
@@ -595,7 +597,7 @@ preopen
 逐层检查：
 
 1. `decision_as_of` 带时区，并与 `trade_date` 的 `Asia/Shanghai` 交易日一致。
-2. TradingDatas V1 请求包含必填 `schema_major`；`order` 省略时由 registry 默认排序。catalog、逐 dataset metadata 与 receipt 逐项验证；不可用数据和 null source proof 不能被其它健康 dataset 洗白。
+2. TradingDatas V1 请求包含必填 `schema_major`，并按 dataset 使用显式 filters、`query_as_of_mode`、identity/event mapping 与 page/row budgets；`order` 省略时由 registry 默认排序。完整 probe 必须遍历到 terminal page并完成同一 observation 双跑，跨页 metadata/identity/顺序或预算异常一律阻断。provider-native rows 不补造行级 receipt/available/revision；不可用数据、null source proof 或 `historical_pit_eligible=false` 不能被其它健康 dataset 洗白。
 3. CoverageReceipt 的分母、taxonomy、有效时间、来源 generation/receipt/hash 经外部注入 verifier 复核；缺 verifier 时只能 `partial_market + degraded`。
 4. 账户可交易池只含主板普通股；市场环境可含双创指数和全市场行业聚合，但始终 `context_only`。
 5. 小账户计划绑定50,000 CNY policy、独立账户proof、买入整手/卖出零股例外、持仓/T+1、模拟费用、现金顺序、最少经济订单、无交易区与authority generation；本地逻辑重算positions/gross/content hash、费用和计划数值。Champion score必须绑定当前selection manifest、artifact/model/spec及经独立port复核的数值PIT特征快照，rank只排序且不参与sizing。fixture verifier只证明所给输入的绑定；canonical-capital测试路径从同一模拟ledger head派生并复读current generation/lineage。两者都不证明真实账户、Champion registry、feature authority或broker事实。
@@ -651,7 +653,7 @@ preopen
 
 即使本地全部通过，以下证据缺一不可：
 
-1. TradingDatas owner fresh handoff 冻结的 base URL、catalog version、dataset IDs、auth/receipt authority 和 live readback；
+1. TradingDatas owner handoff 冻结的 base URL、catalog version、dataset IDs、schema、filters/as-of policy、auth/receipt authority，以及 TA 使用自身 token/client 完成的 fresh readback；上游声明不能替代 TA 独立复现；
 2. 所有 A 股消费者的同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；
 3. 每个predictive dataset的首次可见时间、release/revision链、first-seen receipt和训练时vintage；无法还原历史回填版本的数据不得进入历史训练；
 4. PIT证券主数据覆盖上市/退市、板块迁移、ST/风险警示、停复牌和历史指数/行业成员，证明没有用当前存续集合回填过去Universe；

@@ -7,7 +7,7 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 ## 数据接入与迁移边界
 
 - **产品 identity**：数据平台统一称为 TradingDatas（GitHub `NicholasHan1226/TradingDatas`；本地 `/Users/nicholashan/Projects/Finance/TradingDatas`）。旧 SharedSignals 名称只允许出现在 immutable wire/schema ID、兼容代码符号/文件名和明确标注的退役历史中。
-- **current-v1**：A股 V1 候选链只通过显式配置的 `GET /v1/catalog`、`POST /v1/query`、Evidence Gate 和不可变研究快照消费 TradingDatas；最终 HTTP transport 只从受限 `0600` token file 注入 Bearer 认证。没有 transport/合法 token/data evidence 时 fail closed，不直读兄弟仓、SQLite、Tushare、`/tushare`、`/source_status` 或 provider 专用端点。TradingDatas fresh handoff 前保持 fixture/mock-first，不猜测 base URL、catalog version 或 dataset ID。
+- **current-v1**：A股 V1 候选链只通过显式配置的 `GET /v1/catalog`、`POST /v1/query`、Evidence Gate 和不可变研究快照消费 TradingDatas；provider-native rows 原样保留，receipt/data-through/observed-at/完整 lineage 只从 envelope 形成 source proof。每个 dataset 显式声明 filters、as-of policy、identity/domain-event 映射和 page/row budgets；透明跟随 opaque cursor 时对循环、metadata 漂移、重复 identity、预算超限与顺序变化 fail closed。缺历史首次可见/revision 链时仅为 `current_observation`、`historical_pit_eligible=false`。最终 HTTP transport 只从受限 `0600` token file 注入 Bearer；没有 transport/合法 token/data evidence 时 fail closed，也无旧链或 provider fallback。
 - **active-compatibility**：旧 reader、筛选和非 A 股兼容消费者仅保留为有清单、有退出条件的历史兼容面，不进入 A股 V1 Champion、风险、订单或调度链。
 - **hard-blocked / retirement-pending**：旧 A股 wrapper、cron 和机会漏斗 writer 已阻断；物理删除须等待安装态、消费者引用、同 `as_of` parity 与回滚证据清零，不能靠长期双轨代替退役。
 
@@ -17,7 +17,7 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 
 ```mermaid
 flowchart LR
-    TD["TradingDatas\n显式 V1 fixture/port"] --> C["PIT Evidence + CoverageReceipt"]
+    TD["TradingDatas\n显式 V1 fixture/port"] --> C["Envelope Source Proof\nCurrent Observation + CoverageReceipt"]
     C --> U["主板三层 Universe"]
     C --> I["Phase 1.5 行业 shadow\n1 深研 + 2 观察"]
     C --> O["OpportunityRadar + Ledger\nPIT shadow only"]
@@ -84,7 +84,7 @@ SampleJournal/KPI 仍是正式演化 authority。Decision Ledger、fixture、pap
 |---|---|---|
 | Phase 0 | V1 合同、主板 scope、CoverageReceipt、50k policy、rank Champion | 契约/故障负例与全量本地验收 |
 | Phase 1 | 真实 TradingDatas V1 驱动的自动模拟日闭环 | 连续 20 个交易日无未来数据、重复订单、权限泄漏、旧链 fallback 和未解释账务差异 |
-| Phase 1.5 | 1 个深研行业 + 2 个观察行业的 shadow 研究 | PIT 覆盖、证据与反事实增量；不影响 Champion |
+| Phase 1.5 | 1 个深研行业 + 2 个观察行业的 shadow 研究 | 当前观察覆盖、证据与反事实增量；历史 PIT 须另有 first-seen/revision authority，不影响 Champion |
 | Phase 2 | 将现有多期限shadow合同升级为有统计证据的 Challenger | purged walk-forward、冻结 OOS、PBO/DSR、quantile/calibration与删失处理证据；合同存在不算通过 |
 | Phase 3 | 将现有三风格shadow合同升级为统一 A股 50k CNY 候选路由 | 分组消融、独立收益来源、费用后增量、abstain价值、尾部与相关性稳定；仍不自动晋级 |
 | Phase 4 | 人工批准的受控试运行设计 | 另行授权；不由本候选推导 |
@@ -105,10 +105,13 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
   tests/test_sharedsignals_v1.py \
   tests/test_sharedsignals_v1_runtime_gate.py \
   tests/test_sharedsignals_v1_integration_probe.py \
+  tests/test_tradingdatas_query_pagination.py \
+  tests/test_research_data_snapshot.py \
+  tests/test_research_snapshot_store.py \
   tests/test_market_lane_governance.py
 ```
 
-`full_acceptance --profile quick` 只聚合当前网络关闭的合同/退役回归测试；`--profile prod` 会调用显式 TradingDatas V1 runtime gate，并在 fresh handoff 配置缺失时按设计失败。`sharedsignals_evidence_contract`、`market_health`、`opening_acceptance` 与 `cn_futures_live_check` 已是 fail-closed 退役/法证墓碑，不是 TradingDatas 验收入口，也不得恢复 localhost fallback。`full_acceptance` 的 capital-growth profile 仍是历史综合回归工具，不是单一生产就绪事实；资本、样本和会话检查必须显式传入两个 capital root、A股 journal、label 截止时间、期货记录和有效会话。见 [docs/operations.md](docs/operations.md)。缺证据必须失败或明确 warning，不能用“样本不足”静默通过。
+`full_acceptance --profile quick` 只聚合当前网络关闭的合同/退役回归测试；`--profile prod` 的轻量 TradingDatas runtime gate 只证明 catalog/auth/单次 dataset 启动 smoke，不能替代 integration probe 的 bounded pagination、same-observation 双跑和 research snapshot 验收。配置缺失时必须失败。`sharedsignals_evidence_contract`、`market_health`、`opening_acceptance` 与 `cn_futures_live_check` 已是 fail-closed 退役/法证墓碑，不是 TradingDatas 验收入口。`full_acceptance` 的 capital-growth profile 仍是历史综合回归工具，不是单一生产就绪事实；缺证据必须失败或明确 warning，不能用“样本不足”静默通过。
 
 ## 文档入口
 
