@@ -268,8 +268,22 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         entries["tradingagent_dedicated_service_identity_candidate"].production_verified
         is False
     )
-    assert "claim_server_uid_gid_or_token_installed" in (
-        entries["tradingagent_dedicated_service_identity_candidate"].prohibited_uses
+    identity = entries["tradingagent_dedicated_service_identity_candidate"]
+    assert "claim_server_uid_gid_preflight_only" in identity.allowed_uses
+    assert "claim_server_ta_scoped_token_installed" in identity.prohibited_uses
+    assert (
+        "claim_server_full_cutover_from_uid_gid_or_immutable_release_preflight"
+        in identity.prohibited_uses
+    )
+    exact_pause_marker_gate = (
+        "accept_pause_without_exactly_one_tradingagent_schedule_state_"
+        "paused_until_tradingdatas_fresh_handoff_marker"
+    )
+    assert exact_pause_marker_gate in identity.prohibited_uses
+    assert "claim_server_uid_gid_or_token_installed" not in identity.prohibited_uses
+    assert (
+        exact_pause_marker_gate
+        in entries["tradingagent_installed_cron"].prohibited_uses
     )
     assert entries["tradingagent_small_account_optimizer"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_thesis_risk_authority"].state == ("CURRENT_VERIFIED")

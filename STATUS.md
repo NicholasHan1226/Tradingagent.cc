@@ -15,7 +15,9 @@ GitHub review #23 已把 catalog-driven parity、专用服务身份、front unit
 observation timer 继续保持未安装、未启用。对既有 secret 路径只做了 metadata-only
 读回：`/run/secrets/tradingagent` 为 `0700 marketgraph:marketgraph` 目录，既有叶
 文件为 `0600 marketgraph:marketgraph` 的 regular single-link file（`nlink=1`）。
-这不是 TA credential handoff，也没有读取或记录 token 值/内容哈希。
+这不是 TA credential handoff，也没有读取或记录 token 值/内容哈希。preflight 也没有
+停止或隔离既有 `tradingagent-front-api.service`；其当前 PID/cgroup 仍是由旧
+`marketgraph` UID 运行的 TA legacy front，因此零-holder gate 尚未通过。
 
 最新 TradingDatas 上游 handoff metadata 指向 production `c3232d0…`、
 `catalog_version=v1-fcc1aaa39c20743e`，目录为 190 total / 12 active / 178 paused，
@@ -39,7 +41,7 @@ current/front、credential、cron/timer 和真实交易 authority 继续分别�
 | 本地发布候选 | review #23 之后的 paused-cron merge hardening 与本次 truth sync 仍是隔离候选；机器状态保持 `TARGET_CONTRACT / production=false` | 候选测试不等于已 apply cron、tmpfiles、token、current/front 或 timer |
 | GitHub 主线 | review #23 已普通合并 catalog parity、sysusers/front 与 cron 迁移合同 | GitHub main 不等于上游 catalog metadata 已成为 TA authenticated parity，也不等于服务器进程加载 |
 | 服务器旁路/preflight | 既有 `0dfcb6d...` sidecar 证据仍只属历史功能旁路；最新 preflight 另创建 UID/GID 987 与 immutable release | immutable release 和 identity 存在不等于 current/front/token/tmpfiles/cron/timer 已切换 |
-| 服务器现役 | current 指针与 front 未切换；fresh TA-scoped token/tmpfiles 未安装，timer 未安装/未启用；既有 secret parent/leaf 仍是 metadata-only 读回的 `marketgraph` ownership | 不能把 UID/GID preflight 或旧叶解释为完整 identity/credential handoff |
+| 服务器现役 | current 指针与 front 未切换；既有 front PID/cgroup 仍是旧 `marketgraph` UID 的 TA legacy service；fresh TA-scoped token/tmpfiles 未安装，timer 未安装/未启用 | 不能把 UID/GID-only preflight 或 immutable release 解释为 token 已安装、零-holder 或 full cutover |
 | 外部能力 | 最新上游 catalog handoff 是 190/12/178、5 ready/7 impaired 的 metadata；TA 12-profile authenticated parity 为 `NOT RUN / BLOCKED` | 不能把 catalog metadata、旧九 profile fixture 或旧五项 one-shot 当成 12-profile TA parity；不证明 profiles/token 存在 |
 
 本地主线与远端主线的 fresh readback 统一使用 `git rev-parse HEAD origin/main`；结果只写入当次验收证据，不把会被下一次提交立即作废的提交号固化进上表两行。
@@ -47,7 +49,7 @@ current/front、credential、cron/timer 和真实交易 authority 继续分别�
 ## 当前发布证据
 
 - review #23 / `1907df9` 已合并 catalog parity 与 identity 的仓库合同。其 190/9/181、5 ready/4 impaired 只来自九 profile fixture，全部 `research_snapshot_eligible=false`，不得改造成 12 项生产 fixture。最新上游 handoff metadata 为 production `c3232d0…`、catalog `v1-fcc1aaa39c20743e`、190/12/178、5 ready/7 impaired；新增三项 `partial/degraded`，`cn.dataset.suspend_d` 为 `stale/degraded`。TA 12-profile authenticated parity 尚未运行，因缺全 12 项获批 secret-free profiles 与 fresh TA credential 固定 blocked。
-- identity preflight 已在服务器创建 `tradingagent:tradingagent` UID/GID 987 和 immutable release；current/front 未切换，fresh TA-scoped token 未安装，tmpfiles 未应用，timer 未安装/未启用。既有 `/run/secrets/tradingagent` 与叶文件仅按 metadata 读回为 `0700 marketgraph:marketgraph` 目录和 `0600 marketgraph:marketgraph` regular、`nlink=1` 叶；未读取内容，也不得把该旧叶称为 TA credential。
+- identity preflight 已在服务器创建 `tradingagent:tradingagent` UID/GID 987 和 immutable release；这是可诚实声明的 UID/GID-only preflight，不是 token/full cutover。current/front 未切换，既有 front PID/cgroup 仍由旧 `marketgraph` UID 运行；fresh TA-scoped token 未安装，tmpfiles 未应用，timer 未安装/未启用。既有 `/run/secrets/tradingagent` 与叶文件仅按 metadata 读回为 `0700 marketgraph:marketgraph` 目录和 `0600 marketgraph:marketgraph` regular、`nlink=1` 叶；未读取内容，也不得把该旧叶称为 TA credential。
 
 - 2026-07-22 TradingDatas Bearer 消费合同已完成离线 fixture/mock 与仓库合同验收；此前记录的聚焦、quick 与全仓数字只对应当时冻结字节，不替代后续候选 fresh 测试。它不证明 TA token 已发放、formal endpoint 已由 TA 读取或生产已激活。
 - 2026-07-22 新 A股候选使用现有 `marketgraph` 只读 token 仅完成一次 formal 18082 compatibility observation：五数据集 bounded/same-observation probe、3041只主板投影和 exact replay 均通过；snapshot `6c44ab3d...`，未产生 capital/order/fill/outbox/reconcile/journal。完整读回见 `docs/reports/2026-07-22-ashare-observation-readback.md`。这不授权长期复用该身份或 token。
@@ -83,24 +85,24 @@ current/front、credential、cron/timer 和真实交易 authority 继续分别�
 - Mini/Hermes webhook、file consumer、`RealSignalQueue` 和专用源码已在仓库层 `RETIRED_BLOCKED`，不得恢复。零值环境变量和 fail-closed wrapper 目前只是安装态墓碑；服务器/旧 Mini 的 cron、process、port 与历史回执仍需独立清零证据。
 - PM/US/HK 专用包、模拟 wrapper、配置、策略、测试及旧 StyleRunner/PerformanceTracker 执行栈已从仓库主线物理删除。冻结的历史输出只允许法证读取；不得参与当前市场状态、收益、交易量、readiness、自我进化或执行决策。
 - 旧 A股数据 reader、screening/research、review/runtime wrapper 与多市场 wrapper 仍按 `active-compatibility / retirement-pending / hard-blocked` 分类。只有满足 `shared/governance/legacy_inventory.yaml` 的消费者清零、同 `as_of` parity、已安装 runtime readback 和回滚证据后才可物理删除。
-- 服务器安装态 cron 的最新已保存 readback 仍指向旧 SharedSignals 与旧 TradingAgent wrapper；identity preflight 没有应用 paused TA cron。它们不是新架构依赖，但在完成 merge-tool 原子 pause、零 TA job 与 non-TA 保留读回前，不能靠删除仓内 tombstone 假装退役。
+- 服务器安装态 cron 的最新已保存 readback 仍指向旧 SharedSignals 与旧 TradingAgent wrapper；identity preflight 没有应用 paused TA cron。paused PASS 必须由 merge tool 原子安装并同时读回：`0` 条 TA recurring job、`# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff` 恰好 `1` 次、non-TA 行的字节/顺序/有效环境赋值不变；任一缺失都不能靠删除仓内 tombstone 假装退役。
 - 2026-07-20 本地只读检查确认 `~/Desktop/Investment` 已不存在，且本机 LaunchAgents、当前进程与 Nicholas 用户 crontab 的精确路径/Hermes/Mini 扫描均未发现引用；它已从 active legacy inventory 移除。此事实不推断服务器或其它主机副本也已清理。
 
 ## 明确未完成
 
 - 2026-07-22 formal loopback 的五项 observation one-shot 使用旧 `marketgraph` 只读 credential，仅限历史兼容验收；它不是 latest active-set parity。最新上游 handoff 的 catalog/version/counts 已记录，但 TA 对 12 个 active profile 的 authenticated parity 为 `NOT RUN / BLOCKED`，仍缺覆盖全部 12 项的获批 secret-free profiles 与 fresh TA credential；本文件不声明 profiles 或 credential 已存在。
 - 上游 handoff 同时声明日线首轮 parity 必须使用精确 `trade_date` filter，受控日期分区可完整分页，而无界跨分区查询会超过上游进度预算。TA 必须通过显式 filters、`max_pages/max_rows` 与 terminal cursor 证明完整读取，不允许无界重试、第一页截断或其它数据路径。
-- 正式 TA 持续接入已完成 sysusers-only 的 UID/GID 987 preflight，但 full identity/credential handoff 仍未完成：current/front 未切、fresh TA-scoped token 未安装、tmpfiles 未应用、paused cron 与零-holder 证据未完成。长期运行必须使用发布侧独立 TA-scoped token 和仓外 manifest，且全程 simulation-only、无 fallback。
+- 正式 TA 持续接入已完成 sysusers-only 的 UID/GID 987 preflight，机器门禁允许只声明这一事实，但禁止据此声称 token 已安装或 full cutover。current/front 未切，legacy front 仍以旧 `marketgraph` UID 运行；fresh TA-scoped token 未安装、tmpfiles 未应用、paused cron 与全量零-holder 证据未完成。零-holder 前必须先停止/隔离 legacy front，随后立即扫描全部 TA service/cgroup 名称、旧 `marketgraph` UID、新 `tradingagent` UID 987 及其它 UID。长期运行必须使用发布侧独立 TA-scoped token 和仓外 manifest，且全程 simulation-only、无 fallback。
 - 长期 observation worker 必须使用专用 `tradingagent:tradingagent` 身份；旧 `marketgraph:marketgraph` 一次性运行和既有 secret 叶只是历史兼容证据。timer 仍未安装/未启用，也缺 fresh credential、12-profile parity 与可信每日 immutable manifest rollover；禁止安装/启用静态 `as_of` 重放调度。
 - 当前 active 日线数据不具备 bid/ask、盘口数量、30秒 freshness或分钟成交量 authority；自动 paper day 只能积累观察、评估历史/特征 readiness 和记录 `abstain/completed_with_blocks` plan，不能从日线合成模拟 fill。
 - T 日收盘 observation 只能在预测前冻结交易日历授权后映射到 T+1；当前 planner 不能自行推导下一 session。membership ledger 固定无 label horizons，缺 calendar/minute/market-truth/adjustment authority 时不得回填标签。
 - 尚未安装 current-v1 live paper scheduler，也未积累真实 TradingDatas 驱动的至少 21 个 forward-collected observation session、20 个连续单日收益区间（不假设统计独立）和 60–120 个交易日冻结 OOS 样本。
-- 现役服务器仍运行旧源码与旧调度；本轮 sidecar 没有切换 service、cron、页面或公网路由。
+- 现役服务器仍运行旧源码、旧调度与旧 `marketgraph` front；identity/release preflight 没有切换 service、cron、页面或公网路由。
 - 没有 accepted DeepSeek evidence、真实 broker/account、公开 ingress 或真实交易授权；`REAL_TRADING_ENABLED=false`。
 
 ## 下一阶段入口
 
 1. 三个市场任务此后只在各自长期 lane 写域独立推进；共享合同/治理修改先由单一 shared-kernel owner 合入 `main`，再在干净检查点同步三条 lane，禁止市场线程直接双写 shared/root。
-2. 下一独立阶段严格按 [operations](docs/operations.md) 顺序推进：backup/preflight → sysusers identity readback → merge-tool 原子应用 paused TA cron并读回零 TA job/保留 non-TA → 证明零 TA process/cgroup/cwd/root/open-FD/mmap holder → 协调 credential freeze → 应用 tmpfiles → publisher 原子安装 fresh `0600 tradingagent:tradingagent` regular/single-link TA 叶 → metadata-only readback → unfreeze。暂停后失败固定 unavailable，不恢复旧 credential/TA cron，也不回退 8082。随后仍须完成 12-profile authenticated parity 与 daily immutable manifest/as-of rollover；在此之前 timer 保持未安装/未启用。
+2. 下一独立阶段严格按 [operations](docs/operations.md) 顺序推进：backup/preflight → sysusers UID/GID-only readback → merge-tool 原子应用 paused TA cron并读回 `0` TA job + `# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff` 恰好 `1` 次 + non-TA 字节/顺序/环境不变 → 停止并隔离 legacy `tradingagent-front-api.service` → 立即扫描全部 TA service/cgroup、旧 `marketgraph` UID、新 `tradingagent` UID 987 与其它 UID 的 process/cgroup/cwd/root/open-FD/mmap holder并证明全零 → 协调 credential freeze → 应用 tmpfiles → publisher 原子安装 fresh `0600 tradingagent:tradingagent` regular/single-link TA 叶 → metadata-only readback → unfreeze。暂停后失败固定 consumer unavailable；front 停止后失败还必须保持 stopped/isolated，只允许修复前滚，不恢复旧 front/credential/TA cron，也不回退 8082。随后仍须完成 12-profile authenticated parity 与 daily immutable manifest/as-of rollover；在此之前 timer 保持未安装/未启用。
 3. 并行积累 current-observation 与真实历史覆盖；分钟/L1 authority 未齐时自动 paper scheduler 只记录 `abstain/completed_with_blocks` plan。分钟证据达到冻结合同后，再开放 simulated reserve/fill/outbox/capital commit，并验证 crash/restart、对账、幂等和持续运行。
 4. 至少 21 个 forward-collected session/20 个连续单日收益区间（不假设统计独立）的工程闭环后评估出口，再积累 60–120 个交易日 OOS/多状态样本。月收益 20% 只作为收益分布上尾指标，不是强制交易、满仓或 PASS 条件。
