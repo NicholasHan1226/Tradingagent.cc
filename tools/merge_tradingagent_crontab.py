@@ -261,17 +261,33 @@ def _backup(text: str, backup_dir: Path) -> Path:
 def _ta_coverage_ok(text: str, template_text: str) -> bool:
     expected = tradingagent_entries(template_text)
     actual = tradingagent_entries(text)
-    if actual != expected or _tradingagent_environment_mismatches(text):
+    lines = [line.strip() for line in text.splitlines()]
+    if (
+        lines.count(TRADINGAGENT_MANAGED_BLOCK_BEGIN) != 1
+        or lines.count(TRADINGAGENT_MANAGED_BLOCK_END) != 1
+    ):
         return False
-    if TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_text:
-        lines = [line.strip() for line in text.splitlines()]
-        return (
-            lines.count(TRADINGAGENT_MANAGED_BLOCK_BEGIN) == 1
-            and lines.count(TRADINGAGENT_MANAGED_BLOCK_END) == 1
-            and lines.count(TRADINGAGENT_SCHEDULE_PAUSED_MARKER) == 1
-            and all(lines.count(line) == 1 for line in TRADINGAGENT_ENVIRONMENT_LINES)
+    begin = lines.index(TRADINGAGENT_MANAGED_BLOCK_BEGIN)
+    end = lines.index(TRADINGAGENT_MANAGED_BLOCK_END)
+    if begin >= end:
+        return False
+    managed_lines = lines[begin + 1 : end]
+    managed_text = "\n".join(managed_lines)
+    if (
+        actual != expected
+        or tradingagent_entries(managed_text) != expected
+        or _tradingagent_environment_mismatches(managed_text)
+        or any(
+            managed_lines.count(line) != 1 for line in TRADINGAGENT_ENVIRONMENT_LINES
         )
-    return bool(expected)
+    ):
+        return False
+    explicitly_paused = TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_text
+    if managed_lines.count(TRADINGAGENT_SCHEDULE_PAUSED_MARKER) != int(
+        explicitly_paused
+    ):
+        return False
+    return not expected if explicitly_paused else bool(expected)
 
 
 def apply_merge(

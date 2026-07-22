@@ -311,6 +311,19 @@ class MergeTests(unittest.TestCase):
         )
         self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
 
+    def test_paused_coverage_preserves_other_project_shell_assignment(self):
+        current = (
+            "# TradingDatas runtime environment\n"
+            "SHELL=/bin/bash\n"
+            "*/5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh\n"
+        )
+
+        result = merge(current, PAUSED_TEMPLATE)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.count("SHELL=/bin/bash"), 2)
+        self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
+
 
 class ApplyWorkflowTests(unittest.TestCase):
     """apply_merge with mocked system calls."""
