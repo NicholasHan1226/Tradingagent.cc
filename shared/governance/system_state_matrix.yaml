@@ -16,6 +16,7 @@ entries:
     prohibited_uses:
       - claim_production_runtime_ready
       - claim_upstream_handoff_as_ta_authenticated_readback
+      - claim_upstream_catalog_metadata_as_ta_authenticated_parity
       - fallback_to_legacy_storage_route_or_provider
     successor: sharedsignals.query_result.v1
   - entry_id: tradingagent_sharedsignals_v1_client
@@ -121,6 +122,8 @@ entries:
       - promote_parity_receipt_to_research_snapshot
       - infer_historical_pit_or_revision_authority
       - infer_ta_scoped_token_service_identity_or_runtime_activation
+      - claim_catalog_metadata_as_ta_authenticated_parity
+      - claim_secret_free_profiles_or_ta_credential_provisioning
       - query_sqlite_tushare_source_status_or_provider_specific_routes
       - fallback_after_auth_catalog_query_or_pagination_failure
     successor: tradingagent.tradingdatas.catalog-parity.v1
@@ -140,14 +143,26 @@ entries:
     allowed_uses:
       - review_tracked_tradingagent_user_group_and_front_unit_contract
       - prepare_non_sensitive_uid_gid_handoff_before_token_provisioning
+      - claim_server_uid_gid_preflight_only
       - keep_front_read_only_simulation_only_and_unable_to_read_tradingdatas_secret
       - preserve_temporary_read_only_marketgraph_projection_group_during_migration
     prohibited_uses:
-      - claim_server_uid_gid_or_token_installed
+      - claim_server_ta_scoped_token_installed
+      - claim_server_full_cutover_from_uid_gid_or_immutable_release_preflight
+      - claim_immutable_release_preflight_as_current_front_tmpfiles_or_runtime_cutover
       - claim_front_service_cutover_or_runtime_activation
       - expose_token_content_hash_or_authorization_header
       - enable_observation_timer_or_real_trading
       - infer_marketgraph_as_a_tradingagent_service_identity
+      - accept_paused_cron_without_zero_ta_jobs_exactly_one_pause_marker_and_non_ta_byte_order_env_preservation
+      - accept_pause_without_exactly_one_tradingagent_schedule_state_paused_until_tradingdatas_fresh_handoff_marker
+      - scan_zero_holders_before_stopping_and_isolating_legacy_front
+      - limit_zero_holder_scan_to_uid_987_or_new_ta_service_cgroups
+      - restart_legacy_front_or_consumer_after_post_stop_failure
+      - provision_or_replace_credential_before_coordinated_freeze
+      - apply_tmpfiles_before_paused_ta_cron_and_zero_holder_proof
+      - restore_legacy_credential_or_ta_cron_after_pause_failure
+      - fallback_to_legacy_credential_or_8082
     successor: tradingagent.dedicated-service-identity.v1
   - entry_id: tradingagent_ashare_observation_runtime
     state: CURRENT_VERIFIED
@@ -276,6 +291,7 @@ entries:
       - enable_before_trusted_daily_immutable_manifest_rollover
       - replay_static_manifest_or_as_of_as_daily_accumulation
       - claim_persistent_observation_or_production_runtime
+      - infer_timer_installed_or_enabled_from_uid_gid_or_immutable_release_preflight
     successor: tradingagent.ashare.observation-worker-timer.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
@@ -1192,6 +1208,9 @@ entries:
     prohibited_uses:
       - infer_candidate_schedule_or_activation
       - mutate_or_install_cron
+      - accept_pause_without_zero_ta_jobs_exactly_one_pause_marker_and_non_ta_byte_order_env_preservation
+      - accept_pause_without_exactly_one_tradingagent_schedule_state_paused_until_tradingdatas_fresh_handoff_marker
+      - restore_legacy_ta_cron_after_pause_failure
     successor: separately_authorized_activation_required
   - entry_id: tradingagent_production_runtime
     state: CURRENT_VERIFIED
@@ -1206,6 +1225,8 @@ entries:
       - compare_read_only_runtime_inventory_during_release
     prohibited_uses:
       - infer_sidecar_candidate_activated_as_production
+      - infer_identity_or_immutable_release_preflight_as_current_front_token_or_tmpfiles_cutover
+      - restart_legacy_front_after_post_stop_failure
       - deploy_or_write_production
     successor: separately_authorized_activation_required
   - entry_id: tradingagent_server_sidecar_candidate

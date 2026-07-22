@@ -370,7 +370,7 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 
 缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`TRADINGDATAS_API_TOKEN_FILE` 只保存 `/run/secrets/tradingagent` 下的仓外绝对路径；checkout/worktree/Git common repo 或任意其它目录中的文件一律拒绝。禁止在环境变量、manifest、fixture、日志或回执中写明文 token。目标文件必须由发布侧独立配置为 TA-scoped credential，精确 `0600`、可信 owner、普通单硬链接文件且整条路径无 symlink；不得复用 TradingDatas bootstrap token。`http-json-v1` transport 只接受无尾随斜杠、path、query、fragment、userinfo、控制字符或反斜杠的 canonical `scheme://host[:port]`，并只向该 authority 上精确的 `GET /v1/catalog` 与 `POST /v1/query` 注入 Bearer header；只接受通用客户端固定生成的 JSON `Accept`/`Content-Type`，调用方添加 Host、forwarding、proxy 或其它 header 会在网络前拒绝。远端 authority 必须使用 HTTPS，明文 HTTP 只接受 `127.0.0.0/8` 或 `::1` 的 IP 字面量 loopback，不接受 `localhost` 等 DNS 名称。不同 authority/path/query/method、调用方自带 Authorization 和 30x 重定向都在发送前拒绝。transport 为 single-flight，并发第二请求在网络前失败；401/403 不读取正文并锁住该 transport，后续请求、重试和任何 legacy/provider fallback 全部拒绝。当前合同完成不等于实际 token 已发放，也不授权配置或运行 live endpoint。
 
-长期 A股 observation worker 的发布合同固定为专用 `tradingagent:tradingagent` 服务身份，叶文件路径为 `/run/secrets/tradingagent/tradingdatas-read.token`；`tradingagent-front-api.service` 不读取该 token。只有发布侧可创建父目录、生成并注册独立 TA scope token，再以 `tradingagent:tradingagent`、精确 `0600` 和无 symlink/硬链接别名的原子替换安装叶文件；root provisioning 必须可在重启后重建并保留显式回滚。应用候选、测试、manifest、日志与任务消息均不得创建、读取或传递 token 值。旧 `marketgraph:marketgraph` 身份及其只读 token 只是 2026-07-22 一次性兼容验收的历史证据，不得在长驻 worker、front 或新 state root 中复用。发布前若目录或叶文件尚不存在，消费端必须保持 unavailable，不能自行降级到其它 credential、端口或数据源。
+长期 A股 observation worker 的发布合同固定为专用 `tradingagent:tradingagent` 服务身份，叶文件路径为 `/run/secrets/tradingagent/tradingdatas-read.token`；`tradingagent-front-api.service` 不读取该 token。父目录只能由受控 tmpfiles 阶段校正，只有 credential publisher 可生成、注册并以 `tradingagent:tradingagent`、精确 `0600` 和无 symlink/硬链接别名的原子替换安装叶文件；重启后重建也必须走同一 freeze/publisher/readback 顺序，不能恢复旧叶。应用候选、测试、manifest、日志与任务消息均不得创建、读取或传递 token 值。旧 `marketgraph:marketgraph` 身份及其只读 token 只是 2026-07-22 一次性兼容验收的历史证据，不得在长驻 worker、front 或新 state root 中复用。发布前若 fresh TA-scoped 叶尚不存在，消费端必须保持 unavailable，不能自行降级到其它 credential、端口或数据源。
 
 #### 2.0.1 专用服务身份与 installed unit 切换
 
@@ -385,28 +385,79 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 - `deploy/systemd/tradingagent-ashare-observation.timer`：不可 enable 的静态候选，
   本阶段不安装、不启用。
 
-安装顺序必须是：备份账户数据库、现役 unit/drop-in、两份 crontab、现役仓
-HEAD/status 与路径权限；安装 sysusers 配置并运行 `systemd-sysusers`；读回
-UID/GID/primary group/nologin；安装 tmpfiles 配置并运行
-`systemd-tmpfiles --create`；最后才由 TradingDatas credential publisher 在
-服务器本地生成、注册并原子安装新的 TA-scoped source/runtime token。应用发布
-流程既不能读取身份不明的 `/etc/tradingagent/tradingdatas-read.token`，也不能
-复制旧 `marketgraph` runtime token。任何 token 值或 token 内容哈希都不得进入
-命令行、Git、日志、回执或任务消息。
+当前迁移前基线只做过 metadata-only 读回：`/run/secrets/tradingagent` 是
+`0700 marketgraph:marketgraph` 目录，既有
+`tradingdatas-read.token` 叶是 `0600 marketgraph:marketgraph` 的 regular file、
+`nlink=1`。这只证明旧安装态文件身份，不证明其 scope、内容或可复用性；禁止读取、
+备份、哈希或复制叶内容。针对这个已存在路径，切换顺序固定为：
+
+1. **backup/preflight**：备份账户数据库、现役 unit/drop-in、root 与
+   `marketgraph` 两份 crontab、现役仓 HEAD/status、immutable release/current
+   指针和相关路径 metadata；确认 observation timer 未安装且未启用。credential
+   内容不进入备份或证据。
+2. **只落 sysusers identity**：安装 sysusers 配置并运行
+   `systemd-sysusers`，随后读回 UID、GID、primary group、nologin 与 home；本步
+   不运行 tmpfiles，不改 current/front，也不触碰 secret parent 或叶文件。
+3. **先暂停 TA cron**：只用本仓 `tools/merge_tradingagent_crontab.py` 和 paused
+   模板原子安装。读回必须同时证明：TA recurring market job 为 `0`；
+   `# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff` 恰好出现
+   `1` 次；全部 non-TA 行的字节、相对顺序和有效环境赋值保持不变。timer 继续保持
+   未安装、未启用；三项任一不满足都不是 paused PASS。
+4. **停止并隔离 legacy front**：步骤 3 读回通过后，立即停止并在迁移窗口内隔离
+   已安装的 `tradingagent-front-api.service`，阻止依赖或人工操作将其重启。其当前
+   PID/cgroup 是由旧 `marketgraph` UID 运行的 TA legacy front；必须保存停止前身份，
+   再读回 unit inactive、原 PID 退出且 cgroup 无成员。本步不启动新 front/canary。
+5. **立即证明零 holder**：紧接 legacy front 停止读回，在任何其它动作、credential
+   freeze 或 tmpfiles 变更前执行。扫描必须覆盖所有 TA process、所有已加载或遗留的
+   TA service/cgroup 名称，并同时覆盖旧 `marketgraph` UID、新
+   `tradingagent` UID 987 以及 root/其它 UID；不能只按 UID 987 或新 unit 名过滤。
+   同时对相关 current/release、state 与 secret 路径完成 `/proc` 的 cwd、root、
+   open-FD 和 mmap holder 读回，所有结果必须为零。仅看 cron、单一 service 状态或
+   单一 cgroup 不够。
+6. **协调 credential freeze**：由 credential publisher 明确冻结生成、轮换和
+   写入窗口；应用发布者不得接触 credential 内容。freeze 未确认时停止。
+7. **再应用 tmpfiles**：只有 paused-cron 三项精确读回、legacy front 已停止隔离、
+   全量零-holder 与 publisher freeze 证据同时成立后，才安装 tmpfiles 配置并运行
+   `systemd-tmpfiles --create`；tmpfiles 只建立/校正目录，不创建 token leaf。
+8. **publisher 原子安装新叶**：publisher 在服务器本地生成并注册全新的
+   TA-scoped credential，再原子安装
+   `/run/secrets/tradingagent/tradingdatas-read.token`；最终叶必须是精确
+   `0600 tradingagent:tradingagent`、regular、single-link，整条路径无 symlink，
+   也没有硬链接或其它 inode alias。不得复用或改名旧 `marketgraph` credential。
+9. **metadata-only readback**：只读回路径组件、owner/group、mode、文件类型、
+   link count 与 alias 扫描结果；任何 token 值或内容哈希都不得进入命令行、Git、
+   日志、回执或任务消息。
+10. **最后 unfreeze**：只有新叶 metadata readback 全部通过，publisher 才解除
+    freeze。unfreeze 不安装/启用 timer，也不自动切换 current、front 或 worker；
+    legacy front 继续停止隔离，TA 仍须等待独立的 12-profile authenticated parity
+    与切换授权。
+
+应用发布流程既不能读取身份不明的
+`/etc/tradingagent/tradingdatas-read.token`，也不能复制旧 `marketgraph` runtime
+token。步骤 3 暂停成功后任一步失败，TA observation consumer 必须保持
+unavailable，TA recurring job 保持为零、pause marker 保持恰好一个，同时保留
+non-TA cron 的字节/顺序/环境。步骤 4 停止隔离后失败时，legacy front 必须继续
+停止且不得解除隔离；只能保存失败证据并受控前滚。不得恢复旧 TA cron、旧
+credential/叶文件或 legacy front，也不得回退到 8082、旧 route、文件或 provider
+数据路径。
 
 前端 unit 使用专用 UID/primary group 和 immutable release bytes；迁移期间仅以
 `SupplementaryGroups=marketgraph` 只读历史模拟投影，且没有任何
 `ReadWritePaths`；`InaccessiblePaths=/run/secrets/tradingagent` 进一步隔离
-worker credential，front 即使使用相同主 UID 也不能读取 token。切换前必须先在备用 loopback 端口以该身份启动 canary，比较
-health、snapshot 安全标志与关键投影计数；无法读取历史投影时回滚，不得用放宽
-全树权限掩盖失败。installed base unit 必须与仓库字节一致，历史
+worker credential，front 即使使用相同主 UID 也不能读取 token。front canary 与
+切换属于步骤 10 之后的独立授权阶段；步骤 4 到 10 之间不得启动任何 legacy/new
+front 进程。后续切换前必须在备用 loopback 端口以专用身份启动 canary，比较
+health、snapshot 安全标志与关键投影计数；无法读取历史投影时保持 front
+unavailable 并修复前滚，不得重启 legacy front 或用放宽全树权限掩盖失败。
+installed base unit 必须与仓库字节一致，历史
 `sharedsignals.conf`/`sim-only.conf` drop-in 必须备份后移出 active unit 目录；
 新 base unit 已固定 simulation-only 并把前端 TradingDatas/MarketGraph URL 留空。
 
 现役 `marketgraph` crontab 的 TradingAgent managed block 必须使用本仓
 `tools/merge_tradingagent_crontab.py` 与 paused 模板生成，原子安装并读回，结果
-应为零条 TA recurring market job。其它项目的 provider/monitor cron 不属于 TA
-写域，不得在本次切换中逐条删除。这样只证明 **TA 活跃消费者不再使用 8082**；
+必须同时为零条 TA recurring market job、恰好一个 pause marker，并保持 non-TA
+字节/顺序/有效环境赋值不变。其它项目的 provider/monitor cron 不属于 TA 写域，
+不得在本次切换中逐条删除。这样只证明 **TA 活跃消费者不再使用 8082**；
 旧 SharedSignals service、provider/monitor cron 与 8082 的最终退役仍需其 owner
 另行完成持续数据替代、no-use 观察和回滚验收。
 
@@ -415,10 +466,13 @@ health、snapshot 安全标志与关键投影计数；无法读取历史投影�
 前拒绝 Git checkout 内的备份目录。禁止使用旧的仓内
 `runtime/backups/crontab`，也禁止从脏的现役仓运行会写回代码树的安装方式。
 
-回滚按相反顺序执行：停止新 worker/front；恢复原 front base/drop-in 和原始
-crontab 字节；重启并复核原 PID/8787 health；由 credential publisher 撤销新
-TA scope credential 并重建所需 runtime leaf。不要删除 release、失败证据、旧
-service 或旧 token 作为“回滚”。
+本阶段不切换 current 或安装/启用新 front/worker timer，但会在步骤 4 显式停止并
+隔离 legacy front，因此不存在用旧 front、旧 TA cron 或旧 credential 恢复可用性的
+回滚。步骤 3 前失败可保持原状并退出；步骤 3 后失败固定 fail closed，步骤 4 后还
+必须保持 front stopped/isolated：停止任何新 TA process、保持 TA job 为零、唯一
+pause marker、non-TA cron 不变和 consumer unavailable，保留 immutable release、
+备份与失败证据，再按同一顺序修复前滚。不得删除证据，也不得以旧 front、旧 token、
+旧调度或 8082 fallback 缩短故障窗口。
 
 ### 2.1 TradingDatas V1 接入验收器
 
