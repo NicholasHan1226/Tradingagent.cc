@@ -49,6 +49,19 @@ BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh
 
 EXTERNAL_BACKUP_DIR = Path("/opt/investment/release-evidence/tradingagent/test/cron")
 
+CONTROLLED_ENVIRONMENT_ASSIGNMENTS = (
+    ("SHELL=/bin/bash", "SHELL=/bin/sh"),
+    ("CRON_TZ=Asia/Shanghai", "CRON_TZ=UTC"),
+    ("TZ=Asia/Shanghai", "TZ=UTC"),
+    ("REAL_TRADING_ENABLED=false", "REAL_TRADING_ENABLED=true"),
+    ("ASHARE_SIM_HERMES_ENABLED=0", "ASHARE_SIM_HERMES_ENABLED=1"),
+    ("ASHARE_SIM_WEBHOOK_ENABLED=0", "ASHARE_SIM_WEBHOOK_ENABLED=1"),
+    (
+        "BASH_ENV=/opt/investment/tradingagent/shared/env_loader.sh",
+        "BASH_ENV=/wrong/loader.sh",
+    ),
+)
+
 CURRENT = """\
 # TradingDatas market data
 */5 * * * * /opt/investment/tradingdatas/collectors/provider_transport.sh >> /opt/investment/tradingdatas/logs/provider_transport.log 2>&1
@@ -323,6 +336,87 @@ class MergeTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.count("SHELL=/bin/bash"), 2)
         self.assertTrue(_ta_coverage_ok(result, PAUSED_TEMPLATE))
+
+    def test_coverage_rejects_extra_controlled_assignment_inside_managed_block(self):
+        result = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(result)
+
+        for expected, wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS:
+            variants = {
+                "before_expected": result.replace(
+                    expected + "\n", wrong + "\n" + expected + "\n", 1
+                ),
+                "after_expected": result.replace(
+                    expected + "\n", expected + "\n" + wrong + "\n", 1
+                ),
+                "after_jobs": result.replace(
+                    "# END TRADINGAGENT MANAGED CRON",
+                    wrong + "\n# END TRADINGAGENT MANAGED CRON",
+                    1,
+                ),
+            }
+            for position, invalid in variants.items():
+                with self.subTest(
+                    variable=expected.split("=", 1)[0], position=position
+                ):
+                    self.assertFalse(_ta_coverage_ok(invalid, TA_TEMPLATE))
+
+    def test_coverage_rejects_schedule_state_namespace_variants(self):
+        paused = merge("", PAUSED_TEMPLATE)
+        active = merge("", TA_TEMPLATE)
+        self.assertIsNotNone(paused)
+        self.assertIsNotNone(active)
+        expected_marker = (
+            "# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
+        )
+
+        for value in ("active", "paused_wrong"):
+            variant = f"# TRADINGAGENT_SCHEDULE_STATE={value}"
+            with self.subTest(template="paused", value=value):
+                self.assertFalse(
+                    _ta_coverage_ok(
+                        paused.replace(
+                            expected_marker,
+                            expected_marker + "\n" + variant,
+                            1,
+                        ),
+                        PAUSED_TEMPLATE,
+                    )
+                )
+            with self.subTest(template="active", value=value):
+                self.assertFalse(
+                    _ta_coverage_ok(
+                        active.replace(
+                            "# END TRADINGAGENT MANAGED CRON",
+                            variant + "\n# END TRADINGAGENT MANAGED CRON",
+                            1,
+                        ),
+                        TA_TEMPLATE,
+                    )
+                )
+
+    def test_coverage_retains_exact_env_rejection_and_outside_assignments(self):
+        active = merge("", TA_TEMPLATE)
+        paused = merge("", PAUSED_TEMPLATE)
+        self.assertIsNotNone(active)
+        self.assertIsNotNone(paused)
+
+        for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS:
+            with self.subTest(variable=expected.split("=", 1)[0]):
+                self.assertFalse(
+                    _ta_coverage_ok(
+                        active.replace(
+                            expected + "\n", expected + "\n" + expected + "\n", 1
+                        ),
+                        TA_TEMPLATE,
+                    )
+                )
+
+        outside = "\n".join(
+            expected for expected, _wrong in CONTROLLED_ENVIRONMENT_ASSIGNMENTS
+        )
+        self.assertTrue(_ta_coverage_ok(outside + "\n" + active, TA_TEMPLATE))
+        self.assertTrue(_ta_coverage_ok(outside + "\n" + paused, PAUSED_TEMPLATE))
 
 
 class ApplyWorkflowTests(unittest.TestCase):

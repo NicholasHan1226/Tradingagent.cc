@@ -273,19 +273,37 @@ def _ta_coverage_ok(text: str, template_text: str) -> bool:
         return False
     managed_lines = lines[begin + 1 : end]
     managed_text = "\n".join(managed_lines)
+    expected_environment = {
+        line.split("=", 1)[0]: line for line in TRADINGAGENT_ENVIRONMENT_LINES
+    }
+    managed_environment = {variable: [] for variable in expected_environment}
+    for line in managed_lines:
+        if "=" not in line or line.startswith("#"):
+            continue
+        variable = line.split("=", 1)[0].strip()
+        if variable in managed_environment:
+            managed_environment[variable].append(line)
     if (
         actual != expected
         or tradingagent_entries(managed_text) != expected
         or _tradingagent_environment_mismatches(managed_text)
         or any(
-            managed_lines.count(line) != 1 for line in TRADINGAGENT_ENVIRONMENT_LINES
+            managed_environment[variable] != [expected_assignment]
+            for variable, expected_assignment in expected_environment.items()
         )
     ):
         return False
     explicitly_paused = TRADINGAGENT_SCHEDULE_PAUSED_MARKER in template_text
-    if managed_lines.count(TRADINGAGENT_SCHEDULE_PAUSED_MARKER) != int(
-        explicitly_paused
-    ):
+    state_markers = []
+    for line in managed_lines:
+        candidate = line[1:].strip() if line.startswith("#") else line
+        variable, separator, _value = candidate.partition("=")
+        if separator and variable.strip() == "TRADINGAGENT_SCHEDULE_STATE":
+            state_markers.append(line)
+    expected_state_markers = (
+        [TRADINGAGENT_SCHEDULE_PAUSED_MARKER] if explicitly_paused else []
+    )
+    if state_markers != expected_state_markers:
         return False
     return not expected if explicitly_paused else bool(expected)
 
