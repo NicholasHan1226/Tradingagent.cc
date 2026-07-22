@@ -346,6 +346,25 @@ def _canonical_json(value: object) -> str:
     )
 
 
+def _simulate_link_then_unlink_crash(
+    published_path: Path,
+    *,
+    token: str,
+) -> Path:
+    assert len(token) == 32
+    temporary = published_path.parent / f".tmp-{token}.json"
+    os.link(published_path, temporary)
+    published_stat = published_path.lstat()
+    temporary_stat = temporary.lstat()
+    assert (published_stat.st_dev, published_stat.st_ino) == (
+        temporary_stat.st_dev,
+        temporary_stat.st_ino,
+    )
+    assert published_stat.st_nlink == 2
+    assert temporary_stat.st_nlink == 2
+    return temporary
+
+
 def test_round_trip_survives_new_instance_with_rows_and_exact_evidence(
     tmp_path: Path,
 ) -> None:
@@ -411,6 +430,198 @@ def test_round_trip_survives_new_instance_with_rows_and_exact_evidence(
     assert artifact["datasets"][0]["row_observation_sha256"] == (
         snapshot.datasets[0].row_observation_sha256
     )
+
+
+def test_load_recovers_artifact_link_then_unlink_crash_window(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    artifact_path = root / f"snapshot-{snapshot.snapshot_sha256}.json"
+    temporary = _simulate_link_then_unlink_crash(
+        artifact_path,
+        token="a" * 32,
+    )
+
+    recovered = store.load(
+        profile_id=snapshot.profile_id,
+        decision_as_of=DECISION_AS_OF,
+        expected_snapshot_sha256=snapshot.snapshot_sha256,
+        catalog_version=CATALOG,
+        receipt_ids=_receipt_ids(),
+    )
+
+    assert recovered == snapshot
+    assert not temporary.exists()
+    assert artifact_path.lstat().st_nlink == 1
+
+
+def test_load_bound_decision_recovers_binding_link_then_unlink_crash_window(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    binding_path = next(root.glob("decision-*.json"))
+    temporary = _simulate_link_then_unlink_crash(
+        binding_path,
+        token="b" * 32,
+    )
+
+    recovered = store.load_bound_decision(
+        profile_id=snapshot.profile_id,
+        decision_as_of=DECISION_AS_OF,
+        catalog_version=CATALOG,
+    )
+
+    assert recovered == snapshot
+    assert not temporary.exists()
+    assert binding_path.lstat().st_nlink == 1
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "multiple_aliases",
+        "wrong_name",
+        "wrong_owner",
+        "wrong_mode",
+        "symlink",
+        "noncanonical",
+    ),
+)
+def test_artifact_recovery_rejects_suspicious_state_without_deleting_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    artifact_path = root / f"snapshot-{snapshot.snapshot_sha256}.json"
+    suspicious: list[Path]
+
+    if case == "multiple_aliases":
+        first = _simulate_link_then_unlink_crash(
+            artifact_path,
+            token="c" * 32,
+        )
+        second = root / f".tmp-{'d' * 32}.json"
+        os.link(artifact_path, second)
+        assert artifact_path.lstat().st_nlink == 3
+        suspicious = [artifact_path, first, second]
+    elif case == "wrong_name":
+        invalid_name = root / ".tmp-NOT-LOWER-HEX.json"
+        os.link(artifact_path, invalid_name)
+        assert artifact_path.lstat().st_nlink == 2
+        suspicious = [artifact_path, invalid_name]
+    elif case == "wrong_owner":
+        temporary = _simulate_link_then_unlink_crash(
+            artifact_path,
+            token="e" * 32,
+        )
+        current_uid = os.geteuid()
+        monkeypatch.setattr(
+            "shared.data.research_snapshot_store.os.geteuid",
+            lambda: current_uid + 1,
+        )
+        suspicious = [artifact_path, temporary]
+    elif case == "wrong_mode":
+        temporary = _simulate_link_then_unlink_crash(
+            artifact_path,
+            token="f" * 32,
+        )
+        artifact_path.chmod(0o640)
+        suspicious = [artifact_path, temporary]
+    elif case == "symlink":
+        backing = root / "artifact-backing.json"
+        artifact_path.rename(backing)
+        temporary = root / f".tmp-{'1' * 32}.json"
+        os.link(backing, temporary)
+        artifact_path.symlink_to(backing.name)
+        suspicious = [artifact_path, backing, temporary]
+    else:
+        temporary = _simulate_link_then_unlink_crash(
+            artifact_path,
+            token="2" * 32,
+        )
+        raw = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact_path.write_text(
+            json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        suspicious = [artifact_path, temporary]
+
+    before = {
+        path: (
+            path.lstat().st_dev,
+            path.lstat().st_ino,
+            path.lstat().st_nlink,
+        )
+        for path in suspicious
+    }
+    with pytest.raises(ResearchSnapshotStoreCorruption):
+        store.load(
+            profile_id=snapshot.profile_id,
+            decision_as_of=DECISION_AS_OF,
+            expected_snapshot_sha256=snapshot.snapshot_sha256,
+            catalog_version=CATALOG,
+            receipt_ids=_receipt_ids(),
+        )
+
+    assert all(os.path.lexists(path) for path in suspicious)
+    assert {
+        path: (
+            path.lstat().st_dev,
+            path.lstat().st_ino,
+            path.lstat().st_nlink,
+        )
+        for path in suspicious
+    } == before
+
+
+def test_artifact_recovery_rechecks_link_count_before_unlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    artifact_path = root / f"snapshot-{snapshot.snapshot_sha256}.json"
+    temporary = _simulate_link_then_unlink_crash(
+        artifact_path,
+        token="3" * 32,
+    )
+    injected_alias = root / f".tmp-{'4' * 32}.json"
+    original = FileResearchSnapshotStore._validate_recovery_payload
+
+    def add_alias_after_payload_validation(self, **kwargs) -> None:
+        original(self, **kwargs)
+        os.link(artifact_path, injected_alias)
+
+    monkeypatch.setattr(
+        FileResearchSnapshotStore,
+        "_validate_recovery_payload",
+        add_alias_after_payload_validation,
+    )
+
+    with pytest.raises(ResearchSnapshotStoreCorruption):
+        store.load(
+            profile_id=snapshot.profile_id,
+            decision_as_of=DECISION_AS_OF,
+            expected_snapshot_sha256=snapshot.snapshot_sha256,
+            catalog_version=CATALOG,
+            receipt_ids=_receipt_ids(),
+        )
+
+    assert temporary.exists()
+    assert injected_alias.exists()
+    assert artifact_path.lstat().st_nlink == 3
 
 
 def test_round_trip_normalizes_source_proof_timestamps_before_hashing(
@@ -692,6 +903,104 @@ def test_symlink_hardlink_and_traversal_paths_fail_closed(tmp_path: Path) -> Non
             catalog_version=CATALOG,
             receipt_ids=_receipt_ids(),
         )
+
+
+def test_existing_root_with_nonprivate_mode_fails_closed_without_repair(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
+    store = FileResearchSnapshotStore(root)
+
+    with pytest.raises(ResearchSnapshotStoreCorruption, match="root_mode_invalid"):
+        store.compare_and_swap(
+            snapshot=_snapshot(),
+            expected_snapshot_sha256=None,
+        )
+
+    assert root.stat().st_mode & 0o777 == 0o755
+    assert list(root.iterdir()) == []
+
+
+def test_existing_root_with_wrong_owner_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "research-snapshots"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    actual_euid = os.geteuid()
+    monkeypatch.setattr(
+        "shared.data.research_snapshot_store.os.geteuid",
+        lambda: actual_euid + 1,
+    )
+
+    with pytest.raises(ResearchSnapshotStoreCorruption, match="root_owner_invalid"):
+        FileResearchSnapshotStore(root).compare_and_swap(
+            snapshot=_snapshot(),
+            expected_snapshot_sha256=None,
+        )
+
+    assert list(root.iterdir()) == []
+
+
+def test_artifact_with_nonprivate_mode_fails_closed_on_read(tmp_path: Path) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    artifact = root / f"snapshot-{snapshot.snapshot_sha256}.json"
+    artifact.chmod(0o640)
+
+    with pytest.raises(ResearchSnapshotStoreCorruption, match="artifact_mode_invalid"):
+        store.load(
+            profile_id=snapshot.profile_id,
+            decision_as_of=DECISION_AS_OF,
+            expected_snapshot_sha256=snapshot.snapshot_sha256,
+            catalog_version=CATALOG,
+            receipt_ids=_receipt_ids(),
+        )
+
+    assert artifact.stat().st_mode & 0o777 == 0o640
+
+
+def test_binding_with_nonprivate_mode_fails_closed_on_read(tmp_path: Path) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    binding = next(root.glob("decision-*.json"))
+    binding.chmod(0o640)
+
+    with pytest.raises(ResearchSnapshotStoreCorruption, match="binding_mode_invalid"):
+        store.load_bound_decision(
+            profile_id=snapshot.profile_id,
+            decision_as_of=DECISION_AS_OF,
+            catalog_version=CATALOG,
+        )
+
+    assert binding.stat().st_mode & 0o777 == 0o640
+
+
+def test_lock_with_nonprivate_mode_fails_closed_before_read(tmp_path: Path) -> None:
+    root = tmp_path / "research-snapshots"
+    snapshot = _snapshot()
+    store = FileResearchSnapshotStore(root)
+    store.compare_and_swap(snapshot=snapshot, expected_snapshot_sha256=None)
+    lock = next(root.glob(".decision-*.lock"))
+    lock.chmod(0o640)
+
+    with pytest.raises(ResearchSnapshotStoreCorruption, match="lock_mode_invalid"):
+        store.load(
+            profile_id=snapshot.profile_id,
+            decision_as_of=DECISION_AS_OF,
+            expected_snapshot_sha256=snapshot.snapshot_sha256,
+            catalog_version=CATALOG,
+            receipt_ids=_receipt_ids(),
+        )
+
+    assert lock.stat().st_mode & 0o777 == 0o640
 
 
 def test_root_is_explicit_and_atomic_failure_never_publishes_decision_binding(

@@ -123,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             f"pass snapshot_sha256={result.snapshot_sha256} "
-            f"tradable_universe_count={result.tradable_universe_count} "
+            f"observation_session={result.observation_session} "
+            f"observation_universe_count={result.observation_universe_count} "
+            f"observation_ledger_sha256={result.observation_ledger_sha256} "
             f"idempotent_replay={str(result.idempotent_replay).lower()}"
         )
     return 0

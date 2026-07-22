@@ -100,6 +100,134 @@ entries:
       - read_plaintext_token_environment
       - fallback_to_legacy_storage_route_or_provider
     successor: tradingagent.tradingdatas.integration-readiness.v2
+  - entry_id: tradingagent_ashare_observation_runtime
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/runtime/ashare_observation.py
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - tests/test_ashare_observation_runtime.py
+      - tests/test_ashare_observation_ledger.py
+      - docs/data_contract.md
+      - tests/test_ashare_worker_units.py
+      - tests/test_ashare_worker_runtime_audit.py
+    allowed_uses:
+      - bind_fresh_snapshot_probe_observation_receipt_membership_and_transaction_complete
+      - use_index_classification_and_industry_index_aggregates_as_context_only
+      - verify_exact_committed_replay_without_transport_or_capital_side_effects
+      - load_verified_bundle_only_from_same_private_state_root_and_session_lock
+    prohibited_uses:
+      - inherit_or_claim_server_validation_from_historical_a7488e9_bytes
+      - infer_historical_pit_or_model_effectiveness
+      - infer_dedicated_worker_or_timer_activation
+      - infer_membership_history_or_paper_planning_from_legacy_a7488e9_state
+      - backfill_legacy_state_or_treat_observation_universe_as_tradable
+      - consume_four_data_artifacts_without_transaction_complete_commit_proof
+      - mint_observation_eligibility_from_caller_mapping_hash_or_direct_dataclass
+      - claim_index_classify_or_sw_daily_as_complete_industry_breadth
+      - synthesize_minute_quote_fill_order_or_capital_evidence_from_daily_rows
+      - make_marketgraph_a_tradingagent_runtime_dependency
+      - infer_real_trading_or_broker_authority
+    successor: tradingagent.ashare.observation-runtime.v1
+  - entry_id: tradingagent_ashare_observation_a7488e9_historical_readback
+    state: HISTORICAL_READ_ONLY
+    layer: server_validated_non_authority_simulation_only
+    owner: TradingAgent
+    canonical_path: docs/reports/2026-07-22-ashare-observation-readback.md
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - docs/reports/2026-07-22-ashare-observation-readback.md
+    allowed_uses:
+      - audit_exact_a7488e9_authenticated_three_artifact_one_shot
+      - preserve_historical_snapshot_probe_and_observation_receipt_identities
+    prohibited_uses:
+      - bind_historical_readback_to_evolved_current_source_bytes
+      - infer_membership_ledger_forward_history_or_paper_planning
+      - backfill_or_upgrade_historical_state
+      - infer_dedicated_worker_timer_production_or_trading_authority
+    successor: tradingagent.ashare.observation-runtime.v1
+  - entry_id: tradingagent_ashare_observation_membership_ledger
+    state: TARGET_CONTRACT
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/runtime/ashare_observation_ledger.py
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - tests/test_ashare_observation_ledger.py
+      - tests/test_ashare_observation_runtime.py
+      - docs/data_contract.md
+    allowed_uses:
+      - bind_snapshot_probe_observation_receipt_per_symbol_membership_and_commit_proof
+      - record_observed_and_excluded_denominator_rows_in_fresh_state
+      - exact_replay_of_new_five_authority_committed_binding
+    prohibited_uses:
+      - treat_observation_membership_as_tradable_candidate_or_order_authority
+      - add_label_horizons_without_calendar_minute_and_market_truth_authority
+      - backfill_or_upgrade_legacy_a7488e9_state
+      - emit_excluded_symbols_to_features_candidates_forecasts_positions_orders_or_llm
+    successor: tradingagent.ashare.observation-membership-ledger.v1
+  - entry_id: tradingagent_ashare_prospective_history_readiness
+    state: TARGET_CONTRACT
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/runtime/ashare_observation_history.py
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - tests/test_ashare_observation_history.py
+      - docs/data_contract.md
+    allowed_uses:
+      - measure_forward_collected_symbol_coverage_from_committed_five_authority_sessions
+      - require_at_least_twenty_one_sessions_for_twenty_day_features
+      - preserve_explicit_continuity_and_adjustment_blockers
+    prohibited_uses:
+      - claim_historical_pit_from_current_observations
+      - unlock_features_from_session_count_without_calendar_continuity
+      - compute_predictive_features_without_corporate_action_adjustment_authority
+      - sort_repair_or_backfill_missing_sessions
+    successor: tradingagent.ashare.prospective-observation-history-readiness.v1
+  - entry_id: tradingagent_ashare_daily_only_paper_planning
+    state: TARGET_CONTRACT
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/runtime/ashare_paper_planning.py
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - tests/test_ashare_paper_planning.py
+      - docs/data_contract.md
+      - docs/operations.md
+    allowed_uses:
+      - persist_deterministic_daily_only_abstain_decision
+      - expose_null_paper_trade_session_and_stable_blockers
+    prohibited_uses:
+      - infer_t_plus_one_without_frozen_calendar_authority
+      - create_capital_reservation_order_fill_outbox_reconcile_or_sample_journal
+      - synthesize_minute_or_l1_evidence_from_daily_close
+    successor: tradingagent.ashare.daily-only-paper-planning.v1
+  - entry_id: tradingagent_ashare_observation_timer_candidate
+    state: TARGET_CONTRACT
+    layer: architecture_target
+    owner: TradingAgent
+    canonical_path: deploy/systemd/tradingagent-ashare-observation.timer
+    production_verified: false
+    last_verified_at: "2026-07-22"
+    evidence:
+      - tests/test_ashare_worker_units.py
+      - tests/test_ashare_worker_runtime_audit.py
+      - docs/operations.md
+    allowed_uses:
+      - disabled_unit_contract_and_static_validation
+    prohibited_uses:
+      - install_or_enable_before_dedicated_tradingagent_token_and_identity_handoff
+      - enable_before_trusted_daily_immutable_manifest_rollover
+      - replay_static_manifest_or_as_of_as_daily_accumulation
+      - claim_persistent_observation_or_production_runtime
+    successor: tradingagent.ashare.observation-worker-timer.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
     layer: repository_contract
@@ -113,10 +241,10 @@ entries:
       - tests/test_three_universe_snapshots.py
     allowed_uses:
       - mainboard_simulation_scope_validation
-      - chinext_star_aggregate_context
+      - non_mainboard_index_and_industry_aggregate_context_only
       - externally_verified_content_addressed_coverage_receipt_validation
     prohibited_uses:
-      - chinext_or_star_individual_security_analysis
+      - chinext_star_or_bj_individual_security_analysis
       - non_mainboard_order_creation
       - caller_asserted_full_market_coverage
       - accept_unverified_coverage_authority

@@ -36,6 +36,9 @@ from .research_snapshot import (
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _DATASET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_TEMPORARY_NAME_RE = re.compile(r"^\.tmp-[0-9a-f]{32}\.json$")
+_PRIVATE_FILE_MODE = 0o600
+_PRIVATE_DIRECTORY_MODE = 0o700
 _ARTIFACT_KEYS = frozenset(
     {
         "schema_version",
@@ -241,17 +244,66 @@ def _same_file_identity(fd: int, path: Path, *, kind: str) -> os.stat_result:
         raise ResearchSnapshotStoreCorruption(
             f"research_snapshot_store_{kind}_identity_unavailable"
         ) from exc
-    if not stat.S_ISREG(fd_stat.st_mode) or not stat.S_ISREG(path_stat.st_mode):
-        raise ResearchSnapshotStoreCorruption(
-            f"research_snapshot_store_{kind}_not_regular"
-        )
-    if fd_stat.st_nlink != 1 or path_stat.st_nlink != 1:
-        raise ResearchSnapshotStoreCorruption(
-            f"research_snapshot_store_{kind}_hardlink_forbidden"
-        )
+    for value in (fd_stat, path_stat):
+        _validate_private_file_stat(value, kind=kind, expected_nlink=1)
     if (fd_stat.st_dev, fd_stat.st_ino) != (path_stat.st_dev, path_stat.st_ino):
         raise ResearchSnapshotStoreCorruption(
             f"research_snapshot_store_{kind}_identity_changed"
+        )
+    return fd_stat
+
+
+def _validate_private_file_stat(
+    value: os.stat_result,
+    *,
+    kind: str,
+    expected_nlink: int,
+    recovery: bool = False,
+) -> None:
+    qualifier = f"{kind}_recovery" if recovery else kind
+    if not stat.S_ISREG(value.st_mode):
+        raise ResearchSnapshotStoreCorruption(
+            f"research_snapshot_store_{qualifier}_not_regular"
+        )
+    if value.st_nlink != expected_nlink:
+        suffix = "link_count_invalid" if recovery else "hardlink_forbidden"
+        raise ResearchSnapshotStoreCorruption(
+            f"research_snapshot_store_{qualifier}_{suffix}"
+        )
+    if value.st_uid != os.geteuid():
+        raise ResearchSnapshotStoreCorruption(
+            f"research_snapshot_store_{qualifier}_owner_invalid"
+        )
+    if stat.S_IMODE(value.st_mode) != _PRIVATE_FILE_MODE:
+        raise ResearchSnapshotStoreCorruption(
+            f"research_snapshot_store_{qualifier}_mode_invalid"
+        )
+
+
+def _same_root_identity(fd: int, path: Path) -> os.stat_result:
+    try:
+        fd_stat = os.fstat(fd)
+        path_stat = path.lstat()
+    except OSError as exc:
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_root_identity_unavailable"
+        ) from exc
+    for value in (fd_stat, path_stat):
+        if not stat.S_ISDIR(value.st_mode):
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_root_not_directory"
+            )
+        if value.st_uid != os.geteuid():
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_root_owner_invalid"
+            )
+        if stat.S_IMODE(value.st_mode) != _PRIVATE_DIRECTORY_MODE:
+            raise ResearchSnapshotStoreCorruption(
+                "research_snapshot_store_root_mode_invalid"
+            )
+    if (fd_stat.st_dev, fd_stat.st_ino) != (path_stat.st_dev, path_stat.st_ino):
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_root_identity_changed"
         )
     return fd_stat
 
@@ -1133,25 +1185,39 @@ class FileResearchSnapshotStore:
         _assert_safe_path(self.root)
         existed = self.root.exists()
         try:
-            self.root.mkdir(parents=True, exist_ok=True)
+            self.root.mkdir(
+                mode=_PRIVATE_DIRECTORY_MODE,
+                parents=True,
+                exist_ok=True,
+            )
         except OSError as exc:
             raise ResearchSnapshotStoreCorruption(
                 "research_snapshot_store_root_unavailable"
             ) from exc
         _assert_safe_path(self.root)
+        if not existed:
+            _fsync_directory(self.root.parent)
+        self._fsync_root()
+
+    def _fsync_root(self) -> None:
+        _assert_safe_path(self.root)
+        flags = os.O_RDONLY | _directory_flag() | _no_follow_flag()
         try:
-            mode = self.root.lstat().st_mode
+            fd = os.open(os.fspath(self.root), flags)
         except OSError as exc:
             raise ResearchSnapshotStoreCorruption(
                 "research_snapshot_store_root_unavailable"
             ) from exc
-        if not stat.S_ISDIR(mode):
+        try:
+            _same_root_identity(fd, self.root)
+            os.fsync(fd)
+            _same_root_identity(fd, self.root)
+        except OSError as exc:
             raise ResearchSnapshotStoreCorruption(
-                "research_snapshot_store_root_not_directory"
-            )
-        if not existed:
-            _fsync_directory(self.root.parent)
-        _fsync_directory(self.root)
+                "research_snapshot_store_directory_sync_failed"
+            ) from exc
+        finally:
+            os.close(fd)
 
     def _artifact_path(self, snapshot_sha256: str) -> Path:
         validated = _sha256(snapshot_sha256, field_name="snapshot_sha256")
@@ -1199,6 +1265,7 @@ class FileResearchSnapshotStore:
                 os.close(fd)
 
     def _read_json(self, path: Path, *, kind: str) -> dict[str, Any]:
+        self._recover_atomic_link_window(path, kind=kind)
         _assert_safe_path(path)
         flags = os.O_RDONLY | _no_follow_flag()
         try:
@@ -1239,6 +1306,224 @@ class FileResearchSnapshotStore:
             )
         return raw
 
+    @staticmethod
+    def _validate_recovery_stat(
+        value: os.stat_result,
+        *,
+        kind: str,
+        expected_nlink: int,
+    ) -> None:
+        _validate_private_file_stat(
+            value,
+            kind=kind,
+            expected_nlink=expected_nlink,
+            recovery=True,
+        )
+
+    def _validate_recovery_payload(
+        self,
+        *,
+        path: Path,
+        kind: str,
+        encoded: bytes,
+    ) -> None:
+        try:
+            text = encoded.decode("utf-8")
+            raw = json.loads(text)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_recovery_malformed"
+            ) from exc
+        if not isinstance(raw, dict) or _canonical_json(raw) != text:
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_recovery_not_canonical"
+            )
+        if kind == "artifact":
+            snapshot, _ = _decode_artifact(raw)
+            if path != self._artifact_path(snapshot.snapshot_sha256):
+                raise ResearchSnapshotStoreCorruption(
+                    "research_snapshot_store_artifact_recovery_identity_mismatch"
+                )
+            return
+        if kind == "binding":
+            binding = _decode_binding(raw)
+            if path != self._binding_path(str(binding["decision_identity_sha256"])):
+                raise ResearchSnapshotStoreCorruption(
+                    "research_snapshot_store_binding_recovery_identity_mismatch"
+                )
+            return
+        raise ResearchSnapshotStoreCorruption(
+            "research_snapshot_store_recovery_kind_invalid"
+        )
+
+    def _recover_atomic_link_window(self, path: Path, *, kind: str) -> None:
+        """Finish the sole valid link(temp, final) -> unlink(temp) crash state.
+
+        Callers hold the decision's exclusive lock.  Recovery only removes one
+        exact private temporary alias after validating both directory entries,
+        their shared inode, and the complete canonical payload.
+        """
+
+        _assert_safe_path(path)
+        try:
+            published_stat = path.lstat()
+        except OSError as exc:
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_unavailable"
+            ) from exc
+        if not stat.S_ISREG(published_stat.st_mode):
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_not_regular"
+            )
+        if published_stat.st_nlink == 1:
+            return
+        self._validate_recovery_stat(
+            published_stat,
+            kind=kind,
+            expected_nlink=2,
+        )
+
+        aliases: list[Path] = []
+        try:
+            with os.scandir(self.root) as entries:
+                for entry in entries:
+                    entry_stat = entry.stat(follow_symlinks=False)
+                    if entry.name == path.name:
+                        continue
+                    if (entry_stat.st_dev, entry_stat.st_ino) == (
+                        published_stat.st_dev,
+                        published_stat.st_ino,
+                    ):
+                        aliases.append(self.root / entry.name)
+        except OSError as exc:
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_recovery_scan_failed"
+            ) from exc
+        if len(aliases) != 1:
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_hardlink_recovery_alias_count_invalid"
+            )
+        temporary = aliases[0]
+        if not _TEMPORARY_NAME_RE.fullmatch(temporary.name):
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_recovery_alias_name_invalid"
+            )
+        _assert_safe_path(temporary)
+
+        flags = os.O_RDONLY | _no_follow_flag()
+        published_fd: int | None = None
+        temporary_fd: int | None = None
+        try:
+            published_fd = os.open(os.fspath(path), flags)
+            temporary_fd = os.open(os.fspath(temporary), flags)
+            published_fd_stat = os.fstat(published_fd)
+            temporary_fd_stat = os.fstat(temporary_fd)
+            published_path_stat = path.lstat()
+            temporary_path_stat = temporary.lstat()
+            for value in (
+                published_fd_stat,
+                temporary_fd_stat,
+                published_path_stat,
+                temporary_path_stat,
+            ):
+                self._validate_recovery_stat(
+                    value,
+                    kind=kind,
+                    expected_nlink=2,
+                )
+            identities = {
+                (value.st_dev, value.st_ino)
+                for value in (
+                    published_fd_stat,
+                    temporary_fd_stat,
+                    published_path_stat,
+                    temporary_path_stat,
+                )
+            }
+            if len(identities) != 1:
+                raise ResearchSnapshotStoreCorruption(
+                    f"research_snapshot_store_{kind}_recovery_identity_mismatch"
+                )
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(published_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            encoded = b"".join(chunks)
+            after_read = os.fstat(published_fd)
+            if (
+                published_fd_stat.st_size,
+                published_fd_stat.st_mtime_ns,
+                published_fd_stat.st_ctime_ns,
+            ) != (
+                after_read.st_size,
+                after_read.st_mtime_ns,
+                after_read.st_ctime_ns,
+            ):
+                raise ResearchSnapshotStoreCorruption(
+                    f"research_snapshot_store_{kind}_recovery_changed_during_read"
+                )
+            self._validate_recovery_payload(
+                path=path,
+                kind=kind,
+                encoded=encoded,
+            )
+            before_unlink = (
+                os.fstat(published_fd),
+                os.fstat(temporary_fd),
+                path.lstat(),
+                temporary.lstat(),
+            )
+            for value in before_unlink:
+                self._validate_recovery_stat(
+                    value,
+                    kind=kind,
+                    expected_nlink=2,
+                )
+            if len({(value.st_dev, value.st_ino) for value in before_unlink}) != 1:
+                raise ResearchSnapshotStoreCorruption(
+                    f"research_snapshot_store_{kind}_recovery_identity_changed"
+                )
+            if (
+                before_unlink[0].st_size,
+                before_unlink[0].st_mtime_ns,
+                before_unlink[0].st_ctime_ns,
+            ) != (
+                published_fd_stat.st_size,
+                published_fd_stat.st_mtime_ns,
+                published_fd_stat.st_ctime_ns,
+            ):
+                raise ResearchSnapshotStoreCorruption(
+                    f"research_snapshot_store_{kind}_recovery_changed_before_unlink"
+                )
+            os.unlink(temporary)
+            self._fsync_root()
+            recovered_stat = path.lstat()
+            self._validate_recovery_stat(
+                recovered_stat,
+                kind=kind,
+                expected_nlink=1,
+            )
+            if (recovered_stat.st_dev, recovered_stat.st_ino) != (
+                published_fd_stat.st_dev,
+                published_fd_stat.st_ino,
+            ):
+                raise ResearchSnapshotStoreCorruption(
+                    f"research_snapshot_store_{kind}_recovery_identity_changed"
+                )
+        except ResearchSnapshotStoreCorruption:
+            raise
+        except OSError as exc:
+            raise ResearchSnapshotStoreCorruption(
+                f"research_snapshot_store_{kind}_recovery_failed"
+            ) from exc
+        finally:
+            if temporary_fd is not None:
+                os.close(temporary_fd)
+            if published_fd is not None:
+                os.close(published_fd)
+
     def _atomic_create(self, path: Path, payload: Mapping[str, Any]) -> None:
         _assert_safe_path(path)
         encoded = _canonical_json(payload).encode("utf-8")
@@ -1263,7 +1548,7 @@ class FileResearchSnapshotStore:
             fd = None
             os.link(temporary, path, follow_symlinks=False)
             os.unlink(temporary)
-            _fsync_directory(self.root)
+            self._fsync_root()
             final_fd = os.open(os.fspath(path), os.O_RDONLY | _no_follow_flag())
             try:
                 _same_file_identity(final_fd, path, kind="published")
@@ -1277,7 +1562,7 @@ class FileResearchSnapshotStore:
                 temporary.unlink(missing_ok=True)
             finally:
                 if self.root.exists():
-                    _fsync_directory(self.root)
+                    self._fsync_root()
             raise
         except OSError as exc:
             if fd is not None:
@@ -1286,7 +1571,7 @@ class FileResearchSnapshotStore:
                 temporary.unlink(missing_ok=True)
             finally:
                 if self.root.exists():
-                    _fsync_directory(self.root)
+                    self._fsync_root()
             raise ResearchSnapshotStoreCorruption(
                 "research_snapshot_store_atomic_write_failed"
             ) from exc
@@ -1413,7 +1698,7 @@ class FileResearchSnapshotStore:
             return None
         identity_sha = _decision_identity(expected_profile, expected_as_of)
         binding_path = self._binding_path(identity_sha)
-        with self._locked(identity_sha, exclusive=False):
+        with self._locked(identity_sha, exclusive=True):
             if not binding_path.exists():
                 return None
             binding = _decode_binding(self._read_json(binding_path, kind="binding"))
@@ -1460,7 +1745,7 @@ class FileResearchSnapshotStore:
         )
         expected_receipts = _validate_receipt_ids(receipt_ids)
         identity_sha = _decision_identity(expected_profile, expected_as_of)
-        with self._locked(identity_sha, exclusive=False):
+        with self._locked(identity_sha, exclusive=True):
             expected_binding_path = self._binding_path(identity_sha)
             binding: dict[str, Any] | None = None
             if expected_binding_path.exists():

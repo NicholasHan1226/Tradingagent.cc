@@ -370,7 +370,7 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 
 缺任一配置时保持 unavailable；不得猜测 localhost、生产地址、catalog version、schema major 或 dataset ID。`TRADINGDATAS_API_TOKEN_FILE` 只保存 `/run/secrets/tradingagent` 下的仓外绝对路径；checkout/worktree/Git common repo 或任意其它目录中的文件一律拒绝。禁止在环境变量、manifest、fixture、日志或回执中写明文 token。目标文件必须由发布侧独立配置为 TA-scoped credential，精确 `0600`、可信 owner、普通单硬链接文件且整条路径无 symlink；不得复用 TradingDatas bootstrap token。`http-json-v1` transport 只接受无尾随斜杠、path、query、fragment、userinfo、控制字符或反斜杠的 canonical `scheme://host[:port]`，并只向该 authority 上精确的 `GET /v1/catalog` 与 `POST /v1/query` 注入 Bearer header；只接受通用客户端固定生成的 JSON `Accept`/`Content-Type`，调用方添加 Host、forwarding、proxy 或其它 header 会在网络前拒绝。远端 authority 必须使用 HTTPS，明文 HTTP 只接受 `127.0.0.0/8` 或 `::1` 的 IP 字面量 loopback，不接受 `localhost` 等 DNS 名称。不同 authority/path/query/method、调用方自带 Authorization 和 30x 重定向都在发送前拒绝。transport 为 single-flight，并发第二请求在网络前失败；401/403 不读取正文并锁住该 transport，后续请求、重试和任何 legacy/provider fallback 全部拒绝。当前合同完成不等于实际 token 已发放，也不授权配置或运行 live endpoint。
 
-当前发布合同固定服务身份为 `tradingagent-front-api.service` 的 `User=marketgraph`、`Group=marketgraph`，叶文件路径为 `/run/secrets/tradingagent/tradingdatas-read.token`。只有发布侧可创建父目录、生成并注册独立 TA scope token，再以 `marketgraph:marketgraph`、精确 `0600` 和无 symlink/硬链接别名的原子替换安装叶文件；root provisioning 必须可在重启后重建并保留显式回滚。应用候选、测试、manifest、日志与任务消息均不得创建、读取或传递 token 值。发布前若目录或叶文件尚不存在，消费端必须保持 unavailable，不能自行降级到其它 credential、端口或数据源。
+长期 A股 observation worker 的发布合同固定为专用 `tradingagent:tradingagent` 服务身份，叶文件路径为 `/run/secrets/tradingagent/tradingdatas-read.token`；`tradingagent-front-api.service` 不读取该 token。只有发布侧可创建父目录、生成并注册独立 TA scope token，再以 `tradingagent:tradingagent`、精确 `0600` 和无 symlink/硬链接别名的原子替换安装叶文件；root provisioning 必须可在重启后重建并保留显式回滚。应用候选、测试、manifest、日志与任务消息均不得创建、读取或传递 token 值。旧 `marketgraph:marketgraph` 身份及其只读 token 只是 2026-07-22 一次性兼容验收的历史证据，不得在长驻 worker、front 或新 state root 中复用。发布前若目录或叶文件尚不存在，消费端必须保持 unavailable，不能自行降级到其它 credential、端口或数据源。
 
 ### 2.1 TradingDatas V1 接入验收器
 
@@ -381,7 +381,7 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 首批显式功能角色为：
 
 - `trade_calendar`：交易日历，执行必需；
-- `equity_master`：主板证券主数据与历史可交易状态，执行必需；
+- `security_master`：证券主数据，必须显式请求 `ts_code/name/list_status/list_date` 并固定 `list_status={eq:L}`；runner 在消费侧再排除非主板、风险警示和上市不足 30 日个股；
 - `daily_bars`：主板 provider-native 日线当前观察，执行必需；没有历史 first-seen/revision authority 时不得称为历史 PIT；
 - `industry_context`：全市场行业及创业板/科创板指数聚合，只作环境上下文，不允许输出双创个股。
 
@@ -409,9 +409,11 @@ python3 -m shared.runtime_test.sharedsignals_v1_integration_probe \
 
 ### 2.2 A股 one-shot current-observation runner
 
-仓库候选提供一个 observation-only runner，把上一节的完整双跑 probe 作为不可绕过的写入前门禁，再冻结一次同语义的 provider-native research snapshot。runner 同时要求 `security_master` 与 `daily_bars`，排除 ST/退市风险、新股、停牌/零成交和非主板个股，并写入不可覆盖的 observation receipt，将 probe、snapshot、范围投影和固定非交易 authority 绑定。它不生成候选、资本预约、订单、成交、对账或 SampleJournal 样本，也不表示自动模拟 scheduler 已安装。
+仓库候选提供一个 observation-only runner，把上一节的完整双跑 probe 作为不可绕过的写入前门禁，再冻结一次同语义的 provider-native research snapshot。runner 同时要求 `security_master` 与 `daily_bars`，以两者 symbol 并集建立 denominator，将 ST/退市风险、新股、停牌/零成交、缺日线和非主板个股作为显式排除记录。首次成功写入必须先持久化 transaction intent，再原子冻结 `ResearchDataSnapshot`、integration probe receipt、aggregate observation receipt 和逐股 membership ledger，四项精确读回后才发布 transaction-complete commit marker；可消费权威因此是五项绑定，不是“文件都出现了”即可。`observation_universe` 只是观察初筛，不是 Account Tradable Universe、小资金可行池或订单池。runner 不生成候选、资本预约、订单、成交、对账或 SampleJournal 样本，也不表示自动模拟 scheduler 已安装。
 
-运行时必须显式提供仓外 manifest、state/runtime/log roots；token-file 可由参数或服务环境中的 `TRADINGDATAS_API_TOKEN_FILE` 指定，二者都只允许绝对路径。`runtime-root` 与 `log-root` 是 dedicated worker 的安装边界，当前 runner 不在其中创建第二业务 authority；唯一业务写入是 `state-root/research-snapshots` 下的不可变 current-observation binding 和配套 probe receipt。
+运行消费端只能通过 `load_verified_ashare_runtime_authority_bundle` 在同一 state root 与 session lock 内重读五项 committed binding。普通 mapping/hash、直接 `AshareRuntimeAuthorityBundle(...)` 或公共诊断 builder 都不能自授资格；缺 complete 的半写事务、权限不是 root `0700`/file `0600`、owner 不匹配或跨根 artifact 一律 fail closed。日线估值 adapter 只接 state root 与显式交易身份，在内部调用该 loader，不接受调用方注入的 receipt、membership 或“已验证”bundle。
+
+运行时必须显式提供仓外 manifest、fresh state root、runtime root 与 log root；token-file 可由参数或服务环境中的 `TRADINGDATAS_API_TOKEN_FILE` 指定，二者都只允许绝对路径。`runtime-root` 与 `log-root` 是 dedicated worker 的安装边界，当前 runner 不在其中创建第二业务 authority。旧 `a7488e9` state root 没有 membership ledger，只能作历史读回证据；新候选不得在其上补写或作精确重放。
 
 ```bash
 export REAL_TRADING_ENABLED=false
@@ -425,9 +427,11 @@ python3 tools/run_ashare_observation.py \
   --json
 ```
 
-也可显式传入 `--token-file /absolute/path/to/tradingdatas-read.token`；禁止两种方式包含明文 token，且出现 `TRADINGDATAS_API_TOKEN`、`TRADINGDATAS_BEARER_TOKEN` 或 `TRADINGDATAS_TOKEN` 时即使 token-file 合法也会拒绝运行。runner 固定 `mg_off`，不会读取 `MARKETGRAPH_API_URL`。首次运行只有在 bounded pagination、same-observation 双跑、probe 后快照语义守恒、source proof、current-observation、证券主数据与主板 scope 投影全部通过后才写入；同一 profile/decision 的精确重放只读回不可变 snapshot/probe/observation receipt binding，不创建 transport、不再次请求数据。创业板、科创板和北交所个股可保留在原始全市场观察中，但只计入排除原因，不能进入 `tradable_universe`；行业、指数、板块宽度只能是 `optional_context`。
+也可显式传入 `--token-file /absolute/path/to/tradingdatas-read.token`；禁止两种方式包含明文 token，且出现 `TRADINGDATAS_API_TOKEN`、`TRADINGDATAS_BEARER_TOKEN` 或 `TRADINGDATAS_TOKEN` 时即使 token-file 合法也会拒绝运行。runner 固定 `mg_off`，不会读取 `MARKETGRAPH_API_URL`。首次运行只有在 bounded pagination、same-observation 双跑、probe 后快照语义守恒、source proof、current-observation、证券主数据与主板 scope 投影全部通过后才写入；同一 profile/decision 的精确重放只读回不可变的五项 committed binding，不创建 transport、不再次请求数据。intent 后任一崩溃点只允许在同 session 锁内恢复精确同内容；没有 complete marker 的四项状态不能被 runtime authority、history 或 planner 消费。创业板、科创板和北交所个股可保留在原始全市场观察中，但只计入排除原因，不能进入 `observation_universe`。当前 `index_classify`/`sw_daily` 只是行业分类与行业指数 `optional_context`；没有成分 denominator/coverage receipt 时不得称为完整行业宽度。旧回执中的 `tradable_*` 只是待退役兼容别名，不是订单 authority。
 
-退出码：`0=观察绑定或精确重放通过`、`2=数据/范围/存储门禁阻断`、`64=参数、manifest、token-file或transport配置无效`。stdout 只输出 secret-free 摘要；systemd/journal 日志不得把 token、Authorization、manifest正文或 provider自由文本 reason 写出。当前文档只登记 one-shot 代码入口；在 dedicated worker 身份、unit/timer、仓外 manifest、服务 token、正式 endpoint parity 和回滚验收同时通过前，不得声称每日自动观察、自动模拟或生产激活。
+退出码：`0=观察绑定或精确重放通过`、`2=数据/范围/存储门禁阻断`、`64=参数、manifest、token-file或transport配置无效`。stdout 只输出 secret-free 摘要；systemd/journal 日志不得把 token、Authorization、manifest正文或 provider自由文本 reason 写出。当前 service/timer 只是 **non-enableable code candidate**：专用 `tradingagent:tradingagent` token/service handoff 尚未完成，也没有可信 worker 按冻结交易日滚动生成每日 immutable manifest/as-of 的 authority。当前静态 manifest 不得由 timer 重复回放；在 credential/identity、daily manifest rollover、正式 endpoint parity、fresh state root、重启/幂等和回滚验收全部通过前，禁止 enable/install 该 timer，也不得声称每日自动观察、自动模拟或生产激活。
+
+盘后日线的 `observation_session=T` 只是 current observation。在预测前冻结且独立验证的交易日历没有给出下一 session 之前，daily-only planner 必须写 `paper_trade_session=null` 并固定 `action=abstain/status=completed_with_blocks`。每个 symbol 至少需要 21 个 forward-collected session 才能覆盖 20 日 momentum/volatility 的最小数学窗口；但缺交易日连续性和公司行动/复权 authority 时，即使计数达到 21 也仍是 blocked。当前 membership ledger 不注册任何 label horizon；缺 calendar/minute/market-truth/adjustment authority 不得生成或回填标签。缺分钟/L1 evidence 时不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：
 

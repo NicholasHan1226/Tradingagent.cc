@@ -779,8 +779,15 @@ def test_checked_in_example_manifest_is_parseable_and_non_live() -> None:
     assert config.base_url.endswith(".invalid")
     assert config.expected_probe_roles == (
         "trade_calendar",
-        "equity_master",
+        "security_master",
         "daily_bars",
         "industry_context",
     )
+    security_master = next(
+        item for item in config.datasets if item.probe_role == "security_master"
+    )
+    assert {"ts_code", "name", "list_status", "list_date"}.issubset(
+        security_master.fields
+    )
+    assert security_master.filters == {"list_status": {"eq": "L"}}
     assert config.datasets[-1].requirement_role == "optional_context"

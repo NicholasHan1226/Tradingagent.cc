@@ -11,8 +11,16 @@ from typing import Any
 
 import pytest
 
-from shared.data.research_snapshot_store import FileResearchSnapshotStore
+import shared.runtime.ashare_observation as ashare_observation_module
+from shared.data.research_snapshot_store import (
+    FileResearchSnapshotStore,
+    ResearchSnapshotStoreConflict,
+)
 from shared.data.sharedsignals_v1 import HTTPResponse
+from shared.runtime.ashare_observation_ledger import (
+    OBSERVED_REASON_CODE,
+    FileAshareObservationMembershipLedger,
+)
 from shared.runtime.ashare_observation import (
     AshareObservationBlocked,
     AshareObservationConfig,
@@ -30,6 +38,15 @@ DATASETS = {
     "industry_context": "fixture.cn.industry.breadth.v1",
 }
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _observation_receipt_paths(root: Path) -> tuple[Path, ...]:
+    return tuple(
+        path
+        for path in root.glob("observation-*.json")
+        if not path.name.startswith("observation-intent-")
+        and not path.name.startswith("observation-complete-")
+    )
 
 
 def _manifest() -> dict[str, Any]:
@@ -88,7 +105,7 @@ def _manifest() -> dict[str, Any]:
                 "dataset_id": DATASETS["daily_bars"],
                 "schema_major": 2,
                 "requirement_role": "required_execution",
-                "fields": ["ts_code", "trade_date", "close", "vol"],
+                "fields": ["ts_code", "trade_date", "close", "vol", "amount"],
                 "filters": {"trade_date": {"eq": "20260722"}},
                 "limit": 10,
                 "minimum_row_count": 1,
@@ -148,6 +165,8 @@ def _query_payload(
     request_id: str,
     rows: list[dict[str, Any]],
     next_cursor: str | None = None,
+    data_through: str = "2026-07-22T15:00:00+08:00",
+    observed_at: str = "2026-07-22T15:05:00+08:00",
 ) -> dict[str, Any]:
     return {
         "api_version": "v1",
@@ -167,8 +186,8 @@ def _query_payload(
                 "provider_neutral": True,
             },
             "receipt_id": f"receipt-{dataset_id}",
-            "data_through": "2026-07-22T15:00:00+08:00",
-            "observed_at": "2026-07-22T15:05:00+08:00",
+            "data_through": data_through,
+            "observed_at": observed_at,
             "reasons": [],
         },
     }
@@ -181,12 +200,16 @@ class ObservationTransport:
         change_second_daily_run: bool = False,
         change_snapshot_daily_run: bool = False,
         daily_trade_date: str = "20260722",
+        data_through: str = "2026-07-22T15:00:00+08:00",
+        observed_at: str = "2026-07-22T15:05:00+08:00",
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self._daily_first_page_count = 0
         self._change_second_daily_run = change_second_daily_run
         self._change_snapshot_daily_run = change_snapshot_daily_run
         self._daily_trade_date = daily_trade_date
+        self._data_through = data_through
+        self._observed_at = observed_at
 
     def __call__(
         self,
@@ -230,6 +253,8 @@ class ObservationTransport:
                     dataset_id,
                     request_id=request_id,
                     rows=[{"market": "SSE", "cal_date": "20260722", "is_open": 1}],
+                    data_through=self._data_through,
+                    observed_at=self._observed_at,
                 ),
             )
         if dataset_id == DATASETS["industry_context"]:
@@ -245,6 +270,8 @@ class ObservationTransport:
                             "breadth": 0.58,
                         }
                     ],
+                    data_through=self._data_through,
+                    observed_at=self._observed_at,
                 ),
             )
         if dataset_id == DATASETS["security_master"]:
@@ -264,6 +291,7 @@ class ObservationTransport:
                     ("600001.SH", "*ST测试", "L", "19991201"),
                     ("600002.SH", "新股测试", "L", "20260710"),
                     ("600003.SH", "停牌测试", "L", "20000101"),
+                    ("600004.SH", "缺日线测试", "L", "20000101"),
                 )
             ]
             return HTTPResponse(
@@ -272,6 +300,8 @@ class ObservationTransport:
                     dataset_id,
                     request_id=request_id,
                     rows=rows,
+                    data_through=self._data_through,
+                    observed_at=self._observed_at,
                 ),
             )
         assert dataset_id == DATASETS["daily_bars"]
@@ -293,21 +323,26 @@ class ObservationTransport:
                             "trade_date": self._daily_trade_date,
                             "close": close,
                             "vol": 1000.0,
+                            "amount": 10_000_000.0,
                         },
                         {
                             "ts_code": "300001.SZ",
                             "trade_date": self._daily_trade_date,
                             "close": 20.0,
                             "vol": 1000.0,
+                            "amount": 20_000_000.0,
                         },
                         {
                             "ts_code": "600001.SH",
                             "trade_date": "20260722",
                             "close": 5.0,
                             "vol": 1000.0,
+                            "amount": 5_000_000.0,
                         },
                     ],
                     next_cursor="daily-page-2",
+                    data_through=self._data_through,
+                    observed_at=self._observed_at,
                 ),
             )
         assert cursor == "daily-page-2"
@@ -322,32 +357,39 @@ class ObservationTransport:
                         "trade_date": self._daily_trade_date,
                         "close": 30.0,
                         "vol": 1000.0,
+                        "amount": 30_000_000.0,
                     },
                     {
                         "ts_code": "430001.BJ",
                         "trade_date": self._daily_trade_date,
                         "close": 8.0,
                         "vol": 1000.0,
+                        "amount": 8_000_000.0,
                     },
                     {
                         "ts_code": "000001.SZ",
                         "trade_date": self._daily_trade_date,
                         "close": 12.0,
                         "vol": 1000.0,
+                        "amount": 12_000_000.0,
                     },
                     {
                         "ts_code": "600002.SH",
                         "trade_date": self._daily_trade_date,
                         "close": 9.0,
                         "vol": 1000.0,
+                        "amount": 9_000_000.0,
                     },
                     {
                         "ts_code": "600003.SH",
                         "trade_date": self._daily_trade_date,
                         "close": 7.0,
                         "vol": 0.0,
+                        "amount": 0.0,
                     },
                 ],
+                data_through=self._data_through,
+                observed_at=self._observed_at,
             ),
         )
 
@@ -382,13 +424,22 @@ def test_probe_precedes_immutable_current_observation_and_mainboard_projection(
     assert result.historical_pit_eligible is False
     assert result.execution_authority is False
     assert result.idempotent_replay is False
+    assert result.observation_session == "20260722"
+    assert (
+        result.observation_universe_semantics
+        == "mainboard_observation_universe_not_order_eligible"
+    )
+    assert result.observation_universe_count == 2
+    assert result.observation_universe_sha256 == result.tradable_universe_sha256
+    assert len(result.observation_ledger_sha256) == 64
     assert result.tradable_symbols == ("000001.SZ", "600000.SH")
     assert result.tradable_universe_count == 2
     assert len(result.tradable_universe_sha256) == 64
-    assert result.excluded_individual_count == 6
+    assert result.excluded_individual_count == 7
     assert result.excluded_reason_counts == {
         "beijing_security_not_in_phase_scope": 1,
         "chinext_individual_permission_unavailable": 1,
+        "daily_bar_missing_or_unavailable": 1,
         "new_listing_excluded": 1,
         "risk_warning_security_excluded": 1,
         "star_individual_permission_unavailable": 1,
@@ -398,6 +449,7 @@ def test_probe_precedes_immutable_current_observation_and_mainboard_projection(
     assert result.probe_same_as_of_match is True
     assert len(result.probe_receipt_sha256) == 64
     assert len(result.observation_receipt_sha256) == 64
+    assert len(result.observation_transaction_complete_sha256) == 64
     assert factory_calls == [
         (
             "http-json-v1",
@@ -433,18 +485,59 @@ def test_probe_precedes_immutable_current_observation_and_mainboard_projection(
     probe_paths = tuple(config.snapshot_root.glob("integration-*.json"))
     assert len(probe_paths) == 1
     assert probe_paths[0].stat().st_mode & 0o777 == 0o600
-    observation_paths = tuple(config.snapshot_root.glob("observation-*.json"))
+    observation_paths = _observation_receipt_paths(config.snapshot_root)
     assert len(observation_paths) == 1
     assert observation_paths[0].stat().st_mode & 0o777 == 0o600
     observation_receipt = json.loads(observation_paths[0].read_text(encoding="utf-8"))
     assert observation_receipt["snapshot_sha256"] == result.snapshot_sha256
     assert observation_receipt["probe_receipt_sha256"] == result.probe_receipt_sha256
     assert observation_receipt["receipt_sha256"] == result.observation_receipt_sha256
+    assert len(tuple(config.snapshot_root.glob("observation-intent-*.json"))) == 1
+    complete_paths = tuple(config.snapshot_root.glob("observation-complete-*.json"))
+    assert len(complete_paths) == 1
+    complete = json.loads(complete_paths[0].read_text(encoding="utf-8"))
+    assert (
+        complete["content_sha256"]
+        == result.observation_transaction_complete_sha256
+    )
+
+    membership = FileAshareObservationMembershipLedger(
+        config.snapshot_root / "observation-membership"
+    ).load_bound_session(observation_session="20260722")
+    assert membership is not None
+    assert membership.content_sha256 == result.observation_ledger_sha256
+    assert membership.universe_sha256 == result.observation_universe_sha256
+    assert tuple(
+        (item.symbol, item.disposition, item.reason_code) for item in membership.records
+    ) == (
+        ("000001.SZ", "observed", OBSERVED_REASON_CODE),
+        (
+            "300001.SZ",
+            "excluded",
+            "chinext_individual_permission_unavailable",
+        ),
+        ("430001.BJ", "excluded", "beijing_security_not_in_phase_scope"),
+        ("600000.SH", "observed", OBSERVED_REASON_CODE),
+        ("600001.SH", "excluded", "risk_warning_security_excluded"),
+        ("600002.SH", "excluded", "new_listing_excluded"),
+        (
+            "600003.SH",
+            "excluded",
+            "suspended_or_nonpositive_bar_excluded",
+        ),
+        (
+            "600004.SH",
+            "excluded",
+            "daily_bar_missing_or_unavailable",
+        ),
+        ("688001.SH", "excluded", "star_individual_permission_unavailable"),
+    )
 
     first_call_count = len(transport.calls)
     replay = run_ashare_observation(config, transport_factory=factory)
     assert replay.idempotent_replay is True
     assert replay.snapshot_sha256 == result.snapshot_sha256
+    assert replay.observation_ledger_sha256 == result.observation_ledger_sha256
     assert replay.tradable_symbols == result.tradable_symbols
     assert len(transport.calls) == first_call_count
     assert len(factory_calls) == 1
@@ -496,6 +589,95 @@ def test_prior_day_daily_rows_cannot_enter_current_tradable_projection(
     assert not config.snapshot_root.exists()
 
 
+def test_pre_close_as_of_cannot_bind_a_daily_observation(tmp_path: Path) -> None:
+    payload = _manifest()
+    payload["as_of"] = "2026-07-22T14:59:59+08:00"
+    config = AshareObservationConfig(
+        manifest_path=_write_manifest(tmp_path, payload),
+        token_file=_token_path(tmp_path),
+        snapshot_root=(tmp_path / "state" / "snapshots").resolve(),
+    )
+
+    with pytest.raises(
+        AshareObservationBlocked, match="post_close_observation_required"
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: ObservationTransport(),
+        )
+    assert not config.snapshot_root.exists()
+
+
+@pytest.mark.parametrize(
+    "observed_at",
+    (
+        "not-an-instant",
+        "2026-07-22T14:59:59+08:00",
+        "2026-07-22T15:11:00+08:00",
+    ),
+)
+def test_invalid_or_time_inconsistent_observation_proof_is_blocked_by_probe(
+    tmp_path: Path,
+    observed_at: str,
+) -> None:
+    config = _config(tmp_path)
+
+    with pytest.raises(AshareObservationBlocked, match="integration_probe_blocked"):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: ObservationTransport(
+                observed_at=observed_at
+            ),
+        )
+
+    assert not config.snapshot_root.exists()
+
+
+def test_daily_data_through_must_cover_the_full_post_close_session(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="post_close_daily_data_through_required",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: ObservationTransport(
+                data_through="2026-07-22T14:59:59+08:00"
+            ),
+        )
+
+    assert not config.snapshot_root.exists()
+
+
+def test_replay_rejects_missing_observation_membership_ledger(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    transport = ObservationTransport()
+    run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: transport,
+    )
+    ledger_root = config.snapshot_root / "observation-membership"
+    for path in ledger_root.iterdir():
+        path.unlink()
+    ledger_root.rmdir()
+    call_count = len(transport.calls)
+
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="observation_membership_ledger_missing",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: transport,
+        )
+    assert len(transport.calls) == call_count
+
+
 def test_replay_rejects_probe_receipt_not_bound_to_snapshot(tmp_path: Path) -> None:
     config = _config(tmp_path)
     transport = ObservationTransport()
@@ -545,7 +727,7 @@ def test_replay_never_recreates_missing_observation_receipt(tmp_path: Path) -> N
         config,
         transport_factory=lambda *_args, **_kwargs: transport,
     )
-    observation_path = next(config.snapshot_root.glob("observation-*.json"))
+    observation_path = _observation_receipt_paths(config.snapshot_root)[0]
     observation_path.unlink()
     call_count = len(transport.calls)
 
@@ -559,6 +741,218 @@ def test_replay_never_recreates_missing_observation_receipt(tmp_path: Path) -> N
         )
     assert not observation_path.exists()
     assert len(transport.calls) == call_count
+
+
+def test_legacy_three_artifact_state_without_intent_is_never_upgraded(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    transport = ObservationTransport()
+    run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: transport,
+    )
+    next(config.snapshot_root.glob("observation-intent-*.json")).unlink()
+    next(config.snapshot_root.glob("observation-complete-*.json")).unlink()
+    membership_root = config.snapshot_root / "observation-membership"
+    for path in membership_root.iterdir():
+        if path.is_file():
+            path.unlink()
+    call_count = len(transport.calls)
+
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="observation_transaction_intent_missing",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("legacy_state_must_not_create_transport")
+            ),
+        )
+
+    assert len(transport.calls) == call_count
+    assert not tuple(membership_root.glob("session-*.json"))
+
+
+def test_probe_only_state_without_intent_is_never_adopted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    transport = ObservationTransport()
+    original_compare_and_swap = FileResearchSnapshotStore.compare_and_swap
+
+    def fail_after_probe(*_args: object, **_kwargs: object) -> None:
+        raise ResearchSnapshotStoreConflict("injected_after_probe")
+
+    monkeypatch.setattr(
+        FileResearchSnapshotStore,
+        "compare_and_swap",
+        fail_after_probe,
+    )
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="research_snapshot_store_commit_failed",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: transport,
+        )
+    next(config.snapshot_root.glob("observation-intent-*.json")).unlink()
+    monkeypatch.setattr(
+        FileResearchSnapshotStore,
+        "compare_and_swap",
+        original_compare_and_swap,
+    )
+
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="observation_transaction_legacy_state_forbidden",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: transport,
+        )
+
+    assert len(tuple(config.snapshot_root.glob("integration-*.json"))) == 1
+    assert (
+        FileResearchSnapshotStore(config.snapshot_root).load_bound_decision(
+            profile_id="ashare-phase1-current-observation-v1",
+            decision_as_of=AS_OF,
+            catalog_version=CATALOG_VERSION,
+        )
+        is None
+    )
+
+
+def test_complete_marker_link_publish_window_recovers_exactly(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    transport = ObservationTransport()
+    run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: transport,
+    )
+    complete = next(config.snapshot_root.glob("observation-complete-*.json"))
+    temporary = complete.parent / f".{complete.name}.injected.tmp"
+    os.link(complete, temporary)
+    assert complete.stat().st_nlink == 2
+    call_count = len(transport.calls)
+
+    replay = run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("marker_recovery_must_not_create_transport")
+        ),
+    )
+
+    assert replay.idempotent_replay is True
+    assert len(transport.calls) == call_count
+    assert not temporary.exists()
+    assert complete.stat().st_nlink == 1
+
+
+def test_partial_commit_after_snapshot_recovers_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    transport = ObservationTransport()
+    original_write = ashare_observation_module._write_immutable_observation_receipt
+
+    def fail_after_snapshot(*_args: object, **_kwargs: object) -> None:
+        raise AshareObservationBlocked("injected_after_snapshot")
+
+    monkeypatch.setattr(
+        ashare_observation_module,
+        "_write_immutable_observation_receipt",
+        fail_after_snapshot,
+    )
+    with pytest.raises(AshareObservationBlocked, match="injected_after_snapshot"):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: transport,
+        )
+
+    assert (
+        FileResearchSnapshotStore(config.snapshot_root).load_bound_decision(
+            profile_id="ashare-phase1-current-observation-v1",
+            decision_as_of=AS_OF,
+            catalog_version=CATALOG_VERSION,
+        )
+        is not None
+    )
+    assert len(tuple(config.snapshot_root.glob("observation-intent-*.json"))) == 1
+    assert not tuple(config.snapshot_root.glob("observation-complete-*.json"))
+    assert not _observation_receipt_paths(config.snapshot_root)
+    call_count = len(transport.calls)
+
+    monkeypatch.setattr(
+        ashare_observation_module,
+        "_write_immutable_observation_receipt",
+        original_write,
+    )
+    recovered = run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("recovery_must_not_create_transport")
+        ),
+    )
+
+    assert recovered.idempotent_replay is False
+    assert len(transport.calls) == call_count
+    assert len(tuple(config.snapshot_root.glob("observation-complete-*.json"))) == 1
+    assert (
+        FileAshareObservationMembershipLedger(
+            config.snapshot_root / "observation-membership"
+        ).load_bound_session(observation_session="20260722")
+        is not None
+    )
+
+
+def test_partial_commit_after_receipt_recovers_membership_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    transport = ObservationTransport()
+    original_persist = ashare_observation_module._persist_observation_membership
+
+    def fail_after_receipt(*_args: object, **_kwargs: object) -> None:
+        raise AshareObservationBlocked("injected_after_receipt")
+
+    monkeypatch.setattr(
+        ashare_observation_module,
+        "_persist_observation_membership",
+        fail_after_receipt,
+    )
+    with pytest.raises(AshareObservationBlocked, match="injected_after_receipt"):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: transport,
+        )
+
+    assert len(_observation_receipt_paths(config.snapshot_root)) == 1
+    assert not tuple(config.snapshot_root.glob("observation-complete-*.json"))
+    call_count = len(transport.calls)
+
+    monkeypatch.setattr(
+        ashare_observation_module,
+        "_persist_observation_membership",
+        original_persist,
+    )
+    recovered = run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("recovery_must_not_create_transport")
+        ),
+    )
+
+    assert recovered.idempotent_replay is False
+    assert len(transport.calls) == call_count
+    assert len(tuple(config.snapshot_root.glob("observation-complete-*.json"))) == 1
 
 
 def test_industry_and_index_roles_must_remain_optional_context(tmp_path: Path) -> None:
@@ -633,6 +1027,31 @@ def test_security_master_is_required_for_tradable_projection(tmp_path: Path) -> 
             config,
             transport_factory=lambda *_args, **_kwargs: ObservationTransport(),
         )
+
+
+def test_daily_amount_is_required_for_forward_liquidity_history(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest()
+    daily = next(
+        item for item in payload["datasets"] if item["probe_role"] == "daily_bars"
+    )
+    daily["fields"].remove("amount")
+    config = AshareObservationConfig(
+        manifest_path=_write_manifest(tmp_path, payload),
+        token_file=_token_path(tmp_path),
+        snapshot_root=(tmp_path / "state" / "snapshots").resolve(),
+    )
+
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="daily_bars_scope_contract_invalid",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: ObservationTransport(),
+        )
+    assert not config.snapshot_root.exists()
 
 
 @pytest.mark.parametrize(
