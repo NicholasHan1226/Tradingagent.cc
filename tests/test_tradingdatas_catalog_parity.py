@@ -324,7 +324,7 @@ class FixtureTransport:
         dataset_id = str(json_body["dataset_id"])
         self._query_calls[dataset_id] = self._query_calls.get(dataset_id, 0) + 1
         call_number = self._query_calls[dataset_id]
-        cursor = json_body["cursor"]
+        cursor = json_body.get("cursor")
         if cursor is None:
             run = self._starts.get(dataset_id, 0) + 1
             self._starts[dataset_id] = run

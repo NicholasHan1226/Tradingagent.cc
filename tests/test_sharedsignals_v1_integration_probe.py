@@ -278,7 +278,7 @@ def test_healthy_multidataset_double_run_emits_content_addressed_receipt(
         payload = call["json_body"]
         assert payload is not None
         assert payload["as_of"] == AS_OF
-        assert payload["cursor"] is None
+        assert "cursor" not in payload
         assert "order" not in payload
     serialized = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "tradingdatas.fixture.invalid" not in serialized

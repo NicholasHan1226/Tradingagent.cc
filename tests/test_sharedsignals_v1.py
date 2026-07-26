@@ -328,6 +328,38 @@ def test_as_of_is_omitted_when_not_requested() -> None:
     assert bounded.to_payload()["as_of"] == "2026-07-16T01:00:00+00:00"
 
 
+def test_catalog_default_query_omits_all_optional_wire_fields() -> None:
+    request = QueryRequest(
+        dataset_id=DATASET_ID,
+        schema_major=SCHEMA_MAJOR,
+        limit=1,
+    )
+
+    assert request.to_payload() == {
+        "dataset_id": DATASET_ID,
+        "schema_major": SCHEMA_MAJOR,
+        "limit": 1,
+    }
+
+
+def test_explicit_empty_query_collections_remain_explicit() -> None:
+    request = QueryRequest(
+        dataset_id=DATASET_ID,
+        schema_major=SCHEMA_MAJOR,
+        fields=(),
+        filters={},
+        limit=1,
+    )
+
+    assert request.to_payload() == {
+        "dataset_id": DATASET_ID,
+        "schema_major": SCHEMA_MAJOR,
+        "fields": [],
+        "filters": {},
+        "limit": 1,
+    }
+
+
 @pytest.mark.parametrize("invalid", ["trade_date:desc", [""], ["x", "x"]])
 def test_explicit_order_must_be_unique_nonempty_terms(invalid: object) -> None:
     with pytest.raises(ContractViolation, match="order"):
