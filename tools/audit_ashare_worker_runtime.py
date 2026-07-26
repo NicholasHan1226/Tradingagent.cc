@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import grp
+import importlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ from typing import Any, Sequence
 
 
 TOKEN_FILE = Path("/run/secrets/tradingagent/tradingdatas-read.token")
+EXPECTED_PYYAML_VERSION = "6.0.3"
 
 
 class RuntimeAuditError(RuntimeError):
@@ -197,6 +199,19 @@ def audit_python_runtime(python_runtime: Path) -> dict[str, Any]:
     }
 
 
+def audit_python_dependencies() -> dict[str, str]:
+    """Import and verify the frozen minimal third-party dependency set."""
+
+    try:
+        yaml_module = importlib.import_module("yaml")
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise RuntimeAuditError("python_dependency_pyyaml_missing") from exc
+    version = getattr(yaml_module, "__version__", None)
+    if version != EXPECTED_PYYAML_VERSION:
+        raise RuntimeAuditError("python_dependency_pyyaml_version_invalid")
+    return {"pyyaml": version}
+
+
 def _identity(user: str, group: str) -> tuple[int, int]:
     try:
         user_record = pwd.getpwnam(user)
@@ -242,6 +257,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_gid=expected_gid,
         )
         python_runtime = audit_python_runtime(args.python_runtime)
+        python_dependencies = audit_python_dependencies()
         token = audit_token_file(
             TOKEN_FILE,
             expected_uid=expected_uid,
@@ -267,6 +283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "directories": directories,
                 "marketgraph_mode": "mg_off",
                 "ok": True,
+                "python_dependencies": python_dependencies,
                 "python_runtime": python_runtime,
                 "real_trading_enabled": False,
                 "schema_version": 1,

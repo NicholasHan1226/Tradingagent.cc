@@ -386,18 +386,23 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
   本阶段不安装、不启用。
 
 observation worker 不得再引用旧 `/opt/tradingagent/venv`。当前冻结解释器为
-`/opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1/bin/python3`：
+`/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3`：
 它是 root-owned、无 symlink 路径、single-link、精确 `0555` 的 versioned
-stdlib-only runtime，父目录必须是 root-owned 且不可由 `tradingagent` 写入。
+minimal runtime，父目录必须是 root-owned 且不可由 `tradingagent` 写入。
+唯一第三方运行依赖由
+`deploy/ashare-observation-requirements.txt` 精确版本和 wheel SHA-256
+冻结；当前为 PyYAML 6.0.3。运行时审计必须实际导入并验证这个版本，不能仅凭文件
+存在或系统全局包推断依赖可用。
 `ExecStartPre` 会在读取 token metadata 和发起网络前复核该解释器；leaf、owner、
 mode、link count 或路径任一漂移都阻断 worker。不得原地升级此 runtime；Python
 版本或依赖变化必须建立新的 versioned 路径、更新 unit/测试并重新走 release
 preflight。
 
-服务器构建只能在受限临时目录使用系统 `/usr/bin/python3 -m venv --without-pip
---copies`，确认 `pip` 不存在、以 UID 987 导入冻结 release 成功后，再 root-owned
-原子安装到上述路径并冻结目录/文件权限。构建日志必须记录 Python 版本、runtime
-tree digest 和目标 release，但不得包含 token 或其哈希。该 runtime 安装不等于
+服务器构建只能在受限临时目录使用系统 `/usr/bin/python3 -m venv --copies`，
+随后用 `pip install --require-hashes` 安装上述最小依赖；确认依赖版本、以 UID
+987 导入冻结 release 成功后，再 root-owned 原子安装到上述路径并冻结目录/文件
+权限。构建日志必须记录 Python/PyYAML 版本、runtime tree digest、requirements
+digest 和目标 release，但不得包含 token 或其哈希。该 runtime 安装不等于
 observation service 安装，更不等于 timer/front/模拟或真实交易激活。失败回滚是
 保持 worker/timer inactive、保留证据并修复前滚；禁止恢复旧
 `/opt/tradingagent/venv` 依赖。

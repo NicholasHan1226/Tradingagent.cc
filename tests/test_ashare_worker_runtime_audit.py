@@ -116,6 +116,42 @@ def test_python_runtime_audit_rejects_symlink_writable_or_non_root_runtime(
         audit.audit_python_runtime(runtime)
 
 
+def test_python_dependency_audit_requires_exact_pyyaml_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = _load_audit_module()
+
+    monkeypatch.setattr(
+        audit.importlib,
+        "import_module",
+        lambda name: type("YamlModule", (), {"__version__": "6.0.3"})()
+        if name == "yaml"
+        else None,
+    )
+    assert audit.audit_python_dependencies() == {"pyyaml": "6.0.3"}
+
+    monkeypatch.setattr(
+        audit.importlib,
+        "import_module",
+        lambda _name: type("YamlModule", (), {"__version__": "6.0.1"})(),
+    )
+    with pytest.raises(
+        audit.RuntimeAuditError,
+        match="python_dependency_pyyaml_version_invalid",
+    ):
+        audit.audit_python_dependencies()
+
+    def _missing(_name: str) -> object:
+        raise ModuleNotFoundError
+
+    monkeypatch.setattr(audit.importlib, "import_module", _missing)
+    with pytest.raises(
+        audit.RuntimeAuditError,
+        match="python_dependency_pyyaml_missing",
+    ):
+        audit.audit_python_dependencies()
+
+
 def test_runtime_audit_accepts_separated_owned_directories_and_private_token(
     tmp_path: Path,
 ) -> None:
@@ -303,8 +339,14 @@ def test_runtime_audit_cli_requires_exact_mg_off(
         "audit_python_runtime",
         lambda *_args, **_kwargs: {"mode": "0555", "regular": True},
     )
+    monkeypatch.setattr(
+        audit,
+        "audit_python_dependencies",
+        lambda: {"pyyaml": "6.0.3"},
+    )
 
     assert audit.main(arguments) == 0
     accepted = json.loads(capsys.readouterr().out)
     assert accepted["marketgraph_mode"] == "mg_off"
+    assert accepted["python_dependencies"] == {"pyyaml": "6.0.3"}
     assert accepted["python_runtime"] == {"mode": "0555", "regular": True}

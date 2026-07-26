@@ -9,9 +9,12 @@ SERVICE = SYSTEMD_ROOT / "tradingagent-ashare-observation.service"
 TIMER = SYSTEMD_ROOT / "tradingagent-ashare-observation.timer"
 ENV_EXAMPLE = SYSTEMD_ROOT / "tradingagent-ashare-worker.env.example"
 TMPFILES = SYSTEMD_ROOT / "tradingagent-runtime.tmpfiles.conf"
+OBSERVATION_REQUIREMENTS = (
+    REPO_ROOT / "deploy" / "ashare-observation-requirements.txt"
+)
 OBSERVATION_PYTHON = (
     "/opt/investment/tools/venvs/"
-    "tradingagent-observation-py312-stdlib-v1/bin/python3"
+    "tradingagent-observation-py312-pyyaml603-v1/bin/python3"
 )
 
 
@@ -31,6 +34,16 @@ def _environment(text: str) -> dict[str, str]:
         assert key and key not in values
         values[key] = value
     return values
+
+
+def test_observation_runtime_dependency_is_exactly_version_and_hash_locked() -> None:
+    requirements = _text(OBSERVATION_REQUIREMENTS)
+    assert "PyYAML==6.0.3" in requirements
+    assert (
+        "--hash=sha256:"
+        "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
+    ) in requirements
+    assert ">=" not in requirements
 
 
 def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
@@ -67,7 +80,7 @@ def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
         "ReadOnlyPaths=/opt/investment/releases/tradingagent",
         (
             "ReadOnlyPaths=/opt/investment/tools/venvs/"
-            "tradingagent-observation-py312-stdlib-v1"
+            "tradingagent-observation-py312-pyyaml603-v1"
         ),
         "ReadOnlyPaths=/run/secrets/tradingagent",
         "ReadWritePaths=/var/lib/tradingagent/ashare-observation",

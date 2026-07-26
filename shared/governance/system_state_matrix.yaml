@@ -328,7 +328,7 @@ entries:
       - docs/operations.md
     allowed_uses:
       - disabled_unit_contract_and_static_validation
-      - require_a_root_owned_versioned_stdlib_only_python_runtime_before_worker_start
+      - require_a_root_owned_versioned_minimal_python_runtime_with_hashed_dependencies_before_worker_start
     prohibited_uses:
       - install_or_enable_before_dedicated_tradingagent_token_and_identity_handoff
       - enable_before_trusted_daily_immutable_manifest_rollover
