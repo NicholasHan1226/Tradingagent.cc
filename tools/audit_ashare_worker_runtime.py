@@ -172,6 +172,31 @@ def audit_token_file(
     }
 
 
+def audit_python_runtime(python_runtime: Path) -> dict[str, Any]:
+    """Validate the immutable root-owned interpreter without executing it."""
+
+    metadata = _lstat_no_follow(
+        python_runtime,
+        field_name="python_runtime",
+    )
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeAuditError("python_runtime_regular_file_required")
+    if metadata.st_nlink != 1:
+        raise RuntimeAuditError("python_runtime_link_count_invalid")
+    mode = stat.S_IMODE(metadata.st_mode)
+    if mode != 0o555:
+        raise RuntimeAuditError("python_runtime_mode_invalid")
+    if metadata.st_uid != 0 or metadata.st_gid != 0:
+        raise RuntimeAuditError("python_runtime_owner_invalid")
+    return {
+        "link_count": metadata.st_nlink,
+        "mode": f"{mode:04o}",
+        "owner_gid": metadata.st_gid,
+        "owner_uid": metadata.st_uid,
+        "regular": True,
+    }
+
+
 def _identity(user: str, group: str) -> tuple[int, int]:
     try:
         user_record = pwd.getpwnam(user)
@@ -188,6 +213,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Audit the installed A-share observation worker metadata.",
     )
     parser.add_argument("--release-root", required=True, type=Path)
+    parser.add_argument("--python-runtime", required=True, type=Path)
     parser.add_argument("--state-root", required=True, type=Path)
     parser.add_argument("--runtime-root", required=True, type=Path)
     parser.add_argument("--log-root", required=True, type=Path)
@@ -215,6 +241,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_uid=expected_uid,
             expected_gid=expected_gid,
         )
+        python_runtime = audit_python_runtime(args.python_runtime)
         token = audit_token_file(
             TOKEN_FILE,
             expected_uid=expected_uid,
@@ -240,6 +267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "directories": directories,
                 "marketgraph_mode": "mg_off",
                 "ok": True,
+                "python_runtime": python_runtime,
                 "real_trading_enabled": False,
                 "schema_version": 1,
                 "token": token,

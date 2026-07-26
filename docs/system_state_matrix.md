@@ -41,7 +41,7 @@
 | A股 `a7488e9` historical authenticated current-observation | formal 18082 one-shot 与精确幂等重放只在 `a7488e9` 冻结三件字节通过；3041只沪深主板，双创/北交所个股排除，行业/指数仅上下文 | `HISTORICAL_READ_ONLY / server_validated_non_authority_simulation_only / production=false` | 只证明当时单次真实只读观察；不得绑定到当前五项源码，专用TA token/worker/timer、历史PIT、分钟证据和模拟成交均未激活 |
 | A股五项 committed observation runtime | `6db813c…`仓库合同逐 session 绑定snapshot/probe/observation receipt/membership ledger，以transaction-complete作为唯一commit point；核心三数据集正式运行和幂等重放 PASS | `CURRENT_VERIFIED / repository_contract` + `server_validated_non_authority_read_only / production=false` | 单次current observation不是历史PIT、feature、tradable/candidate/order authority |
 | A股 forward-history + daily-only planner | 至少21个forward session；缺calendar continuity/adjustment仍blocked；无label horizons，`paper_trade_session=null` 且 abstain | `TARGET_CONTRACT / repository_contract / production=false` | 无预测、资金、订单、成交、对账或SampleJournal authority |
-| A股 observation timer | unit/timer 字节仅作 disabled 静态候选；daily已ready但calendar continuity、专用Python runtime与manifest rollover仍未通过 | `TARGET_CONTRACT / architecture_target / production=false` | 当前仍未安装/未启用；不能用静态manifest/as-of或自然日推断冒充日更 |
+| A股 observation timer | unit/timer 字节仅作 disabled 静态候选；unit 已改为 root-owned versioned stdlib runtime 并禁止旧 `/opt/tradingagent/venv`，服务器安装仍待验 | `TARGET_CONTRACT / architecture_target / production=false` | 当前仍未安装/未启用；不能用静态manifest/as-of或自然日推断冒充日更 |
 | 主板三层 Universe | policy/snapshots/zero-leakage 合同已进入仓库；环境宽度由内容寻址CoverageReceipt及外部verifier派生，过期/数量/双创聚合/authority缺口降级 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅模拟scope与cash+policy upper bound；真实coverage verifier、broker和ledger订单量均未证明 |
 | Phase 1.5 行业 shadow 薄切片 | PIT taxonomy、成分、score方法/有效期、score/coverage receipts和独立proof绑定；动态 1 深研 + 2 观察 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture研究聚焦；真实score verifier缺失；无个股、无position effect、无晋级资格 |
 | 50k optimizer + plan binding | 可行池负责cash+policy上界；无默认account verifier复核账户；Champion score另绑定当前selection/artifact/model/spec与经独立port复核的数值PIT特征；plan再绑定T+1、cost、现金顺序、零股卖出与订单量 | `CURRENT_VERIFIED / repository_contract / production=false` | rank只排序、固定probe sizing；fixture proof不证明真实账户、Champion/feature registry或broker |
@@ -79,7 +79,7 @@
 | `tradingagent_ashare_observation_membership_ledger` | `CURRENT_VERIFIED / repository_contract` | 新 fresh state 的五项 committed binding 已由当前服务器读回；仍无 label/trading authority |
 | `tradingagent_ashare_prospective_history_readiness` | `TARGET_CONTRACT / repository_contract` | 21 session 最小覆盖；calendar continuity/adjustment 缺失仍 blocked |
 | `tradingagent_ashare_daily_only_paper_planning` | `TARGET_CONTRACT / repository_contract` | `paper_trade_session=null` 的 deterministic abstain；无资金或执行副作用 |
-| `tradingagent_ashare_observation_timer_candidate` | `TARGET_CONTRACT / architecture_target` | 当前未安装/未启用；calendar continuity、专用Python runtime和动态manifest rollover未通过 |
+| `tradingagent_ashare_observation_timer_candidate` | `TARGET_CONTRACT / architecture_target` | 当前未安装/未启用；versioned Python runtime 仍待服务器验收，动态manifest rollover未通过 |
 | `tradingagent_mainboard_scope` | `CURRENT_VERIFIED / repository_contract` | 主板个股；双创/北交所等非主板指数与行业聚合仅环境参考，非主板个股禁止分析；覆盖 authority 需外部复核 |
 | `tradingagent_small_account_optimizer` | `CURRENT_VERIFIED / repository_contract` | 50k、账户输入/proof绑定、整数股/零股卖出、费用与现金的模拟优化器；不证明真实账户 |
 | `tradingagent_thesis_risk_authority` | `CURRENT_VERIFIED / repository_contract` | 行业/论点/原材料/政策事件/拥挤/模型家族六维风险完整性门；fixture policy/proof不可晋级 |

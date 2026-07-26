@@ -328,6 +328,7 @@ entries:
       - docs/operations.md
     allowed_uses:
       - disabled_unit_contract_and_static_validation
+      - require_a_root_owned_versioned_stdlib_only_python_runtime_before_worker_start
     prohibited_uses:
       - install_or_enable_before_dedicated_tradingagent_token_and_identity_handoff
       - enable_before_trusted_daily_immutable_manifest_rollover
@@ -336,6 +337,7 @@ entries:
       - infer_timer_installed_or_enabled_from_uid_gid_or_immutable_release_preflight
       - enable_while_equity_daily_or_required_context_dataset_is_stale_or_unobserved
       - enable_before_calendar_continuity_and_uid_987_python_runtime_are_verified
+      - restore_or_traverse_the_legacy_opt_tradingagent_venv
     successor: tradingagent.ashare.observation-worker-timer.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
