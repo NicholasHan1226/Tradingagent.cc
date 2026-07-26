@@ -45,8 +45,10 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Error,
 )
 from shared.data.tradingdatas_pagination import (
+    IdentitylessSinglePageRun,
     PagedQueryRun,
     PaginationContractError,
+    collect_identityless_single_page,
     collect_query_pages,
 )
 from shared.data.tradingdatas_transport import (
@@ -197,6 +199,14 @@ def _string_tuple(value: object, *, field_name: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _identity_fields_tuple(value: object, *, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise CatalogParityConfigurationError(f"{field_name} must be a list")
+    if not value:
+        return ()
+    return _string_tuple(value, field_name=field_name)
+
+
 def _mapping(
     value: object, *, field_name: str, nonempty: bool = False
 ) -> dict[str, Any]:
@@ -310,34 +320,63 @@ class CatalogDatasetSpec:
                 filters=self.filters,
                 limit=self.query_limit,
             )
-            requirement = DatasetRequirement(
-                dataset_id=self.dataset_id,
-                role="optional_context",
-                identity_fields=self.identity_fields,
-                observation_mode=self.observation.mode,
-                query_as_of_mode=self.observation.query_as_of_mode,
-                row_event_time_field=self.observation.row_event_time_field,
-                row_event_time_format=self.observation.row_event_time_format,
-                row_event_timezone=self.observation.row_event_timezone,
-                row_event_time_semantic=self.observation.row_event_time_semantic,
-                minimum_row_count=self.minimum_row_count,
-                max_pages=self.max_pages,
-                max_rows=self.max_rows,
-            )
-        except (SharedSignalsV1Error, ResearchDataContractError) as exc:
+        except SharedSignalsV1Error as exc:
             raise CatalogParityConfigurationError(str(exc)) from exc
-        required_fields = set(requirement.identity_fields)
-        if requirement.row_event_time_field is not None:
-            required_fields.add(requirement.row_event_time_field)
+        if not isinstance(self.identity_fields, tuple):
+            raise CatalogParityConfigurationError("identity_fields must be a tuple")
+
+        if self.identity_fields:
+            try:
+                requirement = DatasetRequirement(
+                    dataset_id=self.dataset_id,
+                    role="optional_context",
+                    identity_fields=self.identity_fields,
+                    observation_mode=self.observation.mode,
+                    query_as_of_mode=self.observation.query_as_of_mode,
+                    row_event_time_field=self.observation.row_event_time_field,
+                    row_event_time_format=self.observation.row_event_time_format,
+                    row_event_timezone=self.observation.row_event_timezone,
+                    row_event_time_semantic=self.observation.row_event_time_semantic,
+                    minimum_row_count=self.minimum_row_count,
+                    max_pages=self.max_pages,
+                    max_rows=self.max_rows,
+                )
+            except ResearchDataContractError as exc:
+                raise CatalogParityConfigurationError(str(exc)) from exc
+            identity_fields = requirement.identity_fields
+            minimum_row_count = requirement.minimum_row_count
+            max_pages = requirement.max_pages
+            max_rows = requirement.max_rows
+        else:
+            if expected_health != "impaired":
+                raise CatalogParityConfigurationError(
+                    "identityless datasets must be declared impaired"
+                )
+            if type(self.max_pages) is not int or self.max_pages != 1:
+                raise CatalogParityConfigurationError(
+                    "identityless datasets require max_pages equal to 1"
+                )
+            if type(self.minimum_row_count) is not int or self.minimum_row_count != 0:
+                raise CatalogParityConfigurationError(
+                    "identityless datasets require minimum_row_count equal to 0"
+                )
+            if type(self.max_rows) is not int or self.max_rows < 0:
+                raise CatalogParityConfigurationError(
+                    "identityless max_rows must be a non-negative integer"
+                )
+            identity_fields = ()
+            minimum_row_count = 0
+            max_pages = 1
+            max_rows = self.max_rows
+
+        required_fields = set(identity_fields)
+        if self.observation.row_event_time_field is not None:
+            required_fields.add(self.observation.row_event_time_field)
         if required_fields.difference(request.fields):
             raise CatalogParityConfigurationError(
                 "catalog_default_fields must include identity and row event fields"
             )
-        if request.limit > requirement.max_rows:
-            raise CatalogParityConfigurationError(
-                "query_limit must not exceed max_rows"
-            )
-        if expected_health == "ready" and requirement.minimum_row_count == 0:
+        if expected_health == "ready" and minimum_row_count == 0:
             raise CatalogParityConfigurationError(
                 "ready datasets require a positive minimum_row_count"
             )
@@ -355,18 +394,26 @@ class CatalogDatasetSpec:
         object.__setattr__(
             self,
             "minimum_row_count",
-            requirement.minimum_row_count,
+            minimum_row_count,
         )
-        object.__setattr__(self, "identity_fields", requirement.identity_fields)
-        object.__setattr__(self, "max_pages", requirement.max_pages)
-        object.__setattr__(self, "max_rows", requirement.max_rows)
+        object.__setattr__(self, "identity_fields", identity_fields)
+        object.__setattr__(self, "max_pages", max_pages)
+        object.__setattr__(self, "max_rows", max_rows)
         object.__setattr__(self, "_limits_json", _canonical_json(limits))
         object.__setattr__(self, "_filters_json", _canonical_json(request.filters))
 
     def expected_limits(self) -> dict[str, Any]:
         return json.loads(self._limits_json)
 
-    def query(self, *, as_of: str) -> QueryRequest:
+    @property
+    def identity_authority_available(self) -> bool:
+        return bool(self.identity_fields)
+
+    def query(self, *, as_of: str | None) -> QueryRequest:
+        if self.observation.query_as_of_mode == "decision_as_of" and as_of is None:
+            raise CatalogParityConfigurationError(
+                "decision_as_of datasets require a manifest as_of timestamp"
+            )
         return QueryRequest(
             dataset_id=self.dataset_id,
             schema_major=self.schema_major,
@@ -404,7 +451,7 @@ class TradingDatasCatalogParityConfig:
     access_policy_id: str
     transport_id: str
     timeout_seconds: float
-    as_of: str
+    as_of: str | None
     expected_counts: Mapping[str, int]
     datasets: tuple[CatalogDatasetSpec, ...]
     _counts_json: str = field(init=False, repr=False)
@@ -444,7 +491,22 @@ class TradingDatasCatalogParityConfig:
             or self.timeout_seconds <= 0
         ):
             raise CatalogParityConfigurationError("timeout_seconds must be positive")
-        as_of = _aware_timestamp(self.as_of, field_name="as_of")
+        decision_as_of_required = any(
+            item.observation.query_as_of_mode == "decision_as_of"
+            for item in self.datasets
+        )
+        if self.as_of is None:
+            if decision_as_of_required:
+                raise CatalogParityConfigurationError(
+                    "as_of may be null only when every dataset omits decision_as_of"
+                )
+            as_of = None
+        else:
+            if not decision_as_of_required:
+                raise CatalogParityConfigurationError(
+                    "as_of must be null when every dataset omits decision_as_of"
+                )
+            as_of = _aware_timestamp(self.as_of, field_name="as_of")
         counts = _mapping(
             self.expected_counts,
             field_name="expected_counts",
@@ -599,7 +661,7 @@ def _dataset_spec(value: object, *, index: int) -> CatalogDatasetSpec:
         ),
         query_limit=value["query_limit"],
         minimum_row_count=value["minimum_row_count"],
-        identity_fields=_string_tuple(
+        identity_fields=_identity_fields_tuple(
             value["identity_fields"],
             field_name=f"datasets[{index}].identity_fields",
         ),
@@ -770,7 +832,10 @@ def _source_proof_sha256(envelope: QueryEnvelope) -> str | None:
     )
 
 
-def _same_observation(first: PagedQueryRun, second: PagedQueryRun) -> bool:
+def _same_observation(
+    first: PagedQueryRun | IdentitylessSinglePageRun,
+    second: PagedQueryRun | IdentitylessSinglePageRun,
+) -> bool:
     return bool(
         first.semantic_sha256 == second.semantic_sha256
         and first.semantic_trace_sha256 == second.semantic_trace_sha256
@@ -812,6 +877,7 @@ def _base_receipt(config: TradingDatasCatalogParityConfig) -> dict[str, Any]:
         "production_verified": False,
         "real_trading_enabled": False,
         "research_snapshot_emitted": False,
+        "as_of": config.as_of,
         "catalog_version": config.catalog_version,
         "transport_id": config.transport_id,
         "manifest_sha256": config.manifest_sha256,
@@ -846,12 +912,15 @@ def _dataset_receipt(
     *,
     spec: CatalogDatasetSpec,
     request: QueryRequest,
-    first: PagedQueryRun,
-    second: PagedQueryRun,
+    first: PagedQueryRun | IdentitylessSinglePageRun,
+    second: PagedQueryRun | IdentitylessSinglePageRun,
     decisions: tuple[EvidenceDecision, EvidenceDecision],
 ) -> tuple[dict[str, Any], bool, bool]:
     reasons: list[str] = []
     accounting_reasons: list[str] = []
+    identity_authority_available = spec.identity_authority_available
+    if not identity_authority_available:
+        accounting_reasons.append("identity_authority_unavailable")
     proof_complete = _source_proof_complete(first.envelope) and _source_proof_complete(
         second.envelope
     )
@@ -889,8 +958,10 @@ def _dataset_receipt(
                 }
             ),
             "query_sha256": request.sha256,
+            "query_as_of": request.as_of,
             "observation_mapping_sha256": _sha256(spec.observation.to_payload()),
             "identity_fields_sha256": _sha256(list(spec.identity_fields)),
+            "identity_authority_available": identity_authority_available,
             "max_pages": spec.max_pages,
             "max_rows": spec.max_rows,
             "minimum_row_count": spec.minimum_row_count,
@@ -900,15 +971,48 @@ def _dataset_receipt(
             "pagination_trace_sha256": first.pagination_trace_sha256,
             "page_request_set_sha256": pagination["page_request_set_sha256"],
             "page_response_set_sha256": pagination["page_response_set_sha256"],
-            "identity_sha256": first.identity_sha256,
+            "ordered_rows_sha256": pagination["ordered_rows_sha256"],
+            "metadata_sha256": pagination["metadata_sha256"],
+            "semantic_sha256": pagination["semantic_sha256"],
+            "semantic_trace_sha256": pagination["semantic_trace_sha256"],
+            "run_ordered_rows_sha256s": [
+                first.ordered_rows_sha256,
+                second.ordered_rows_sha256,
+            ],
+            "run_metadata_sha256s": [
+                first.metadata_sha256,
+                second.metadata_sha256,
+            ],
+            "run_semantic_sha256s": [
+                first.semantic_sha256,
+                second.semantic_sha256,
+            ],
+            "run_semantic_trace_sha256s": [
+                first.semantic_trace_sha256,
+                second.semantic_trace_sha256,
+            ],
+            "identity_sha256": (
+                first.identity_sha256 if identity_authority_available else None
+            ),
             "same_observation_match": same_observation,
             "source_proof_complete": proof_complete,
             "source_proof_sha256": _source_proof_sha256(first.envelope),
             "effective_state": decision.effective_state,
-            "evidence_action": decision.action.value,
-            "effective_weight": decision.weight,
+            "evidence_action": (
+                decision.action.value
+                if identity_authority_available
+                else EvidenceAction.REJECT.value
+            ),
+            "evidence_eligible": (
+                decision.eligible if identity_authority_available else False
+            ),
+            "effective_weight": (
+                decision.weight if identity_authority_available else 0.0
+            ),
             "parity_data_accepted": bool(
-                spec.expected_health == "ready" and classification_ok
+                identity_authority_available
+                and spec.expected_health == "ready"
+                and classification_ok
             ),
             "research_snapshot_eligible": False,
             "reason_codes": reasons,
@@ -969,22 +1073,38 @@ def run_tradingdatas_catalog_parity(
     for spec in config.datasets:
         request = spec.query(as_of=config.as_of)
         try:
-            first = collect_query_pages(
-                client=client,
-                request=request,
-                identity_fields=spec.identity_fields,
-                max_pages=spec.max_pages,
-                max_rows=spec.max_rows,
-            )
-            second = collect_query_pages(
-                client=client,
-                request=request,
-                identity_fields=spec.identity_fields,
-                max_pages=spec.max_pages,
-                max_rows=spec.max_rows,
-            )
-            first.verify_integrity(identity_fields=spec.identity_fields)
-            second.verify_integrity(identity_fields=spec.identity_fields)
+            if spec.identity_authority_available:
+                first = collect_query_pages(
+                    client=client,
+                    request=request,
+                    identity_fields=spec.identity_fields,
+                    max_pages=spec.max_pages,
+                    max_rows=spec.max_rows,
+                )
+                second = collect_query_pages(
+                    client=client,
+                    request=request,
+                    identity_fields=spec.identity_fields,
+                    max_pages=spec.max_pages,
+                    max_rows=spec.max_rows,
+                )
+                first.verify_integrity(identity_fields=spec.identity_fields)
+                second.verify_integrity(identity_fields=spec.identity_fields)
+            else:
+                first = collect_identityless_single_page(
+                    client=client,
+                    request=request,
+                    max_pages=spec.max_pages,
+                    max_rows=spec.max_rows,
+                )
+                second = collect_identityless_single_page(
+                    client=client,
+                    request=request,
+                    max_pages=spec.max_pages,
+                    max_rows=spec.max_rows,
+                )
+                first.verify_integrity()
+                second.verify_integrity()
             decisions = (gate.evaluate(first.envelope), gate.evaluate(second.envelope))
         except PaginationContractError as exc:
             code = str(exc)
@@ -995,6 +1115,12 @@ def run_tradingdatas_catalog_parity(
                     "dataset_id": spec.dataset_id,
                     "expected_health": spec.expected_health,
                     "query_sha256": request.sha256,
+                    "query_as_of": request.as_of,
+                    "identity_authority_available": spec.identity_authority_available,
+                    "evidence_action": EvidenceAction.REJECT.value,
+                    "evidence_eligible": False,
+                    "effective_weight": 0.0,
+                    "parity_data_accepted": False,
                     "research_snapshot_eligible": False,
                     "reason_codes": [code],
                 }
@@ -1009,6 +1135,12 @@ def run_tradingdatas_catalog_parity(
                     "dataset_id": spec.dataset_id,
                     "expected_health": spec.expected_health,
                     "query_sha256": request.sha256,
+                    "query_as_of": request.as_of,
+                    "identity_authority_available": spec.identity_authority_available,
+                    "evidence_action": EvidenceAction.REJECT.value,
+                    "evidence_eligible": False,
+                    "effective_weight": 0.0,
+                    "parity_data_accepted": False,
                     "research_snapshot_eligible": False,
                     "reason_codes": ["query_contract_or_transport_failure"],
                 }
@@ -1023,6 +1155,12 @@ def run_tradingdatas_catalog_parity(
                     "dataset_id": spec.dataset_id,
                     "expected_health": spec.expected_health,
                     "query_sha256": request.sha256,
+                    "query_as_of": request.as_of,
+                    "identity_authority_available": spec.identity_authority_available,
+                    "evidence_action": EvidenceAction.REJECT.value,
+                    "evidence_eligible": False,
+                    "effective_weight": 0.0,
+                    "parity_data_accepted": False,
                     "research_snapshot_eligible": False,
                     "reason_codes": ["query_contract_or_transport_failure"],
                 }

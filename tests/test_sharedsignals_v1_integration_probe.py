@@ -305,7 +305,7 @@ def test_query_as_of_mode_is_applied_per_dataset(tmp_path: Path) -> None:
         for call in query_calls
         if call["json_body"]["dataset_id"] == DATASETS["daily_bars"]
     ]
-    assert [call["json_body"]["as_of"] for call in calendar_calls] == [None, None]
+    assert all("as_of" not in call["json_body"] for call in calendar_calls)
     assert [call["json_body"]["as_of"] for call in daily_calls] == [AS_OF, AS_OF]
     calendar_receipt = next(
         item for item in receipt["datasets"] if item["probe_role"] == "trade_calendar"

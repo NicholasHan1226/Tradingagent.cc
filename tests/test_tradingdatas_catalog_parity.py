@@ -289,6 +289,8 @@ class FixtureTransport:
         self.catalog = _catalog_payload()
         self.query_status = 200
         self.metadata_overrides: dict[tuple[str, int], dict[str, Any]] = {}
+        self.query_rows_overrides: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        self.next_cursor_overrides: dict[tuple[str, int], str | None] = {}
         self.cursor_cycle = False
         self.ready_empty = False
         self._starts: dict[str, int] = {}
@@ -346,6 +348,12 @@ class FixtureTransport:
             health = "impaired"
         else:
             raise AssertionError(f"paused dataset queried: {dataset_id}")
+        rows = copy.deepcopy(
+            self.query_rows_overrides.get((dataset_id, call_number), rows)
+        )
+        next_cursor = self.next_cursor_overrides.get(
+            (dataset_id, call_number), next_cursor
+        )
         metadata = copy.deepcopy(
             self.metadata_overrides.get(
                 (dataset_id, call_number), _metadata(health=health)
@@ -505,6 +513,17 @@ def _load_config(tmp_path: Path, payload: dict[str, Any] | None = None):
     return _api().load_catalog_parity_manifest(path.resolve())
 
 
+def _identityless_impaired_manifest(*, max_rows: int) -> dict[str, Any]:
+    payload = _manifest()
+    impaired = payload["datasets"][1]
+    impaired["query_limit"] = 500
+    impaired["minimum_row_count"] = 0
+    impaired["identity_fields"] = []
+    impaired["max_pages"] = 1
+    impaired["max_rows"] = max_rows
+    return payload
+
+
 def test_catalog_discovery_accounts_for_ready_and_impaired_active_sets(
     tmp_path: Path,
 ) -> None:
@@ -562,7 +581,7 @@ def test_catalog_discovery_accounts_for_ready_and_impaired_active_sets(
         for payload in ready_payloads
     )
     assert all(payload["as_of"] == AS_OF for payload in ready_payloads)
-    assert all(payload["as_of"] is None for payload in impaired_payloads)
+    assert all("as_of" not in payload for payload in impaired_payloads)
     assert all("order" not in payload for payload in ready_payloads + impaired_payloads)
 
     encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
@@ -952,4 +971,293 @@ def test_manifest_counts_are_explicit_and_drive_dataset_cardinality(
     payload["expected_counts"]["active"] = 3
 
     with pytest.raises(api.CatalogParityConfigurationError, match="active count"):
+        _load_config(tmp_path, payload)
+
+
+def test_identityless_impaired_empty_page_accepts_zero_frozen_row_cap(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=0),
+    )
+    transport = FixtureTransport()
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "pass"
+    assert receipt["transport_contract_pass"] is True
+    assert receipt["impaired_set_accounted"] is True
+    impaired = receipt["datasets"][1]
+    assert impaired["row_count"] == 0
+    assert impaired["max_rows"] == 0
+    assert impaired["identity_authority_available"] is False
+    assert impaired["identity_sha256"] is None
+    assert impaired["evidence_action"] == "reject"
+    assert impaired["evidence_eligible"] is False
+    assert impaired["effective_weight"] == 0.0
+    assert impaired["parity_data_accepted"] is False
+    assert impaired["research_snapshot_eligible"] is False
+    impaired_queries = [
+        call["json_body"]
+        for call in transport.calls
+        if call["method"] == "POST" and call["json_body"]["dataset_id"] == IMPAIRED_ID
+    ]
+    assert len(impaired_queries) == 2
+    assert all(query["limit"] == 500 for query in impaired_queries)
+    assert all("as_of" not in query for query in impaired_queries)
+    assert all("order" not in query for query in impaired_queries)
+
+
+def test_identityless_duplicate_provider_rows_make_no_identity_claim(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=2),
+    )
+    transport = FixtureTransport()
+    provider_row = {"sector_code": "provider-native", "close": 1}
+    for call_number in (1, 2):
+        transport.query_rows_overrides[(IMPAIRED_ID, call_number)] = [
+            provider_row,
+            provider_row,
+        ]
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "pass"
+    impaired = receipt["datasets"][1]
+    assert impaired["row_count"] == 2
+    assert impaired["same_observation_match"] is True
+    assert impaired["identity_authority_available"] is False
+    assert impaired["identity_sha256"] is None
+    assert impaired["evidence_action"] == "reject"
+    assert impaired["evidence_eligible"] is False
+    assert impaired["effective_weight"] == 0.0
+    assert impaired["parity_data_accepted"] is False
+    assert impaired["research_snapshot_eligible"] is False
+    assert impaired["accounting_reason_codes"] == ["identity_authority_unavailable"]
+    assert len(impaired["run_semantic_sha256s"]) == 2
+    assert len(impaired["run_semantic_trace_sha256s"]) == 2
+    assert len(set(impaired["run_semantic_sha256s"])) == 1
+    assert len(set(impaired["run_semantic_trace_sha256s"])) == 1
+
+
+@pytest.mark.parametrize(
+    ("invalid_profile", "error_pattern"),
+    [
+        ("ready_identityless", "impaired"),
+        ("identityless_multi_page", "max_pages"),
+        ("identityless_positive_minimum", "minimum_row_count"),
+        ("keyed_zero_row_cap", "max_rows"),
+    ],
+)
+def test_identityless_manifest_mode_is_narrow_and_keyed_profiles_stay_strict(
+    tmp_path: Path,
+    invalid_profile: str,
+    error_pattern: str,
+) -> None:
+    api = _api()
+    payload = _manifest()
+    if invalid_profile == "ready_identityless":
+        dataset = payload["datasets"][0]
+        dataset["identity_fields"] = []
+        dataset["minimum_row_count"] = 0
+        dataset["max_pages"] = 1
+        dataset["max_rows"] = 1
+    elif invalid_profile == "identityless_multi_page":
+        dataset = payload["datasets"][1]
+        dataset["identity_fields"] = []
+        dataset["max_pages"] = 2
+    elif invalid_profile == "identityless_positive_minimum":
+        dataset = payload["datasets"][1]
+        dataset["identity_fields"] = []
+        dataset["max_pages"] = 1
+        dataset["minimum_row_count"] = 1
+    else:
+        payload["datasets"][0]["max_rows"] = 0
+
+    with pytest.raises(api.CatalogParityConfigurationError, match=error_pattern):
+        _load_config(tmp_path, payload)
+
+
+def test_keyed_manifest_allows_query_limit_above_frozen_row_cap(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest()
+    ready = payload["datasets"][0]
+    ready["query_limit"] = 500
+    ready["max_rows"] = 1
+
+    config = _load_config(tmp_path, payload)
+
+    assert config.datasets[0].identity_fields == ("symbol", "trade_date")
+    assert config.datasets[0].query_limit == 500
+    assert config.datasets[0].max_rows == 1
+
+
+def test_identityless_nonterminal_cursor_fails_closed_and_is_redacted(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=0),
+    )
+    transport = FixtureTransport()
+    transport.next_cursor_overrides[(IMPAIRED_ID, 1)] = "identityless-opaque-cursor"
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    assert receipt["transport_contract_pass"] is False
+    assert "pagination_page_budget_exceeded" in receipt["reason_codes"]
+    assert "identityless-opaque-cursor" not in json.dumps(receipt, sort_keys=True)
+
+
+def test_identityless_row_budget_is_checked_after_the_complete_response(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=0),
+    )
+    transport = FixtureTransport()
+    transport.query_rows_overrides[(IMPAIRED_ID, 1)] = [{"unexpected": "row"}]
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    assert receipt["transport_contract_pass"] is False
+    assert receipt["reason_codes"] == ["pagination_row_budget_exceeded"]
+
+
+def test_identityless_ordered_provider_row_drift_fails_same_observation(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=1),
+    )
+    transport = FixtureTransport()
+    transport.query_rows_overrides[(IMPAIRED_ID, 1)] = [{"provider_value": 1}]
+    transport.query_rows_overrides[(IMPAIRED_ID, 2)] = [{"provider_value": 2}]
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    assert receipt["transport_contract_pass"] is False
+    impaired = receipt["datasets"][1]
+    assert impaired["same_observation_match"] is False
+    assert impaired["identity_authority_available"] is False
+    assert impaired["identity_sha256"] is None
+    assert impaired["evidence_action"] == "reject"
+    assert impaired["evidence_eligible"] is False
+    assert impaired["effective_weight"] == 0.0
+    assert impaired["reason_codes"] == ["same_observation_semantic_mismatch"]
+
+
+def test_identityless_metadata_becoming_ready_still_has_no_acceptance_or_weight(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=0),
+    )
+    transport = FixtureTransport()
+    for call_number in (1, 2):
+        transport.metadata_overrides[(IMPAIRED_ID, call_number)] = _metadata(
+            health="ready"
+        )
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    assert receipt["impaired_set_accounted"] is False
+    impaired = receipt["datasets"][1]
+    assert impaired["effective_state"] == "ready"
+    assert impaired["evidence_action"] == "reject"
+    assert impaired["evidence_eligible"] is False
+    assert impaired["effective_weight"] == 0.0
+    assert impaired["parity_data_accepted"] is False
+    assert impaired["research_snapshot_eligible"] is False
+    assert impaired["reason_codes"] == ["impaired_dataset_unexpectedly_accepted"]
+
+
+def test_identityless_metadata_drift_fails_same_observation(tmp_path: Path) -> None:
+    api = _api()
+    config = _load_config(
+        tmp_path,
+        _identityless_impaired_manifest(max_rows=0),
+    )
+    transport = FixtureTransport()
+    drifted = _metadata(health="impaired")
+    drifted["observed_at"] = "2026-07-22T15:02:00+08:00"
+    transport.metadata_overrides[(IMPAIRED_ID, 2)] = drifted
+
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "fail"
+    impaired = receipt["datasets"][1]
+    assert impaired["same_observation_match"] is False
+    assert impaired["reason_codes"] == ["same_observation_semantic_mismatch"]
+
+
+def test_null_as_of_is_omitted_from_wire_when_every_dataset_omits_decision_as_of(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    payload = _identityless_impaired_manifest(max_rows=0)
+    payload["as_of"] = None
+    for dataset in payload["datasets"]:
+        dataset["observation"]["query_as_of_mode"] = "omit"
+    config = _load_config(tmp_path, payload)
+    transport = FixtureTransport()
+
+    assert config.as_of is None
+    assert config.to_payload()["as_of"] is None
+    receipt = api.run_tradingdatas_catalog_parity(config, transport=transport)
+
+    assert receipt["status"] == "pass"
+    assert receipt["as_of"] is None
+    assert all(item["query_as_of"] is None for item in receipt["datasets"])
+    query_payloads = [
+        call["json_body"] for call in transport.calls if call["method"] == "POST"
+    ]
+    assert query_payloads
+    assert all("as_of" not in query for query in query_payloads)
+    assert all("order" not in query for query in query_payloads)
+    assert receipt["receipt_sha256"] == api.receipt_sha256(receipt)
+
+
+def test_null_as_of_rejects_any_decision_as_of_dataset(tmp_path: Path) -> None:
+    api = _api()
+    payload = _manifest()
+    payload["as_of"] = None
+
+    with pytest.raises(
+        api.CatalogParityConfigurationError,
+        match="decision_as_of",
+    ):
+        _load_config(tmp_path, payload)
+
+
+def test_nonnull_as_of_rejects_profile_where_every_dataset_omits_it(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    payload = _manifest()
+    for dataset in payload["datasets"]:
+        dataset["observation"]["query_as_of_mode"] = "omit"
+
+    with pytest.raises(
+        api.CatalogParityConfigurationError,
+        match="as_of must be null",
+    ):
         _load_config(tmp_path, payload)

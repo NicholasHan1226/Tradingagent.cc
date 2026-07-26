@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import Any
 
 from .sharedsignals_v1 import (
     QueryEnvelope,
@@ -230,6 +230,146 @@ class PagedQueryRun:
             raise PaginationContractError("pagination_trace_invalid")
 
 
+@dataclass(frozen=True)
+class IdentitylessSinglePageRun:
+    """One terminal provider page bound without inventing row identity."""
+
+    envelope: QueryEnvelope
+    page_count: int
+    row_count: int
+    ordered_rows_sha256: str
+    metadata_sha256: str
+    semantic_sha256: str
+    semantic_trace_sha256: str
+    pagination_trace_sha256: str
+    page_request_sha256s: tuple[str, ...]
+    page_response_sha256s: tuple[str, ...]
+    cursor_chain_sha256: str
+    _request_ids_json: str = field(repr=False)
+
+    @property
+    def request_ids(self) -> tuple[str, ...]:
+        decoded = json.loads(self._request_ids_json)
+        return tuple(decoded)
+
+    @property
+    def dataset_id(self) -> str:
+        return self.envelope.dataset_id
+
+    @property
+    def identity_authority_available(self) -> bool:
+        return False
+
+    @property
+    def identity_sha256(self) -> None:
+        return None
+
+    def to_receipt_payload(self) -> dict[str, Any]:
+        return {
+            "page_count": self.page_count,
+            "row_count": self.row_count,
+            "identity_authority_available": False,
+            "identity_sha256": None,
+            "ordered_rows_sha256": self.ordered_rows_sha256,
+            "metadata_sha256": self.metadata_sha256,
+            "semantic_sha256": self.semantic_sha256,
+            "semantic_trace_sha256": self.semantic_trace_sha256,
+            "pagination_trace_sha256": self.pagination_trace_sha256,
+            "page_request_set_sha256": _sha256(list(self.page_request_sha256s)),
+            "page_response_set_sha256": _sha256(list(self.page_response_sha256s)),
+            "cursor_chain_sha256": self.cursor_chain_sha256,
+        }
+
+    def verify_integrity(self) -> None:
+        if self.envelope.next_cursor is not None:
+            raise PaginationContractError("pagination_incomplete")
+        if (
+            self.page_count != 1
+            or isinstance(self.page_count, bool)
+            or isinstance(self.row_count, bool)
+            or not isinstance(self.row_count, int)
+            or self.row_count < 0
+            or len(self.envelope.data) != self.row_count
+        ):
+            raise PaginationContractError("pagination_trace_invalid")
+        request_ids = self.request_ids
+        if not (
+            len(self.page_request_sha256s)
+            == len(self.page_response_sha256s)
+            == len(request_ids)
+            == 1
+        ):
+            raise PaginationContractError("pagination_trace_invalid")
+        hashes = (
+            self.ordered_rows_sha256,
+            self.metadata_sha256,
+            self.semantic_sha256,
+            self.semantic_trace_sha256,
+            self.pagination_trace_sha256,
+            self.cursor_chain_sha256,
+            *self.page_request_sha256s,
+            *self.page_response_sha256s,
+        )
+        if any(
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in hashes
+        ):
+            raise PaginationContractError("pagination_trace_invalid")
+        if any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for value in request_ids
+        ):
+            raise PaginationContractError("pagination_trace_invalid")
+
+        rows = list(self.envelope.data)
+        metadata_sha256 = _sha256(_metadata_identity(self.envelope))
+        ordered_rows_sha256 = _sha256(rows)
+        page_response_sha256 = _sha256(
+            {
+                "data": rows,
+                "metadata": _metadata_identity(self.envelope),
+                "has_next_page": False,
+            }
+        )
+        semantic_payload = {
+            "base_query_sha256": self.page_request_sha256s[0],
+            "metadata_sha256": metadata_sha256,
+            "identity_authority_available": False,
+            "ordered_rows_sha256": ordered_rows_sha256,
+            "page_count": 1,
+            "row_count": len(rows),
+        }
+        semantic_sha256 = _sha256(semantic_payload)
+        semantic_trace_sha256 = _sha256(
+            {
+                **semantic_payload,
+                "page_response_sha256s": [page_response_sha256],
+            }
+        )
+        cursor_chain_sha256 = _sha256([])
+        pagination_trace_sha256 = _sha256(
+            {
+                "semantic_trace_sha256": semantic_trace_sha256,
+                "page_request_sha256s": list(self.page_request_sha256s),
+                "request_ids_sha256": _sha256(list(request_ids)),
+                "cursor_chain_sha256": cursor_chain_sha256,
+            }
+        )
+        if (
+            self.ordered_rows_sha256 != ordered_rows_sha256
+            or self.metadata_sha256 != metadata_sha256
+            or self.semantic_sha256 != semantic_sha256
+            or self.semantic_trace_sha256 != semantic_trace_sha256
+            or self.pagination_trace_sha256 != pagination_trace_sha256
+            or self.page_response_sha256s != (page_response_sha256,)
+            or self.cursor_chain_sha256 != cursor_chain_sha256
+            or self.envelope.request_id != f"ta-paged-{semantic_sha256[:24]}"
+        ):
+            raise PaginationContractError("pagination_trace_invalid")
+
+
 def collect_query_pages(
     *,
     client: SharedSignalsV1Client,
@@ -257,8 +397,6 @@ def collect_query_pages(
             raise PaginationContractError(f"pagination_{field_name}_invalid")
     if max_pages > HARD_MAX_PAGES or max_rows > HARD_MAX_ROWS:
         raise PaginationContractError("pagination_budget_above_hard_ceiling")
-    if request.limit > max_rows:
-        raise PaginationContractError("pagination_limit_exceeds_row_budget")
 
     rows: list[dict[str, Any]] = []
     row_identities: list[dict[str, Any]] = []
@@ -391,6 +529,95 @@ def collect_query_pages(
     )
 
 
+def collect_identityless_single_page(
+    *,
+    client: SharedSignalsV1Client,
+    request: QueryRequest,
+    max_pages: int,
+    max_rows: int,
+) -> IdentitylessSinglePageRun:
+    """Bind exactly one terminal page when no business identity is authoritative."""
+
+    if not isinstance(client, SharedSignalsV1Client):
+        raise TypeError("client must be SharedSignalsV1Client")
+    if not isinstance(request, QueryRequest):
+        raise TypeError("request must be QueryRequest")
+    if request.cursor is not None:
+        raise PaginationContractError("pagination_initial_cursor_forbidden")
+    if isinstance(max_pages, bool) or not isinstance(max_pages, int) or max_pages != 1:
+        raise PaginationContractError("pagination_max_pages_invalid")
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 0:
+        raise PaginationContractError("pagination_max_rows_invalid")
+    if max_rows > HARD_MAX_ROWS:
+        raise PaginationContractError("pagination_budget_above_hard_ceiling")
+
+    envelope = client.query_uncached(request)
+    if len(envelope.data) > request.limit:
+        raise PaginationContractError("pagination_page_limit_exceeded")
+    if envelope.next_cursor is not None:
+        raise PaginationContractError("pagination_page_budget_exceeded")
+    if len(envelope.data) > max_rows:
+        raise PaginationContractError("pagination_row_budget_exceeded")
+
+    rows = list(envelope.data)
+    metadata_sha256 = _sha256(_metadata_identity(envelope))
+    ordered_rows_sha256 = _sha256(rows)
+    page_response_sha256 = _sha256(
+        {
+            "data": rows,
+            "metadata": _metadata_identity(envelope),
+            "has_next_page": False,
+        }
+    )
+    semantic_payload = {
+        "base_query_sha256": request.sha256,
+        "metadata_sha256": metadata_sha256,
+        "identity_authority_available": False,
+        "ordered_rows_sha256": ordered_rows_sha256,
+        "page_count": 1,
+        "row_count": len(rows),
+    }
+    semantic_sha256 = _sha256(semantic_payload)
+    semantic_trace_sha256 = _sha256(
+        {
+            **semantic_payload,
+            "page_response_sha256s": [page_response_sha256],
+        }
+    )
+    cursor_chain_sha256 = _sha256([])
+    pagination_trace_sha256 = _sha256(
+        {
+            "semantic_trace_sha256": semantic_trace_sha256,
+            "page_request_sha256s": [request.sha256],
+            "request_ids_sha256": _sha256([envelope.request_id]),
+            "cursor_chain_sha256": cursor_chain_sha256,
+        }
+    )
+    combined = QueryEnvelope(
+        api_version=envelope.api_version,
+        catalog_version=envelope.catalog_version,
+        request_id=f"ta-paged-{semantic_sha256[:24]}",
+        dataset_id=envelope.dataset_id,
+        data=envelope.data,
+        next_cursor=None,
+        metadata=envelope.metadata,
+    )
+    return IdentitylessSinglePageRun(
+        envelope=combined,
+        page_count=1,
+        row_count=len(rows),
+        ordered_rows_sha256=ordered_rows_sha256,
+        metadata_sha256=metadata_sha256,
+        semantic_sha256=semantic_sha256,
+        semantic_trace_sha256=semantic_trace_sha256,
+        pagination_trace_sha256=pagination_trace_sha256,
+        page_request_sha256s=(request.sha256,),
+        page_response_sha256s=(page_response_sha256,),
+        cursor_chain_sha256=cursor_chain_sha256,
+        _request_ids_json=_canonical_json([envelope.request_id]),
+    )
+
+
 def bind_complete_page(
     *,
     request: QueryRequest,
@@ -487,8 +714,10 @@ def bind_complete_page(
 
 
 __all__ = [
+    "IdentitylessSinglePageRun",
     "PagedQueryRun",
     "PaginationContractError",
     "bind_complete_page",
+    "collect_identityless_single_page",
     "collect_query_pages",
 ]
