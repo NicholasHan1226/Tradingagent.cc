@@ -1,6 +1,6 @@
 # System State Matrix
 
-> 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、服务器旁路、生产文件、生产 runtime、已安装 cron、真实数据与真实交易动作必须分别验证。A股 V1 与第一批三市场内核已经进入 Git 主线；本轮非核心市场物理退役在 `codex/ta-postrelease-state-retirement-v1` 独立候选中收口，并在合并后成为 `repository_contract`。该层与 `production_verified=false` 只证明仓库合同，不能把代码存在或测试通过静默提升为 runtime、真实数据或交易能力。
+> 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、不可变服务器 release、现役 runtime、真实数据与真实交易动作必须分别验证。截至 2026-07-26，专用 TradingAgent 身份和 TradingDatas 26-active 首屏读回属于 `server_validated_non_authority_read_only`；front、worker、timer、研究快照、模拟盘和真实交易仍未激活。
 
 `legacy_inventory.yaml` 中的 `paths` 只登记干净克隆必须存在的源码或配置；`runtime_paths` 单独登记可能尚未生成、不得纳入 Git 的安装态/运行态历史路径，并要求由 `.gitignore` 明确覆盖。运行目录在某台开发机上存在或不存在都不能证明生产消费者已经退役，生产裁决仍需独立的 installed-runtime readback。
 
@@ -18,12 +18,12 @@
 
 ## 当前关键边界
 
-- TradingDatas `GET /v1/catalog` 和 `POST /v1/query` 由上游唯一 writer/reviewer 负责；TA 只实现可配置 consumer，不读取或修改 TradingDatas 仓，也不把 HTTP 200 或 catalog metadata 当成 authenticated parity。review #23 / `1907df9` 已把 catalog-driven parity 与专用 identity/front 合同合入主线，但机器状态继续是 `TARGET_CONTRACT / repository_contract / production=false`。旧九 profile fixture 只证明 190/9/181、5 ready/4 impaired 的本地合同；最新上游 handoff metadata 是 production `c3232d0…`、`catalog_version=v1-fcc1aaa39c20743e`、190/12/178、5 ready/7 impaired，新增三项为 `partial/degraded`，`cn.dataset.suspend_d` 为 `stale/degraded`。TA 12-profile authenticated parity 仍为 `NOT RUN / BLOCKED`，等待覆盖全部 12 项的获批 secret-free profiles 与 fresh TA credential；本文不声明二者存在。2026-07-22 使用旧 `marketgraph` credential 的五项 one-shot 仍只属历史兼容证据，不能扩张为 latest active-set parity。
-- local/server identity preflight 已创建 `tradingagent:tradingagent` UID/GID 987 和 immutable release，但没有切 current/front、fresh token 或 tmpfiles，timer 仍未安装/未启用。机器门禁允许 `claim_server_uid_gid_preflight_only`，同时继续禁止声称 server token 已安装或 full cutover。既有 `/run/secrets/tradingagent` 只做过 metadata-only 读回：parent 为 `0700 marketgraph:marketgraph`，叶为 `0600 marketgraph:marketgraph` regular、`nlink=1`；这不是 TA credential handoff。后续固定先 pause TA cron并同时读回 `0` TA job、`# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff` 恰好 `1` 次、non-TA 字节/顺序/有效环境不变；随后停止并隔离仍由旧 `marketgraph` UID 运行的 legacy `tradingagent-front-api.service`，立即对全部 TA service/cgroup 名称、旧 `marketgraph` UID、新 `tradingagent` UID 987 与其它 UID 证明 process/cgroup/cwd/root/open-FD/mmap holder 全零。之后才可协调 credential freeze、应用 tmpfiles、由 publisher 原子安装 fresh TA 叶、metadata-only readback、最后 unfreeze。pause 后失败必须保持 consumer unavailable；front 停止后失败还必须保持 stopped/isolated，只允许修复前滚，禁止恢复旧 front/credential/TA cron或回退 8082。
+- TradingDatas `GET /v1/catalog` 和 `POST /v1/query` 由上游唯一 writer/reviewer 负责；TA 只实现可配置 consumer，不读取或修改 TradingDatas 仓。正式目录现为 `catalog_version=v1-c19a22c011fc363e`、190/26/164。TA 专用身份已对 26 个 active 做两次 `limit=1` 首屏查询：3 ready、9 stale、14 unobserved，门禁 3 accept / 23 reject，查询合同失败为 0。12 项带 `next_cursor`，所以该证据只证明目录、认证、首屏 request/envelope 和 metadata fail-closed，不是完整分页、研究快照或历史 PIT。
+- `tradingagent:tradingagent` UID/GID 987 与专用 token-file 已完成服务器 handoff。parent 为 `root:tradingagent 0710`，leaf 为 `tradingagent:tradingagent 0600` regular、`nlink=1`；Linux 通过 `O_PATH` 安全遍历 execute-only parent，不扩大目录读取权限。front 继续 inactive/runtime-masked，8787 closed；不可变 `7cec341…` release 已安装但未切 current。TradingDatas timer 未启用，旧 8082 未修改且 TA 无 fallback。
 - A股资本、执行 lineage 与 SampleJournal 是仓库契约层当前能力；它们不证明生产 runtime、cron 或真实市场样本已验证。
 - 主板 scope、Phase 1.5 行业 shadow 薄切片、OpportunityRadar/Ledger、多期限 forecast、三风格 router、LLM evidence/journals、V1 client、小资金与资本/风险/执行合同仍主要是仓库级能力；服务器现役必须逐项另验。新 A股候选将 observation 权威收紧为 snapshot/probe receipt/observation receipt/membership ledger 四项数据证据加 transaction-complete commit proof 的五项绑定；只有同一私有 state root/session lock 内重读五项证据的 strict loader 才能生成 verified bundle，普通 mapping/hash/dataclass 不能自授资格。`observation_universe` 不是 tradable/order universe。每个 symbol 至少 21 个 forward session 只是 20 日特征的最小数学覆盖；缺交易日连续性和公司行动/复权 authority 仍固定 blocked。ledger 当前无 label horizons；daily-only planner 固定 `paper_trade_session=null` 且 abstain，无资金/订单/成交副作用。`index_classify`/`sw_daily` 只是行业分类/行业指数环境，不证明完整行业宽度。
 - 当前 DeepSeek 候选接受两种精确transport：同时绑定request/outbound identity的冻结离线响应fixture，以及默认关闭、固定官方HTTPS地址、禁代理/重定向/自动重试的`DeepSeekHTTPTransport`。2026-07-18一次旧A股v1 Prompt的隔离真实请求到达HTTP 200 provider envelope，但evidence binding被本地schema拒绝；没有accepted receipt、Journal或生产切换。当前代码另有互斥的audit-only rejected-attempt receipt合同和独立audit Journal，A股v2 Prompt只完成离线fixture验证，二者都不能追溯包装该旧canary。Bull/Bear provider模式要求显式typed recorder、稳定request ID、同source verifier，以及由一个显式绝对accepted锚点派生的canonical accepted/rejected/provider-invocation Journal family；invocation逻辑键不依赖调用方ID，网络前落`in_flight`并持跨进程锁至唯一终态。非canonical family、相对路径、Unicode/大小写/真实路径或物理别名、未知mode、伪recorder、换ID重发、冲突、未知in-flight或持久化失败均fail closed。三类readback只属`local-integrity-only`；跨主机/生产worker共享同一锚点尚未装配验证，accepted evidence、认证稳定性、quota/限流/成本、数据留存和生产可用性仍未验证。
-- `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。模板已移除显式旧A股调度；仍保留的wrapper由不可环境覆盖的kill switch阻断（退出码78），只能用于识别历史安装依赖与退役审计。最新 identity preflight 没有 apply paused TA cron；后续只能用 merge tool 原子暂停，且 PASS 必须同时为 `0` TA recurring job、`# TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff` 恰好 `1` 次、non-TA 字节/顺序/有效环境不变。UID/GID 987 与 immutable release 是部分 preflight，不是现役切换；legacy front 仍由旧 `marketgraph` UID 运行，current/front/token/tmpfiles/timer 都未据此晋级，`production_verified=false` 保持不变。
+- `shared/crontab.txt` 是仓库调度模板，不是已安装 cron。服务器 readback 有恰好一个 pause marker，未发现引用 TradingAgent 仓库或服务的 active job；另有独立旧 A股 closing-scan 由其它 owner 管理，不能当成 TA scheduler。front、worker 和 observation timer 均未启动，`production_verified=false` 保持不变。
 - Mini/Hermes webhook、file consumer 与 `RealSignalQueue` 在仓库合同层已退役并由 `tradingagent_mini_hermes_retirement` 阻止恢复；A股只保留`tradingagent.ashare.paper_broker.v1`的server-local模拟合同。`ASHARE_SIM_HERMES_ENABLED=0`和`ASHARE_SIM_WEBHOOK_ENABLED=0`仅是安装态清理墓碑，不代表服务器或Mini上的cron、env、process、port已经清零；这些仍需独立只读readback。
 - `tradingagent_market_lane_governance`登记A股、CNFutures、Crypto三个长期worktree/branch/path owner，并要求三套模拟合同、外部测试合同和未来live adapter family互不重复且`live_enabled=false`。A股20交易日fixture loop与CNFutures闭环已是主线仓库合同；Crypto本批只登记本地fixture opening candidate，旧direct workflow/simulator/executor/shadow writer已退役。它们都不证明服务器调度、真实数据、Testnet或实盘API可用。
 - `tradingagent_retired_noncore_markets`证明仓库合同中 US/PM/HK、旧多市场规则/退出 facade 与通用 Style/Evolution 执行面已物理删除，并以静态门禁阻止恢复；它不证明服务器安装态 cron、历史 runtime 或外部依赖已经清理。
@@ -32,16 +32,16 @@
 
 | 对象 | 仓库观察 | YAML 门禁 | 当前可用范围 |
 |---|---|---|---|
-| TradingDatas V1 upstream query | TA不写TradingDatas；最新上游 190/12/178 metadata 与旧五项 one-shot 都不是 TA full active-set parity | `TARGET_CONTRACT` | 不代表 12-profile authenticated parity、TA credential、生产调度、历史 PIT 或交易通过 |
+| TradingDatas V1 upstream query | TA不写TradingDatas；正式目录 190/26/164，固定 catalog/query，无旧路由或存储 fallback | `TARGET_CONTRACT` | 上游可查询不代表 dataset ready、完整分页、历史 PIT 或交易通过 |
 | TA TradingDatas V1 client + Evidence Gate | 实现与契约测试已进入仓库；兼容代码符号仍含`SharedSignalsV1*` | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture/contract；不代表TradingDatas runtime |
-| TA TradingDatas Bearer transport (`tradingagent_tradingdatas_bearer_transport`) | 最终transport只从`/run/secrets/tradingagent`受限token file注入header；精确绑定canonical authority/method/path与固定JSON header，远端只允许HTTPS；禁止明文env、调用方覆盖、secret回执/日志、认证重试和旧链fallback | `CURRENT_VERIFIED / repository_contract / production=false` | 仅消费侧文件/header合同；实际TA-scoped token、哈希注册和live认证readback仍未完成 |
+| TA TradingDatas Bearer transport (`tradingagent_tradingdatas_bearer_transport`) | 专用token-file已完成 metadata handoff，正式18082认证和26-active只读探测通过；值/哈希不出服务器 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 认证成功不代表dataset可用、front/worker激活或交易authority |
 | TA TradingDatas V1 integration-readiness probe | v2显式manifest；逐dataset filters/as-of/identity/event/budgets；provider-native rows、envelope source proof、bounded cursor、跨页守恒与same-observation双跑 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture或另行授权的只读联调；current observation不是历史PIT，也不是生产或交易authority |
-| TA TradingDatas catalog parity | review #23 合入的九 profile fixture 为190/9/181、5 ready/4 impaired；最新上游 metadata 为 production `c3232d0…`、catalog `v1-fcc1aaa39c20743e`、190/12/178、5 ready/7 impaired，新增三项partial/degraded且suspend stale/degraded | `TARGET_CONTRACT / repository_contract / production=false` | TA 12-profile authenticated parity `NOT RUN / BLOCKED`；catalog metadata不是parity，且不声明全12项profiles或fresh TA credential存在 |
-| TA dedicated service identity candidate | tracked sysusers/front合同已合入；服务器preflight只创建UID/GID 987与immutable release，legacy front仍由旧`marketgraph` UID运行，current/front/fresh token/tmpfiles未切 | `TARGET_CONTRACT / repository_contract / production=false` | 允许诚实声明UID/GID-only preflight，禁止token/full cutover；pause必须为0 job+1 marker+non-TA字节/顺序/环境不变，先停隔离legacy front再按全部TA cgroup与旧新UID做零-holder；失败只前滚 |
+| TA TradingDatas catalog parity | 26-active 首屏双跑 PASS：3 ready、9 stale、14 unobserved；12项存在后续cursor，全部不作为完整数据 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 首屏parity不是terminal分页、research snapshot、历史PIT或执行证据 |
+| TA dedicated service identity | UID/GID 987、root:tradingagent 0710 parent、tradingagent-owned 0600 leaf和正式18082认证已验证；front仍停止 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 身份/token不等于current/front/worker/timer或完整cutover |
 | A股 `a7488e9` historical authenticated current-observation | formal 18082 one-shot 与精确幂等重放只在 `a7488e9` 冻结三件字节通过；3041只沪深主板，双创/北交所个股排除，行业/指数仅上下文 | `HISTORICAL_READ_ONLY / server_validated_non_authority_simulation_only / production=false` | 只证明当时单次真实只读观察；不得绑定到当前五项源码，专用TA token/worker/timer、历史PIT、分钟证据和模拟成交均未激活 |
 | A股五项 committed observation runtime | 当前仓库合同逐 session 绑定snapshot/probe/observation receipt/membership ledger，并以transaction-complete作为唯一commit point，显式记录 observed/excluded denominator | `CURRENT_VERIFIED / repository_contract / production=false` | 不可补写旧 `a7488e9` state，也未获当前服务器读回；缺complete的半写状态不可消费，observation不是tradable/candidate/order authority |
 | A股 forward-history + daily-only planner | 至少21个forward session；缺calendar continuity/adjustment仍blocked；无label horizons，`paper_trade_session=null` 且 abstain | `TARGET_CONTRACT / repository_contract / production=false` | 无预测、资金、订单、成交、对账或SampleJournal authority |
-| A股 observation timer | unit/timer 字节仅作 disabled 静态候选；UID/GID preflight 不等于 fresh TA credential、12-profile parity 或 daily immutable manifest rollover | `TARGET_CONTRACT / architecture_target / production=false` | 当前仍未安装/未启用；不得用identity/release存在或静态manifest/as-of冒充日更 |
+| A股 observation timer | unit/timer 字节仅作 disabled 静态候选；专用身份与26-active首屏parity不等于daily immutable manifest rollover | `TARGET_CONTRACT / architecture_target / production=false` | 当前仍未安装/未启用；daily stale时不得启用，也不得用静态manifest/as-of冒充日更 |
 | 主板三层 Universe | policy/snapshots/zero-leakage 合同已进入仓库；环境宽度由内容寻址CoverageReceipt及外部verifier派生，过期/数量/双创聚合/authority缺口降级 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅模拟scope与cash+policy upper bound；真实coverage verifier、broker和ledger订单量均未证明 |
 | Phase 1.5 行业 shadow 薄切片 | PIT taxonomy、成分、score方法/有效期、score/coverage receipts和独立proof绑定；动态 1 深研 + 2 观察 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture研究聚焦；真实score verifier缺失；无个股、无position effect、无晋级资格 |
 | 50k optimizer + plan binding | 可行池负责cash+policy上界；无默认account verifier复核账户；Champion score另绑定当前selection/artifact/model/spec与经独立port复核的数值PIT特征；plan再绑定T+1、cost、现金顺序、零股卖出与订单量 | `CURRENT_VERIFIED / repository_contract / production=false` | rank只排序、固定probe sizing；fixture proof不证明真实账户、Champion/feature registry或broker |
@@ -67,18 +67,18 @@
 
 | `entry_id` | 状态 / layer | 人工说明 |
 |---|---|---|
-| `sharedsignals_v1_query` | `TARGET_CONTRACT / repository_contract` | 保留的机器条目ID；最新上游12-active metadata不替代TA authenticated parity |
+| `sharedsignals_v1_query` | `TARGET_CONTRACT / repository_contract` | 保留的机器条目ID；TA已对正式26-active做首屏只读探测，仍不拥有服务端 |
 | `tradingagent_sharedsignals_v1_client` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；provider-native envelope consumer，不证明 live TradingDatas |
-| `tradingagent_tradingdatas_bearer_transport` | `CURRENT_VERIFIED / repository_contract` | 受限TA token file到两个固定V1 endpoint的Bearer注入；实际token发放、注册和live认证readback仍未完成 |
+| `tradingagent_tradingdatas_bearer_transport` | `CURRENT_VERIFIED / repository_contract` | 专用token-file和正式18082认证已完成；无secret输出、无旧链fallback |
 | `tradingagent_sharedsignals_v1_integration_probe` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；v2 bounded-pagination、source-proof、identity守恒与same-observation只读接入门；曾由 `a7488e9` 使用历史 `marketgraph` 身份一次性运行，专用TA身份尚未运行 |
-| `tradingagent_tradingdatas_catalog_parity` | `TARGET_CONTRACT / repository_contract` | 九profile fixture已合入但latest 12-profile TA parity仍NOT RUN/BLOCKED；catalog metadata不能替代认证双跑，profiles/credential未声明存在 |
-| `tradingagent_dedicated_service_identity_candidate` | `TARGET_CONTRACT / repository_contract` | 允许UID/GID-only preflight事实；禁止token/full cutover，仍须精确pause→停隔离legacy front→全TA cgroup/旧新UID零-holder→freeze/tmpfiles/publisher顺序 |
+| `tradingagent_tradingdatas_catalog_parity` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | 正式26-active首屏双跑通过；不具备terminal分页或research资格 |
+| `tradingagent_dedicated_service_identity_candidate` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | UID/GID、0710 parent、0600 leaf和专用身份只读认证已验证；front/worker仍关闭 |
 | `tradingagent_ashare_observation_runtime` | `CURRENT_VERIFIED / repository_contract` | 当前五项 committed observation 仓库合同；MarketGraph off；无当前服务器读回、历史PIT、执行副作用或持久调度 |
 | `tradingagent_ashare_observation_a7488e9_historical_readback` | `HISTORICAL_READ_ONLY / server_validated_non_authority_simulation_only` | 只保存 `a7488e9` 三件 formal 18082 one-shot 历史证据；不得升级或绑定当前源码 |
 | `tradingagent_ashare_observation_membership_ledger` | `TARGET_CONTRACT / repository_contract` | 新 fresh state 的五项 committed binding；无 label/trading authority |
 | `tradingagent_ashare_prospective_history_readiness` | `TARGET_CONTRACT / repository_contract` | 21 session 最小覆盖；calendar continuity/adjustment 缺失仍 blocked |
 | `tradingagent_ashare_daily_only_paper_planning` | `TARGET_CONTRACT / repository_contract` | `paper_trade_session=null` 的 deterministic abstain；无资金或执行副作用 |
-| `tradingagent_ashare_observation_timer_candidate` | `TARGET_CONTRACT / architecture_target` | 当前未安装/未启用；UID/GID preflight不替代fresh token、12-profile parity与daily immutable manifest rollover |
+| `tradingagent_ashare_observation_timer_candidate` | `TARGET_CONTRACT / architecture_target` | 当前未安装/未启用；daily/SW stale时禁止启用 |
 | `tradingagent_mainboard_scope` | `CURRENT_VERIFIED / repository_contract` | 主板个股；双创/北交所等非主板指数与行业聚合仅环境参考，非主板个股禁止分析；覆盖 authority 需外部复核 |
 | `tradingagent_small_account_optimizer` | `CURRENT_VERIFIED / repository_contract` | 50k、账户输入/proof绑定、整数股/零股卖出、费用与现金的模拟优化器；不证明真实账户 |
 | `tradingagent_thesis_risk_authority` | `CURRENT_VERIFIED / repository_contract` | 行业/论点/原材料/政策事件/拥挤/模型家族六维风险完整性门；fixture policy/proof不可晋级 |
@@ -120,15 +120,15 @@
 | `tradingagent_crypto_fixture_auto_sim` | `CURRENT_VERIFIED / repository_contract` | generation 1本地fixture opening候选、非权威receipt与独立LLM sidecar；无current runtime/Testnet/Live |
 | `tradingagent_crypto_execution_retirement` | `RETIRED_BLOCKED / repository_contract` | 旧Crypto direct workflow/simulator/executor/shadow writer与generic registry路径禁止恢复 |
 | `tradingagent_retired_noncore_markets` | `RETIRED_BLOCKED / repository_contract` | US/PM/HK与旧共享市场执行语义已从仓库合同删除；安装态仍需独立readback |
-| `tradingagent_installed_cron` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | identity preflight未apply paused cron；PASS必须读回0 TA job、恰好1个pause marker、non-TA字节/顺序/环境不变，pause后失败禁止恢复旧TA cron |
-| `tradingagent_production_runtime` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | UID/GID 987与immutable release是部分preflight；legacy front仍为旧`marketgraph` TA PID/cgroup，current/front/fresh token/tmpfiles/timer未切，停front后失败不得重启 |
+| `tradingagent_installed_cron` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | 一个pause marker且无TradingAgent active job；其它owner的旧A股job不归TA接管 |
+| `tradingagent_production_runtime` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | `7cec341…`不可变release已安装但未切current；front inactive/masked、8787 closed、无worker/timer |
 | `tradingagent_server_sidecar_candidate` | `CURRENT_VERIFIED / server_validated_non_authority_simulation_only` | detached候选已在目标机通过测试与已停止的18787 loopback canary；现役service/cron/8787未变，无live数据或交易authority |
 | `tradingagent_front` | `CURRENT_VERIFIED / repository_contract` | 只读模拟看板；`tradingagent.cc`仅作待验收的单用户认证入口，不写订单或资金、不允许匿名访问/API直出 |
 
 ## 阶段出口前的必需证据
 
 1. 本地精确 diff、聚焦/全后端/前端检查、离线端到端、crash/restart 和独立 review；
-2. TradingDatas 上游 handoff 冻结的 catalog version、dataset IDs、schema/query policy、auth、receipt authority，以及TA使用自身token/client得到的fresh runtime readback；
+2. TradingDatas 上游 handoff 冻结的 catalog version、dataset IDs、schema/query policy、auth、receipt authority，以及TA使用自身token/client得到的fresh runtime readback；需要研究的数据还必须走到terminal cursor，首屏probe不能替代；
 3. A股消费者同 `as_of` parity、V1 cutover、旧 import/URL/env/cron/front 引用清零与 runtime no-fallback 负例；
 4. 生产market-evidence、Champion/feature registry、六维论点风险policy/exposure-set verifier、metrics重算与可信时钟authority接入并完成readback；本地fixture proof不得被复用为生产凭证；
 5. 当前本地候选状态已写入机器YAML；冻结候选前仍须复核代码、测试、文档、YAML evidence和精确diff一致，任何后续变化继续在同一变更中对齐。

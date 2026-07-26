@@ -6,7 +6,7 @@ entries:
     owner: TradingDatas
     canonical_path: TradingDatas:/v1/query
     production_verified: false
-    last_verified_at: "2026-07-22"
+    last_verified_at: "2026-07-26"
     evidence:
       - STATUS.md
       - docs/data_contract.md
@@ -25,7 +25,7 @@ entries:
     owner: TradingAgent
     canonical_path: shared/data/sharedsignals_v1.py
     production_verified: false
-    last_verified_at: "2026-07-22"
+    last_verified_at: "2026-07-26"
     evidence:
       - tests/test_sharedsignals_v1.py
       - tests/test_tradingdatas_query_pagination.py
@@ -47,7 +47,7 @@ entries:
     owner: TradingAgent
     canonical_path: shared/data/tradingdatas_auth.py
     production_verified: false
-    last_verified_at: "2026-07-22"
+    last_verified_at: "2026-07-26"
     evidence:
       - tests/test_tradingdatas_bearer_auth.py
       - tests/test_sharedsignals_v1_runtime_gate.py
@@ -58,6 +58,7 @@ entries:
       - load_dedicated_ta_bearer_from_secure_token_file
       - authorize_catalog_and_query_on_explicit_v1_transport
       - fail_closed_fixture_and_contract_testing
+      - authenticated_read_only_catalog_query_against_formal_loopback_18082
     prohibited_uses:
       - plaintext_token_environment_or_manifest
       - repository_internal_token_file
@@ -67,7 +68,8 @@ entries:
       - reuse_tradingdatas_bootstrap_token
       - retry_or_fallback_after_auth_failure
       - concurrent_bearer_requests
-      - claim_token_provisioning_or_live_runtime_available
+      - claim_any_dataset_ready_from_transport_authentication_alone
+      - claim_front_worker_scheduler_or_trading_runtime_activated
     successor: tradingagent.tradingdatas.bearer-transport.v1
   - entry_id: tradingagent_sharedsignals_v1_integration_probe
     state: CURRENT_VERIFIED
@@ -102,53 +104,59 @@ entries:
       - fallback_to_legacy_storage_route_or_provider
     successor: tradingagent.tradingdatas.integration-readiness.v2
   - entry_id: tradingagent_tradingdatas_catalog_parity
-    state: TARGET_CONTRACT
-    layer: repository_contract
+    state: CURRENT_VERIFIED
+    layer: server_validated_non_authority_read_only
     owner: TradingAgent
     canonical_path: shared/runtime_test/tradingdatas_catalog_parity.py
     production_verified: false
-    last_verified_at: "2026-07-23"
+    last_verified_at: "2026-07-26"
     evidence:
       - tests/test_tradingdatas_catalog_parity.py
       - docs/data_contract.md
       - docs/operations.md
       - STATUS.md
+      - /opt/investment/release-evidence/tradingagent/20260726T100914Z-ta-catalog26-readback-7cec341
     allowed_uses:
       - discover_and_match_the_exact_active_catalog_set_from_v1_catalog
       - run_two_bounded_same_observation_queries_per_active_dataset
       - accept_declared_ready_data_and_account_for_declared_impaired_data_at_zero_weight
       - emit_secret_free_transport_parity_receipts_without_rows_or_cursors
+      - record_exact_26_active_catalog_rows_and_first_page_metadata_health
     prohibited_uses:
       - promote_parity_receipt_to_research_snapshot
       - infer_historical_pit_or_revision_authority
       - infer_ta_scoped_token_service_identity_or_runtime_activation
       - claim_catalog_metadata_as_ta_authenticated_parity
       - claim_secret_free_profiles_or_ta_credential_provisioning
+      - claim_limit_one_probe_as_complete_pagination_or_research_snapshot
+      - promote_identityless_active_datasets_to_research_or_execution_evidence
       - query_sqlite_tushare_source_status_or_provider_specific_routes
       - fallback_after_auth_catalog_query_or_pagination_failure
     successor: tradingagent.tradingdatas.catalog-parity.v1
   - entry_id: tradingagent_dedicated_service_identity_candidate
-    state: TARGET_CONTRACT
-    layer: repository_contract
+    state: CURRENT_VERIFIED
+    layer: server_validated_non_authority_read_only
     owner: TradingAgent
     canonical_path: deploy/systemd/tradingagent-runtime.sysusers.conf
     production_verified: false
-    last_verified_at: "2026-07-23"
+    last_verified_at: "2026-07-26"
     evidence:
       - deploy/systemd/tradingagent-runtime.sysusers.conf
       - deploy/systemd/tradingagent-front-api.service
       - tests/test_tradingagent_service_identity.py
       - docs/operations.md
       - STATUS.md
+      - /run/secrets/tradingagent/tradingdatas-read.token
     allowed_uses:
       - review_tracked_tradingagent_user_group_and_front_unit_contract
       - prepare_non_sensitive_uid_gid_handoff_before_token_provisioning
       - claim_server_uid_gid_preflight_only
       - keep_front_read_only_simulation_only_and_unable_to_read_tradingdatas_secret
       - preserve_temporary_read_only_marketgraph_projection_group_during_migration
+      - claim_server_uid_gid_and_ta_scoped_token_leaf_metadata
+      - run_read_only_catalog_query_probe_as_dedicated_tradingagent_identity
     prohibited_uses:
-      - claim_server_ta_scoped_token_installed
-      - claim_server_full_cutover_from_uid_gid_or_immutable_release_preflight
+      - claim_front_worker_scheduler_or_full_runtime_cutover_from_identity_and_token
       - claim_immutable_release_preflight_as_current_front_tmpfiles_or_runtime_cutover
       - claim_front_service_cutover_or_runtime_activation
       - expose_token_content_hash_or_authorization_header
@@ -279,7 +287,7 @@ entries:
     owner: TradingAgent
     canonical_path: deploy/systemd/tradingagent-ashare-observation.timer
     production_verified: false
-    last_verified_at: "2026-07-22"
+    last_verified_at: "2026-07-26"
     evidence:
       - tests/test_ashare_worker_units.py
       - tests/test_ashare_worker_runtime_audit.py
@@ -292,6 +300,7 @@ entries:
       - replay_static_manifest_or_as_of_as_daily_accumulation
       - claim_persistent_observation_or_production_runtime
       - infer_timer_installed_or_enabled_from_uid_gid_or_immutable_release_preflight
+      - enable_while_equity_daily_or_required_context_dataset_is_stale_or_unobserved
     successor: tradingagent.ashare.observation-worker-timer.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
@@ -1200,11 +1209,12 @@ entries:
     owner: TradingAgent
     canonical_path: marketgraph-user-crontab
     production_verified: false
-    last_verified_at: "2026-07-20"
+    last_verified_at: "2026-07-26"
     evidence:
       - STATUS.md
     allowed_uses:
       - compare_read_only_crontab_digest_during_release
+      - confirm_no_active_job_references_tradingagent_repository_or_service
     prohibited_uses:
       - infer_candidate_schedule_or_activation
       - mutate_or_install_cron
@@ -1218,14 +1228,17 @@ entries:
     owner: TradingAgent
     canonical_path: /opt/investment/tradingagent
     production_verified: false
-    last_verified_at: "2026-07-20"
+    last_verified_at: "2026-07-26"
     evidence:
       - STATUS.md
+      - /opt/investment/releases/tradingagent/7cec341633abc9302e0a407a3615ec29d8c59447
     allowed_uses:
       - compare_read_only_runtime_inventory_during_release
+      - inspect_immutable_release_and_inactive_front_readback
     prohibited_uses:
       - infer_sidecar_candidate_activated_as_production
       - infer_identity_or_immutable_release_preflight_as_current_front_token_or_tmpfiles_cutover
+      - infer_catalog26_probe_as_observation_worker_or_simulation_activation
       - restart_legacy_front_after_post_stop_failure
       - deploy_or_write_production
     successor: separately_authorized_activation_required

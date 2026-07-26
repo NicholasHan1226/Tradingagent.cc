@@ -253,7 +253,10 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     assert entries["sharedsignals_v1_query"].production_verified is False
     assert entries["tradingagent_sharedsignals_v1_client"].state == ("CURRENT_VERIFIED")
     assert entries["tradingagent_tradingdatas_catalog_parity"].state == (
-        "TARGET_CONTRACT"
+        "CURRENT_VERIFIED"
+    )
+    assert entries["tradingagent_tradingdatas_catalog_parity"].layer == (
+        "server_validated_non_authority_read_only"
     )
     assert (
         entries["tradingagent_tradingdatas_catalog_parity"].production_verified is False
@@ -262,7 +265,10 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
         entries["tradingagent_tradingdatas_catalog_parity"].prohibited_uses
     )
     assert entries["tradingagent_dedicated_service_identity_candidate"].state == (
-        "TARGET_CONTRACT"
+        "CURRENT_VERIFIED"
+    )
+    assert entries["tradingagent_dedicated_service_identity_candidate"].layer == (
+        "server_validated_non_authority_read_only"
     )
     assert (
         entries["tradingagent_dedicated_service_identity_candidate"].production_verified
@@ -270,9 +276,12 @@ def test_system_state_matrix_has_one_truthful_entry_per_required_boundary() -> N
     )
     identity = entries["tradingagent_dedicated_service_identity_candidate"]
     assert "claim_server_uid_gid_preflight_only" in identity.allowed_uses
-    assert "claim_server_ta_scoped_token_installed" in identity.prohibited_uses
     assert (
-        "claim_server_full_cutover_from_uid_gid_or_immutable_release_preflight"
+        "claim_server_uid_gid_and_ta_scoped_token_leaf_metadata"
+        in identity.allowed_uses
+    )
+    assert (
+        "claim_front_worker_scheduler_or_full_runtime_cutover_from_identity_and_token"
         in identity.prohibited_uses
     )
     exact_pause_marker_gate = (
