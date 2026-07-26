@@ -139,7 +139,7 @@ def test_collects_provider_native_rows_and_binds_one_envelope_identity() -> None
     assert len(run.identity_sha256) == 64
     assert len(run.semantic_sha256) == 64
     assert len(run.pagination_trace_sha256) == 64
-    assert [call["json_body"]["cursor"] for call in transport.calls] == [
+    assert [call["json_body"].get("cursor") for call in transport.calls] == [
         None,
         opaque_cursor,
     ]
@@ -379,7 +379,7 @@ def test_only_cursor_changes_across_requests_and_page_limit_is_enforced() -> Non
     )
     first_payload = dict(transport.calls[0]["json_body"])
     second_payload = dict(transport.calls[1]["json_body"])
-    assert first_payload.pop("cursor") is None
+    assert first_payload.pop("cursor", None) is None
     assert second_payload.pop("cursor") == "next"
     assert first_payload == second_payload
 

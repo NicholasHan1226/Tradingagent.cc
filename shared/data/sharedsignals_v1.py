@@ -215,13 +215,13 @@ class QueryRequest:
 
     dataset_id: str
     schema_major: int
-    fields: tuple[str, ...] = ()
-    filters: Mapping[str, Any] = field(default_factory=dict)
+    fields: tuple[str, ...] | None = None
+    filters: Mapping[str, Any] | None = None
     as_of: str | None = None
     order: tuple[str, ...] | None = None
     limit: int = 1_000
     cursor: str | None = None
-    _filters_json: str = field(init=False, repr=False)
+    _filters_json: str | None = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dataset_id", _dataset_id(self.dataset_id))
@@ -232,20 +232,24 @@ class QueryRequest:
         ):
             raise ContractViolation("schema_major must be a positive integer")
 
-        if isinstance(self.fields, str):
-            raise ContractViolation("fields must be a sequence of field names")
-        normalized_fields: list[str] = []
-        for item in self.fields:
-            field_name = _native_nonempty_string(item, field_name="fields item")
-            if field_name in normalized_fields:
-                raise ContractViolation("fields must not contain duplicates")
-            normalized_fields.append(field_name)
-        object.__setattr__(self, "fields", tuple(normalized_fields))
+        if self.fields is not None:
+            if isinstance(self.fields, str):
+                raise ContractViolation("fields must be a sequence of field names")
+            normalized_fields: list[str] = []
+            for item in self.fields:
+                field_name = _native_nonempty_string(item, field_name="fields item")
+                if field_name in normalized_fields:
+                    raise ContractViolation("fields must not contain duplicates")
+                normalized_fields.append(field_name)
+            object.__setattr__(self, "fields", tuple(normalized_fields))
 
-        filters = _copy_mapping(self.filters, field_name="filters")
-        filters_json = _canonical_json(filters, field_name="filters")
-        object.__setattr__(self, "filters", json.loads(filters_json))
-        object.__setattr__(self, "_filters_json", filters_json)
+        if self.filters is None:
+            object.__setattr__(self, "_filters_json", None)
+        else:
+            filters = _copy_mapping(self.filters, field_name="filters")
+            filters_json = _canonical_json(filters, field_name="filters")
+            object.__setattr__(self, "filters", json.loads(filters_json))
+            object.__setattr__(self, "_filters_json", filters_json)
 
         if self.as_of is not None:
             object.__setattr__(
@@ -282,15 +286,18 @@ class QueryRequest:
         payload: dict[str, Any] = {
             "dataset_id": self.dataset_id,
             "schema_major": self.schema_major,
-            "fields": list(self.fields),
-            "filters": json.loads(self._filters_json),
             "limit": self.limit,
-            "cursor": self.cursor,
         }
+        if self.fields is not None:
+            payload["fields"] = list(self.fields)
+        if self._filters_json is not None:
+            payload["filters"] = json.loads(self._filters_json)
         if self.as_of is not None:
             payload["as_of"] = self.as_of
         if self.order is not None:
             payload["order"] = list(self.order)
+        if self.cursor is not None:
+            payload["cursor"] = self.cursor
         return payload
 
     @property
