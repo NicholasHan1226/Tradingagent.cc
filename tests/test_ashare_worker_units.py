@@ -9,6 +9,10 @@ SERVICE = SYSTEMD_ROOT / "tradingagent-ashare-observation.service"
 TIMER = SYSTEMD_ROOT / "tradingagent-ashare-observation.timer"
 ENV_EXAMPLE = SYSTEMD_ROOT / "tradingagent-ashare-worker.env.example"
 TMPFILES = SYSTEMD_ROOT / "tradingagent-runtime.tmpfiles.conf"
+OBSERVATION_PYTHON = (
+    "/opt/investment/tools/venvs/"
+    "tradingagent-observation-py312-stdlib-v1/bin/python3"
+)
 
 
 def _text(path: Path) -> str:
@@ -40,8 +44,18 @@ def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
         "Environment=REAL_TRADING_ENABLED=false",
         "Environment=MARKETGRAPH_MODE=mg_off",
         "ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token",
-        "ExecStartPre=/opt/tradingagent/venv/bin/python3 /opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py",
-        "ExecStart=/opt/tradingagent/venv/bin/python3 /opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py",
+        f"ConditionPathExists={OBSERVATION_PYTHON}",
+        (
+            f"ExecStartPre={OBSERVATION_PYTHON} "
+            "/opt/investment/releases/tradingagent/current/tools/"
+            "audit_ashare_worker_runtime.py"
+        ),
+        (
+            f"ExecStart={OBSERVATION_PYTHON} "
+            "/opt/investment/releases/tradingagent/current/tools/"
+            "run_ashare_observation.py"
+        ),
+        f"--python-runtime {OBSERVATION_PYTHON}",
         "ProtectSystem=strict",
         "ProtectHome=true",
         "NoNewPrivileges=true",
@@ -51,6 +65,10 @@ def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
         "IPAddressDeny=any",
         "IPAddressAllow=localhost",
         "ReadOnlyPaths=/opt/investment/releases/tradingagent",
+        (
+            "ReadOnlyPaths=/opt/investment/tools/venvs/"
+            "tradingagent-observation-py312-stdlib-v1"
+        ),
         "ReadOnlyPaths=/run/secrets/tradingagent",
         "ReadWritePaths=/var/lib/tradingagent/ashare-observation",
         "ReadWritePaths=/run/tradingagent/ashare-observation",
@@ -75,6 +93,7 @@ def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
         "/source_status",
         "sqlite",
         ":8082",
+        "/opt/tradingagent",
     ):
         assert forbidden not in lowered
 

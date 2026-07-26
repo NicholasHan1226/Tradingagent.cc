@@ -5,6 +5,7 @@ After=network-online.target
 ConditionPathExists=/etc/tradingagent/ashare-worker.env
 ConditionPathExists=/etc/tradingagent/ashare-observation-manifest.json
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
+ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1/bin/python3
 ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py
 ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py
 
@@ -18,8 +19,8 @@ Environment=REAL_TRADING_ENABLED=false
 Environment=MARKETGRAPH_MODE=mg_off
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
-ExecStartPre=/opt/tradingagent/venv/bin/python3 /opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py --release-root /opt/investment/releases/tradingagent/current --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT} --expected-user tradingagent --expected-group tradingagent
-ExecStart=/opt/tradingagent/venv/bin/python3 /opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py --manifest ${ASHARE_OBSERVATION_MANIFEST} --token-file /run/secrets/tradingagent/tradingdatas-read.token --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT}
+ExecStartPre=/opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1/bin/python3 /opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py --python-runtime /opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1/bin/python3 --release-root /opt/investment/releases/tradingagent/current --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT} --expected-user tradingagent --expected-group tradingagent
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1/bin/python3 /opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py --manifest ${ASHARE_OBSERVATION_MANIFEST} --token-file /run/secrets/tradingagent/tradingdatas-read.token --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT}
 TimeoutStartSec=30min
 UMask=0077
 StateDirectory=tradingagent/ashare-observation
@@ -46,6 +47,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
 ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1
 ReadOnlyPaths=/etc/tradingagent
 ReadOnlyPaths=/run/secrets/tradingagent
 ReadWritePaths=/var/lib/tradingagent/ashare-observation

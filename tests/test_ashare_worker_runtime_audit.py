@@ -41,6 +41,81 @@ def _directories(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return release, state, runtime, log
 
 
+def _python_runtime(tmp_path: Path) -> Path:
+    runtime = tmp_path / "tools" / "observation-python" / "bin" / "python3"
+    runtime.parent.mkdir(parents=True, mode=0o755)
+    runtime.write_bytes(b"fixture-python-runtime")
+    runtime.chmod(0o555)
+    return runtime
+
+
+def test_python_runtime_audit_accepts_root_owned_immutable_regular_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = _load_audit_module()
+    runtime = _python_runtime(tmp_path)
+    metadata = runtime.lstat()
+    root_metadata = type(
+        "Metadata",
+        (),
+        {
+            "st_mode": metadata.st_mode,
+            "st_nlink": metadata.st_nlink,
+            "st_uid": 0,
+            "st_gid": 0,
+        },
+    )()
+    monkeypatch.setattr(
+        audit,
+        "_lstat_no_follow",
+        lambda *_args, **_kwargs: root_metadata,
+    )
+
+    assert audit.audit_python_runtime(runtime) == {
+        "link_count": 1,
+        "mode": "0555",
+        "owner_gid": 0,
+        "owner_uid": 0,
+        "regular": True,
+    }
+
+
+def test_python_runtime_audit_rejects_symlink_writable_or_non_root_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = _load_audit_module()
+    runtime = _python_runtime(tmp_path)
+    alias = runtime.with_name("python-alias")
+    alias.symlink_to(runtime)
+    with pytest.raises(audit.RuntimeAuditError, match="path_symlink_forbidden"):
+        audit.audit_python_runtime(alias)
+
+    runtime.chmod(0o755)
+    with pytest.raises(audit.RuntimeAuditError, match="python_runtime_mode_invalid"):
+        audit.audit_python_runtime(runtime)
+
+    runtime.chmod(0o555)
+    metadata = runtime.lstat()
+    monkeypatch.setattr(
+        audit,
+        "_lstat_no_follow",
+        lambda *_args, **_kwargs: type(
+            "Metadata",
+            (),
+            {
+                "st_mode": metadata.st_mode,
+                "st_nlink": metadata.st_nlink,
+                "st_uid": 987,
+                "st_gid": metadata.st_gid,
+            },
+        )(),
+    )
+    with pytest.raises(audit.RuntimeAuditError, match="python_runtime_owner_invalid"):
+        audit.audit_python_runtime(runtime)
+
+
 def test_runtime_audit_accepts_separated_owned_directories_and_private_token(
     tmp_path: Path,
 ) -> None:
@@ -189,6 +264,8 @@ def test_runtime_audit_cli_requires_exact_mg_off(
     audit = _load_audit_module()
     release, state, runtime, log = _directories(tmp_path)
     arguments = [
+        "--python-runtime",
+        str(_python_runtime(tmp_path)),
         "--release-root",
         str(release),
         "--state-root",
@@ -221,7 +298,13 @@ def test_runtime_audit_cli_requires_exact_mg_off(
         "audit_token_file",
         lambda *_args, **_kwargs: {"mode": "0600", "regular": True},
     )
+    monkeypatch.setattr(
+        audit,
+        "audit_python_runtime",
+        lambda *_args, **_kwargs: {"mode": "0555", "regular": True},
+    )
 
     assert audit.main(arguments) == 0
     accepted = json.loads(capsys.readouterr().out)
     assert accepted["marketgraph_mode"] == "mg_off"
+    assert accepted["python_runtime"] == {"mode": "0555", "regular": True}

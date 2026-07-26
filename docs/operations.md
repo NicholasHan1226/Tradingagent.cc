@@ -385,7 +385,26 @@ export TRADINGDATAS_API_TOKEN_FILE='/run/secrets/tradingagent/tradingdatas-read.
 - `deploy/systemd/tradingagent-ashare-observation.timer`：不可 enable 的静态候选，
   本阶段不安装、不启用。
 
-当前迁移前基线只做过 metadata-only 读回：`/run/secrets/tradingagent` 是
+observation worker 不得再引用旧 `/opt/tradingagent/venv`。当前冻结解释器为
+`/opt/investment/tools/venvs/tradingagent-observation-py312-stdlib-v1/bin/python3`：
+它是 root-owned、无 symlink 路径、single-link、精确 `0555` 的 versioned
+stdlib-only runtime，父目录必须是 root-owned 且不可由 `tradingagent` 写入。
+`ExecStartPre` 会在读取 token metadata 和发起网络前复核该解释器；leaf、owner、
+mode、link count 或路径任一漂移都阻断 worker。不得原地升级此 runtime；Python
+版本或依赖变化必须建立新的 versioned 路径、更新 unit/测试并重新走 release
+preflight。
+
+服务器构建只能在受限临时目录使用系统 `/usr/bin/python3 -m venv --without-pip
+--copies`，确认 `pip` 不存在、以 UID 987 导入冻结 release 成功后，再 root-owned
+原子安装到上述路径并冻结目录/文件权限。构建日志必须记录 Python 版本、runtime
+tree digest 和目标 release，但不得包含 token 或其哈希。该 runtime 安装不等于
+observation service 安装，更不等于 timer/front/模拟或真实交易激活。失败回滚是
+保持 worker/timer inactive、保留证据并修复前滚；禁止恢复旧
+`/opt/tradingagent/venv` 依赖。
+
+以下是 2026-07-22 credential 切换前的历史基线与不可逆顺序，不是当前运行态，
+也不得因为后续 runtime/front 修复而整段重放。历史基线只做过 metadata-only
+读回：`/run/secrets/tradingagent` 是
 `0700 marketgraph:marketgraph` 目录，既有
 `tradingdatas-read.token` 叶是 `0600 marketgraph:marketgraph` 的 regular file、
 `nlink=1`。这只证明旧安装态文件身份，不证明其 scope、内容或可复用性；禁止读取、
