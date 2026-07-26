@@ -5,13 +5,15 @@
 ## 当前结论
 
 TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer token-file
-消费合同和 26-active 首屏有界验收，但尚未进入 A股 observation 或自动模拟交易。
+消费合同、26-active 首屏有界验收，以及当前 A股核心三数据集 observation 的
+第一次正式只读运行。`20260724` current-observation 已形成并完成幂等重放；
+行业分类上下文因 metadata failed 被排除，自动模拟交易仍未启动。
 
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
-  `git rev-parse HEAD origin/main` 读回为准；本轮已验证运行代码锚点为
-  `7cec341…`。
+  `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
+  `6db813c…`。
 - 服务器已安装对应不可变代码 release：
-  `/opt/investment/releases/tradingagent/7cec341633abc9302e0a407a3615ec29d8c59447`。
+  `/opt/investment/releases/tradingagent/6db813cdb9c9eaa36ab65c3529ebaeee145aeba2`。
   该目录不是 active/current 切换，也没有启动 front、worker、timer 或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`；当前
@@ -24,11 +26,19 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   3 ready、9 stale、14 unobserved；Evidence Gate 为 3 accept / 23 reject，
   query 合同失败为 0。12 项返回 `next_cursor`，因此本轮只证明目录、认证、
   默认请求、省略字段和 metadata fail-closed，不证明完整数据读取。
-- 3 个 ready 是 `cn.market.trade_calendar`、
-  `cn.equity.security_master`、`cn.dataset.index_classify`。A股日线
-  `cn.equity.daily` 与申万日线 `cn.dataset.sw_daily` 仍为 stale/degraded，
-  不进入研究快照、股票选择或模拟决策。
-- `research_snapshot_emitted=false`、`simulation_started=false`、
+- 首屏验收时的 3 个 ready 是 `cn.market.trade_calendar`、
+  `cn.equity.security_master`、`cn.dataset.index_classify`。此后
+  `cn.equity.daily` 已对 `trade_date=20260724` 完成 5526 行采集并正式读回为
+  ready/fresh；`cn.dataset.sw_daily` 同日上游返回 QuickSync `40101`
+  permission-denied，继续 impaired/fail-closed。
+- TradingDatas 随后补齐 `20260723`–`20260725` 日历，正式 18082 直接证明
+  `20260724 is_open=1`。TA 用新鲜 decision time/state root 完整读取
+  `trade_calendar + security_master + daily`，生成 3041 只沪深主板
+  observation Universe，明确排除 2569 条不在权限/第一阶段范围或不满足数据门禁的
+  个体。五项 committed evidence 和精确幂等重放均 PASS。
+- `index_classify` 在本次重跑时返回 failed/degraded，作为 optional context 被从
+  核心 manifest 移除；`context_probe_roles=[]`，不能据此做行业宽度或行业选股。
+- `current_observation_snapshot_emitted=true`、`simulation_started=false`、
   `REAL_TRADING_ENABLED=false`。
 
 正式通过证据：
@@ -40,6 +50,10 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 - 读回状态文件：
   `/var/lib/tradingagent/ashare-observation/catalog26-v1-c19a22c011fc363e.json`
   （`tradingagent:tradingagent 0600`）
+- 当前会话代码、失败关闭与最终 PASS 证据：
+  `/opt/investment/release-evidence/tradingagent/20260726T105403Z-ta-current-session-6db813c`
+- 详细读回报告：
+  [docs/reports/2026-07-26-ashare-current-session-readback.md](docs/reports/2026-07-26-ashare-current-session-readback.md)
 
 本地主线与远端主线一致性必须在每次交付时重新执行
 `git rev-parse HEAD origin/main`；顶部提交号只标记本轮证据，后续提交会自然作废。
@@ -50,14 +64,17 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 |---|---|---|
 | 本地主线 | `main` 已含 provider-neutral client、分页/证据门禁、目录默认请求省略和 0710 secret parent 安全遍历 | 代码存在不等于服务器已激活 |
 | GitHub 主线 | 本轮两个合同修复已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
-| 服务器代码 | `7cec341…` 不可变 release 已安装、未激活 | release 目录不等于 current/front/worker |
+| 服务器代码 | `6db813c…` 不可变 release 已安装、未激活 | release 目录不等于 current/front/worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 26-active 首屏双跑合同 PASS；3 ready 接收、23 impaired 拒绝 | `limit=1` 不是分页完整性、PIT、历史训练或行业宽度证明 |
-| 交易能力 | front inactive 且 runtime-masked，8787 closed；无 scheduler、broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
+| 数据验收 | 26-active 首屏双跑合同 PASS；核心三数据集 current-observation 与幂等重放 PASS | 单次 current observation 不是历史 PIT、训练样本、行业宽度或执行证明 |
+| 交易能力 | front inactive 但 unit 仍 enabled，8787 closed；无 scheduler、broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
 
-旧 `8082` listener 仍由旧系统所有者保留，TradingAgent 没有依赖、探测或 fallback
-到该端口。TradingDatas collector timer 保持 inactive/disabled（当前机器读回为
-not-found）；TradingAgent 不负责启用或修改 TradingDatas 采集调度。
+旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
+fallback 到该端口。服务器上 inactive 的旧 front unit 仍是 `enabled`，且遗留
+`sharedsignals.conf` drop-in 仍指向 `SHAREDSIGNALS_API_URL=http://127.0.0.1:8082`；
+它是后续退役阻塞，不是当前 consumer 的可用 fallback。TradingDatas collector
+timer 保持 inactive/disabled（当前机器读回为 not-found）；TradingAgent 不负责
+启用或修改 TradingDatas 采集调度。
 
 ## A股第一阶段边界
 
@@ -72,7 +89,8 @@ not-found）；TradingAgent 不负责启用或修改 TradingDatas 采集调度�
    少量高质量机会、no-trade band、整数 100 股、最低经济订单、低容量机会和
    试探—确认—扩仓；不以交易次数或每月 20% 作为强制生产约束。
 5. **多风格**：产业趋势、事件/预期差、跨市场错配和现金状态逻辑上独立，
-   资金统一组合、订单统一净额；当前仍未获得可运行的正式研究快照。
+   资金统一组合、订单统一净额；当前 observation 尚未形成可运行的行业特征、
+   个股 ranking 或策略信号。
 
 ## 当前架构边界
 
@@ -101,34 +119,36 @@ not-found）；TradingAgent 不负责启用或修改 TradingDatas 采集调度�
 
 ## 明确未完成
 
-- 日线和申万日线仍 stale/degraded，因此不能诚实启动 A股股票 observation、
-  feature、ranking 或自动模拟盘。
-- 26-active 首屏 probe 不是完整分页验收。下一份完整 research manifest 必须按
-  catalog 冻结 fields/filter/order/limits，并对需要的 dataset 走到 terminal cursor；
-  循环、预算超限、跨页 metadata/identity 漂移均拒绝。
-- 三个 ready 目前只有合同可用性；尚未形成交易日历、证券主数据和行业分类的
-  current-observation bundle。
-- 未积累至少 21 个 forward-collected 交易会话；无正式历史 PIT/revision authority、
-  标签成熟度、冻结 OOS 或 60–120 交易日模拟样本。
+- 目前只积累 1 个 forward-collected 交易会话，未达到 21 个会话的 20 日特征最低
+  覆盖；无正式历史 PIT/revision authority、标签成熟度、冻结 OOS 或
+  60–120 交易日模拟样本。
+- 申万日线仍 permission-denied，`index_classify` 本次为 failed/degraded；核心
+  observation 没有行业上下文，不能冒充行业宽度、行业排名或产业研究输入。
+- 当前 snapshot 只证明单次 current observation，不是可训练历史数据，也没有
+  feature、ranking、forecast、TargetPosition、PaperFill 或账户对账。
 - 日频数据不能合成分钟级 quote、bid/ask 或可成交 fill。正式自动模拟成交仍需要
   经验证的执行时点行情或独立模拟成交政策。
 - front 继续停止；本阶段不恢复 `tradingagent.cc` 页面。当前也没有自动 worker、
-  current pointer、服务 unit 或观察 timer 激活。
-- 旧 8082、旧服务器 runtime 和退役文档只能由各自 owner 按证据链清理；
-  TradingAgent 不使用它们，也不以删除代替依赖清零证明。
+  current pointer 或观察 timer 激活。front unit 虽 inactive 但仍 enabled，且保留
+  8082 drop-in，退役前必须先清零配置并做 no-fallback readback。
+- 服务器已有 `/opt/tradingagent/venv`，但其 parent `/opt/tradingagent` 为
+  `root:marketgraph 0750`，专用 UID 987 不能进入；不能用 root 测试替代专用身份
+  runtime。服务激活前必须提供 tradingagent 可执行且不可变的 Python 环境。
+- 旧 8082、旧服务器 runtime 和退役文档只能按各自 ownership 与证据链清理；
+  不以删除代替依赖清零证明。
 
 ## 下一阶段入口
 
 依赖顺序固定为：
 
-1. 等 TradingDatas 将 `cn.equity.daily`（以及需要时的 `cn.dataset.sw_daily`）
-   恢复为 ready/non-degraded；
-2. 使用 catalog 动态冻结第一阶段最小 manifest，只完整读取
-   `trade_calendar + security_master + daily + index_classify`，行业日线继续
-   按健康状态可选；
-3. 生成 current-observation bundle 和主板 Universe，创业板/科创板个股明确排除，
-   指数/行业汇总仅作为 context；
-4. 启动无成交副作用的每日 observation 与 Decision Ledger 积累；
+1. 修复专用 UID 987 的 Python runtime 可达性，并让 worker 每次按当前 catalog、
+   最近完成交易日和新鲜 decision time 生成不可变 manifest；不能重放静态日期；
+2. 安装但默认禁用 observation unit，先完成新鲜手工 dry-run、幂等、失败恢复和
+   no-8082-fallback readback，再讨论 timer；
+3. 每个交易日继续积累 committed current-observation 与 Decision Ledger；创业板、
+   科创板和北交所个股继续排除，健康的指数/行业汇总仅作为 context；
+4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
+   主板 observation，也不把汇总数据冒充个股权限；
 5. 数据、日历、执行行情和模拟资本权威全部通过后，才开放自动 paper
    `Signal -> TargetPosition -> Risk -> PaperFill -> Reconcile -> Attribution`
    闭环；
