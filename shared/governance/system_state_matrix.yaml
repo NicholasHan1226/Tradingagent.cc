@@ -158,6 +158,8 @@ entries:
       - claim_server_uid_gid_and_ta_scoped_token_leaf_metadata
       - run_read_only_catalog_query_probe_as_dedicated_tradingagent_identity
       - record_that_the_existing_root_marketgraph_0750_python_parent_is_not_a_uid_987_runtime
+      - run_the_frozen_observation_entrypoint_and_runtime_audit_with_the_root_owned_versioned_runtime
+      - record_the_inactive_disabled_runtime_masked_front_and_zero_active_legacy_dropins
     prohibited_uses:
       - claim_front_worker_scheduler_or_full_runtime_cutover_from_identity_and_token
       - claim_immutable_release_preflight_as_current_front_tmpfiles_or_runtime_cutover
@@ -326,6 +328,8 @@ entries:
       - tests/test_ashare_worker_units.py
       - tests/test_ashare_worker_runtime_audit.py
       - docs/operations.md
+      - docs/reports/2026-07-26-ashare-runtime-retirement-readback.md
+      - /opt/investment/release-evidence/tradingagent/20260726T114404Z-ta-runtime-retirement-eb2e18a
     allowed_uses:
       - disabled_unit_contract_and_static_validation
       - require_a_root_owned_versioned_minimal_python_runtime_with_hashed_dependencies_before_worker_start
@@ -1269,20 +1273,24 @@ entries:
     evidence:
       - STATUS.md
       - docs/reports/2026-07-26-ashare-current-session-readback.md
+      - docs/reports/2026-07-26-ashare-runtime-retirement-readback.md
       - /opt/investment/releases/tradingagent/6db813cdb9c9eaa36ab65c3529ebaeee145aeba2
+      - /opt/investment/releases/tradingagent/eb2e18a6c38b1f5c1139679a8e910c6923fa3edb
       - /opt/investment/release-evidence/tradingagent/20260726T105403Z-ta-current-session-6db813c
+      - /opt/investment/release-evidence/tradingagent/20260726T114404Z-ta-runtime-retirement-eb2e18a
+      - /opt/investment/release-evidence/tradingagent/20260726T114546Z-ta-front-base-forwardfix-eb2e18a
     allowed_uses:
       - compare_read_only_runtime_inventory_during_release
       - inspect_immutable_release_and_inactive_front_readback
-      - record_inactive_but_enabled_front_and_the_residual_8082_dropin
-      - record_uid_987_python_runtime_parent_access_gap
+      - record_inactive_disabled_runtime_masked_front_with_no_active_8082_dropin
+      - record_uid_987_versioned_python_runtime_and_inactive_static_worker
     prohibited_uses:
       - infer_sidecar_candidate_activated_as_production
       - infer_identity_or_immutable_release_preflight_as_current_front_token_or_tmpfiles_cutover
       - infer_catalog26_probe_as_observation_worker_or_simulation_activation
       - restart_legacy_front_after_post_stop_failure
       - deploy_or_write_production
-      - claim_the_residual_8082_front_dropin_is_retired_or_usable_as_fallback
+      - claim_the_still_listening_8082_service_is_owned_or_retired_by_tradingagent
     successor: separately_authorized_activation_required
   - entry_id: tradingagent_server_sidecar_candidate
     state: CURRENT_VERIFIED
