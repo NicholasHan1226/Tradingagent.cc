@@ -187,7 +187,7 @@ receipt_sha256: sha256
 
 `shared.runtime.ashare_observation` 是完整 integration probe 之后的最小 A股观察绑定器，不是模拟订单或交易 authority。调用方必须显式提供仓外绝对 manifest、TA-scoped token-file 和 fresh state root，并固定 `REAL_TRADING_ENABLED=false`、`marketgraph_mode=mg_off`。首次绑定严格按以下顺序执行：
 
-1. 加载并校验 secret-free v2 manifest；`daily_bars` 必须使用与 `decision_as_of` 上海交易日一致的精确 `trade_date={"eq": "YYYYMMDD"}` filter；
+1. 加载并校验 secret-free v2 manifest；`daily_bars` 必须使用精确 `trade_date={"eq": "YYYYMMDD"}` filter。该日期必须由同一快照中的 `trade_calendar` 证明为不晚于 `decision_as_of` 的最新已完成开市日，不能简单等同 `decision_as_of` 的自然日；周末、节假日或延迟采集时允许 `observation_session < 上海本地 decision date`；
 2. 对每个 dataset 做受 `max_pages/max_rows` 约束的双跑 integration probe，并要求 terminal cursor、跨页 identity 守恒和 same-observation semantic match；
 3. 再读取一次完整 dataset set，且它的 semantic response、semantic pagination trace、identity、页数和行数必须与已通过 probe 的 observation 完全相同；
 4. 证券范围必须同时绑定 `security_master` 与 `daily_bars`，并以两者 symbol 并集作为观察 denominator：master 固定请求 `ts_code/name/list_status/list_date` 且过滤 `list_status={eq:L}`；仅非 ST/退市风险、上市满 30 日、当日 `close>0`、`vol>0` 且 `amount>0` 的沪深主板普通股进入 `observation_universe`；主数据中有效但当日日线缺失、日线孤儿、停牌/零成交和非主板个股都必须以稳定 reason code 显式记录，不得从 denominator 静默消失；
@@ -206,7 +206,7 @@ historical_pit_eligible=false
 execution_authority=false
 ```
 
-`daily_bars` 原始快照可以保留全市场 provider-native rows，以免环境样本只剩主板；每行 `trade_date` 必须与上海时区决策日完全一致。`observation_universe` 只是观察初筛，不是 Account Tradable Universe、Small-Capital Feasible Universe、候选、仓位或订单池；观察资格不授予任何资金或执行 authority。membership ledger 中的 excluded row 只作 denominator/排除法证，不得进入 Feature、Candidate、Forecast、Position、Order、LLM 或任意外部逐股输出。
+`daily_bars` 原始快照可以保留全市场 provider-native rows，以免环境样本只剩主板；每行 `trade_date` 必须与交易日历确认的 `observation_session` 完全一致。envelope `data_through` 的上海本地日期也必须等于该 session，但不要求伪造为 15:00；`observed_at <= decision_as_of`，且 freshness/quality/lineage/receipt 仍逐数据集 fail closed。membership ledger 允许 session 早于 decision 自然日，但绝不允许 session 晚于 decision。`observation_universe` 只是观察初筛，不是 Account Tradable Universe、Small-Capital Feasible Universe、候选、仓位或订单池；观察资格不授予任何资金或执行 authority。membership ledger 中的 excluded row 只作 denominator/排除法证，不得进入 Feature、Candidate、Forecast、Position、Order、LLM 或任意外部逐股输出。
 
 旧 receipt 中的 `tradable_universe_count/hash` 仅是限时兼容别名，其语义与 `observation_universe_count/hash` 相同，绝不表示 broker permission 或订单资格。新 writer/reader 不得再使用该别名作 authority；它仅为旧回执读回保留，待旧消费者和服务器状态根完成 parity 与清零证据后退役。
 

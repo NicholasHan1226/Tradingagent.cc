@@ -14,11 +14,12 @@ import hashlib
 import json
 import math
 import os
+import re
 import stat
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterator, Mapping
@@ -353,8 +354,13 @@ def _context_probe_roles(
         0,
     ):
         raise AshareObservationBlocked("post_close_observation_required")
-    decision_date = local_decision.strftime("%Y%m%d")
-    if daily.filters.get("trade_date") != {"eq": decision_date}:
+    daily_trade_date_filter = daily.filters.get("trade_date")
+    if (
+        not isinstance(daily_trade_date_filter, Mapping)
+        or set(daily_trade_date_filter) != {"eq"}
+        or not isinstance(daily_trade_date_filter.get("eq"), str)
+        or not re.fullmatch(r"[0-9]{8}", daily_trade_date_filter["eq"])
+    ):
         raise AshareObservationBlocked("daily_bars_trade_date_filter_required")
 
     for item in config.datasets:
@@ -867,6 +873,14 @@ def _universe_projection(
     snapshot: ResearchDataSnapshot,
     config: SharedSignalsIntegrationProbeConfig,
 ) -> _ObservationUniverseProjection:
+    calendar_spec = next(
+        item for item in config.datasets if item.probe_role == "trade_calendar"
+    )
+    calendar_snapshot = next(
+        item
+        for item in snapshot.datasets
+        if item.dataset_id == calendar_spec.dataset_id
+    )
     daily_spec = next(
         item for item in config.datasets if item.probe_role == "daily_bars"
     )
@@ -890,7 +904,49 @@ def _universe_projection(
     if decision_instant.tzinfo is None or decision_instant.utcoffset() is None:
         raise AshareObservationBlocked("decision_as_of_must_be_timezone_aware")
     local_decision = decision_instant.astimezone(_SHANGHAI)
-    decision_date = local_decision.date()
+    daily_session_text = daily_spec.filters["trade_date"]["eq"]
+    try:
+        daily_session_date = datetime.strptime(
+            daily_session_text,
+            "%Y%m%d",
+        ).date()
+    except (TypeError, ValueError) as exc:  # pragma: no cover - manifest invariant
+        raise AshareObservationBlocked(
+            "daily_bars_trade_date_filter_required"
+        ) from exc
+    calendar_states: dict[date, int] = {}
+    for row in calendar_snapshot.decoded_rows():
+        cal_date = row.get("cal_date")
+        if not isinstance(cal_date, str):
+            raise AshareObservationBlocked("trade_calendar_rows_invalid")
+        try:
+            parsed_cal_date = datetime.strptime(
+                cal_date.replace("-", "")[:8],
+                "%Y%m%d",
+            ).date()
+        except ValueError as exc:
+            raise AshareObservationBlocked("trade_calendar_rows_invalid") from exc
+        raw_is_open = row.get("is_open")
+        if type(raw_is_open) is int and raw_is_open in {0, 1}:
+            is_open = raw_is_open
+        elif type(raw_is_open) is str and raw_is_open in {"0", "1"}:
+            is_open = int(raw_is_open)
+        else:
+            raise AshareObservationBlocked("trade_calendar_rows_invalid")
+        previous = calendar_states.get(parsed_cal_date)
+        if previous is not None and previous != is_open:
+            raise AshareObservationBlocked("trade_calendar_rows_invalid")
+        calendar_states[parsed_cal_date] = is_open
+    completed_sessions = {
+        session
+        for session, is_open in calendar_states.items()
+        if is_open == 1 and session <= local_decision.date()
+    }
+    if not completed_sessions:
+        raise AshareObservationBlocked("trade_calendar_open_session_missing")
+    latest_completed_session = max(completed_sessions)
+    if daily_session_date != latest_completed_session:
+        raise AshareObservationBlocked("daily_bars_not_latest_completed_session")
     try:
         daily_data_through = datetime.fromisoformat(
             str(daily_snapshot.data_through).replace("Z", "+00:00")
@@ -900,11 +956,7 @@ def _universe_projection(
     if daily_data_through.tzinfo is None or daily_data_through.utcoffset() is None:
         raise AshareObservationBlocked("daily_data_through_invalid")
     local_daily_data_through = daily_data_through.astimezone(_SHANGHAI)
-    if local_daily_data_through.date() != decision_date or (
-        local_daily_data_through.hour,
-        local_daily_data_through.minute,
-        local_daily_data_through.second,
-    ) < (15, 0, 0):
+    if local_daily_data_through.date() != daily_session_date:
         raise AshareObservationBlocked("post_close_daily_data_through_required")
 
     try:
@@ -915,16 +967,8 @@ def _universe_projection(
         raise AshareObservationBlocked("daily_observation_time_invalid") from exc
     if daily_observed_at.tzinfo is None or daily_observed_at.utcoffset() is None:
         raise AshareObservationBlocked("daily_observation_time_invalid")
-    local_daily_observed_at = daily_observed_at.astimezone(_SHANGHAI)
     if (
-        local_daily_observed_at.date() != decision_date
-        or (
-            local_daily_observed_at.hour,
-            local_daily_observed_at.minute,
-            local_daily_observed_at.second,
-        )
-        < (15, 0, 0)
-        or daily_data_through > daily_observed_at
+        daily_data_through > daily_observed_at
         or daily_observed_at > decision_instant
     ):
         raise AshareObservationBlocked("post_close_daily_observation_required")
@@ -932,7 +976,7 @@ def _universe_projection(
     daily_rows: dict[str, Mapping[str, Any]] = {}
     for row in daily_snapshot.decoded_rows():
         symbol = row.get("ts_code")
-        if row.get("trade_date") != decision_date.strftime("%Y%m%d"):
+        if row.get("trade_date") != daily_session_text:
             raise AshareObservationBlocked("daily_bar_trade_date_mismatch")
         if not isinstance(symbol, str) or not symbol or symbol in daily_rows:
             raise AshareObservationBlocked("daily_symbol_identity_invalid")
@@ -986,7 +1030,7 @@ def _universe_projection(
         except ValueError:
             exclude(symbol, "security_master_missing_or_inactive")
             continue
-        if decision_date - listed < timedelta(days=_MIN_LISTING_AGE_DAYS):
+        if daily_session_date - listed < timedelta(days=_MIN_LISTING_AGE_DAYS):
             exclude(symbol, "new_listing_excluded")
             continue
         if row is None:
@@ -1029,7 +1073,7 @@ def _universe_projection(
     if len(records) != len(set(master_rows).union(daily_rows)):
         raise AshareObservationBlocked("daily_symbol_membership_incomplete")
     return _ObservationUniverseProjection(
-        observation_session=decision_date.strftime("%Y%m%d"),
+        observation_session=daily_session_text,
         observed_symbols=tuple(sorted(observed)),
         excluded_reason_counts=dict(sorted(excluded.items())),
         membership_records=tuple(sorted(records, key=lambda item: item.symbol)),

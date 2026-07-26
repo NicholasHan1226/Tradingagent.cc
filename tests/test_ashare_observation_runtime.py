@@ -202,6 +202,7 @@ class ObservationTransport:
         daily_trade_date: str = "20260722",
         data_through: str = "2026-07-22T15:00:00+08:00",
         observed_at: str = "2026-07-22T15:05:00+08:00",
+        calendar_rows: list[dict[str, Any]] | None = None,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self._daily_first_page_count = 0
@@ -210,6 +211,9 @@ class ObservationTransport:
         self._daily_trade_date = daily_trade_date
         self._data_through = data_through
         self._observed_at = observed_at
+        self._calendar_rows = calendar_rows or [
+            {"market": "SSE", "cal_date": "20260722", "is_open": 1}
+        ]
 
     def __call__(
         self,
@@ -252,7 +256,7 @@ class ObservationTransport:
                 json_body=_query_payload(
                     dataset_id,
                     request_id=request_id,
-                    rows=[{"market": "SSE", "cal_date": "20260722", "is_open": 1}],
+                    rows=self._calendar_rows,
                     data_through=self._data_through,
                     observed_at=self._observed_at,
                 ),
@@ -334,7 +338,7 @@ class ObservationTransport:
                         },
                         {
                             "ts_code": "600001.SH",
-                            "trade_date": "20260722",
+                            "trade_date": self._daily_trade_date,
                             "close": 5.0,
                             "vol": 1000.0,
                             "amount": 5_000_000.0,
@@ -589,6 +593,32 @@ def test_prior_day_daily_rows_cannot_enter_current_tradable_projection(
     assert not config.snapshot_root.exists()
 
 
+def test_manifest_cannot_bind_a_session_older_than_latest_open_calendar_day(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest()
+    payload["datasets"][2]["filters"] = {"trade_date": {"eq": "20260721"}}
+    payload["datasets"][3]["filters"] = {"trade_date": {"eq": "20260721"}}
+    config = AshareObservationConfig(
+        manifest_path=_write_manifest(tmp_path, payload),
+        token_file=_token_path(tmp_path),
+        snapshot_root=(tmp_path / "state" / "snapshots").resolve(),
+    )
+
+    with pytest.raises(
+        AshareObservationBlocked,
+        match="daily_bars_not_latest_completed_session",
+    ):
+        run_ashare_observation(
+            config,
+            transport_factory=lambda *_args, **_kwargs: ObservationTransport(
+                daily_trade_date="20260721"
+            ),
+        )
+
+    assert not config.snapshot_root.exists()
+
+
 def test_pre_close_as_of_cannot_bind_a_daily_observation(tmp_path: Path) -> None:
     payload = _manifest()
     payload["as_of"] = "2026-07-22T14:59:59+08:00"
@@ -606,6 +636,41 @@ def test_pre_close_as_of_cannot_bind_a_daily_observation(tmp_path: Path) -> None
             transport_factory=lambda *_args, **_kwargs: ObservationTransport(),
         )
     assert not config.snapshot_root.exists()
+
+
+def test_weekend_current_observation_binds_latest_completed_open_session(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest()
+    payload["as_of"] = "2026-07-26T19:00:00+08:00"
+    payload["datasets"][2]["filters"] = {"trade_date": {"eq": "20260724"}}
+    payload["datasets"][3]["filters"] = {"trade_date": {"eq": "20260724"}}
+    config = AshareObservationConfig(
+        manifest_path=_write_manifest(tmp_path, payload),
+        token_file=_token_path(tmp_path),
+        snapshot_root=(tmp_path / "state" / "snapshots").resolve(),
+    )
+    transport = ObservationTransport(
+        daily_trade_date="20260724",
+        data_through="2026-07-24T00:00:00+08:00",
+        observed_at="2026-07-26T18:36:07+08:00",
+        calendar_rows=[
+            {"market": "SSE", "cal_date": "20260723", "is_open": 1},
+            {"market": "SSE", "cal_date": "20260724", "is_open": 1},
+            {"market": "SSE", "cal_date": "20260725", "is_open": 0},
+            {"market": "SSE", "cal_date": "20260726", "is_open": 0},
+        ],
+    )
+
+    result = run_ashare_observation(
+        config,
+        transport_factory=lambda *_args, **_kwargs: transport,
+    )
+
+    assert result.status == "pass"
+    assert result.observation_session == "20260724"
+    assert result.historical_pit_eligible is False
+    assert result.execution_authority is False
 
 
 @pytest.mark.parametrize(
@@ -633,7 +698,7 @@ def test_invalid_or_time_inconsistent_observation_proof_is_blocked_by_probe(
     assert not config.snapshot_root.exists()
 
 
-def test_daily_data_through_must_cover_the_full_post_close_session(
+def test_daily_data_through_must_match_the_observed_session(
     tmp_path: Path,
 ) -> None:
     config = _config(tmp_path)
@@ -645,7 +710,7 @@ def test_daily_data_through_must_cover_the_full_post_close_session(
         run_ashare_observation(
             config,
             transport_factory=lambda *_args, **_kwargs: ObservationTransport(
-                data_through="2026-07-22T14:59:59+08:00"
+                data_through="2026-07-21T23:59:59+08:00"
             ),
         )
 

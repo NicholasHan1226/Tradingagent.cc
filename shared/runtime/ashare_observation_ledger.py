@@ -158,6 +158,12 @@ def _session(value: object) -> str:
     return value
 
 
+def _session_is_not_after_decision(session: str, decision: datetime) -> bool:
+    return datetime.strptime(session, "%Y%m%d").date() <= decision.astimezone(
+        _SHANGHAI
+    ).date()
+
+
 @dataclass(frozen=True)
 class AshareObservationMembershipRecord:
     """One stock's explicit Phase-1 membership disposition for one session."""
@@ -229,7 +235,7 @@ class AshareObservationMembershipArtifact:
     def __post_init__(self) -> None:
         session = _session(self.observation_session)
         decision = _aware_utc(self.decision_as_of, field_name="decision_as_of")
-        if decision.astimezone(_SHANGHAI).strftime("%Y%m%d") != session:
+        if not _session_is_not_after_decision(session, decision):
             raise AshareObservationLedgerContractError(
                 "artifact_decision_session_mismatch"
             )
@@ -564,7 +570,7 @@ def _artifact_payload(
     session = _session(observation_session)
     _snapshot_identity(snapshot)
     decision = _aware_utc(snapshot.decision_as_of, field_name="decision_as_of")
-    if decision.astimezone(_SHANGHAI).strftime("%Y%m%d") != session:
+    if not _session_is_not_after_decision(session, decision):
         raise AshareObservationLedgerContractError(
             "observation_session_decision_mismatch"
         )
@@ -678,7 +684,7 @@ def _decode_artifact(raw: object) -> AshareObservationMembershipArtifact:
         decision_instant = _aware_utc(decision, field_name="decision_as_of")
     except AshareObservationLedgerContractError as exc:
         raise AshareObservationLedgerCorruption("decision_as_of_invalid") from exc
-    if decision_instant.astimezone(_SHANGHAI).strftime("%Y%m%d") != session:
+    if not _session_is_not_after_decision(session, decision_instant):
         raise AshareObservationLedgerCorruption("decision_session_mismatch")
     flags = (
         raw.get("historical_pit_eligible"),
@@ -770,7 +776,7 @@ def _decode_binding(raw: object) -> dict[str, Any]:
         decision_instant = _aware_utc(decision, field_name="decision_as_of")
     except AshareObservationLedgerContractError as exc:
         raise AshareObservationLedgerCorruption("binding_identity_invalid") from exc
-    if decision_instant.astimezone(_SHANGHAI).strftime("%Y%m%d") != session:
+    if not _session_is_not_after_decision(session, decision_instant):
         raise AshareObservationLedgerCorruption("binding_identity_mismatch")
     return dict(raw)
 
