@@ -116,12 +116,14 @@ entries:
       - docs/operations.md
       - STATUS.md
       - /opt/investment/release-evidence/tradingagent/20260726T100914Z-ta-catalog26-readback-7cec341
+      - docs/reports/2026-07-26-ashare-current-session-readback.md
     allowed_uses:
       - discover_and_match_the_exact_active_catalog_set_from_v1_catalog
       - run_two_bounded_same_observation_queries_per_active_dataset
       - accept_declared_ready_data_and_account_for_declared_impaired_data_at_zero_weight
       - emit_secret_free_transport_parity_receipts_without_rows_or_cursors
       - record_exact_26_active_catalog_rows_and_first_page_metadata_health
+      - record_later_daily_20260724_ready_and_sw_daily_permission_denied_without_rewriting_the_original_parity_receipt
     prohibited_uses:
       - promote_parity_receipt_to_research_snapshot
       - infer_historical_pit_or_revision_authority
@@ -155,6 +157,7 @@ entries:
       - preserve_temporary_read_only_marketgraph_projection_group_during_migration
       - claim_server_uid_gid_and_ta_scoped_token_leaf_metadata
       - run_read_only_catalog_query_probe_as_dedicated_tradingagent_identity
+      - record_that_the_existing_root_marketgraph_0750_python_parent_is_not_a_uid_987_runtime
     prohibited_uses:
       - claim_front_worker_scheduler_or_full_runtime_cutover_from_identity_and_token
       - claim_immutable_release_preflight_as_current_front_tmpfiles_or_runtime_cutover
@@ -171,6 +174,7 @@ entries:
       - apply_tmpfiles_before_paused_ta_cron_and_zero_holder_proof
       - restore_legacy_credential_or_ta_cron_after_pause_failure
       - fallback_to_legacy_credential_or_8082
+      - claim_uid_987_can_execute_the_existing_opt_tradingagent_venv
     successor: tradingagent.dedicated-service-identity.v1
   - entry_id: tradingagent_ashare_observation_runtime
     state: CURRENT_VERIFIED
@@ -178,11 +182,13 @@ entries:
     owner: TradingAgent
     canonical_path: shared/runtime/ashare_observation.py
     production_verified: false
-    last_verified_at: "2026-07-22"
+    last_verified_at: "2026-07-26"
     evidence:
       - tests/test_ashare_observation_runtime.py
       - tests/test_ashare_observation_ledger.py
       - docs/data_contract.md
+      - docs/operations.md
+      - docs/reports/2026-07-26-ashare-current-session-readback.md
       - tests/test_ashare_worker_units.py
       - tests/test_ashare_worker_runtime_audit.py
     allowed_uses:
@@ -190,6 +196,8 @@ entries:
       - use_index_classification_and_industry_index_aggregates_as_context_only
       - verify_exact_committed_replay_without_transport_or_capital_side_effects
       - load_verified_bundle_only_from_same_private_state_root_and_session_lock
+      - bind_daily_rows_to_the_latest_open_session_directly_proven_by_the_full_calendar
+      - keep_decision_natural_date_separate_from_observation_session
     prohibited_uses:
       - inherit_or_claim_server_validation_from_historical_a7488e9_bytes
       - infer_historical_pit_or_model_effectiveness
@@ -201,8 +209,33 @@ entries:
       - claim_index_classify_or_sw_daily_as_complete_industry_breadth
       - synthesize_minute_quote_fill_order_or_capital_evidence_from_daily_rows
       - make_marketgraph_a_tradingagent_runtime_dependency
+      - infer_a_missing_open_session_from_pretrade_date_weekend_or_natural_date
       - infer_real_trading_or_broker_authority
     successor: tradingagent.ashare.observation-runtime.v1
+  - entry_id: tradingagent_ashare_observation_current_session_readback
+    state: CURRENT_VERIFIED
+    layer: server_validated_non_authority_read_only
+    owner: TradingAgent
+    canonical_path: docs/reports/2026-07-26-ashare-current-session-readback.md
+    production_verified: false
+    last_verified_at: "2026-07-26"
+    evidence:
+      - docs/reports/2026-07-26-ashare-current-session-readback.md
+      - /opt/investment/release-evidence/tradingagent/20260726T105403Z-ta-current-session-6db813c
+    allowed_uses:
+      - audit_the_fail_closed_four_dataset_current_session_attempt
+      - prove_daily_20260724_was_not_promoted_without_direct_calendar_continuity
+      - preserve_the_exact_daily_bars_not_latest_completed_session_reason
+      - audit_the_final_three_required_dataset_current_observation_pass
+      - audit_the_exact_same_state_root_idempotent_replay
+      - record_3041_mainboard_observation_members_and_2569_explicit_exclusions
+    prohibited_uses:
+      - promote_the_earlier_failed_attempt_to_snapshot_membership_or_transaction_complete
+      - infer_20260724_open_from_pretrade_date_or_weekend_knowledge
+      - infer_historical_pit_feature_ranking_simulation_fill_or_real_trading
+      - infer_industry_context_from_failed_index_classify_or_impaired_sw_daily
+      - enable_front_worker_timer_or_broker
+    successor: accumulate_forward_observations_after_uid_987_runtime_and_worker_gates
   - entry_id: tradingagent_ashare_observation_a7488e9_historical_readback
     state: HISTORICAL_READ_ONLY
     layer: server_validated_non_authority_simulation_only
@@ -222,16 +255,17 @@ entries:
       - infer_dedicated_worker_timer_production_or_trading_authority
     successor: tradingagent.ashare.observation-runtime.v1
   - entry_id: tradingagent_ashare_observation_membership_ledger
-    state: TARGET_CONTRACT
+    state: CURRENT_VERIFIED
     layer: repository_contract
     owner: TradingAgent
     canonical_path: shared/runtime/ashare_observation_ledger.py
     production_verified: false
-    last_verified_at: "2026-07-22"
+    last_verified_at: "2026-07-26"
     evidence:
       - tests/test_ashare_observation_ledger.py
       - tests/test_ashare_observation_runtime.py
       - docs/data_contract.md
+      - docs/reports/2026-07-26-ashare-current-session-readback.md
     allowed_uses:
       - bind_snapshot_probe_observation_receipt_per_symbol_membership_and_commit_proof
       - record_observed_and_excluded_denominator_rows_in_fresh_state
@@ -301,6 +335,7 @@ entries:
       - claim_persistent_observation_or_production_runtime
       - infer_timer_installed_or_enabled_from_uid_gid_or_immutable_release_preflight
       - enable_while_equity_daily_or_required_context_dataset_is_stale_or_unobserved
+      - enable_before_calendar_continuity_and_uid_987_python_runtime_are_verified
     successor: tradingagent.ashare.observation-worker-timer.v1
   - entry_id: tradingagent_mainboard_scope
     state: CURRENT_VERIFIED
@@ -1231,16 +1266,21 @@ entries:
     last_verified_at: "2026-07-26"
     evidence:
       - STATUS.md
-      - /opt/investment/releases/tradingagent/7cec341633abc9302e0a407a3615ec29d8c59447
+      - docs/reports/2026-07-26-ashare-current-session-readback.md
+      - /opt/investment/releases/tradingagent/6db813cdb9c9eaa36ab65c3529ebaeee145aeba2
+      - /opt/investment/release-evidence/tradingagent/20260726T105403Z-ta-current-session-6db813c
     allowed_uses:
       - compare_read_only_runtime_inventory_during_release
       - inspect_immutable_release_and_inactive_front_readback
+      - record_inactive_but_enabled_front_and_the_residual_8082_dropin
+      - record_uid_987_python_runtime_parent_access_gap
     prohibited_uses:
       - infer_sidecar_candidate_activated_as_production
       - infer_identity_or_immutable_release_preflight_as_current_front_token_or_tmpfiles_cutover
       - infer_catalog26_probe_as_observation_worker_or_simulation_activation
       - restart_legacy_front_after_post_stop_failure
       - deploy_or_write_production
+      - claim_the_residual_8082_front_dropin_is_retired_or_usable_as_fallback
     successor: separately_authorized_activation_required
   - entry_id: tradingagent_server_sidecar_candidate
     state: CURRENT_VERIFIED
