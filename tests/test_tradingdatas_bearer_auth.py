@@ -545,6 +545,39 @@ def test_secure_open_capability_absence_fails_closed(
     assert caught.value.reason_code == "tradingdatas_token_secure_open_unsupported"
 
 
+def test_directory_open_flags_prefer_linux_path_only_traversal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthetic_o_path = 1 << 29
+    monkeypatch.setattr(
+        "shared.data.tradingdatas_auth.os.O_PATH",
+        synthetic_o_path,
+        raising=False,
+    )
+
+    flags = tradingdatas_auth._directory_open_flags()
+
+    assert flags & synthetic_o_path
+    assert flags & os.O_DIRECTORY
+    assert flags & os.O_NOFOLLOW
+
+
+def test_directory_open_flags_fall_back_when_path_only_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "shared.data.tradingdatas_auth.os.O_PATH",
+        0,
+        raising=False,
+    )
+
+    flags = tradingdatas_auth._directory_open_flags()
+
+    assert flags & os.O_DIRECTORY
+    assert flags & os.O_NOFOLLOW
+    assert flags & os.O_ACCMODE == os.O_RDONLY
+
+
 def test_token_file_change_during_read_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

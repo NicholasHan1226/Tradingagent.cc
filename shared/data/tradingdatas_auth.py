@@ -68,13 +68,18 @@ def _require_secure_open_capabilities() -> None:
         raise _token_error("tradingdatas_token_secure_open_unsupported")
 
 
+def _directory_open_flags() -> int:
+    """Open directory components without requiring directory read permission."""
+
+    access_flag = getattr(os, "O_PATH", 0) or os.O_RDONLY
+    return access_flag | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
 def _open_token_no_follow(path: Path) -> tuple[int, int]:
     """Return parent and leaf descriptors opened component-by-component."""
 
     _require_secure_open_capabilities()
-    directory_flags = (
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-    )
+    directory_flags = _directory_open_flags()
     try:
         parent_descriptor = os.open(path.anchor, directory_flags)
     except OSError:
