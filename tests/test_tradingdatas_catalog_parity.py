@@ -581,7 +581,7 @@ def test_catalog_discovery_accounts_for_ready_and_impaired_active_sets(
         for payload in ready_payloads
     )
     assert all(payload["as_of"] == AS_OF for payload in ready_payloads)
-    assert all(payload["as_of"] is None for payload in impaired_payloads)
+    assert all("as_of" not in payload for payload in impaired_payloads)
     assert all("order" not in payload for payload in ready_payloads + impaired_payloads)
 
     encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
@@ -1006,7 +1006,7 @@ def test_identityless_impaired_empty_page_accepts_zero_frozen_row_cap(
     ]
     assert len(impaired_queries) == 2
     assert all(query["limit"] == 500 for query in impaired_queries)
-    assert all(query["as_of"] is None for query in impaired_queries)
+    assert all("as_of" not in query for query in impaired_queries)
     assert all("order" not in query for query in impaired_queries)
 
 
@@ -1209,7 +1209,7 @@ def test_identityless_metadata_drift_fails_same_observation(tmp_path: Path) -> N
     assert impaired["reason_codes"] == ["same_observation_semantic_mismatch"]
 
 
-def test_null_as_of_is_preserved_when_every_dataset_omits_decision_as_of(
+def test_null_as_of_is_omitted_from_wire_when_every_dataset_omits_decision_as_of(
     tmp_path: Path,
 ) -> None:
     api = _api()
@@ -1231,7 +1231,7 @@ def test_null_as_of_is_preserved_when_every_dataset_omits_decision_as_of(
         call["json_body"] for call in transport.calls if call["method"] == "POST"
     ]
     assert query_payloads
-    assert all(query["as_of"] is None for query in query_payloads)
+    assert all("as_of" not in query for query in query_payloads)
     assert all("order" not in query for query in query_payloads)
     assert receipt["receipt_sha256"] == api.receipt_sha256(receipt)
 

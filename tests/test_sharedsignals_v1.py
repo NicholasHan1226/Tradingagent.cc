@@ -316,6 +316,18 @@ def test_explicit_order_is_copied_and_omitted_when_not_requested() -> None:
     assert "order" not in defaulted.to_payload()
 
 
+def test_as_of_is_omitted_when_not_requested() -> None:
+    defaulted = QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
+    bounded = QueryRequest(
+        dataset_id=DATASET_ID,
+        schema_major=SCHEMA_MAJOR,
+        as_of="2026-07-16T01:00:00+00:00",
+    )
+
+    assert "as_of" not in defaulted.to_payload()
+    assert bounded.to_payload()["as_of"] == "2026-07-16T01:00:00+00:00"
+
+
 @pytest.mark.parametrize("invalid", ["trade_date:desc", [""], ["x", "x"]])
 def test_explicit_order_must_be_unique_nonempty_terms(invalid: object) -> None:
     with pytest.raises(ContractViolation, match="order"):
@@ -559,9 +571,7 @@ def test_query_rejects_data_through_after_observed_at() -> None:
 
 
 def test_cache_only_contains_validated_envelopes_and_binds_full_identity() -> None:
-    transport = FakeTransport(
-        [HTTPResponse(200, _query_payload(next_cursor=None))]
-    )
+    transport = FakeTransport([HTTPResponse(200, _query_payload(next_cursor=None))])
     client = SharedSignalsV1Client(_config(), transport=transport)
     request = QueryRequest(
         dataset_id=DATASET_ID,
@@ -586,9 +596,7 @@ def test_cache_only_contains_validated_envelopes_and_binds_full_identity() -> No
 
 
 def test_cached_envelope_cannot_be_mutated_through_a_prior_result() -> None:
-    transport = FakeTransport(
-        [HTTPResponse(200, _query_payload(next_cursor=None))]
-    )
+    transport = FakeTransport([HTTPResponse(200, _query_payload(next_cursor=None))])
     client = SharedSignalsV1Client(_config(), transport=transport)
     request = QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
 

@@ -122,7 +122,7 @@ def test_identityless_empty_terminal_page_allows_zero_row_budget() -> None:
     assert run.identity_sha256 is None
     assert len(transport.calls) == 1
     assert transport.calls[0]["json_body"]["limit"] == 500
-    assert transport.calls[0]["json_body"]["as_of"] is None
+    assert "as_of" not in transport.calls[0]["json_body"]
     assert "order" not in transport.calls[0]["json_body"]
 
 

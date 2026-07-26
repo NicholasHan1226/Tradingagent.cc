@@ -284,10 +284,11 @@ class QueryRequest:
             "schema_major": self.schema_major,
             "fields": list(self.fields),
             "filters": json.loads(self._filters_json),
-            "as_of": self.as_of,
             "limit": self.limit,
             "cursor": self.cursor,
         }
+        if self.as_of is not None:
+            payload["as_of"] = self.as_of
         if self.order is not None:
             payload["order"] = list(self.order)
         return payload
