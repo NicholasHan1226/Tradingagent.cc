@@ -80,6 +80,11 @@ a production-ready minute dataset.
   are not hard-coded in TA.
 - Provider-native rows remain rows. Receipt, lineage, freshness,
   `data_through`, and `observed_at` remain response-envelope evidence.
+- If the minute dataset exposes only `ts_code/time/OHLCV/amount`, TA binds
+  previous-close and suspension state from a separate, same-session
+  `MinuteReferenceFact`; absence, symbol/date mismatch, or invalid reference
+  evidence fails closed. TA never asks TradingDatas to copy envelope evidence
+  or trading-state guesses into provider-native rows.
 - Volume/amount conversion factors and raw-unadjusted execution-price semantics
   are explicit profile inputs. TA does not guess whether a provider reports
   shares, lots, yuan, or thousands of yuan.
@@ -217,6 +222,39 @@ MarketCapitalLedger, durable outbox, production scheduler or promotion
 authority. Real minute handoff still requires the separate TradingDatas
 catalog profile, five-day observation gate and a future durable settlement
 adapter.
+
+### Read-only real-data canary
+
+`Ashare.minute_canary` is the bridge from the mock-ready contract to a formal
+TradingDatas minute handoff. It accepts an external secret-free profile
+manifest, a separate TA-owned reference-fact manifest, and the existing secure
+TA token file. The dataset ID, catalog version, schema/fields, filters,
+identity, timestamp semantics, unit multipliers and bounded page/row budgets
+must all be explicit in that profile.
+
+It performs exact catalog drift validation, two bounded query reads,
+pagination/identity checks and the full minute Evidence Gate, then writes a
+0600 observation-only receipt. It cannot create candidates, orders, fills,
+capital entries, schedules or trading authority.
+
+Example after a formal non-secret TradingDatas handoff:
+
+```bash
+export REAL_TRADING_ENABLED=false
+python3 -m Ashare.minute_canary \
+  --manifest /absolute/runtime/minute-profile.json \
+  --reference-facts /absolute/runtime/minute-reference-facts.json \
+  --token-file /run/secrets/tradingagent/tradingdatas-read.token \
+  --decision-time 2026-07-28T09:35:25+08:00 \
+  --trading-date 2026-07-28 \
+  --output /absolute/runtime/minute-canary-receipt.json
+```
+
+The manifest and reference facts are runtime evidence, not repository defaults.
+Until TradingDatas formally freezes `cn.dataset.rt_min`, its catalog contract,
+and a fresh five-minute receipt, this command remains unconfigured and must
+fail closed. A passing canary authorizes observation only; the five-trading-day
+observation gate and 20-session sample accumulation remain separate.
 
 ### Phase-one A-share scope
 

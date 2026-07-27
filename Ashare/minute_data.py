@@ -191,8 +191,8 @@ class MinuteDatasetProfile:
     close_field: str
     volume_field: str
     amount_field: str
-    previous_close_field: str
-    suspension_field: str
+    previous_close_field: str | None
+    suspension_field: str | None
     frequency_field: str | None
     frequency_value: str | None
     timestamp_format: str
@@ -218,11 +218,15 @@ class MinuteDatasetProfile:
             "close_field",
             "volume_field",
             "amount_field",
-            "previous_close_field",
-            "suspension_field",
             "timestamp_format",
         ):
             _text(getattr(self, field_name), f"minute_profile_{field_name}_invalid")
+        if (self.previous_close_field is None) != (self.suspension_field is None):
+            raise MinuteDataContractError("minute_reference_field_contract_incomplete")
+        for field_name in ("previous_close_field", "suspension_field"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _text(value, f"minute_profile_{field_name}_invalid")
         if self.catalog_route != FIXED_CATALOG_ROUTE:
             raise MinuteDataContractError("minute_catalog_route_invalid")
         if self.query_route != FIXED_QUERY_ROUTE:
@@ -286,9 +290,11 @@ class MinuteDatasetProfile:
             self.close_field,
             self.volume_field,
             self.amount_field,
-            self.previous_close_field,
-            self.suspension_field,
         }
+        if self.previous_close_field is not None:
+            required.add(self.previous_close_field)
+        if self.suspension_field is not None:
+            required.add(self.suspension_field)
         if self.frequency_field is not None:
             required.add(self.frequency_field)
         if not required.issubset(set(self.default_fields)):
@@ -322,8 +328,8 @@ class MinuteDatasetProfile:
         close_field: str,
         volume_field: str,
         amount_field: str,
-        previous_close_field: str,
-        suspension_field: str,
+        previous_close_field: str | None,
+        suspension_field: str | None,
         timestamp_format: str,
         timestamp_semantics: MinuteTimestampSemantics,
         volume_multiplier_to_shares: float,
@@ -469,6 +475,7 @@ class MinuteBarEvidence:
     source_lineage_sha256: str
     envelope_proof_sha256: str
     source_row_sha256: str
+    reference_evidence_sha256: str
 
     def __post_init__(self) -> None:
         if not is_mainboard_tradable(self.symbol):
@@ -484,6 +491,7 @@ class MinuteBarEvidence:
             "source_lineage_sha256",
             "envelope_proof_sha256",
             "source_row_sha256",
+            "reference_evidence_sha256",
         ):
             value = getattr(self, field_name)
             if (
@@ -560,11 +568,46 @@ class MinuteBarEvidence:
             "source_lineage_sha256": self.source_lineage_sha256,
             "envelope_proof_sha256": self.envelope_proof_sha256,
             "source_row_sha256": self.source_row_sha256,
+            "reference_evidence_sha256": self.reference_evidence_sha256,
         }
 
     @property
     def sha256(self) -> str:
         return _sha256(self.canonical_payload())
+
+
+@dataclass(frozen=True)
+class MinuteReferenceFact:
+    """TA-owned daily/reference evidence required by provider-native minute rows."""
+
+    symbol: str
+    trade_date: date
+    previous_close_cny: float
+    suspended: bool
+    evidence_sha256: str
+
+    def __post_init__(self) -> None:
+        if not is_mainboard_tradable(self.symbol):
+            raise MinuteDataContractError(
+                "minute_reference_symbol_not_mainboard_tradable"
+            )
+        if not isinstance(self.trade_date, date) or isinstance(
+            self.trade_date, datetime
+        ):
+            raise MinuteDataContractError("minute_reference_trade_date_invalid")
+        _finite(
+            self.previous_close_cny,
+            "minute_reference_previous_close_invalid",
+            positive=True,
+        )
+        if type(self.suspended) is not bool:
+            raise MinuteDataContractError("minute_reference_suspension_invalid")
+        if (
+            not isinstance(self.evidence_sha256, str)
+            or len(self.evidence_sha256) != 64
+            or any(character not in _SHA256_HEX for character in self.evidence_sha256)
+        ):
+            raise MinuteDataContractError("minute_reference_evidence_sha256_invalid")
 
 
 @dataclass(frozen=True)
@@ -718,6 +761,7 @@ class MinuteMarketDataPort(Protocol):
         decision_time: datetime,
         trading_dates: frozenset[date],
         audit_ledger: MinuteEvidenceAuditLedger,
+        reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
     ) -> MinuteBarSnapshot: ...
 
 
@@ -746,6 +790,7 @@ def _map_run(
     run: PagedQueryRun,
     decision_time: datetime,
     trading_dates: frozenset[date],
+    reference_facts: Mapping[str, MinuteReferenceFact] | None,
 ) -> tuple[MinuteBarEvidence, ...]:
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
@@ -807,10 +852,29 @@ def _map_run(
             actual_frequency = str(row.get(profile.frequency_field) or "").lower()
             if actual_frequency != str(profile.frequency_value).lower():
                 raise MinuteDataContractError("minute_row_frequency_mismatch")
-        suspended = row.get(profile.suspension_field)
-        if type(suspended) is not bool:
-            raise MinuteDataContractError("minute_row_suspension_invalid")
         source_row_sha = _sha256(row)
+        if profile.previous_close_field is None:
+            reference = (
+                reference_facts.get(symbol)
+                if isinstance(reference_facts, Mapping)
+                else None
+            )
+            if not isinstance(reference, MinuteReferenceFact):
+                raise MinuteDataContractError("minute_reference_fact_missing")
+            if reference.symbol != symbol:
+                raise MinuteDataContractError("minute_reference_symbol_mismatch")
+            if reference.trade_date != bar_end.astimezone(SHANGHAI).date():
+                raise MinuteDataContractError("minute_reference_trade_date_mismatch")
+            previous_close = reference.previous_close_cny
+            suspended = reference.suspended
+            reference_evidence_sha = reference.evidence_sha256
+        else:
+            assert profile.suspension_field is not None
+            previous_close = row.get(profile.previous_close_field)
+            suspended = row.get(profile.suspension_field)
+            if type(suspended) is not bool:
+                raise MinuteDataContractError("minute_row_suspension_invalid")
+            reference_evidence_sha = source_row_sha
         evidence = MinuteBarEvidence(
             symbol=symbol,
             bar_start=bar_start,
@@ -836,7 +900,7 @@ def _map_run(
                 * profile.amount_multiplier_to_cny
             ),
             previous_close_cny=_finite(
-                row.get(profile.previous_close_field),
+                previous_close,
                 "minute_previous_close_invalid",
                 positive=True,
             ),
@@ -852,6 +916,7 @@ def _map_run(
             source_lineage_sha256=lineage_sha,
             envelope_proof_sha256=envelope_proof_sha,
             source_row_sha256=source_row_sha,
+            reference_evidence_sha256=reference_evidence_sha,
         )
         previous = seen.get(evidence.identity)
         if previous is not None:
@@ -876,6 +941,7 @@ def snapshot_from_runs(
     decision_time: datetime,
     trading_dates: frozenset[date],
     audit_ledger: MinuteEvidenceAuditLedger,
+    reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
 ) -> MinuteBarSnapshot:
     """Map two bounded reads and require identical same-observation semantics."""
 
@@ -896,12 +962,14 @@ def snapshot_from_runs(
             run=first,
             decision_time=decision_time,
             trading_dates=trading_dates,
+            reference_facts=reference_facts,
         )
         replay_bars = _map_run(
             profile=profile,
             run=replay,
             decision_time=decision_time,
             trading_dates=trading_dates,
+            reference_facts=reference_facts,
         )
         if [bar.sha256 for bar in bars] != [bar.sha256 for bar in replay_bars]:
             raise MinuteDataContractError("minute_same_observation_mismatch")
@@ -946,6 +1014,7 @@ class TradingDatasMinuteMarketDataPort:
         decision_time: datetime,
         trading_dates: frozenset[date],
         audit_ledger: MinuteEvidenceAuditLedger,
+        reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
         try:
@@ -1016,6 +1085,7 @@ class TradingDatasMinuteMarketDataPort:
                 decision_time=decision_time,
                 trading_dates=trading_dates,
                 audit_ledger=audit_ledger,
+                reference_facts=reference_facts,
             )
         except MinuteDataContractError as exc:
             if len(audit_ledger.records()) == audit_count_before:
@@ -1091,6 +1161,7 @@ __all__ = [
     "MinuteEvidenceAuditLedger",
     "MinuteEvidenceAuditRecord",
     "MinuteMarketDataPort",
+    "MinuteReferenceFact",
     "MinuteTimestampSemantics",
     "TradingDatasMinuteMarketDataPort",
     "snapshot_from_runs",

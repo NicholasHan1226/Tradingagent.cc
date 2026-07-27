@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from datetime import date, datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from Ashare.minute_data import (
     MinuteDataContractError,
     MinuteDatasetProfile,
     MinuteEvidenceAuditLedger,
+    MinuteReferenceFact,
     MinuteTimestampSemantics,
     TradingDatasMinuteMarketDataPort,
 )
@@ -526,3 +528,187 @@ def test_units_price_adjustment_and_filters_are_explicit_fail_closed_contracts()
             trading_dates=frozenset({date(2026, 7, 27)}),
             audit_ledger=audit,
         )
+
+
+def test_provider_native_quicksync_shape_binds_daily_reference_evidence() -> None:
+    fields = [
+        "ts_code",
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "vol",
+        "amount",
+    ]
+    catalog_row = _catalog_row(
+        default_fields=fields,
+        default_order=["ts_code:asc", "time:asc"],
+        fields=[
+            {
+                "name": field,
+                "selectable": True,
+                "filterable": True,
+                "sortable": True,
+                "operators": ["eq", "in", "gte", "lte", "between"],
+            }
+            for field in fields
+        ],
+        filter_operators={
+            field: ["eq", "in", "gte", "lte", "between"] for field in fields
+        },
+    )
+    first = {
+        "ts_code": "600000.SH",
+        "time": "2026-07-27 09:40:00",
+        "open": 10.0,
+        "high": 10.2,
+        "low": 9.9,
+        "close": 10.1,
+        "vol": 10_000,
+        "amount": 101_000,
+    }
+    second = {
+        "ts_code": "000001.SZ",
+        "time": "2026-07-27 09:40:00",
+        "open": 11.0,
+        "high": 11.2,
+        "low": 10.9,
+        "close": 11.1,
+        "vol": 12_000,
+        "amount": 133_200,
+    }
+    client = _client(
+        _Transport(
+            first_rows=[first],
+            second_rows=[second],
+            catalog_row=catalog_row,
+        )
+    )
+    profile = _profile(
+        client,
+        identity_fields=("ts_code", "time"),
+        timestamp_field="time",
+        previous_close_field=None,
+        suspension_field=None,
+        frequency_field=None,
+        frequency_value=None,
+        timestamp_format="%Y-%m-%d %H:%M:%S",
+    )
+    audit = MinuteEvidenceAuditLedger()
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={"time": {"gte": "2026-07-27 09:35:00"}},
+        decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=audit,
+        reference_facts={
+            "600000.SH": MinuteReferenceFact(
+                symbol="600000.SH",
+                trade_date=date(2026, 7, 27),
+                previous_close_cny=9.98,
+                suspended=False,
+                evidence_sha256="a" * 64,
+            ),
+            "000001.SZ": MinuteReferenceFact(
+                symbol="000001.SZ",
+                trade_date=date(2026, 7, 27),
+                previous_close_cny=10.95,
+                suspended=False,
+                evidence_sha256="b" * 64,
+            ),
+        },
+    )
+
+    assert [bar.symbol for bar in snapshot.bars] == ["600000.SH", "000001.SZ"]
+    assert [bar.previous_close_cny for bar in snapshot.bars] == [9.98, 10.95]
+    assert [bar.reference_evidence_sha256 for bar in snapshot.bars] == [
+        "a" * 64,
+        "b" * 64,
+    ]
+    assert (
+        replace(snapshot.bars[0], reference_evidence_sha256="c" * 64).sha256
+        != snapshot.bars[0].sha256
+    )
+    assert audit.records() == ()
+
+
+def test_provider_native_quicksync_shape_requires_matching_reference_fact() -> None:
+    fields = [
+        "ts_code",
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "vol",
+        "amount",
+    ]
+    catalog_row = _catalog_row(
+        default_fields=fields,
+        default_order=["ts_code:asc", "time:asc"],
+        fields=[
+            {
+                "name": field,
+                "selectable": True,
+                "filterable": True,
+                "sortable": True,
+                "operators": ["eq", "in", "gte", "lte", "between"],
+            }
+            for field in fields
+        ],
+        filter_operators={
+            field: ["eq", "in", "gte", "lte", "between"] for field in fields
+        },
+    )
+    rows = [
+        {
+            "ts_code": symbol,
+            "time": "2026-07-27 09:40:00",
+            "open": 10.0,
+            "high": 10.2,
+            "low": 9.9,
+            "close": 10.1,
+            "vol": 10_000,
+            "amount": 101_000,
+        }
+        for symbol in ("600000.SH", "000001.SZ")
+    ]
+    client = _client(
+        _Transport(
+            first_rows=[rows[0]],
+            second_rows=[rows[1]],
+            catalog_row=catalog_row,
+        )
+    )
+    profile = _profile(
+        client,
+        identity_fields=("ts_code", "time"),
+        timestamp_field="time",
+        previous_close_field=None,
+        suspension_field=None,
+        frequency_field=None,
+        frequency_value=None,
+        timestamp_format="%Y-%m-%d %H:%M:%S",
+    )
+    audit = MinuteEvidenceAuditLedger()
+
+    with pytest.raises(MinuteDataContractError, match="minute_reference_fact_missing"):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=audit,
+            reference_facts={
+                "600000.SH": MinuteReferenceFact(
+                    symbol="600000.SH",
+                    trade_date=date(2026, 7, 27),
+                    previous_close_cny=9.98,
+                    suspended=False,
+                    evidence_sha256="a" * 64,
+                ),
+            },
+        )
+
+    assert audit.records()[0].reason_code == "minute_reference_fact_missing"
