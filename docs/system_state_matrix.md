@@ -1,6 +1,6 @@
 # System State Matrix
 
-> 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、不可变服务器 release、现役 runtime、真实数据与真实交易动作必须分别验证。截至 2026-07-27，专用 TradingAgent 身份、TradingDatas 历史 26-active 首屏读回、A股核心三数据集 current-session 和 inactive observation runtime PASS 属于 `server_validated_non_authority_read_only`；动态 catalog/manifest rollover 已是仓库合同但尚待本轮服务器手工 one-shot。worker/timer、特征/排名、模拟盘和真实交易仍未激活，front 保持退役停机态。
+> 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、不可变服务器 release、现役 runtime、真实数据与真实交易动作必须分别验证。截至 2026-07-27，专用 TradingAgent 身份、TradingDatas 历史 26-active 首屏读回、A股核心三数据集 current-session 和 inactive observation runtime PASS 属于 `server_validated_non_authority_read_only`；动态 catalog/manifest rollover 已完成仓库合同和 92-active 服务器失败关闭验收，但因 daily stale 尚未发布新 manifest。worker/timer、特征/排名、模拟盘和真实交易仍未激活，front 保持退役停机态。
 
 `legacy_inventory.yaml` 中的 `paths` 只登记干净克隆必须存在的源码或配置；`runtime_paths` 单独登记可能尚未生成、不得纳入 Git 的安装态/运行态历史路径，并要求由 `.gitignore` 明确覆盖。运行目录在某台开发机上存在或不存在都不能证明生产消费者已经退役，生产裁决仍需独立的 installed-runtime readback。
 
@@ -32,7 +32,7 @@
 
 | 对象 | 仓库观察 | YAML 门禁 | 当前可用范围 |
 |---|---|---|---|
-| TradingDatas V1 upstream query | TA不写TradingDatas；正式目录 190/26/164，固定 catalog/query，无旧路由或存储 fallback | `TARGET_CONTRACT` | 上游可查询不代表 dataset ready、完整分页、历史 PIT 或交易通过 |
+| TradingDatas V1 upstream query | TA不写TradingDatas；最新TA读回正式目录190/92/98，固定catalog/query，无旧路由或存储fallback | `TARGET_CONTRACT` | 上游可查询不代表 dataset ready、完整分页、历史 PIT 或交易通过 |
 | TA TradingDatas V1 client + Evidence Gate | 实现与契约测试已进入仓库；兼容代码符号仍含`SharedSignalsV1*` | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture/contract；不代表TradingDatas runtime |
 | TA TradingDatas Bearer transport (`tradingagent_tradingdatas_bearer_transport`) | 专用token-file已完成 metadata handoff，正式18082认证和26-active只读探测通过；值/哈希不出服务器 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 认证成功不代表dataset可用、front/worker激活或交易authority |
 | TA TradingDatas V1 integration-readiness probe | v2显式manifest；逐dataset filters/as-of/identity/event/budgets；provider-native rows、envelope source proof、bounded cursor、跨页守恒与same-observation双跑 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture或另行授权的只读联调；current observation不是历史PIT，也不是生产或交易authority |
@@ -40,9 +40,9 @@
 | TA dedicated service identity | UID/GID 987、root:tradingagent 0710 parent、tradingagent-owned 0600 leaf、正式18082认证和versioned Python runtime已验证；front退役停机 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 身份/token/runtime不等于current、worker/timer激活或完整cutover |
 | A股 `a7488e9` historical authenticated current-observation | formal 18082 one-shot 与精确幂等重放只在 `a7488e9` 冻结三件字节通过；3041只沪深主板，双创/北交所个股排除，行业/指数仅上下文 | `HISTORICAL_READ_ONLY / server_validated_non_authority_simulation_only / production=false` | 只证明当时单次真实只读观察；不得绑定到当前五项源码，专用TA token/worker/timer、历史PIT、分钟证据和模拟成交均未激活 |
 | A股五项 committed observation runtime | `6db813c…`仓库合同逐 session 绑定snapshot/probe/observation receipt/membership ledger，以transaction-complete作为唯一commit point；核心三数据集正式运行和幂等重放 PASS | `CURRENT_VERIFIED / repository_contract` + `server_validated_non_authority_read_only / production=false` | 单次current observation不是历史PIT、feature、tradable/candidate/order authority |
-| A股 dynamic observation manifest rollover | 动态冻结全部 active catalog inventory；只映射并预检 calendar/security-master/daily；同 session 同合同复用，合同漂移保留旧 current 并失败关闭 | `CURRENT_VERIFIED / repository_contract / production=false` | 尚未完成本轮92-active服务器one-shot；不自动纳入其它active dataset，不是timer或交易authority |
+| A股 dynamic observation manifest rollover | 动态冻结全部 active catalog inventory；只映射并预检 calendar/security-master/daily；同 session 同合同复用，合同漂移保留旧 current 并失败关闭 | `CURRENT_VERIFIED / repository_contract` + `server_validated_non_authority_read_only / production=false` | 92-active只读验收因daily stale正确退出2且未发布；不自动纳入其它active dataset，不是timer或交易authority |
 | A股 forward-history + daily-only planner | 至少21个forward session；缺calendar continuity/adjustment仍blocked；无label horizons，`paper_trade_session=null` 且 abstain | `TARGET_CONTRACT / repository_contract / production=false` | 无预测、资金、订单、成交、对账或SampleJournal authority |
-| A股 observation timer | tracked disabled oneshot 已串联runtime audit→dynamic manifest→observation；root-owned runtime和UID987入口已验，timer仍不存在 | `TARGET_CONTRACT / server_validated_non_authority_read_only / production=false` | dynamic rollover尚待服务器手工one-shot；没有current切换或timer激活 |
+| A股 observation timer | tracked disabled oneshot 已串联runtime audit→dynamic manifest→observation；root-owned runtime和UID987入口已验，timer仍不存在 | `TARGET_CONTRACT / server_validated_non_authority_read_only / production=false` | dynamic builder已因daily stale失败关闭；没有完整worker one-shot、current切换或timer激活 |
 | 主板三层 Universe | policy/snapshots/zero-leakage 合同已进入仓库；环境宽度由内容寻址CoverageReceipt及外部verifier派生，过期/数量/双创聚合/authority缺口降级 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅模拟scope与cash+policy upper bound；真实coverage verifier、broker和ledger订单量均未证明 |
 | Phase 1.5 行业 shadow 薄切片 | PIT taxonomy、成分、score方法/有效期、score/coverage receipts和独立proof绑定；动态 1 深研 + 2 观察 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture研究聚焦；真实score verifier缺失；无个股、无position effect、无晋级资格 |
 | 50k optimizer + plan binding | 可行池负责cash+policy上界；无默认account verifier复核账户；Champion score另绑定当前selection/artifact/model/spec与经独立port复核的数值PIT特征；plan再绑定T+1、cost、现金顺序、零股卖出与订单量 | `CURRENT_VERIFIED / repository_contract / production=false` | rank只排序、固定probe sizing；fixture proof不证明真实账户、Champion/feature registry或broker |
@@ -80,7 +80,7 @@
 | `tradingagent_ashare_observation_membership_ledger` | `CURRENT_VERIFIED / repository_contract` | 新 fresh state 的五项 committed binding 已由当前服务器读回；仍无 label/trading authority |
 | `tradingagent_ashare_prospective_history_readiness` | `TARGET_CONTRACT / repository_contract` | 21 session 最小覆盖；calendar continuity/adjustment 缺失仍 blocked |
 | `tradingagent_ashare_daily_only_paper_planning` | `TARGET_CONTRACT / repository_contract` | `paper_trade_session=null` 的 deterministic abstain；无资金或执行副作用 |
-| `tradingagent_ashare_observation_manifest_rollover` | `CURRENT_VERIFIED / repository_contract` | 动态catalog inventory与核心三数据集manifest生成、同session幂等及合同漂移fail-closed；尚未证明服务器worker/timer激活 |
+| `tradingagent_ashare_observation_manifest_rollover` | `CURRENT_VERIFIED / repository_contract` | 92-active服务器读回证明daily stale时正确fail-closed；尚无新manifest、worker或timer激活 |
 | `tradingagent_ashare_observation_timer_candidate` | `TARGET_CONTRACT / architecture_target` | disabled oneshot已接dynamic builder；服务器手工one-shot和失败恢复未验，timer不存在 |
 | `tradingagent_mainboard_scope` | `CURRENT_VERIFIED / repository_contract` | 主板个股；双创/北交所等非主板指数与行业聚合仅环境参考，非主板个股禁止分析；覆盖 authority 需外部复核 |
 | `tradingagent_small_account_optimizer` | `CURRENT_VERIFIED / repository_contract` | 50k、账户输入/proof绑定、整数股/零股卖出、费用与现金的模拟优化器；不证明真实账户 |
