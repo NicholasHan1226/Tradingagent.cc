@@ -10,8 +10,11 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 2026-07-27 又完成动态 catalog/manifest builder 的仓库实现、服务器失败关闭验收
 以及 freshness 修正后的正式重跑。正式目录已扩大到 100 active，但系统仍只映射
 calendar/security-master/daily 三个审核过的核心角色；builder 已发布内容寻址
-manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。自动模拟交易仍未
-启动。
+manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。仓库现已包含
+5分钟 fixture/mock 研究闭环：严格分钟证据之后可生成透明滚动特征、未经校准的
+确定性排名、精确下一根K线模拟结算、四个隔离反事实账本、Decision Ledger 与对账；
+它没有正式分钟 dataset handoff、worker/timer 或 durable capital authority。
+自动模拟交易仍未启动。
 
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
   `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
@@ -151,8 +154,9 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
    少量高质量机会、no-trade band、整数 100 股、最低经济订单、低容量机会和
    试探—确认—扩仓；不以交易次数或每月 20% 作为强制生产约束。
 5. **多风格**：产业趋势、事件/预期差、跨市场错配和现金状态逻辑上独立，
-   资金统一组合、订单统一净额；当前 observation 尚未形成可运行的行业特征、
-   个股 ranking 或策略信号。
+   资金统一组合、订单统一净额；仓库 fixture 已能对主板样本生成未经校准的
+   个股排序，并分别运行 baseline/event/flow/dynamic-position 反事实账本。
+   这些分数、账本和成交均不可冒充概率、真实行业特征、生产策略或资金 authority。
 
 ## 当前架构边界
 
@@ -186,8 +190,10 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
   60–120 交易日模拟样本。
 - 申万日线仍 permission-denied，`index_classify` 本次为 failed/degraded；核心
   observation 没有行业上下文，不能冒充行业宽度、行业排名或产业研究输入。
-- 当前 snapshot 只证明单次 current observation，不是可训练历史数据，也没有
-  feature、ranking、forecast、TargetPosition、PaperFill 或账户对账。
+- 当前正式 snapshot 只证明单次日频 current observation，不是可训练历史数据；
+  新增 feature、ranking、PaperFill 和账户对账只在人工构造的5分钟 fixture/mock
+  合同中通过，尚未绑定 TradingDatas 正式分钟数据、durable capital/outbox 或
+  生产 worker。
 - 日频数据不能合成分钟级 quote、bid/ask 或可成交 fill。正式自动模拟成交仍需要
   经验证的执行时点行情或独立模拟成交政策。
 - front 继续停止；本阶段不恢复 `tradingagent.cc` 页面。tracked base unit 已安装

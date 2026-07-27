@@ -1200,6 +1200,31 @@ entries:
       - infer_predictive_edge_or_return_target
       - authorize_broker_or_real_trading
     successor: ashare_real_data_paper_requires_fresh_tradingdatas_handoff
+  - entry_id: tradingagent_ashare_minute_fixture_research_loop
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: Ashare/minute_loop.py
+    production_verified: false
+    last_verified_at: "2026-07-27"
+    evidence:
+      - Ashare/minute_data.py
+      - Ashare/minute_research.py
+      - Ashare/minute_paper.py
+      - Ashare/minute_loop.py
+      - tests/test_ashare_minute_data.py
+      - tests/test_ashare_minute_research.py
+      - tests/test_ashare_minute_paper.py
+      - tests/test_ashare_minute_loop.py
+    allowed_uses:
+      - validate_catalog_derived_five_minute_fixture_evidence
+      - collect_uncalibrated_rank_and_counterfactual_fixture_records
+      - verify_exact_next_bar_settlement_recovery_and_reconciliation
+    prohibited_uses:
+      - infer_formal_tradingdatas_minute_handoff_or_runtime
+      - publish_calibrated_probability_expected_return_or_predictive_edge
+      - infer_durable_capital_outbox_scheduler_broker_or_real_trading
+    successor: ashare_minute_observation_requires_fresh_tradingdatas_handoff
   - entry_id: tradingagent_cnfutures_fixture_closed_loop
     state: CURRENT_VERIFIED
     layer: repository_contract
