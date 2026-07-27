@@ -103,6 +103,7 @@ def _bar(
         source_lineage_sha256=_sha("b"),
         envelope_proof_sha256=_sha("c"),
         source_row_sha256=_sha("d"),
+        reference_evidence_sha256=_sha("e"),
     )
 
 
