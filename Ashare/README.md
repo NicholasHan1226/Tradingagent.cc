@@ -151,6 +151,73 @@ ranked-not-traded outcomes are translated into the existing
 one decision-ledger vocabulary for actual paper fills and the base, event,
 flow and dynamic-position counterfactual books.
 
+### Automatic fixture research loop
+
+`minute_research.py` and `minute_loop.py` connect the accepted evidence and
+paper contracts without adding a runtime, broker, data fallback or second
+capital authority.
+
+`MinuteRollingFeatureEngine` requires consecutive accepted snapshots. Its
+transparent V1 features are close-to-close return, intrabar return, bar range,
+volume/amount change and an optional bounded context adjustment. The resulting
+output is permanently explicit about its current scientific status:
+
+```text
+score_semantics = uncalibrated_deterministic_rank_score
+calibrated_probability = null
+expected_return_bps = null
+probability_model_state = not_calibrated
+promotion_eligible = false
+execution_authority = false
+```
+
+This score only creates an ordering for fixture label collection. It does not
+claim forward return, probability calibration, investment advice or a trained
+model. A name is candidate-eligible only if its TA-owned universe record is a
+mainboard ordinary share, belongs to one of the first three research themes,
+is at least 30 calendar days old, and is neither risk-warning nor
+delisting-risk. ChiNext/STAR/index or industry aggregate observations remain
+`context_only` and cannot become a feature symbol, candidate or order.
+
+`MinuteFixtureClosedLoop` processes one completed cross-sectional snapshot at a
+time:
+
+```text
+accepted minute bars
+  -> rolling features
+  -> uncalibrated ranking
+  -> action comparison
+  -> pending fixture order
+  -> exact next completed bar settlement
+  -> fixture cash/positions
+  -> reconciliation
+  -> Decision Ledger
+  -> counterfactual attribution
+```
+
+The baseline sleeve uses only the transparent score. Event and flow sleeves
+require matching, PIT-bounded auxiliary evidence with an explicit expiry;
+missing or expired evidence never falls back to the baseline. Missing evidence
+is recorded as a model rejection, while expired input fails the current
+shadow-ranking step closed. The
+dynamic-position sleeve changes only fixture lot count inside the same
+canonical 50k constraints. These four books are independent counterfactual
+experiments, not four real accounts and not four capital authorities.
+
+Pending orders are restart-state hashed and may settle only against the exact
+next five-minute bar. A skipped/missing bar becomes a formal nonfill; it is
+never filled late. Data failure cancels pending new-risk attempts, records
+data-reject decisions for every monitored trade symbol and creates no new
+position. Manual fixture rejection has a dedicated audit path. A completed
+step reconciles each sleeve only when marks exist for every held symbol.
+
+The loop is intentionally process-local and fixture-only. Its restart format
+protects test state integrity but is not the append-only SampleJournal,
+MarketCapitalLedger, durable outbox, production scheduler or promotion
+authority. Real minute handoff still requires the separate TradingDatas
+catalog profile, five-day observation gate and a future durable settlement
+adapter.
+
 ### Phase-one A-share scope
 
 - Tradable equities: Shanghai/Shenzhen mainboard ordinary shares only.
