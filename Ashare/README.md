@@ -65,3 +65,115 @@ training- nor promotion-eligible. ChiNext, STAR, and Beijing individual equities
 fully excluded. Only canonical context-only indices and sector/industry
 aggregates may enter context; they never enter candidate selection or receipts.
 Promotion, risk expansion, LLM influence, and real trading remain disabled.
+
+## Five-minute simulation adapter
+
+`minute_data.py` and `minute_paper.py` are the A-share lane's mock-ready
+five-minute vertical slice. They do not assert that TradingDatas currently has
+a production-ready minute dataset.
+
+### TradingDatas consumer boundary
+
+- The only data-plane routes are `GET /v1/catalog` and `POST /v1/query`.
+- `MinuteDatasetProfile` must be built from one exact active catalog row. The
+  dataset ID, `schema_major`, default fields, default order and page-size limit
+  are not hard-coded in TA.
+- Provider-native rows remain rows. Receipt, lineage, freshness,
+  `data_through`, and `observed_at` remain response-envelope evidence.
+- Volume/amount conversion factors and raw-unadjusted execution-price semantics
+  are explicit profile inputs. TA does not guess whether a provider reports
+  shares, lots, yuan, or thousands of yuan.
+- The first supported frequency is exactly five minutes. Timestamp field,
+  timestamp format and bar-start/bar-end semantics must be supplied by the
+  frozen TA profile after the formal TradingDatas handoff.
+- No SQLite, file, port 8082, `/tushare`, `/source_status`, provider-specific
+  route or fallback exists in the adapter.
+- Every bounded read is replayed. Pagination, cross-page identity,
+  catalog-version drift and same-observation mismatch fail closed.
+- Query filters must use only the field/operator allow-list in the frozen
+  catalog row; a provider-private or undeclared filter is rejected.
+
+`MinuteBarEvidence` accepts only a completed mainboard common-stock bar with:
+
+- an exchange-calendar eligible Shanghai trade date;
+- an exact morning or afternoon session interval that does not cross lunch,
+  close or a trade date;
+- `bar_end <= data_through <= observed_at == available_at <= decision_time`;
+- no more than 30 seconds between bar end and availability;
+- positive valid OHLC prices, nonnegative amount, positive volume, no
+  suspension, and no duplicate/conflicting `(symbol, bar_end)` identity;
+- envelope state `ready`, `degraded=false`, freshness `fresh/stale=false`,
+  quality `valid`, complete provider-neutral lineage, receipt and timestamps.
+
+Rejected data creates `MinuteEvidenceAuditRecord` only. It is never feature-,
+candidate-, or execution-eligible.
+
+### Small-account fixture simulation
+
+The operating policy reads the canonical `ashare-capital-v1` projection:
+
+- 50,000 CNY initial capital;
+- 15% single-name cap, 90% stock-gross hard cap and 100-share buy lots;
+- 10 monitored symbols initially, 60 only after real batch-minute parity;
+- up to six actively used positions while the canonical authority retains its
+  eight-position safety capacity;
+- cash as a formal state and canonical 1,000/2,000 CNY no-trade/economic-order
+  thresholds.
+
+`MinuteExecutionPair` forbids same-bar execution. A decision made after bar
+`t` may use only the next valid bar `t+1`; the lunch transition is
+11:30-to-13:05 and the unsupported closing auction is not used.
+
+`MinuteFixturePaperBook` applies next-bar open plus conservative canonical
+slippage, high/low and price-limit bounds, 10% bar-participation capacity,
+partial/nonfill/reject receipts, minimum commission, sell tax and transfer
+fee, T+1 sellable quantities, cash/position conservation, exact marks,
+restart-state hashing and idempotent order replay. It is explicitly:
+
+```text
+authority_tier = non_production_fixture
+durable = false
+real_trading_enabled = false
+broker_order_id = null
+```
+
+It is a mock verifier, not a replacement for `MarketCapitalLedger`. Completed
+five-minute bars are retrospective fill evidence: the modeled fill time is the
+next bar open, while settlement occurs only after the completed bar becomes
+available. The existing live-quote capital stage requires contemporaneous quote
+evidence, so the durable minute settlement adapter must be frozen separately
+after the real TradingDatas minute handoff; no timestamp is rewritten to make a
+completed bar look like a live quote.
+
+All fill, nonfill, data/model/human rejection, insufficient-capital and
+ranked-not-traded outcomes are translated into the existing
+`DecisionExposureRecord` / `InMemoryDecisionLedger` contract. This preserves
+one decision-ledger vocabulary for actual paper fills and the base, event,
+flow and dynamic-position counterfactual books.
+
+### Phase-one A-share scope
+
+- Tradable equities: Shanghai/Shenzhen mainboard ordinary shares only.
+- Context-only evidence: ChiNext/STAR indices and industry aggregates may
+  influence market or sector state, but cannot become order symbols.
+- First research directions: AI/semiconductor infrastructure,
+  robotics/industrial automation and innovative medicines, with a broad-index
+  control sample.
+- ST/risk-warning names, delisting risk, listings younger than 30 days,
+  suspension, zero volume and unproven trading state remain upstream universe
+  exclusions. The minute gate independently rechecks mainboard identity,
+  suspension and positive volume.
+- DeepSeek/other LLMs remain news, event and industry-evidence sidecars. They
+  cannot place orders, set position size, change a model, bypass risk or write
+  the paper account.
+
+### Runtime stop line
+
+Until TradingDatas supplies a formal five-minute catalog/query handoff and TA
+passes a 10-symbol canary plus five consecutive trade-date observations:
+
+- do not enable a TA production timer;
+- do not run this fixture as the current capital authority;
+- do not connect a broker or create real orders;
+- do not restore the online front;
+- keep `REAL_TRADING_ENABLED=false`.
