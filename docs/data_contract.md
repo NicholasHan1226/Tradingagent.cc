@@ -605,6 +605,40 @@ Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的
 - 资本支持的模拟执行 quote 必须嵌入精确`AShareExecutionQuoteEvidence + MarketEvidenceVerification`，绑定dataset/catalog、source receipt/hash/lineage、quote payload、`data_through/observed_at/available_at`、`market_session`、同一calendar receipt和capital/run context。静态时点必须满足`data_through <= observed_at <= available_at <= execution_time`；quote可以在decision后到达，但不得来自future。trade date必须是calendar当前会话，session label必须匹配上海本地effect time。当前模拟只接受 `continuous_auction_am=09:30–11:30` 与 `continuous_auction_pm=13:00–14:57`；收盘集合竞价和盘后固定价不得伪装为连续竞价。整批snapshot先完成静态preflight，随后无默认`TrustedExecutionClock`分别在`sim_submit`与`capital_commit`紧邻副作用前取时，要求`effect_time-data_through <= 30 seconds`并再次复核session；commit校验后、账务写入前还要重读一次最新drift/Champion authority。quote的`execution_time`保持为市场证据时点；模拟`filled_at/terminal_at`取submit副作用时点，全部ISO时间保留原始微秒精度，commit时点不得倒退。第二次检查失败时保留异常reading、丢弃未提交模拟结果、释放预约且不写capital outbox/ledger；倒退或跨交易日时terminal保持最后合法submit。receipt绑定clock identity、`market_session/available_at/data_through`、market execution time、两次effect time与market authority/verification SHA。日循环与对账复用同一session划分和30秒TTL；验证`not_committed`回执时还必须重证`data_through <= available_at <= execution_time <= sim_submit_checked_at`、`sim_submit_checked_at-data_through <= 30 seconds`及`session(execution_time) == market_session`，不能只看commit阶段的最终失败原因。随后按`regression -> trade-date mismatch -> session mismatch -> stale`的唯一优先级证明失败原因；commit阶段的future原因在submit已通过且时钟不倒退时不可达，因此不接受伪造。regression/trade-date的terminal必须精确等于最后合法submit，session/stale必须精确等于commit reading；卖出型零成交回执不得携带release ID。对账另行验证`quote <= submit <= fill/terminal <= commit <= reconcile`，并只为精确允许列表内的commit前市场失效、零成交、完整残量、无fill/commit ID且释放语义一致的`not_committed`回执开放闭环。当前唯一具体时钟是不可继承、`production_eligible=false`的冻结fixture时钟，不是生产time authority；本地最终authority重读也不证明未来外部authority与capital commit已原子化。
 - pending/unknown、请求值、弱价格证据或 commit pending 只能作为账户/chain-validation 事实，不能进入策略 PnL。
 
+### A股5分钟 fixture research contract
+
+该合同只用于 `Ashare/minute_data.py`、`Ashare/minute_research.py`、
+`Ashare/minute_paper.py` 与 `Ashare/minute_loop.py` 的网络关闭 fixture/mock
+验证。它不写 `MarketCapitalLedger`、durable outbox、正式 SampleJournal 或
+生产 worker。
+
+- `MinuteDatasetProfile` 只能从一份精确 catalog row 冻结 dataset/schema/fields/
+  filters/order/page limit；股票、时间、OHLCV、成交额、前收、停牌、频率、单位换算
+  和 raw-unadjusted 价格语义由 TA 显式解释。禁止 SQLite、8082、旧/provider
+  route 或文件 fallback。
+- `MinuteBarEvidence` 将 provider-native row 与 envelope 的 receipt/lineage/
+  `data_through`/`observed_at` 分离绑定；只接受 ready/non-degraded/fresh/valid、
+  延迟不超过30秒、完成且合法的主板5分钟bar。相同 `(symbol, bar_end)` 重复/冲突、
+  future、午休/收盘跨越、停牌、零成交、分页/游标/same-observation异常均
+  fail closed。
+- `MinuteFeatureVector` 只含 `close_to_close_return`、`intrabar_return`、
+  `range_ratio`、`volume_change`、`amount_change`、显式有效期内的
+  `context_adjustment` 及 `raw_rank_score`。当前score固定
+  `score_semantics=uncalibrated_deterministic_rank_score`；
+  `calibrated_probability=null`、`expected_return_bps=null`、
+  `probability_model_state=not_calibrated`、`promotion_eligible=false`、
+  `execution_authority=false`。
+- `MinuteUniverseInstrument` 的交易成员仅限沪深主板普通股、上市至少30日、
+  非风险警示/退市风险，并只路由首批三个研究主题。双创/科创/行业/宽基聚合必须
+  `context_only=true`，不能成为 feature symbol、candidate 或 order。
+- `MinutePendingFixtureOrder` 只可在完成 bar `t` 后生成，并仅由精确 `t+1`
+  完成bar结算；缺失或跳过该bar形成 nonfill，不允许迟到补成交。数据失败取消未结
+  新风险并记录拒绝；事件/资金辅助证据必须显式到期，缺失不回退、过期失败关闭。
+- baseline/event/flow/dynamic-position 四个 `MinuteFixturePaperBook` 分别从
+  50,000 CNY fixture opening state开始，只用于消融；它们不是四个真实账户或
+  durable capital authority。每个账本独立执行100股、T+1、费用、滑点、涨跌停、
+  bar容量、no-trade band、单票上限、持仓容量、幂等恢复和全mark对账。
+
 ### A股 ExecutionRealityModel
 
 当前版本是 `ashare-execution-reality-20260706-v1`，`effective_from=2026-07-06`。adapter、server-local 模拟撮合、共享 market-rules facade 和反事实成本必须读取同一模型，不得各自复制税费/涨跌幅/整手常量。模型依据沪深现行交易规则、中国结算交易过户费及现行印花税口径；规则变动必须发布新 model version，历史订单不得原地改口径。
