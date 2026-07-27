@@ -575,6 +575,36 @@ profile，也不授权 timer、订单或真实交易。
 
 ### 2.2 A股 one-shot current-observation runner
 
+worker 不再依赖 `/etc/tradingagent` 下的静态日期 manifest。每次 observation
+之前先由专用身份运行动态 builder：
+
+```bash
+export REAL_TRADING_ENABLED=false
+
+python3 tools/build_ashare_observation_manifest.py \
+  --base-url http://127.0.0.1:18082 \
+  --access-policy-id ta-ashare-observation-read-v1 \
+  --token-file /run/secrets/tradingagent/tradingdatas-read.token \
+  --manifest-root /var/lib/tradingagent/ashare-observation/manifests \
+  --json
+```
+
+builder 只使用固定 `GET /v1/catalog` 与 `POST /v1/query`。它动态冻结完整 active
+catalog inventory，但只把经过业务映射审核的
+`trade_calendar/security_master/daily_bars` 三角色写入 observation manifest；
+其它 active dataset 不自动查询、不自动晋级。交易日历必须完整分页并由当前
+metadata/source proof 接受，证券主数据与最近开市日日线再各做一页预检。任一核心
+dataset 为 `stale/partial/empty/unobserved/failed/degraded`，或缺 receipt、
+lineage、data-through、observed-at，退出码为 `2` 且不更新 `current.json`。
+
+仓外产物固定在 manifest root 的 `archive/`、`catalog/`、`receipts/` 和 regular
+file `current.json`；目录 `0700`、文件 `0600`。同一交易会话合同完全相同时复用
+原 manifest；同一会话 catalog/active contract 漂移时保留旧 current 并失败关闭。
+builder 的 catalog snapshot 是 inventory 证据，不是 92 个（或任意未来数量）
+dataset 的研究资格，也不替代下面 runner 的完整分页、same-observation 双跑和五项
+committed binding。退出码固定为 `0=发布或精确复用通过`、`2=上游/证据门禁阻断`、
+`64=本地配置/token-file/transport无效`。
+
 仓库候选提供一个 observation-only runner，把上一节的完整双跑 probe 作为不可绕过的写入前门禁，再冻结一次同语义的 provider-native research snapshot。runner 同时要求 `security_master` 与 `daily_bars`，以两者 symbol 并集建立 denominator，将 ST/退市风险、新股、停牌/零成交、缺日线和非主板个股作为显式排除记录。首次成功写入必须先持久化 transaction intent，再原子冻结 `ResearchDataSnapshot`、integration probe receipt、aggregate observation receipt 和逐股 membership ledger，四项精确读回后才发布 transaction-complete commit marker；可消费权威因此是五项绑定，不是“文件都出现了”即可。`observation_universe` 只是观察初筛，不是 Account Tradable Universe、小资金可行池或订单池。runner 不生成候选、资本预约、订单、成交、对账或 SampleJournal 样本，也不表示自动模拟 scheduler 已安装。
 
 运行消费端只能通过 `load_verified_ashare_runtime_authority_bundle` 在同一 state root 与 session lock 内重读五项 committed binding。普通 mapping/hash、直接 `AshareRuntimeAuthorityBundle(...)` 或公共诊断 builder 都不能自授资格；缺 complete 的半写事务、权限不是 root `0700`/file `0600`、owner 不匹配或跨根 artifact 一律 fail closed。日线估值 adapter 只接 state root 与显式交易身份，在内部调用该 loader，不接受调用方注入的 receipt、membership 或“已验证”bundle。
@@ -595,7 +625,7 @@ python3 tools/run_ashare_observation.py \
 
 也可显式传入 `--token-file /absolute/path/to/tradingdatas-read.token`；禁止两种方式包含明文 token，且出现 `TRADINGDATAS_API_TOKEN`、`TRADINGDATAS_BEARER_TOKEN` 或 `TRADINGDATAS_TOKEN` 时即使 token-file 合法也会拒绝运行。runner 固定 `mg_off`，不会读取 `MARKETGRAPH_API_URL`。首次运行只有在 bounded pagination、same-observation 双跑、probe 后快照语义守恒、source proof、current-observation、证券主数据与主板 scope 投影全部通过后才写入；同一 profile/decision 的精确重放只读回不可变的五项 committed binding，不创建 transport、不再次请求数据。intent 后任一崩溃点只允许在同 session 锁内恢复精确同内容；没有 complete marker 的四项状态不能被 runtime authority、history 或 planner 消费。创业板、科创板和北交所个股可保留在原始全市场观察中，但只计入排除原因，不能进入 `observation_universe`。当前 `index_classify`/`sw_daily` 只是行业分类与行业指数 `optional_context`；没有成分 denominator/coverage receipt 时不得称为完整行业宽度。旧回执中的 `tradable_*` 只是待退役兼容别名，不是订单 authority。
 
-退出码：`0=观察绑定或精确重放通过`、`2=数据/范围/存储门禁阻断`、`64=参数、manifest、token-file或transport配置无效`。stdout 只输出 secret-free 摘要；systemd/journal 日志不得把 token、Authorization、manifest正文或 provider自由文本 reason 写出。专用 `tradingagent:tradingagent` 身份与 TA-scoped token-file 已完成服务器 handoff，但 observation service/timer 仍是 **non-enableable code candidate**，也没有可信 worker 按冻结交易日滚动生成每日 immutable manifest/as-of 的 authority。当前静态 manifest 不得由 timer 重复回放；在 daily manifest rollover、正式 endpoint 全量 observation parity、fresh state root、重启/幂等和回滚验收全部通过前，禁止 enable/install 该 timer，也不得声称每日自动观察、自动模拟或生产激活。周末或节假日 one-shot 必须让 `decision_as_of` 反映实际观察时间，并由完整 `trade_calendar` 证明日线 filter 是最新已完成开市日；不得把自然日硬改成行情日，也不得把 session-date `data_through` 伪造成收盘时刻。
+退出码：`0=观察绑定或精确重放通过`、`2=数据/范围/存储门禁阻断`、`64=参数、manifest、token-file或transport配置无效`。stdout 只输出 secret-free 摘要；systemd/journal 日志不得把 token、Authorization、manifest正文或 provider自由文本 reason 写出。专用 `tradingagent:tradingagent` 身份与 TA-scoped token-file 已完成服务器 handoff；tracked worker unit 已串联 runtime audit → dynamic manifest builder → observation runner，但仍是 **non-enableable code candidate**。在正式 18082 上完成 disabled unit 手工 one-shot、精确重放、失败恢复和回滚验收前，禁止 enable/install timer，也不得声称每日自动观察、自动模拟或生产激活。周末或节假日 one-shot 必须让 `decision_as_of` 反映实际观察时间，并由完整 `trade_calendar` 证明日线 filter 是最新已完成开市日；不得把自然日硬改成行情日，也不得把 session-date `data_through` 伪造成收盘时刻。
 
 盘后日线的 `observation_session=T` 只是 current observation。在预测前冻结且独立验证的交易日历没有给出下一 session 之前，daily-only planner 必须写 `paper_trade_session=null` 并固定 `action=abstain/status=completed_with_blocks`。每个 symbol 至少需要 21 个 forward-collected session 才能覆盖 20 日 momentum/volatility 的最小数学窗口；但缺交易日连续性和公司行动/复权 authority 时，即使计数达到 21 也仍是 blocked。当前 membership ledger 不注册任何 label horizon；缺 calendar/minute/market-truth/adjustment authority 不得生成或回填标签。缺分钟/L1 evidence 时不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用。
 

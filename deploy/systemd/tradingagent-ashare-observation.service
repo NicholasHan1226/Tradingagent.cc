@@ -3,10 +3,10 @@ Description=TradingAgent A-share current-observation worker candidate
 Wants=network-online.target
 After=network-online.target
 ConditionPathExists=/etc/tradingagent/ashare-worker.env
-ConditionPathExists=/etc/tradingagent/ashare-observation-manifest.json
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
 ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
 ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py
+ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/build_ashare_observation_manifest.py
 ConditionPathExists=/opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py
 
 [Service]
@@ -20,6 +20,7 @@ Environment=MARKETGRAPH_MODE=mg_off
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 /opt/investment/releases/tradingagent/current/tools/audit_ashare_worker_runtime.py --python-runtime /opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 --release-root /opt/investment/releases/tradingagent/current --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT} --expected-user tradingagent --expected-group tradingagent
+ExecStartPre=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 /opt/investment/releases/tradingagent/current/tools/build_ashare_observation_manifest.py --base-url ${TRADINGDATAS_API_URL} --access-policy-id ${TRADINGDATAS_ACCESS_POLICY_ID} --token-file /run/secrets/tradingagent/tradingdatas-read.token --manifest-root ${ASHARE_OBSERVATION_MANIFEST_ROOT} --json
 ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 /opt/investment/releases/tradingagent/current/tools/run_ashare_observation.py --manifest ${ASHARE_OBSERVATION_MANIFEST} --token-file /run/secrets/tradingagent/tradingdatas-read.token --state-root ${ASHARE_OBSERVATION_STATE_ROOT} --runtime-root ${ASHARE_OBSERVATION_RUNTIME_ROOT} --log-root ${ASHARE_OBSERVATION_LOG_ROOT}
 TimeoutStartSec=30min
 UMask=0077
