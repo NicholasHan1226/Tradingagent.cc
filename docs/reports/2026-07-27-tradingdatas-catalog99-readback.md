@@ -66,3 +66,31 @@ manifest_root_created=false
 
 下一步仍是等待最近完成交易日的 daily 恢复
 ready/fresh/valid/degraded=false，再重跑动态 manifest 和完整 observation。
+
+## 99-active API parity 补充
+
+同一 production release 和 catalog 随后完成一次 fresh consumer parity：
+
+```text
+identity=UID987 with existing TA read scope
+request=POST /v1/query
+limit=1
+as_of=omitted
+active_dataset_count=99
+http_200=99
+query_contract_failure=0
+nonempty=79
+legal_empty=20
+metadata_ready=3
+metadata_partial=92
+metadata_stale=4
+runtime_success=75
+runtime_empty=20
+runtime_stale=4
+```
+
+这证明所有 active dataset 都能通过固定 catalog/query 合同完成首屏认证回读，
+并能把合法空结果与非空结果投影为诚实 metadata。它不证明 99 项完整分页、
+response completeness、freshness watermark、历史版本或交易用途。尤其不能以
+99/99 HTTP 200 覆盖 92 partial 和 4 stale，也不改变当前 daily 对核心
+observation 的失败关闭。

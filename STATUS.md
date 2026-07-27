@@ -82,6 +82,11 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   `/opt/investment/release-evidence/tradingagent/20260727T092955Z-ta-catalog99-94fcdf7`
 - 99-active 增量报告：
   [docs/reports/2026-07-27-tradingdatas-catalog99-readback.md](docs/reports/2026-07-27-tradingdatas-catalog99-readback.md)
+- 同一 catalog 的发布侧 fresh consumer parity 以 UID 987 和既有 TA read scope
+  对 99 个 active dataset 逐项执行 `POST /v1/query limit=1`、省略 `as_of`：
+  99/99 HTTP 200、0 query-contract failure、79 nonempty、20 legal empty；
+  envelope metadata 为 3 ready、92 partial、4 stale。该证据只证明固定 API
+  可达和 metadata parity，不是完整分页、研究资格、历史 PIT 或执行 authority。
 
 本地主线与远端主线一致性必须在每次交付时重新执行
 `git rev-parse HEAD origin/main`；顶部提交号只标记本轮证据，后续提交会自然作废。
@@ -94,7 +99,7 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 | GitHub 主线 | dynamic manifest 已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
 | 服务器代码 | `6db813c…` observation、`eb2e18a…` runtime 与 `94fcdf7…` dynamic builder 不可变 release 已安装、未切 current | release 目录不等于 active worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 历史26-active首屏合同与`20260724`核心 observation/重放 PASS；99-active 动态读回时 daily stale，builder fail-closed | 单次 current observation 不是历史 PIT、训练样本、行业宽度或执行证明 |
+| 数据验收 | 99-active首屏parity为99/99 HTTP 200但仅3 ready；`20260724`核心 observation/重放曾PASS，当前daily stale使builder fail-closed | 首屏可达和单次current observation都不是完整分页、历史PIT、训练样本、行业宽度或执行证明 |
 | 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；worker inactive/static，timer不存在；无 broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
