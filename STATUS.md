@@ -1,15 +1,16 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-26 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-27 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 ## 当前结论
 
 TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer token-file
-消费合同、26-active 首屏有界验收，以及当前 A股核心三数据集 observation 的
-第一次正式只读运行。`20260724` current-observation 已形成并完成幂等重放；
-行业分类上下文因 metadata failed 被排除。专用 observation Python runtime、
-inactive worker unit 和 legacy front 配置退役也已完成服务器验收；自动模拟交易
-仍未启动。
+消费合同、历史 26-active 首屏有界验收，以及 A股核心三数据集 observation 的
+第一次正式只读运行。`20260724` current-observation 已形成并完成幂等重放。
+2026-07-27 又完成动态 catalog/manifest builder 的仓库实现和服务器失败关闭验收：
+正式目录已扩大到 92 active，但系统仍只映射 calendar/security-master/daily 三个
+审核过的核心角色；当日 daily 为 stale/degraded，builder 正确拒绝发布新 manifest。
+自动模拟交易仍未启动。
 
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
   `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
@@ -18,11 +19,14 @@ inactive worker unit 和 legacy front 配置退役也已完成服务器验收；
   `/opt/investment/releases/tradingagent/6db813cdb9c9eaa36ab65c3529ebaeee145aeba2`。
   服务器另安装
   `/opt/investment/releases/tradingagent/eb2e18a6c38b1f5c1139679a8e910c6923fa3edb`
-  用于 runtime/unit 验收。两者都不是 active/current 切换，也没有启动 front、
-  worker、timer 或真实交易。
+  用于 runtime/unit 验收；动态 builder 对应不可变 release 为
+  `/opt/investment/releases/tradingagent/94fcdf767e9e531b18caa1ac0e9ea18cbb1af647`。
+  三者都不是 active/current 切换，也没有启动 front、worker、timer 或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
-  `GET /v1/catalog` 与 `POST /v1/query`；当前
-  `catalog_version=v1-c19a22c011fc363e`，190 total / 26 active / 164 paused。
+  `GET /v1/catalog` 与 `POST /v1/query`。最新 TA 自身读回为
+  `catalog_version=v1-ee2dbdf4ecc91390`，190 total / 92 active / 98 paused；
+  active contract 摘要为
+  `cbf7b503b0f003b43048d6d64a49098bbb10db9cc8e82379a26a7b84b0d34b2b`。
 - 专用运行身份是 `tradingagent:tradingagent`（UID/GID 987）。token 只从
   `/run/secrets/tradingagent/tradingdatas-read.token` 读取；parent 为
   `root:tradingagent 0710`，leaf 为 `tradingagent:tradingagent 0600` 的 regular
@@ -45,6 +49,11 @@ inactive worker unit 和 legacy front 配置退役也已完成服务器验收；
   核心 manifest 移除；`context_probe_roles=[]`，不能据此做行业宽度或行业选股。
 - `current_observation_snapshot_emitted=true`、`simulation_started=false`、
   `REAL_TRADING_ENABLED=false`。
+- 动态 builder 服务器只读运行时，calendar 与 security-master 为
+  `runtime_state=success/degraded=false`；daily 为
+  `runtime_state=stale/degraded=true`。因此返回
+  `core_dataset_evidence_rejected:cn.equity.daily`、退出码 2，且没有创建或更新
+  manifest root。这是数据新鲜度停止线，不是认证、目录或代码故障。
 
 正式通过证据：
 
@@ -65,6 +74,10 @@ inactive worker unit 和 legacy front 配置退役也已完成服务器验收；
   `/opt/investment/release-evidence/tradingagent/20260726T114546Z-ta-front-base-forwardfix-eb2e18a`
 - runtime/front 详细报告：
   [docs/reports/2026-07-26-ashare-runtime-retirement-readback.md](docs/reports/2026-07-26-ashare-runtime-retirement-readback.md)
+- 动态 catalog/manifest builder 服务器证据：
+  `/opt/investment/release-evidence/tradingagent/20260727T085600Z-ta-ashare-manifest-94fcdf7`
+- 动态 builder 详细报告：
+  [docs/reports/2026-07-27-ashare-dynamic-manifest-readback.md](docs/reports/2026-07-27-ashare-dynamic-manifest-readback.md)
 
 本地主线与远端主线一致性必须在每次交付时重新执行
 `git rev-parse HEAD origin/main`；顶部提交号只标记本轮证据，后续提交会自然作废。
@@ -73,11 +86,11 @@ inactive worker unit 和 legacy front 配置退役也已完成服务器验收；
 
 | 层级 | 当前事实 | 不能据此推断 |
 |---|---|---|
-| 本地主线 | `main` 已含 provider-neutral client、分页/证据门禁、目录默认请求省略和 0710 secret parent 安全遍历 | 代码存在不等于服务器已激活 |
-| GitHub 主线 | observation 与 runtime 修复均已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
-| 服务器代码 | `6db813c…` observation 与 `eb2e18a…` runtime 不可变 release 已安装、未切 current | release 目录不等于 active worker |
+| 本地主线 | `main` 已含 provider-neutral client、分页/证据门禁、动态 manifest builder 和 0710 secret parent 安全遍历 | 代码存在不等于服务器已激活 |
+| GitHub 主线 | dynamic manifest 已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
+| 服务器代码 | `6db813c…` observation、`eb2e18a…` runtime 与 `94fcdf7…` dynamic builder 不可变 release 已安装、未切 current | release 目录不等于 active worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 26-active 首屏双跑合同 PASS；核心三数据集 current-observation 与幂等重放 PASS | 单次 current observation 不是历史 PIT、训练样本、行业宽度或执行证明 |
+| 数据验收 | 历史26-active首屏合同与`20260724`核心 observation/重放 PASS；92-active 动态读回时 daily stale，builder fail-closed | 单次 current observation 不是历史 PIT、训练样本、行业宽度或执行证明 |
 | 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；worker inactive/static，timer不存在；无 broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
@@ -144,7 +157,8 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
   current pointer、自动 worker 或 observation timer 激活。
 - 专用 UID 987 已通过新的 root-owned versioned Python runtime 执行真实入口和
   audit；旧 `/opt/tradingagent/venv` 不再被 TA active unit 引用。动态 manifest
-  rollover、手工 worker one-shot 和 timer 激活仍未完成。
+  rollover 已完成仓库与服务器失败关闭验收，但因 daily stale 尚未发布新
+  manifest；完整 worker one-shot、幂等/失败恢复和 timer 激活仍未完成。
 - 旧 8082、旧服务器 runtime 和退役文档只能按各自 ownership 与证据链清理；
   不以删除代替依赖清零证明。
 
@@ -152,10 +166,10 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
 
 依赖顺序固定为：
 
-1. 让 worker 每次按当前 catalog、最近完成交易日和新鲜 decision time 生成
-   不可变 manifest；不能重放静态日期；
-2. 使用已安装但 inactive/static 的 observation unit 完成新鲜手工 one-shot、
-   幂等和失败恢复读回，再讨论 timer；
+1. 等 TradingDatas 将最近完成交易日的 daily 恢复为
+   ready/fresh/valid/degraded=false；不降低 TA Evidence Gate；
+2. 重跑动态 builder，发布内容寻址 manifest；随后使用 inactive/static
+   observation unit 完成新鲜手工 one-shot、幂等和失败恢复读回，再讨论 timer；
 3. 每个交易日继续积累 committed current-observation 与 Decision Ledger；创业板、
    科创板和北交所个股继续排除，健康的指数/行业汇总仅作为 context；
 4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
