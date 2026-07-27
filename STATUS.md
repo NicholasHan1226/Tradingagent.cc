@@ -21,7 +21,11 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   `/opt/investment/releases/tradingagent/eb2e18a6c38b1f5c1139679a8e910c6923fa3edb`
   用于 runtime/unit 验收；动态 builder 对应不可变 release 为
   `/opt/investment/releases/tradingagent/94fcdf767e9e531b18caa1ac0e9ea18cbb1af647`。
-  三者都不是 active/current 切换，也没有启动 front、worker、timer 或真实交易。
+  当前权威 `main=724ea8818feff142df57c4a7bf7b558e29ec0a35` 也已作为
+  root-owned、只读的不可变 release 安装到
+  `/opt/investment/releases/tradingagent/724ea8818feff142df57c4a7bf7b558e29ec0a35`。
+  这些 release 都不是 active/current 切换，也没有启动 front、worker、timer
+  或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。最新 TA 自身读回为
   `catalog_version=v1-71c20445233c890e`，190 total / 99 active / 91 paused；
@@ -54,6 +58,13 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   `runtime_state=stale/degraded=true`。因此返回
   `core_dataset_evidence_rejected:cn.equity.daily`、退出码 2，且没有创建或更新
   manifest root。这是数据新鲜度停止线，不是认证、目录或代码故障。
+- 2026-07-27 使用当前权威 `main` release、专用 UID、正式 18082 和隔离
+  manifest root 再次执行 builder，仍以同一 reason code 退出 2，且隔离 root
+  为空。TradingDatas 随后确认 `20260724` 的 5526 行 daily 和成功 receipt
+  实际存在，但当前通用 freshness 投影用周五分区零点直接比较周末墙上时钟，
+  触发 259200 秒 SLA，因此元数据仍诚实保持
+  `state=stale/runtime_state=stale/degraded=true`。TA 不覆盖该状态，等待
+  TradingDatas 修正交易会话感知的 freshness 合同。
 
 正式通过证据：
 
@@ -82,6 +93,8 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   `/opt/investment/release-evidence/tradingagent/20260727T092955Z-ta-catalog99-94fcdf7`
 - 99-active 增量报告：
   [docs/reports/2026-07-27-tradingdatas-catalog99-readback.md](docs/reports/2026-07-27-tradingdatas-catalog99-readback.md)
+- 当前 `main` release、动态 builder 重跑和 worker 安装预检：
+  [docs/reports/2026-07-27-ashare-worker-preflight.md](docs/reports/2026-07-27-ashare-worker-preflight.md)
 - 同一 catalog 的发布侧 fresh consumer parity 以 UID 987 和既有 TA read scope
   对 99 个 active dataset 逐项执行 `POST /v1/query limit=1`、省略 `as_of`：
   99/99 HTTP 200、0 query-contract failure、79 nonempty、20 legal empty；
