@@ -7,10 +7,11 @@
 TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer token-file
 消费合同、历史 26-active 首屏有界验收，以及 A股核心三数据集 observation 的
 第一次正式只读运行。`20260724` current-observation 已形成并完成幂等重放。
-2026-07-27 又完成动态 catalog/manifest builder 的仓库实现和服务器失败关闭验收：
-正式目录随后扩大到 99 active，但系统仍只映射 calendar/security-master/daily 三个
-审核过的核心角色；当日 daily 为 stale/degraded，builder 正确拒绝发布新 manifest。
-自动模拟交易仍未启动。
+2026-07-27 又完成动态 catalog/manifest builder 的仓库实现、服务器失败关闭验收
+以及 freshness 修正后的正式重跑。正式目录已扩大到 100 active，但系统仍只映射
+calendar/security-master/daily 三个审核过的核心角色；builder 已发布内容寻址
+manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。自动模拟交易仍未
+启动。
 
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
   `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
@@ -21,16 +22,17 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   `/opt/investment/releases/tradingagent/eb2e18a6c38b1f5c1139679a8e910c6923fa3edb`
   用于 runtime/unit 验收；动态 builder 对应不可变 release 为
   `/opt/investment/releases/tradingagent/94fcdf767e9e531b18caa1ac0e9ea18cbb1af647`。
-  当前权威 `main=724ea8818feff142df57c4a7bf7b558e29ec0a35` 也已作为
+  本轮 worker preflight 代码锚点
+  `724ea8818feff142df57c4a7bf7b558e29ec0a35` 也已作为
   root-owned、只读的不可变 release 安装到
   `/opt/investment/releases/tradingagent/724ea8818feff142df57c4a7bf7b558e29ec0a35`。
   这些 release 都不是 active/current 切换，也没有启动 front、worker、timer
   或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。最新 TA 自身读回为
-  `catalog_version=v1-71c20445233c890e`，190 total / 99 active / 91 paused；
+  `catalog_version=v1-3c18b5d842eedfb2`，190 total / 100 active / 90 paused；
   active contract 摘要为
-  `876e3d514ec5119b64eabd1ff7ee7e20fe1d7163937dbcb594d43a33969b95e0`。
+  `3ae63abd22540312489aa101388a59ad790db853cf848ca28167131e7e653eaf`。
 - 专用运行身份是 `tradingagent:tradingagent`（UID/GID 987）。token 只从
   `/run/secrets/tradingagent/tradingdatas-read.token` 读取；parent 为
   `root:tradingagent 0710`，leaf 为 `tradingagent:tradingagent 0600` 的 regular
@@ -65,6 +67,18 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   触发 259200 秒 SLA，因此元数据仍诚实保持
   `state=stale/runtime_state=stale/degraded=true`。TA 不覆盖该状态，等待
   TradingDatas 修正交易会话感知的 freshness 合同。
+- TradingDatas 在 immutable release
+  `98fa9489c4c8e960d392487c99b06d59e3db8f76` 修正盘后日频 freshness 投影后，
+  TA 受限身份实际读回 daily 为
+  `ready/success/fresh/valid/degraded=false`。builder 随即发布
+  `manifest_sha256=7e5bdc5dd75cc4cd33a1a1bb80b66645c34cd2e4ef4cee08612e26e2bdf09d1f`，
+  session 为 `20260724`，且仍明确
+  `historical_pit_eligible=false/execution_authority=false/simulation_started=false`。
+- 隔离 observation one-shot 生成 3041 只沪深主板 observation Universe，排除
+  2569 条不符合第一阶段权限、标的或数据门禁的个体；首次运行与同 root 重放的
+  snapshot、Universe、ledger、receipt 和 transaction-complete SHA 全部一致，
+  `idempotent_replay` 从 `false` 变为 `true`。该结果是
+  `observation_only`，不是 candidate、TargetPosition、PaperFill 或账户变更。
 
 正式通过证据：
 
@@ -95,6 +109,8 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   [docs/reports/2026-07-27-tradingdatas-catalog99-readback.md](docs/reports/2026-07-27-tradingdatas-catalog99-readback.md)
 - 当前 `main` release、动态 builder 重跑和 worker 安装预检：
   [docs/reports/2026-07-27-ashare-worker-preflight.md](docs/reports/2026-07-27-ashare-worker-preflight.md)
+- freshness 修正后的 manifest 与 observation one-shot：
+  [docs/reports/2026-07-27-ashare-observation-pass.md](docs/reports/2026-07-27-ashare-observation-pass.md)
 - 同一 catalog 的发布侧 fresh consumer parity 以 UID 987 和既有 TA read scope
   对 99 个 active dataset 逐项执行 `POST /v1/query limit=1`、省略 `as_of`：
   99/99 HTTP 200、0 query-contract failure、79 nonempty、20 legal empty；
@@ -112,7 +128,7 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 | GitHub 主线 | dynamic manifest 已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
 | 服务器代码 | `6db813c…` observation、`eb2e18a…` runtime 与 `94fcdf7…` dynamic builder 不可变 release 已安装、未切 current | release 目录不等于 active worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 99-active首屏parity为99/99 HTTP 200但仅3 ready；`20260724`核心 observation/重放曾PASS，当前daily stale使builder fail-closed | 首屏可达和单次current observation都不是完整分页、历史PIT、训练样本、行业宽度或执行证明 |
+| 数据验收 | 历史99-active首屏parity为99/99 HTTP 200但仅3 ready；freshness 修正后 catalog 为100 active，三核心 manifest 和 `20260724` observation/重放再次 PASS | 首屏可达和单次current observation都不是全目录完整分页、历史PIT、训练样本、行业宽度或执行证明 |
 | 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；worker inactive/static，timer不存在；无 broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
@@ -179,8 +195,9 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
   current pointer、自动 worker 或 observation timer 激活。
 - 专用 UID 987 已通过新的 root-owned versioned Python runtime 执行真实入口和
   audit；旧 `/opt/tradingagent/venv` 不再被 TA active unit 引用。动态 manifest
-  rollover 已完成仓库与服务器失败关闭验收，但因 daily stale 尚未发布新
-  manifest；完整 worker one-shot、幂等/失败恢复和 timer 激活仍未完成。
+  rollover 已完成失败关闭和恢复后 PASS 验收，手工 one-shot 与幂等重放已完成；
+  tracked unit、secret-free env 与 `current` 指针尚未安装，失败恢复和 timer
+  激活仍未完成。
 - 旧 8082、旧服务器 runtime 和退役文档只能按各自 ownership 与证据链清理；
   不以删除代替依赖清零证明。
 
@@ -188,15 +205,14 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
 
 依赖顺序固定为：
 
-1. 等 TradingDatas 将最近完成交易日的 daily 恢复为
-   ready/fresh/valid/degraded=false；不降低 TA Evidence Gate；
-2. 重跑动态 builder，发布内容寻址 manifest；随后使用 inactive/static
-   observation unit 完成新鲜手工 one-shot、幂等和失败恢复读回，再讨论 timer；
-3. 每个交易日继续积累 committed current-observation 与 Decision Ledger；创业板、
+1. 在独立发布门禁下安装 tracked inactive/static unit、secret-free env 与
+   `current` 指针；先验证 unit one-shot、失败恢复和回滚，不直接启 timer；
+2. unit one-shot 通过后再单独决定 observation timer，以每个交易日持续积累
+   committed current-observation 与 Decision Ledger；创业板、
    科创板和北交所个股继续排除，健康的指数/行业汇总仅作为 context；
-4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
+3. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
    主板 observation，也不把汇总数据冒充个股权限；
-5. 数据、日历、执行行情和模拟资本权威全部通过后，才开放自动 paper
+4. 数据、日历、执行行情和模拟资本权威全部通过后，才开放自动 paper
    `Signal -> TargetPosition -> Risk -> PaperFill -> Reconcile -> Attribution`
    闭环；
-6. 只有长期样本、校准和回撤门禁通过后，才讨论模型晋级；真实交易继续保持关闭。
+5. 只有长期样本、校准和回撤门禁通过后，才讨论模型晋级；真实交易继续保持关闭。
