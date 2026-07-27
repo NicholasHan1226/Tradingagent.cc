@@ -32,11 +32,11 @@
 
 | 对象 | 仓库观察 | YAML 门禁 | 当前可用范围 |
 |---|---|---|---|
-| TradingDatas V1 upstream query | TA不写TradingDatas；最新TA读回正式目录190/99/91，固定catalog/query，无旧路由或存储fallback | `TARGET_CONTRACT` | 上游可查询不代表 dataset ready、完整分页、历史 PIT 或交易通过 |
+| TradingDatas V1 upstream query | TA不写TradingDatas；正式目录190/99/91，99-active首屏parity为99/99 HTTP 200且0合同失败，固定catalog/query，无旧路由或存储fallback | `TARGET_CONTRACT` | HTTP可达不代表dataset ready、完整分页、历史PIT或交易通过 |
 | TA TradingDatas V1 client + Evidence Gate | 实现与契约测试已进入仓库；兼容代码符号仍含`SharedSignalsV1*` | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture/contract；不代表TradingDatas runtime |
 | TA TradingDatas Bearer transport (`tradingagent_tradingdatas_bearer_transport`) | 专用token-file已完成 metadata handoff，正式18082认证和26-active只读探测通过；值/哈希不出服务器 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 认证成功不代表dataset可用、front/worker激活或交易authority |
 | TA TradingDatas V1 integration-readiness probe | v2显式manifest；逐dataset filters/as-of/identity/event/budgets；provider-native rows、envelope source proof、bounded cursor、跨页守恒与same-observation双跑 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture或另行授权的只读联调；current observation不是历史PIT，也不是生产或交易authority |
-| TA TradingDatas catalog parity | 26-active 首屏双跑 PASS：当时3 ready、9 stale、14 unobserved；其后daily(20260724) ready/fresh，sw_daily permission-denied | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 首屏parity和单日ready都不是terminal研究快照、历史PIT或执行证据 |
+| TA TradingDatas catalog parity | 最新99-active首屏读回：79 nonempty、20 legal empty、3 ready、92 partial、4 stale、0 query-contract failure | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 首屏parity、HTTP 200和receipt都不是terminal研究快照、历史PIT或执行证据 |
 | TA dedicated service identity | UID/GID 987、root:tradingagent 0710 parent、tradingagent-owned 0600 leaf、正式18082认证和versioned Python runtime已验证；front退役停机 | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 身份/token/runtime不等于current、worker/timer激活或完整cutover |
 | A股 `a7488e9` historical authenticated current-observation | formal 18082 one-shot 与精确幂等重放只在 `a7488e9` 冻结三件字节通过；3041只沪深主板，双创/北交所个股排除，行业/指数仅上下文 | `HISTORICAL_READ_ONLY / server_validated_non_authority_simulation_only / production=false` | 只证明当时单次真实只读观察；不得绑定到当前五项源码，专用TA token/worker/timer、历史PIT、分钟证据和模拟成交均未激活 |
 | A股五项 committed observation runtime | `6db813c…`仓库合同逐 session 绑定snapshot/probe/observation receipt/membership ledger，以transaction-complete作为唯一commit point；核心三数据集正式运行和幂等重放 PASS | `CURRENT_VERIFIED / repository_contract` + `server_validated_non_authority_read_only / production=false` | 单次current observation不是历史PIT、feature、tradable/candidate/order authority |
@@ -72,7 +72,7 @@
 | `tradingagent_sharedsignals_v1_client` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；provider-native envelope consumer，不证明 live TradingDatas |
 | `tradingagent_tradingdatas_bearer_transport` | `CURRENT_VERIFIED / repository_contract` | 专用token-file和正式18082认证已完成；无secret输出、无旧链fallback |
 | `tradingagent_sharedsignals_v1_integration_probe` | `CURRENT_VERIFIED / repository_contract` | 保留的兼容机器条目ID；v2 bounded-pagination、source-proof、identity守恒与same-observation只读接入门；已由专用UID987对当前核心三数据集正式运行 |
-| `tradingagent_tradingdatas_catalog_parity` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | 正式26-active首屏双跑通过；不具备terminal分页或research资格 |
+| `tradingagent_tradingdatas_catalog_parity` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | 正式99-active首屏parity为99/99 HTTP 200但仅3 ready；不具备terminal分页或research资格 |
 | `tradingagent_dedicated_service_identity_candidate` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | UID/GID、0710 parent、0600 leaf、专用身份只读认证和versioned runtime已验证；front/worker仍关闭 |
 | `tradingagent_ashare_observation_runtime` | `CURRENT_VERIFIED / repository_contract` | 当前五项 committed observation 仓库合同；正式服务器complete bundle另由current-session readback条目记录，本条不自升生产或执行authority |
 | `tradingagent_ashare_observation_current_session_readback` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | 核心三数据集 `20260724` observation 与幂等重放 PASS；3041个主板members，行业context为空，无执行authority |
