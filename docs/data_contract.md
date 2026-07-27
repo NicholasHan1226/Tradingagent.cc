@@ -86,6 +86,35 @@ dataset 必须 `REJECT/weight=0.0`，合法 null proof 只记为 unavailable acc
 角色；新增 active dataset 在完成业务映射和研究验证前不能因 catalog 激活而自动
 进入 Universe、特征、候选或策略。
 
+A股盘后 worker 的动态 manifest builder 每轮只调用一次 `GET /v1/catalog`，
+把全部 active catalog rows 原样冻结到仓外、内容寻址、secret-free 的 catalog
+snapshot，并从中校验三个固定业务角色：
+
+```text
+trade_calendar  -> cn.market.trade_calendar
+security_master -> cn.equity.security_master
+daily_bars      -> cn.equity.daily
+```
+
+这三个 dataset ID 是经过上游 catalog/handoff 审核的 TA 业务映射，不是由 provider
+名称、alias、返回行或 URL 猜测。builder 只依据 catalog 的 `fields`、
+`filter_operators`、`default_order`、`limits` 和 `schema_major` 生成查询合同；
+完整分页交易日历用于确定最近完成开市日，证券主数据和该日 daily 再分别执行
+`limit=1` 当前 metadata/source-proof 预检。三项任一不是
+`ACCEPT/weight=1.0` 就不发布 current manifest。其它 active dataset 无论 catalog
+runtime 为 success、partial、empty 或 degraded，都只进入 inventory snapshot，
+固定 `research_auto_promotion=false`，不会被查询或自动加入研究。完整 observation
+runner 随后仍须对三项执行有界终端分页、same-observation 双跑和五项 committed
+binding，builder 预检不能替代它。
+
+每个交易会话的 manifest 正文按内容寻址存入 `archive/`，稳定入口
+`current.json` 只由同一私有 manifest root 内的原子 replace 发布。同一会话、同一
+catalog/active contract 精确复用；同一会话 active contract 或核心 query contract
+漂移时 `same_session_catalog_contract_changed` 并保留旧 current。新交易会话才
+允许滚动 current。manifest、catalog snapshot 和 build receipt 都不包含 token、
+Authorization、原始 cursor 或交易 authority；`historical_pit_eligible=false`、
+`simulation_started=false`、`real_trading_enabled=false` 固定不变。
+
 TradingDatas 返回的 `data[]` 是 **provider-native rows**，TA 原样保存，不把 envelope metadata 复制进每一行，也不生成虚假的 `available_time/revision_id/receipt_id`。dataset requirement 只声明：
 
 - `identity_fields`：用于跨页唯一性与守恒检查；

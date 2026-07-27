@@ -64,6 +64,11 @@ def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
             "audit_ashare_worker_runtime.py"
         ),
         (
+            f"ExecStartPre={OBSERVATION_PYTHON} "
+            "/opt/investment/releases/tradingagent/current/tools/"
+            "build_ashare_observation_manifest.py"
+        ),
+        (
             f"ExecStart={OBSERVATION_PYTHON} "
             "/opt/investment/releases/tradingagent/current/tools/"
             "run_ashare_observation.py"
@@ -111,13 +116,35 @@ def test_observation_service_is_dedicated_sim_only_and_sandboxed() -> None:
         assert forbidden not in lowered
 
     exec_start_pre = next(
-        line for line in text.splitlines() if line.startswith("ExecStartPre=")
+        line
+        for line in text.splitlines()
+        if line.startswith("ExecStartPre=")
+        and "audit_ashare_worker_runtime.py" in line
+    )
+    manifest_exec_start_pre = next(
+        line
+        for line in text.splitlines()
+        if line.startswith("ExecStartPre=")
+        and "build_ashare_observation_manifest.py" in line
     )
     exec_start = next(
         line for line in text.splitlines() if line.startswith("ExecStart=")
     )
     assert (
         "--token-file /run/secrets/tradingagent/tradingdatas-read.token" in exec_start
+    )
+    assert "--base-url ${TRADINGDATAS_API_URL}" in manifest_exec_start_pre
+    assert (
+        "--access-policy-id ${TRADINGDATAS_ACCESS_POLICY_ID}"
+        in manifest_exec_start_pre
+    )
+    assert (
+        "--token-file /run/secrets/tradingagent/tradingdatas-read.token"
+        in manifest_exec_start_pre
+    )
+    assert (
+        "--manifest-root ${ASHARE_OBSERVATION_MANIFEST_ROOT}"
+        in manifest_exec_start_pre
     )
     for variable in (
         "${ASHARE_OBSERVATION_STATE_ROOT}",
@@ -146,13 +173,20 @@ def test_worker_environment_is_path_only_simulation_configuration() -> None:
 
     assert values == {
         "ASHARE_OBSERVATION_LOG_ROOT": "/var/log/tradingagent/ashare-observation",
-        "ASHARE_OBSERVATION_MANIFEST": "/etc/tradingagent/ashare-observation-manifest.json",
+        "ASHARE_OBSERVATION_MANIFEST": (
+            "/var/lib/tradingagent/ashare-observation/manifests/current.json"
+        ),
+        "ASHARE_OBSERVATION_MANIFEST_ROOT": (
+            "/var/lib/tradingagent/ashare-observation/manifests"
+        ),
         "ASHARE_OBSERVATION_RUNTIME_ROOT": "/run/tradingagent/ashare-observation",
         "ASHARE_OBSERVATION_STATE_ROOT": "/var/lib/tradingagent/ashare-observation",
         "MARKETGRAPH_MODE": "mg_off",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUNBUFFERED": "1",
         "REAL_TRADING_ENABLED": "false",
+        "TRADINGDATAS_ACCESS_POLICY_ID": "ta-ashare-observation-read-v1",
+        "TRADINGDATAS_API_URL": "http://127.0.0.1:18082",
     }
     encoded = "\n".join(values).lower()
     for forbidden in ("token=", "api_key", "broker", "llm", "deepseek", "0.0.0.0"):

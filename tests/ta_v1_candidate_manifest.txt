@@ -23,6 +23,7 @@ tests/test_sharedsignals_v1.py
 tests/test_sharedsignals_v1_runtime_gate.py
 tests/test_sharedsignals_v1_integration_probe.py
 tests/test_ashare_observation_runtime.py
+tests/test_ashare_observation_manifest.py
 tests/test_ashare_observation_ledger.py
 tests/test_ashare_observation_history.py
 tests/test_ashare_runtime_ports.py

@@ -317,6 +317,37 @@ entries:
       - create_capital_reservation_order_fill_outbox_reconcile_or_sample_journal
       - synthesize_minute_or_l1_evidence_from_daily_close
     successor: tradingagent.ashare.daily-only-paper-planning.v1
+  - entry_id: tradingagent_ashare_observation_manifest_rollover
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: shared/runtime/ashare_observation_manifest.py
+    production_verified: false
+    last_verified_at: "2026-07-27"
+    evidence:
+      - tools/build_ashare_observation_manifest.py
+      - tests/test_ashare_observation_manifest.py
+      - tests/test_ashare_worker_units.py
+      - docs/data_contract.md
+      - docs/operations.md
+    allowed_uses:
+      - dynamically_discover_and_freeze_the_current_active_catalog_inventory
+      - map_only_the_reviewed_calendar_security_master_and_daily_roles_into_observation
+      - derive_the_latest_completed_session_from_a_terminal_calendar_read
+      - require_current_ready_nondegraded_source_proof_for_each_core_dataset
+      - publish_content_addressed_catalog_manifest_and_build_receipt_artifacts
+      - atomically_roll_current_manifest_only_for_a_new_trading_session
+      - exactly_reuse_the_same_session_and_same_contract_manifest
+    prohibited_uses:
+      - auto_promote_new_active_datasets_to_research_features_candidates_or_execution
+      - accept_catalog_active_or_http_200_as_research_readiness
+      - accept_stale_partial_empty_unobserved_failed_or_degraded_core_data
+      - replace_full_observation_pagination_same_observation_or_committed_binding
+      - overwrite_a_same_session_manifest_after_catalog_or_contract_drift
+      - infer_historical_pit_revision_label_prediction_simulation_or_trading_authority
+      - read_sqlite_tushare_source_status_provider_route_or_legacy_8082
+      - enable_worker_timer_or_real_trading
+    successor: tradingagent.ashare.observation-manifest-rollover.v1
   - entry_id: tradingagent_ashare_observation_timer_candidate
     state: TARGET_CONTRACT
     layer: architecture_target
@@ -333,6 +364,7 @@ entries:
     allowed_uses:
       - disabled_unit_contract_and_static_validation
       - require_a_root_owned_versioned_minimal_python_runtime_with_hashed_dependencies_before_worker_start
+      - chain_runtime_audit_dynamic_manifest_builder_and_observation_runner_in_a_disabled_oneshot_unit
     prohibited_uses:
       - install_or_enable_before_dedicated_tradingagent_token_and_identity_handoff
       - enable_before_trusted_daily_immutable_manifest_rollover
