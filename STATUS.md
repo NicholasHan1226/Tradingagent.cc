@@ -8,7 +8,7 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 消费合同、历史 26-active 首屏有界验收，以及 A股核心三数据集 observation 的
 第一次正式只读运行。`20260724` current-observation 已形成并完成幂等重放。
 2026-07-27 又完成动态 catalog/manifest builder 的仓库实现和服务器失败关闭验收：
-正式目录已扩大到 92 active，但系统仍只映射 calendar/security-master/daily 三个
+正式目录随后扩大到 99 active，但系统仍只映射 calendar/security-master/daily 三个
 审核过的核心角色；当日 daily 为 stale/degraded，builder 正确拒绝发布新 manifest。
 自动模拟交易仍未启动。
 
@@ -24,9 +24,9 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   三者都不是 active/current 切换，也没有启动 front、worker、timer 或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。最新 TA 自身读回为
-  `catalog_version=v1-ee2dbdf4ecc91390`，190 total / 92 active / 98 paused；
+  `catalog_version=v1-71c20445233c890e`，190 total / 99 active / 91 paused；
   active contract 摘要为
-  `cbf7b503b0f003b43048d6d64a49098bbb10db9cc8e82379a26a7b84b0d34b2b`。
+  `876e3d514ec5119b64eabd1ff7ee7e20fe1d7163937dbcb594d43a33969b95e0`。
 - 专用运行身份是 `tradingagent:tradingagent`（UID/GID 987）。token 只从
   `/run/secrets/tradingagent/tradingdatas-read.token` 读取；parent 为
   `root:tradingagent 0710`，leaf 为 `tradingagent:tradingagent 0600` 的 regular
@@ -78,6 +78,10 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
   `/opt/investment/release-evidence/tradingagent/20260727T085600Z-ta-ashare-manifest-94fcdf7`
 - 动态 builder 详细报告：
   [docs/reports/2026-07-27-ashare-dynamic-manifest-readback.md](docs/reports/2026-07-27-ashare-dynamic-manifest-readback.md)
+- 99-active 增量目录读回证据：
+  `/opt/investment/release-evidence/tradingagent/20260727T092955Z-ta-catalog99-94fcdf7`
+- 99-active 增量报告：
+  [docs/reports/2026-07-27-tradingdatas-catalog99-readback.md](docs/reports/2026-07-27-tradingdatas-catalog99-readback.md)
 
 本地主线与远端主线一致性必须在每次交付时重新执行
 `git rev-parse HEAD origin/main`；顶部提交号只标记本轮证据，后续提交会自然作废。
@@ -90,7 +94,7 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 | GitHub 主线 | dynamic manifest 已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
 | 服务器代码 | `6db813c…` observation、`eb2e18a…` runtime 与 `94fcdf7…` dynamic builder 不可变 release 已安装、未切 current | release 目录不等于 active worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 历史26-active首屏合同与`20260724`核心 observation/重放 PASS；92-active 动态读回时 daily stale，builder fail-closed | 单次 current observation 不是历史 PIT、训练样本、行业宽度或执行证明 |
+| 数据验收 | 历史26-active首屏合同与`20260724`核心 observation/重放 PASS；99-active 动态读回时 daily stale，builder fail-closed | 单次 current observation 不是历史 PIT、训练样本、行业宽度或执行证明 |
 | 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；worker inactive/static，timer不存在；无 broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
