@@ -177,7 +177,8 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
         "OnCalendar=Mon..Fri *-*-* 11:00..35/5:40",
         "OnCalendar=Mon..Fri *-*-* 13:10/5:40",
         "OnCalendar=Mon..Fri *-*-* 14:00/5:40",
-        "OnCalendar=Mon..Fri *-*-* 15:00..05/5:40",
+        "OnCalendar=Mon..Fri *-*-* 15:00:40",
+        "OnCalendar=Mon..Fri *-*-* 15:05:40",
     )
     assert "09..11" not in timer
     assert "13..15" not in timer
