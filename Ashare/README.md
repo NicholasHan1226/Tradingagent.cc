@@ -261,10 +261,14 @@ python3 -m Ashare.minute_canary \
 ```
 
 The manifest and reference facts are runtime evidence, not repository defaults.
-Until TradingDatas formally freezes `cn.dataset.rt_min`, its catalog contract,
-and a fresh five-minute receipt, this command remains unconfigured and must
-fail closed. A passing canary authorizes observation only; the five-trading-day
-observation gate and 20-session sample accumulation remain separate.
+TradingDatas formally froze `cn.dataset.rt_min` schema major 2 and began the
+ten-mainboard-symbol five-minute continuous canary on 2026-07-28. TA read back
+adjacent completed bars through the formal catalog/query API with complete
+receipt and lineage metadata. The provider currently exposes the latest bar
+about one complete five-minute bar late, so the strict 30-second execution
+evidence gate remains closed. This handoff authorizes observation and data
+accumulation only; the five-trading-day observation gate, fresh daily limit and
+suspension references, and 20-session sample accumulation remain separate.
 
 ### Phase-one A-share scope
 
@@ -284,8 +288,9 @@ observation gate and 20-session sample accumulation remain separate.
 
 ### Runtime stop line
 
-Until TradingDatas supplies a formal five-minute catalog/query handoff and TA
-passes a 10-symbol canary plus five consecutive trade-date observations:
+Until TA completes five consecutive trade-date observations, validates the
+expanded symbol batch, and obtains fresh daily/limit/suspension reference
+evidence:
 
 - do not enable a TA production timer;
 - do not run this fixture as the current capital authority;

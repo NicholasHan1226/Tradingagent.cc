@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-27 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-28 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 ## 当前结论
 
@@ -8,13 +8,15 @@ TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer to
 消费合同、历史 26-active 首屏有界验收，以及 A股核心三数据集 observation 的
 第一次正式只读运行。`20260724` current-observation 已形成并完成幂等重放。
 2026-07-27 又完成动态 catalog/manifest builder 的仓库实现、服务器失败关闭验收
-以及 freshness 修正后的正式重跑。正式目录已扩大到 100 active，但系统仍只映射
+以及 freshness 修正后的正式重跑。正式目录现为 101 active，但系统仍只映射
 calendar/security-master/daily 三个审核过的核心角色；builder 已发布内容寻址
 manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。仓库现已包含
 5分钟 fixture/mock 研究闭环：严格分钟证据之后可生成透明滚动特征、未经校准的
 确定性排名、精确下一根K线模拟结算、四个隔离反事实账本、Decision Ledger 与对账；
-它没有正式分钟 dataset handoff、worker/timer 或 durable capital authority。
-自动模拟交易仍未启动。
+TradingDatas 已正式交付 `cn.dataset.rt_min` 的 10只主板/5MIN 持续采集并形成
+相邻完成K线读回。该数据约晚一个完整5分钟K线，只取得 observation/data
+accumulation 资格，不满足 TA 的30秒执行证据门禁。TA worker/timer、durable
+capital runtime 和自动模拟交易仍未启动。
 
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
   `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
@@ -33,9 +35,23 @@ manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。仓库
   或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。最新 TA 自身读回为
-  `catalog_version=v1-3c18b5d842eedfb2`，190 total / 100 active / 90 paused；
-  active contract 摘要为
-  `3ae63abd22540312489aa101388a59ad790db853cf848ca28167131e7e653eaf`。
+  `catalog_version=v1-06e8544b4bc715b1`，190 total / 101 active / 89 paused。
+- TradingDatas 权威 main/origin/production release 为
+  `226ee7646ab03075da1c2adfaef8986a34e5e64e`。其通用
+  `tradingdatas-provider-native-collect.timer` 已由 TradingDatas owner 启用，
+  固定 `OnCalendar=*-*-* *:0/5:00`、`AccuracySec=1s`、
+  `RandomizedDelaySec=15s`、`Persistent=true`；这不是 TA timer，也不授予
+  TA 模拟或真实交易权限。
+- `cn.dataset.rt_min` schema major 2 的 2026-07-28 11:00、11:05 两个相邻
+  bar_end 均经正式 18082 精确读回为 10/10 股票、
+  `ready/success/fresh/valid/non-degraded`，receipt 与 provider lineage 完整；
+  11:15 bar_end 的第三次 TA 只读核验同样为 10/10。上游约晚一个完整5分钟
+  K线，不能宣称 `bar_end -> observed_at <= 30s`，且数据不含 L1/bid-ask。
+- 当前交易必需参考数据中，`security_master` 与 `trade_calendar` 为
+  success/non-degraded；`daily`、`stk_limit`、`suspend_d` 与 `adj_factor`
+  仍为 stale/degraded，因而不能据此启用 TA 自动模拟成交。`sw_daily`、
+  `limit_list_ths` 与 `moneyflow_ind_ths` 也仍 degraded，只可等待上游刷新或
+  继续 fail closed。
 - 专用运行身份是 `tradingagent:tradingagent`（UID/GID 987）。token 只从
   `/run/secrets/tradingagent/tradingdatas-read.token` 读取；parent 为
   `root:tradingagent 0710`，leaf 为 `tradingagent:tradingagent 0600` 的 regular
@@ -131,15 +147,15 @@ manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。仓库
 | GitHub 主线 | dynamic manifest 已普通合并，GitHub CI `front`/`test` 均通过 | CI 不等于真实数据 fresh 或模拟盘已启动 |
 | 服务器代码 | `6db813c…` observation、`eb2e18a…` runtime 与 `94fcdf7…` dynamic builder 不可变 release 已安装、未切 current | release 目录不等于 active worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 历史99-active首屏parity为99/99 HTTP 200但仅3 ready；freshness 修正后 catalog 为100 active，三核心 manifest 和 `20260724` observation/重放再次 PASS | 首屏可达和单次current observation都不是全目录完整分页、历史PIT、训练样本、行业宽度或执行证明 |
+| 数据验收 | 历史99-active首屏parity为99/99 HTTP 200但仅3 ready；当前 catalog 为101 active；三核心日频 manifest 和 `20260724` observation/重放 PASS；`rt_min` 已有10只主板的相邻5分钟 observation readback | 分钟数据约晚一根K线；连续三根10只读回不是全天完整率、5日稳定性、历史PIT、训练样本、L1或执行证明 |
 | 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；worker inactive/static，timer不存在；无 broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
 fallback 到该端口。legacy front drop-in 已移出 active systemd 目录，front base
 unit 已与当前仓库字节一致；active unit 中旧 `8082`、`SharedSignals`、
-`/opt/tradingagent` 和 `marketgraph` 身份引用均为零。TradingDatas collector
-timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDatas
-采集调度。
+`/opt/tradingagent` 和 `marketgraph` 身份引用均为零。TradingDatas owner 已
+启用其自身通用5分钟 collector timer；TradingAgent 只读消费 18082，未启用
+TA worker/timer，也不负责修改 TradingDatas 采集调度。
 
 ## A股第一阶段边界
 
@@ -190,12 +206,12 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
   60–120 交易日模拟样本。
 - 申万日线仍 permission-denied，`index_classify` 本次为 failed/degraded；核心
   observation 没有行业上下文，不能冒充行业宽度、行业排名或产业研究输入。
-- 当前正式 snapshot 只证明单次日频 current observation，不是可训练历史数据；
-  新增 feature、ranking、PaperFill 和账户对账只在人工构造的5分钟 fixture/mock
-  合同中通过，尚未绑定 TradingDatas 正式分钟数据、durable capital/outbox 或
-  生产 worker。
-- 日频数据不能合成分钟级 quote、bid/ask 或可成交 fill。正式自动模拟成交仍需要
-  经验证的执行时点行情或独立模拟成交政策。
+- 当前日频 snapshot 只证明单次 current observation；`rt_min` 只证明
+  10只主板、相邻5分钟 OHLCV/amount 的持续观察数据。二者都不是可训练历史
+  PIT，也没有绑定 durable capital/outbox 或 TA 生产 worker。
+- `rt_min` 约晚一根完整K线且不含 bid/ask；当前只用于数据积累。正式自动模拟
+  成交仍需交易必需参考数据 fresh、连续5个交易日观察，以及明确保守的下一K线
+  模拟成交政策通过独立启用门禁。
 - front 继续停止；本阶段不恢复 `tradingagent.cc` 页面。tracked base unit 已安装
   但保持 inactive/disabled/runtime-masked，旧 drop-in 已退役。当前也没有
   current pointer、自动 worker 或 observation timer 激活。
@@ -211,14 +227,16 @@ timer 保持 inactive/disabled；TradingAgent 不负责启用或修改 TradingDa
 
 依赖顺序固定为：
 
-1. 在独立发布门禁下安装 tracked inactive/static unit、secret-free env 与
-   `current` 指针；先验证 unit one-shot、失败恢复和回滚，不直接启 timer；
-2. unit one-shot 通过后再单独决定 observation timer，以每个交易日持续积累
-   committed current-observation 与 Decision Ledger；创业板、
-   科创板和北交所个股继续排除，健康的指数/行业汇总仅作为 context；
-3. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
+1. 保持 TradingDatas 10只主板/5MIN collector 连续运行，盘后核验午休、下午
+   恢复、全天48个bar slot的完整率、重复/冲突和失败receipt；TA仍不启timer；
+2. 用现有通用采集链刷新 `daily`、`stk_limit`、`suspend_d`、`adj_factor`；
+   数据集逐项 fresh/non-degraded 前不进入自动模拟成交；
+3. 全天完整率通过后，把分钟观察池从10只扩至30只主板，优先覆盖
+   AI/半导体基础设施、机器人/工业自动化、创新药与宽基对照；扩容只改变
+   provider-neutral symbol manifest，不新增公共 route。稳定后再评估60只；
+4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
    主板 observation，也不把汇总数据冒充个股权限；
-4. 数据、日历、执行行情和模拟资本权威全部通过后，才开放自动 paper
+5. 数据、日历、执行行情和模拟资本权威全部通过后，才开放自动 paper
    `Signal -> TargetPosition -> Risk -> PaperFill -> Reconcile -> Attribution`
    闭环；
-5. 只有长期样本、校准和回撤门禁通过后，才讨论模型晋级；真实交易继续保持关闭。
+6. 只有长期样本、校准和回撤门禁通过后，才讨论模型晋级；真实交易继续保持关闭。

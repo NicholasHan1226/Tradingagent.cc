@@ -1,6 +1,6 @@
 # System State Matrix
 
-> 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、不可变服务器 release、现役 runtime、真实数据与真实交易动作必须分别验证。截至 2026-07-27，专用 TradingAgent 身份、TradingDatas 历史 26-active 首屏读回、A股核心三数据集 current-session 和 inactive observation runtime PASS 属于 `server_validated_non_authority_read_only`；动态 catalog/manifest rollover 已完成仓库合同和最新 99-active 服务器失败关闭验收，但因 daily stale 尚未发布新 manifest。worker/timer、特征/排名、模拟盘和真实交易仍未激活，front 保持退役停机态。
+> 本文解释系统状态治理；当前能力状态的机器可读事实源是 `shared/governance/system_state_matrix.yaml`，旧链消费者与退役门的机器可读事实源是 `shared/governance/legacy_inventory.yaml`。本地候选、Git 主线、不可变服务器 release、现役 runtime、真实数据与真实交易动作必须分别验证。截至 2026-07-28，专用 TradingAgent 身份、A股核心三数据集 current-session、正式 `rt_min` 10只主板相邻5分钟 observation readback 属于 `server_validated_non_authority_read_only`。TradingDatas owner 已启用自身5分钟采集timer；TA worker/timer、自动模拟盘和真实交易仍未激活，front 保持退役停机态。
 
 `legacy_inventory.yaml` 中的 `paths` 只登记干净克隆必须存在的源码或配置；`runtime_paths` 单独登记可能尚未生成、不得纳入 Git 的安装态/运行态历史路径，并要求由 `.gitignore` 明确覆盖。运行目录在某台开发机上存在或不存在都不能证明生产消费者已经退役，生产裁决仍需独立的 installed-runtime readback。
 
@@ -50,6 +50,7 @@
 | canonical account authority | 从当前simulated capital ledger head派生账户快照并绑定trade date、generation、execution lineage、现金、持仓与mark receipt；head或identity漂移即fail closed | `CURRENT_VERIFIED / repository_contract / production=false` | 仅本地模拟authority；不证明broker readback、生产账户或真实资金 |
 | market evidence + execution clock | mark/quote绑定dataset/catalog/source receipt/lineage/calendar/capital context；显式fixture clock在sim submit与capital commit前分别重验freshness/session | `CURRENT_VERIFIED / repository_contract / production=false` | 本地hash不是签名；fixture verifier/clock不证明TradingDatas live、交易所行情或生产时间authority |
 | A股5分钟 fixture research loop (`tradingagent_ashare_minute_fixture_research_loop`) | catalog-derived分钟profile、严格Evidence Gate、连续滚动特征、未校准确定性rank、精确下一根K线结算、四个隔离反事实账本、Decision Ledger、恢复与对账合同已进入仓库 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅fixture/mock；无正式分钟dataset handoff、校准概率、预测收益、durable capital/outbox、scheduler、broker或生产样本 |
+| A股正式分钟 observation handoff (`tradingagent_ashare_minute_observation_handoff`) | TradingDatas release `226ee76…` 经正式18082连续读回11:00/11:05及后续11:15三个bar_end，每次10/10、receipt/lineage完整；TD timer active | `CURRENT_VERIFIED / server_validated_non_authority_read_only / production=false` | 约晚一根5分钟K线；无L1/bid-ask、全天/5日稳定性、TA timer、模拟成交或资金authority |
 | model lifecycle/labels | metrics v2 由固定本地trust-root verifier重读完整artifact/receipt并绑定实现/标签/成本/窗口/horizon/regime/source receipts；负向动作持久锁存；A股ValidationPlan经无默认calendar verifier并冻结proof，SampleJournal/ops显式贯穿plan，CLI只加载外部内容寻址artifact且不自签，forward targets从同一会话authority派生 | `CURRENT_VERIFIED / repository_contract / production=false` | 只允许自动收紧；metrics proof是本地完整性hash而非签名/真实独立重算authority；生产calendar、真实market-truth和受信artifact registry仍缺；恢复、晋级和扩风险均需人工 |
 | fixture paper day loop/CLI/store | `compose_paper_runtime`、fixture-only ports/账户proof、仓外CLI、原子RunBundle和Decision Ledger合同已进入仓库 | `CURRENT_VERIFIED / repository_contract / production=false` | 可执行但非authority；不是scheduler/live runtime，fixture不得写正式晋级样本 |
 | capital-backed composition | canonical simulated account、current generation/lineage、人工选定Champion、逐副作用authority门、capital outbox、risk/execution/reconcile组合合同已进入仓库 | `CURRENT_VERIFIED / repository_contract / production=false` | 仅test-only装配；无CLI、scheduler、live TradingDatas或真实paper sample |
@@ -121,6 +122,7 @@
 | `tradingagent_market_lane_governance` | `CURRENT_VERIFIED / repository_contract` | A股、CNFutures、Crypto长期lane和互异BrokerAdapter合同；无live实现或部署证明 |
 | `tradingagent_ashare_twenty_day_fixture_loop` | `CURRENT_VERIFIED / repository_contract` | 网络关闭的20交易日fixture自动模拟合同；不证明scheduler、真实数据或收益 |
 | `tradingagent_ashare_minute_fixture_research_loop` | `CURRENT_VERIFIED / repository_contract` | 5分钟fixture证据、未校准rank、精确下一bar结算和四反事实账本；无正式分钟数据、durable authority或runtime |
+| `tradingagent_ashare_minute_observation_handoff` | `CURRENT_VERIFIED / server_validated_non_authority_read_only` | 正式18082已连续读回10只主板5分钟K线；约晚一根bar，仅 observation/data accumulation，无TA timer或成交authority |
 | `tradingagent_cnfutures_fixture_closed_loop` | `CURRENT_VERIFIED / repository_contract` | 网络关闭的期货会话/保证金/费用/MTM/平仓/对账fixture合同；不是交易所级真值 |
 | `tradingagent_crypto_fixture_auto_sim` | `CURRENT_VERIFIED / repository_contract` | generation 1本地fixture opening候选、非权威receipt与独立LLM sidecar；无current runtime/Testnet/Live |
 | `tradingagent_crypto_execution_retirement` | `RETIRED_BLOCKED / repository_contract` | 旧Crypto direct workflow/simulator/executor/shadow writer与generic registry路径禁止恢复 |
