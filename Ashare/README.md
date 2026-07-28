@@ -208,6 +208,15 @@ five-minute slots, decision outcomes, simulated costs, T+1 positions,
 reconciliation, and the four fixture shadow books. It grants no execution,
 training, promotion, durable-ledger, or real-trading authority.
 
+`minute_offline_learning.py` is a separate post-close, fixture-only projection.
+It appends verified day summaries only to an A-share-local learning journal,
+never to the shared `SampleJournal`; incomplete sessions are recorded as
+blocked and create no training sample. KPI, calibration, missed-opportunity and
+Challenger fields remain review-only: calibration has no forward-label
+authority, and automatic model change, promotion, risk expansion and real
+trading are all false. The tracked `Ashare/systemd/` service/timer are merely
+disabled-by-default installation candidates and are not deployed runtime units.
+
 `minute_session_initializer.py` closes that pre-open preparation gap without
 adding a provider route. At 09:20 it reads the current TradingDatas catalog,
 proves the target date is open, obtains `pretrade_date`, and fetches only the

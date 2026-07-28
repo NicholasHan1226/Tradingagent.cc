@@ -1,0 +1,10 @@
+[Unit]
+Description=Candidate A-share delayed-paper offline-learning timer (disabled by default)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 15:15:00
+Persistent=false
+Unit=tradingagent-ashare-minute-learning.service
+
+[Install]
+WantedBy=timers.target
