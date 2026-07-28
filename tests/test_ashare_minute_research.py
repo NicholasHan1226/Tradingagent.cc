@@ -225,6 +225,28 @@ def test_mainboard_universe_excludes_st_new_and_delisting_names() -> None:
     }
 
 
+def test_universe_scales_from_500_scan_to_full_mainboard_capacity() -> None:
+    instruments = tuple(
+        MinuteUniverseInstrument(
+            symbol=f"{600000 + index:06d}.SH",
+            name=f"Mainboard {index}",
+            industry="generic",
+            research_theme="mainboard_opportunity_scan",
+            list_date=date(2000, 1, 1),
+        )
+        for index in range(501)
+    )
+    with pytest.raises(
+        MinuteResearchContractError,
+        match="monitor_limit_exceeded",
+    ):
+        MinuteResearchUniverse(instruments=instruments)
+    expanded = MinuteResearchUniverse(instruments=instruments, expanded=True)
+    assert len(expanded.trade_symbols) == 501
+    assert expanded.initial_monitor_limit == 500
+    assert expanded.expanded_monitor_limit == 6_000
+
+
 def test_context_is_bounded_pit_evidence_and_never_a_candidate() -> None:
     engine = MinuteRollingFeatureEngine()
     engine.ingest(_snapshot("2026-07-27T09:35:00+08:00", close=10, volume=100_000))

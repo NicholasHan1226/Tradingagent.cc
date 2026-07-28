@@ -218,13 +218,22 @@ def test_closed_loop_schedules_only_after_features_then_settles_next_bar() -> No
         manifest_sha256=manifest,
         auxiliary_evidence=_auxiliary(third_end),
     )
-    assert all(item.settled_receipt is not None for item in third.sleeves)
+    assert all(item.settled_receipt is None for item in third.sleeves)
+    assert set(loop.pending) == set(SLEEVE_IDS)
+
+    fourth_end = "2026-07-27T09:50:00+08:00"
+    fourth = loop.process_snapshot(
+        snapshot=_snapshot(fourth_end, close=10.2, volume=140_000),
+        manifest_sha256=manifest,
+        auxiliary_evidence=_auxiliary(fourth_end),
+    )
+    assert all(item.settled_receipt is not None for item in fourth.sleeves)
     assert all(
         item.settled_receipt.status in {"filled", "partial"}
-        for item in third.sleeves
+        for item in fourth.sleeves
         if item.settled_receipt is not None
     )
-    assert all(item.reconciliation["reconciled"] for item in third.sleeves)
+    assert all(item.reconciliation["reconciled"] for item in fourth.sleeves)
     assert all(
         loop.ledgers[sleeve].by_disposition(ExposureDisposition.PAPER_FILLED)
         for sleeve in SLEEVE_IDS
@@ -296,7 +305,7 @@ def test_skipped_execution_bar_is_nonfill_not_same_bar_or_late_fill() -> None:
         manifest_sha256=manifest,
         auxiliary_evidence=_auxiliary(second_end),
     )
-    late_end = "2026-07-27T09:50:00+08:00"
+    late_end = "2026-07-27T09:55:00+08:00"
     with pytest.raises(MinuteLoopContractError, match="research_rejected"):
         loop.process_snapshot(
             snapshot=_snapshot(late_end, close=10.2, volume=130_000),
@@ -307,7 +316,10 @@ def test_skipped_execution_bar_is_nonfill_not_same_bar_or_late_fill() -> None:
         ExposureDisposition.PAPER_NOT_FILLED
     )
     assert baseline_nonfills
-    assert baseline_nonfills[0].nonfill_reason == "minute_execution_not_exact_next_bar"
+    assert (
+        baseline_nonfills[0].nonfill_reason
+        == "minute_execution_not_first_reachable_bar"
+    )
     assert loop.counterfactual_books["baseline"].positions == {}
 
 

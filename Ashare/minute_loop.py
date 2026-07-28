@@ -29,6 +29,7 @@ from .minute_paper import (
     MinuteFixturePaperBook,
     MinutePaperContractError,
     MinuteSmallAccountConstraints,
+    expected_minute_execution_bar_end,
     minute_action_allowed_during_data_failure,
     minute_decision_record,
 )
@@ -483,6 +484,10 @@ class MinuteFixtureClosedLoop:
         pending = self._pending.get(sleeve_id)
         if pending is None:
             return None
+        expected_end = expected_minute_execution_bar_end(pending.decision_bar)
+        latest_end = max((bar.bar_end for bar in bars_by_symbol.values()), default=None)
+        if expected_end is not None and latest_end is not None and latest_end < expected_end:
+            return None
         execution_bar = bars_by_symbol.get(pending.symbol)
         if execution_bar is None:
             self._append_record(
@@ -495,9 +500,11 @@ class MinuteFixtureClosedLoop:
                 action=pending.side,
                 outcome=MinuteDecisionOutcome.PAPER_NOT_FILLED,
                 requested_notional_cny=pending.requested_notional_cny,
-                reason_code="minute_execution_bar_missing",
+                reason_code="minute_first_reachable_execution_bar_missing",
             )
             del self._pending[sleeve_id]
+            return None
+        if expected_end is not None and execution_bar.bar_end < expected_end:
             return None
         try:
             pair = MinuteExecutionPair(pending.decision_bar, execution_bar)
@@ -512,7 +519,7 @@ class MinuteFixtureClosedLoop:
                 action=pending.side,
                 outcome=MinuteDecisionOutcome.PAPER_NOT_FILLED,
                 requested_notional_cny=pending.requested_notional_cny,
-                reason_code="minute_execution_not_exact_next_bar",
+                reason_code="minute_execution_not_first_reachable_bar",
             )
             del self._pending[sleeve_id]
             return None

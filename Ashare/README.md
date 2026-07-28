@@ -104,14 +104,19 @@ a production-ready minute dataset.
 - an exact morning or afternoon session interval that does not cross lunch,
   close or a trade date;
 - `bar_end <= data_through <= observed_at == available_at <= decision_time`;
-- no more than 30 seconds between bar end and availability;
+- an explicit latency tier: `low_latency_execution` remains capped at 30
+  seconds; `delayed_paper` is capped at 390 seconds and is permanently
+  ineligible to claim low-latency execution evidence;
 - positive valid OHLC prices, nonnegative amount, positive volume, no
   suspension, and no duplicate/conflicting `(symbol, bar_end)` identity;
 - envelope state `ready`, `degraded=false`, freshness `fresh/stale=false`,
   quality `valid`, complete provider-neutral lineage, receipt and timestamps.
 
 Rejected data creates `MinuteEvidenceAuditRecord` only. It is never feature-,
-candidate-, or execution-eligible.
+candidate-, or execution-eligible. The delayed tier exists solely because the
+current TradingDatas/QuickSync five-minute source is observed about one
+completed bar late. It preserves the real `observed_at/available_at` timestamp
+and never rewrites it to satisfy the 30-second gate.
 
 ### Small-account fixture simulation
 
@@ -119,15 +124,20 @@ The operating policy reads the canonical `ashare-capital-v1` projection:
 
 - 50,000 CNY initial capital;
 - 15% single-name cap, 90% stock-gross hard cap and 100-share buy lots;
-- 10 monitored symbols initially, 60 only after real batch-minute parity;
+- 10 symbols for the transport canary, up to 500 for the first broad
+  research-paper scan, and up to 6,000 only after full-mainboard sharded
+  minute parity;
 - up to six actively used positions while the canonical authority retains its
   eight-position safety capacity;
 - cash as a formal state and canonical 1,000/2,000 CNY no-trade/economic-order
   thresholds.
 
-`MinuteExecutionPair` forbids same-bar execution. A decision made after bar
-`t` may use only the next valid bar `t+1`; the lunch transition is
-11:30-to-13:05 and the unsupported closing auction is not used.
+`MinuteExecutionPair` forbids same-bar and already-started-bar execution. It
+uses the first five-minute bar whose **start is strictly after the actual
+decision timestamp**. With a one-bar-delayed source this can be later than the
+naive `t+1` bar; the extra delay is intentional and removes look-ahead. The
+lunch transition is handled explicitly and the unsupported closing auction is
+not used.
 
 `MinuteFixturePaperBook` applies next-bar open plus conservative canonical
 slippage, high/low and price-limit bounds, 10% bar-participation capacity,
@@ -161,6 +171,24 @@ flow and dynamic-position counterfactual books.
 `minute_research.py` and `minute_loop.py` connect the accepted evidence and
 paper contracts without adding a runtime, broker, data fallback or second
 capital authority.
+
+`minute_paper_runner.py` adds a small one-shot entrypoint for prospective
+accumulation. Each invocation queries one exact completed bar, updates one
+atomic `0600` research-fixture bundle, and emits reconciliation/decision
+summaries. The bundle is restartable research state only:
+
+```text
+authority_tier = non_production_fixture
+capital_authority = false
+execution_authority = false
+real_trading_enabled = false
+```
+
+The runner may begin after one fresh previous-close/trading-state reference
+snapshot and a successful exact-bar canary. Five consecutive trading days are
+now a stability and scaling review gate, not a prerequisite for collecting the
+first simulated decisions. It still cannot enable a broker, real order, live
+transition or the strict 30-second execution tier.
 
 `MinuteRollingFeatureEngine` requires consecutive accepted snapshots. Its
 transparent V1 features are close-to-close return, intrabar return, bar range,
@@ -278,6 +306,10 @@ suspension references, and 20-session sample accumulation remain separate.
 - First research directions: AI/semiconductor infrastructure,
   robotics/industrial automation and innovative medicines, with a broad-index
   control sample.
+- The broad opportunity radar may monitor up to 500 mainboard names first and
+  later the full mainboard universe. Broad monitoring does not imply broad
+  holdings: the same 4-6 position, lot, fee, liquidity and risk gates remain
+  authoritative.
 - ST/risk-warning names, delisting risk, listings younger than 30 days,
   suspension, zero volume and unproven trading state remain upstream universe
   exclusions. The minute gate independently rechecks mainboard identity,

@@ -11,6 +11,7 @@ from Ashare.minute_data import (
     MinuteDataContractError,
     MinuteDatasetProfile,
     MinuteEvidenceAuditLedger,
+    MinuteEvidenceUse,
     MinuteReferenceFact,
     MinuteTimestampSemantics,
     TradingDatasMinuteMarketDataPort,
@@ -302,6 +303,7 @@ def _load(
     transport: _Transport,
     *,
     decision_time: str = "2026-07-27T09:40:25+08:00",
+    evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
 ) -> tuple[Any, MinuteEvidenceAuditLedger]:
     client = _client(transport)
     profile = _profile(client)
@@ -312,6 +314,7 @@ def _load(
         decision_time=datetime.fromisoformat(decision_time),
         trading_dates=frozenset({date(2026, 7, 27)}),
         audit_ledger=audit,
+        evidence_use=evidence_use,
     )
     return snapshot, audit
 
@@ -504,6 +507,41 @@ def test_latency_future_and_replay_mismatch_fail_closed() -> None:
             decision_time=datetime.fromisoformat("2026-07-27T09:40:32+08:00"),
             trading_dates=frozenset({date(2026, 7, 27)}),
             audit_ledger=audit,
+        )
+
+
+def test_delayed_paper_accepts_one_bar_provider_lag_without_execution_authority() -> (
+    None
+):
+    delayed = _metadata(
+        observed_at="2026-07-27T09:45:28+08:00",
+        data_through="2026-07-27T09:45:26+08:00",
+    )
+    snapshot, audit = _load(
+        _Transport(metadata=delayed),
+        decision_time="2026-07-27T09:45:29+08:00",
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+    assert audit.records() == ()
+    assert all(bar.evidence_use is MinuteEvidenceUse.DELAYED_PAPER for bar in snapshot.bars)
+    assert all(bar.delayed_paper_eligible is True for bar in snapshot.bars)
+    assert all(bar.execution_latency_eligible is False for bar in snapshot.bars)
+
+    too_late = _metadata(
+        observed_at="2026-07-27T09:46:31+08:00",
+        data_through="2026-07-27T09:46:30+08:00",
+    )
+    client = _client(_Transport(metadata=too_late))
+    profile = _profile(client)
+    late_audit = MinuteEvidenceAuditLedger()
+    with pytest.raises(MinuteDataContractError, match="latency"):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:46:32+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=late_audit,
+            evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
         )
 
     changed_client = _client(_Transport(replay_change=True))

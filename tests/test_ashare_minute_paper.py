@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from Ashare.minute_data import MinuteBarEvidence
+from Ashare.minute_data import MinuteBarEvidence, MinuteEvidenceUse
 from Ashare.minute_paper import (
     MinuteDecisionOutcome,
     MinuteExecutionPair,
@@ -34,6 +34,8 @@ def _bar(
     low: float = 9.9,
     close: float = 10.1,
     volume: int = 100_000,
+    observed_delay_seconds: int = 20,
+    evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
 ) -> MinuteBarEvidence:
     bar_end = datetime.fromisoformat(end)
     return MinuteBarEvidence(
@@ -55,13 +57,14 @@ def _bar(
         catalog_version="fixture-minute-catalog-v1",
         receipt_id=f"receipt-{end}",
         data_through=bar_end,
-        observed_at=bar_end + timedelta(seconds=20),
-        available_at=bar_end + timedelta(seconds=20),
-        decision_time=bar_end + timedelta(seconds=25),
+        observed_at=bar_end + timedelta(seconds=observed_delay_seconds),
+        available_at=bar_end + timedelta(seconds=observed_delay_seconds),
+        decision_time=bar_end + timedelta(seconds=observed_delay_seconds + 5),
         source_lineage_sha256=_sha("a"),
         envelope_proof_sha256=_sha("b"),
         source_row_sha256=_sha("c"),
         reference_evidence_sha256=_sha("d"),
+        evidence_use=evidence_use,
     )
 
 
@@ -74,12 +77,12 @@ def _calendar_receipt() -> dict:
     }
 
 
-def test_execution_pair_requires_next_bar_and_handles_lunch_gap() -> None:
+def test_execution_pair_requires_first_reachable_bar_and_handles_lunch_gap() -> None:
     pair = MinuteExecutionPair(
         _bar("2026-07-27T09:35:00+08:00"),
-        _bar("2026-07-27T09:40:00+08:00"),
+        _bar("2026-07-27T09:45:00+08:00"),
     )
-    assert pair.execution_bar.bar_start == pair.decision_bar.bar_end
+    assert pair.execution_bar.bar_start > pair.decision_bar.decision_time
 
     lunch_pair = MinuteExecutionPair(
         _bar("2026-07-27T11:30:00+08:00"),
@@ -87,12 +90,12 @@ def test_execution_pair_requires_next_bar_and_handles_lunch_gap() -> None:
     )
     assert lunch_pair.execution_bar.market_session == "continuous_auction_pm"
 
-    with pytest.raises(MinutePaperContractError, match="next_bar"):
+    with pytest.raises(MinutePaperContractError, match="first_reachable_bar"):
         MinuteExecutionPair(
             _bar("2026-07-27T09:35:00+08:00"),
-            _bar("2026-07-27T09:45:00+08:00"),
+            _bar("2026-07-27T09:40:00+08:00"),
         )
-    with pytest.raises(MinutePaperContractError, match="next_bar"):
+    with pytest.raises(MinutePaperContractError, match="first_reachable_bar"):
         MinuteExecutionPair(
             _bar("2026-07-27T09:35:00+08:00"),
             _bar("2026-07-27T09:35:00+08:00"),
@@ -103,8 +106,9 @@ def test_small_account_constraints_bind_canonical_50000_policy() -> None:
     constraints = MinuteSmallAccountConstraints.canonical()
     assert constraints.policy.initial_equity_cny == 50_000
     assert constraints.single_name_cap_cny == 7_500
-    assert constraints.initial_monitor_count == 10
-    assert constraints.expanded_monitor_count == 60
+    assert constraints.canary_monitor_count == 10
+    assert constraints.initial_monitor_count == 500
+    assert constraints.expanded_monitor_count == 6_000
     assert constraints.operating_max_positions == 6
     constraints.validate_buy_quantity(price_cny=20.0, quantity=300)
     with pytest.raises(MinutePaperContractError, match="round_lot"):
@@ -121,7 +125,7 @@ def test_small_account_constraints_bind_canonical_50000_policy() -> None:
 def test_next_bar_open_plus_slippage_is_bounded_and_fixture_only() -> None:
     pair = MinuteExecutionPair(
         _bar("2026-07-27T09:35:00+08:00"),
-        _bar("2026-07-27T09:40:00+08:00"),
+        _bar("2026-07-27T09:45:00+08:00"),
     )
     snapshot = build_minute_paper_market_snapshot(
         order_id="ORDER-1",
@@ -137,7 +141,8 @@ def test_next_bar_open_plus_slippage_is_bounded_and_fixture_only() -> None:
     assert snapshot.maximum_fill_quantity == 10_000
     assert snapshot.market_snapshot["real_trading_enabled"] is False
     assert snapshot.market_snapshot["retrospective_bar_fill_evidence"] is True
-    assert snapshot.market_snapshot["modeled_fill_time"] == "2026-07-27T09:35:00+08:00"
+    assert snapshot.market_snapshot["modeled_fill_time"] == "2026-07-27T09:40:00+08:00"
+    assert snapshot.market_snapshot["execution_latency_eligible"] is True
 
     snapshot.validate_receipt(
         {
@@ -157,6 +162,37 @@ def test_next_bar_open_plus_slippage_is_bounded_and_fixture_only() -> None:
         )
 
 
+def test_delayed_paper_fill_waits_for_a_bar_open_after_data_arrival() -> None:
+    decision = _bar(
+        "2026-07-27T11:00:00+08:00",
+        observed_delay_seconds=306,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+    pair = MinuteExecutionPair(
+        decision,
+        _bar("2026-07-27T11:15:00+08:00"),
+    )
+    snapshot = build_minute_paper_market_snapshot(
+        order_id="ORDER-DELAYED",
+        pair=pair,
+        side="buy",
+        session_calendar_receipt=_calendar_receipt(),
+        session_calendar_receipt_sha256=_sha("d"),
+        capital_authority_id="ashare-capital-v1",
+        authority_generation=1,
+        execution_lineage_id="minute-delayed-fixture-lineage",
+    )
+    assert snapshot.market_snapshot["modeled_fill_time"] == "2026-07-27T11:10:00+08:00"
+    assert snapshot.market_snapshot["decision_minute_evidence_use"] == "delayed_paper"
+    assert snapshot.market_snapshot["decision_execution_latency_eligible"] is False
+    assert (
+        snapshot.market_snapshot["execution_minute_evidence_use"]
+        == "low_latency_execution"
+    )
+    assert snapshot.market_snapshot["real_trading_enabled"] is False
+    assert decision.execution_latency_eligible is False
+
+
 def test_fill_is_blocked_by_bar_range_price_limit_and_capacity() -> None:
     decision = _bar("2026-07-27T09:35:00+08:00")
     with pytest.raises(MinutePaperContractError, match="outside_bar"):
@@ -165,7 +201,7 @@ def test_fill_is_blocked_by_bar_range_price_limit_and_capacity() -> None:
             pair=MinuteExecutionPair(
                 decision,
                 _bar(
-                    "2026-07-27T09:40:00+08:00",
+                    "2026-07-27T09:45:00+08:00",
                     high=10.0,
                     low=9.9,
                     close=10.0,
@@ -183,7 +219,7 @@ def test_fill_is_blocked_by_bar_range_price_limit_and_capacity() -> None:
             order_id="ORDER-CAPACITY",
             pair=MinuteExecutionPair(
                 decision,
-                _bar("2026-07-27T09:40:00+08:00", volume=999),
+                _bar("2026-07-27T09:45:00+08:00", volume=999),
             ),
             side="buy",
             session_calendar_receipt=_calendar_receipt(),
@@ -279,7 +315,7 @@ def test_filled_outcome_requires_and_records_simulated_fill() -> None:
 def _pair_for_day(day: str, *, volume: int = 100_000, open_price: float = 10.0):
     return MinuteExecutionPair(
         _bar(f"{day}T09:35:00+08:00", open_price=open_price, volume=volume),
-        _bar(f"{day}T09:40:00+08:00", open_price=open_price, volume=volume),
+        _bar(f"{day}T09:45:00+08:00", open_price=open_price, volume=volume),
     )
 
 
@@ -340,7 +376,7 @@ def test_fixture_book_enforces_t1_then_sells_and_conserves_equity() -> None:
         order_id="SELL-SAME-DAY",
         pair=MinuteExecutionPair(
             _bar("2026-07-27T10:00:00+08:00"),
-            _bar("2026-07-27T10:05:00+08:00"),
+            _bar("2026-07-27T10:10:00+08:00"),
         ),
         side="sell",
         requested_quantity=100,
@@ -376,7 +412,7 @@ def test_fixture_book_records_nonfills_without_mutating_cash_or_positions() -> N
             close=11.0,
         ),
         _bar(
-            "2026-07-27T09:40:00+08:00",
+            "2026-07-27T09:45:00+08:00",
             open_price=11.0,
             high=11.1,
             low=10.9,
