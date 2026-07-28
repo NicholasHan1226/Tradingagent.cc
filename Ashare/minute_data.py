@@ -307,9 +307,10 @@ class MinuteDatasetProfile:
             raise MinuteDataContractError("minute_profile_identity_field_missing")
         filter_fields: set[str] = set()
         for field_name, operators in self.filter_operators:
-            if field_name in filter_fields or field_name not in self.default_fields:
+            if field_name in filter_fields:
                 raise MinuteDataContractError("minute_filter_operators_invalid")
             filter_fields.add(field_name)
+            _text(field_name, "minute_filter_operators_invalid")
             _strings(operators, "minute_filter_operators_invalid")
 
     @classmethod

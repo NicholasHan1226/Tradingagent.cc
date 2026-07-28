@@ -74,6 +74,60 @@ def _catalog_payload(row: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def test_profile_accepts_catalog_filter_only_field() -> None:
+    row = _catalog_row()
+    row["default_fields"] = [
+        field_name for field_name in row["default_fields"] if field_name != "freq"
+    ]
+    transport = _Transport(catalog_row=row)
+    client = SharedSignalsV1Client(
+        SharedSignalsV1Config(
+            base_url="http://127.0.0.1:18082",
+            expected_catalog_version=CATALOG,
+            dataset_ids=frozenset({DATASET}),
+            access_policy_id="minute-test",
+            max_limit=2,
+        ),
+        transport=transport,
+    )
+
+    profile = MinuteDatasetProfile.from_catalog(
+        client.get_catalog(),
+        expected_catalog_version=CATALOG,
+        dataset_id=DATASET,
+        identity_fields=("ts_code", "bar_time"),
+        symbol_field="ts_code",
+        timestamp_field="bar_time",
+        open_field="open",
+        high_field="high",
+        low_field="low",
+        close_field="close",
+        volume_field="vol",
+        amount_field="amount",
+        previous_close_field="pre_close",
+        suspension_field="suspended",
+        frequency_field=None,
+        frequency_value=None,
+        timestamp_format="%Y%m%d %H:%M:%S",
+        timestamp_semantics=MinuteTimestampSemantics.BAR_END,
+        volume_multiplier_to_shares=1.0,
+        amount_multiplier_to_cny=1.0,
+        price_adjustment="raw_unadjusted",
+        max_pages=2,
+        max_rows=4,
+        page_limit=2,
+    )
+
+    assert dict(profile.filter_operators)["freq"] == (
+        "eq",
+        "in",
+        "gte",
+        "lte",
+        "between",
+    )
+    assert "freq" not in profile.default_fields
+
+
 def _metadata(**overrides: Any) -> dict[str, Any]:
     value: dict[str, Any] = {
         "state": "ready",
