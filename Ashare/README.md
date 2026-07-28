@@ -201,6 +201,13 @@ prepare the next day's universe or reference facts, so a day cannot begin
 automatically until those inputs have been frozen under that day's private
 `0700` directory.
 
+`minute_day_report.py` is a read-only, secret-free candidate end-of-day
+projection of an already-written delayed-paper state bundle. It verifies the
+bundle/session/hash continuity before reporting expected, observed and missing
+five-minute slots, decision outcomes, simulated costs, T+1 positions,
+reconciliation, and the four fixture shadow books. It grants no execution,
+training, promotion, durable-ledger, or real-trading authority.
+
 `minute_session_initializer.py` closes that pre-open preparation gap without
 adding a provider route. At 09:20 it reads the current TradingDatas catalog,
 proves the target date is open, obtains `pretrade_date`, and fetches only the
