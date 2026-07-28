@@ -134,6 +134,16 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   `09:40–11:35`与`13:10–15:05`。服务器展开验证为48个不重复触发点，安装后
   下一触发为`2026-07-29 09:40 CST`；已知缺口仍只保留失败关闭证据且不做历史
   补单，午休后段和收盘后不再重复空转。
+- 2026-07-28 17:46 CST 对运行态复核发现旧 release `d6f5f2c…` 的 timer
+  仍在15:05后触发至15:55，且缺少盘后只读日报模块；因此以 PR #58 的 CI
+  `test/front` 双 PASS 和本地17项聚焦测试为门禁，普通合并并原子切换到
+  root-owned immutable release `b4f5d600f3d8bb317375a05b2f613e8a06e89c52`。
+  服务器 unit 与该 release 字节一致，收盘段只保留显式`15:00:40`和
+  `15:05:40`，分钟与会话 timer 均为`enabled/active`，下一次分别为
+  `2026-07-29 09:40`和`09:20`；`Ashare/minute_day_report.py`已进入现役
+  release，环境仍为`REAL_TRADING_ENABLED=false`。切换前后全部既有
+  `state-bundle.json`哈希一致，旧 release 与旧 unit 保留为回滚证据；尚未把
+  明日正式09:20初始化、首个成功自动轮或任何盈利结果标为完成。
 - TradingDatas 已修正 `20260729` SSE日历
   (`is_open=1/pretrade_date=20260728`) 的envelope水位：未来适用日只保留在row，
   `data_through=observed_at`为实际观察时刻。发布切换瞬间TA initializer曾一次
