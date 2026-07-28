@@ -75,6 +75,9 @@ CYCLE_CLAIM_PAYLOAD_KEYS = frozenset(
         *_non_authority_fields(),
     }
 )
+CYCLE_CLAIM_WITH_VALUATION_PAYLOAD_KEYS = CYCLE_CLAIM_PAYLOAD_KEYS | frozenset(
+    {"valuation_context"}
+)
 
 
 _LEDGER_WRITE_CAPABILITY = object()
@@ -446,14 +449,69 @@ class CryptoCapitalLedger:
         if not state["initialized"]:
             raise CryptoLedgerError("capital_opening_required")
         if event_type == "cycle_claim":
+            expected_claim_keys = (
+                CYCLE_CLAIM_WITH_VALUATION_PAYLOAD_KEYS
+                if "valuation_context" in payload
+                else CYCLE_CLAIM_PAYLOAD_KEYS
+            )
             self._require_exact_keys(
-                payload, CYCLE_CLAIM_PAYLOAD_KEYS, scope="capital_cycle_claim_payload"
+                payload, expected_claim_keys, scope="capital_cycle_claim_payload"
             )
             run_id = str(payload.get("run_id") or "")
             symbol = str(payload.get("symbol") or "")
             execution_slot = self._ledger_timestamp(
                 payload.get("execution_slot"), "cycle_execution_slot"
             )
+            valuation_context = payload.get("valuation_context")
+            if valuation_context is not None:
+                if not isinstance(valuation_context, Mapping) or set(
+                    valuation_context
+                ) != {"valuation_slot", "marks"}:
+                    raise CryptoLedgerError("capital_valuation_context_invalid")
+                valuation_slot = self._ledger_timestamp(
+                    valuation_context.get("valuation_slot"),
+                    "cycle_valuation_slot",
+                )
+                valuation_marks = valuation_context.get("marks")
+                if (
+                    valuation_slot != execution_slot
+                    or not isinstance(valuation_marks, Mapping)
+                    or len(valuation_marks) != len(ALLOWED_SYMBOLS)
+                    or symbol not in valuation_marks
+                    or any(
+                        mark_symbol not in ALLOWED_SYMBOLS
+                        for mark_symbol in valuation_marks
+                    )
+                ):
+                    raise CryptoLedgerError("capital_valuation_context_invalid")
+                for mark_symbol, raw_mark in valuation_marks.items():
+                    if (
+                        not isinstance(mark_symbol, str)
+                        or not isinstance(raw_mark, Mapping)
+                        or set(raw_mark)
+                        != {
+                            "price",
+                            "observed_at",
+                            "evidence_receipt_id",
+                            "market_evidence_sha256",
+                        }
+                    ):
+                        raise CryptoLedgerError("capital_valuation_mark_invalid")
+                    mark_price = self._ledger_decimal(
+                        raw_mark.get("price"),
+                        f"valuation_mark_{mark_symbol}",
+                    )
+                    mark_observed_at = self._ledger_timestamp(
+                        raw_mark.get("observed_at"),
+                        f"valuation_mark_observed_at_{mark_symbol}",
+                    )
+                    if (
+                        mark_price <= ZERO
+                        or mark_observed_at != valuation_slot
+                        or not str(raw_mark.get("evidence_receipt_id") or "").strip()
+                        or not self._is_sha256(raw_mark.get("market_evidence_sha256"))
+                    ):
+                        raise CryptoLedgerError("capital_valuation_mark_invalid")
             if (
                 payload.get("contract") != CYCLE_CLAIM_CONTRACT
                 or row.get("reference_id") != f"cycle:{run_id}"
@@ -479,6 +537,7 @@ class CryptoCapitalLedger:
                 "capital_generation": payload["capital_generation"],
                 "capital_account_id": str(payload["capital_account_id"]),
                 "capital_currency": str(payload["capital_currency"]),
+                "valuation_context": _canonical_value(valuation_context),
             }
             return
         if event_type == "reserve":
@@ -682,6 +741,20 @@ class CryptoCapitalLedger:
             )
             if _canonical_json(payload) != _canonical_json(expected):
                 raise CryptoLedgerError("capital_reconcile_mismatch")
+            valuation_context = claim.get("valuation_context")
+            if valuation_context is not None:
+                context_marks = valuation_context.get("marks")
+                if not isinstance(context_marks, Mapping) or any(
+                    marked_symbol not in context_marks
+                    or _canonical_json(mark_price)
+                    != _canonical_json(context_marks[marked_symbol].get("price"))
+                    or _canonical_json(expected["mark_slots"].get(marked_symbol))
+                    != _canonical_json(context_marks[marked_symbol].get("observed_at"))
+                    for marked_symbol, mark_price in expected["marks"].items()
+                ):
+                    raise CryptoLedgerError(
+                        "capital_reconcile_valuation_context_mismatch"
+                    )
             valuation_time = self._ledger_timestamp(
                 expected["valuation_slot"], "valuation_slot"
             )

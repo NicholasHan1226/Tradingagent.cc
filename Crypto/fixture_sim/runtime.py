@@ -47,6 +47,7 @@ from .replay import (
     _cycle_claim_payload,
     _fill_event_payload,
     _journal_llm_sidecar,
+    _normalize_valuation_context,
     _read_json,
     _reserve_event_payload,
     _run_id,
@@ -54,6 +55,41 @@ from .replay import (
     _verify_run_bundle,
     _write_projection,
 )
+
+
+def _valuation_context_from_fixtures(
+    evidence: QualifiedFixtureEvidence,
+    fixtures: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    if fixtures is None:
+        return _normalize_valuation_context(evidence, None)
+    if (
+        not isinstance(fixtures, Mapping)
+        or not 1 <= len(fixtures) <= 2
+        or evidence.symbol not in fixtures
+    ):
+        raise CryptoEvidenceError("capital_valuation_fixtures_invalid")
+    marks: dict[str, Any] = {}
+    for symbol in sorted(fixtures):
+        raw_fixture = fixtures[symbol]
+        if not isinstance(symbol, str) or not isinstance(raw_fixture, Mapping):
+            raise CryptoEvidenceError("capital_valuation_fixtures_invalid")
+        qualified = qualify_fixture_evidence(raw_fixture)
+        if qualified.symbol != symbol:
+            raise CryptoEvidenceError("capital_valuation_fixture_symbol_mismatch")
+        marks[symbol] = {
+            "price": qualified.next_executable_quote.bid,
+            "observed_at": qualified.next_executable_quote.observed_at,
+            "evidence_receipt_id": qualified.receipt_id,
+            "market_evidence_sha256": qualified.market_evidence_sha256,
+        }
+    return _normalize_valuation_context(
+        evidence,
+        {
+            "valuation_slot": evidence.next_executable_quote.observed_at,
+            "marks": marks,
+        },
+    )
 
 
 def evaluate_frozen_champion(
@@ -293,11 +329,27 @@ def _run_prepared_fixture_cycle(
     decision: TimeframeDecision,
     prepared_intent: OrderIntent | None,
     prepared_receipt: PaperFillReceipt | None,
+    valuation_context: Mapping[str, Any],
 ) -> dict[str, Any]:
     _assert_canonical_policy(policy)
     _assert_canonical_champion(champion)
     if bundle_path.exists():
         bundle = _read_json(bundle_path)
+        persisted_risk_reject = (
+            decision.action == "buy"
+            and bundle.get("order_intent") is None
+            and bundle.get("paper_receipt") is None
+        )
+        if persisted_risk_reject:
+            if prepared_intent is None or prepared_receipt is None:
+                raise CryptoLedgerError("persisted_risk_reject_candidate_missing")
+            if (
+                ledger.event_by_reference(f"reserve:{prepared_intent.intent_id}")
+                is not None
+                or ledger.event_by_reference(f"fill:{prepared_receipt.receipt_id}")
+                is not None
+            ):
+                raise CryptoLedgerError("persisted_risk_reject_ledger_mismatch")
         _verify_run_bundle(
             bundle,
             run_id=run_id,
@@ -306,18 +358,33 @@ def _run_prepared_fixture_cycle(
             policy=policy,
             champion=champion,
             decision=decision,
-            expected_intent=prepared_intent,
-            expected_receipt=prepared_receipt,
+            expected_intent=(None if persisted_risk_reject else prepared_intent),
+            expected_receipt=(None if persisted_risk_reject else prepared_receipt),
             ledger=ledger,
+            valuation_context=valuation_context,
         )
-        return {"bundle": bundle, "idempotent_replay": True}
+        return {
+            "bundle": bundle,
+            "idempotent_replay": True,
+            "risk_reject_reason": (
+                "frozen_champion_position_cap_exceeded"
+                if persisted_risk_reject
+                else None
+            ),
+        }
 
     ledger._ensure_opening()
+    valuation_marks = valuation_context["marks"]
     mark = evidence.next_executable_quote.bid
     mark_inputs = {
-        "marks": {evidence.symbol: mark},
-        "mark_slots": {evidence.symbol: evidence.next_executable_quote.observed_at},
-        "valuation_slot": evidence.next_executable_quote.observed_at,
+        "marks": {
+            symbol: Decimal(str(item["price"]))
+            for symbol, item in valuation_marks.items()
+        },
+        "mark_slots": {
+            symbol: item["observed_at"] for symbol, item in valuation_marks.items()
+        },
+        "valuation_slot": valuation_context["valuation_slot"],
     }
     reconcile_reference = f"reconcile:{run_id}"
     existing_reconcile = ledger.event_by_reference(reconcile_reference)
@@ -328,9 +395,13 @@ def _run_prepared_fixture_cycle(
         evidence=evidence,
         policy=policy,
         champion=champion,
+        valuation_context=valuation_context,
     )
     existing_claim = ledger.event_by_reference(claim_reference)
     prechecked_before: dict[str, Any] | None = None
+    effective_intent = prepared_intent
+    effective_receipt = prepared_receipt
+    risk_reject_reason: str | None = None
     if existing_reconcile is None:
         incomplete_runs, last_valuation, account_valuation = ledger.account_cycle_guard(
             symbol=evidence.symbol
@@ -352,7 +423,15 @@ def _run_prepared_fixture_cycle(
             raise CryptoLedgerError("capital_account_valuation_regressed")
         if existing_claim is None:
             prechecked_before = _business_snapshot(ledger.snapshot(**mark_inputs))
-            if prepared_intent is not None:
+        if (
+            prepared_intent is not None
+            and ledger.event_by_reference(f"reserve:{prepared_intent.intent_id}")
+            is None
+        ):
+            prechecked_before = prechecked_before or _business_snapshot(
+                ledger.snapshot(**mark_inputs)
+            )
+            try:
                 _assert_frozen_position_cap(
                     prechecked_before,
                     intent=prepared_intent,
@@ -360,6 +439,25 @@ def _run_prepared_fixture_cycle(
                     policy=policy,
                     champion=champion,
                 )
+            except CryptoLedgerError as exc:
+                if str(exc) != "frozen_champion_position_cap_exceeded":
+                    raise
+                effective_intent = None
+                effective_receipt = None
+                risk_reject_reason = str(exc)
+    elif decision.action == "buy" and prepared_intent is not None:
+        if prepared_receipt is None:
+            raise CryptoLedgerError("prepared_order_or_receipt_missing")
+        existing_reserve = ledger.event_by_reference(
+            f"reserve:{prepared_intent.intent_id}"
+        )
+        existing_fill = ledger.event_by_reference(f"fill:{prepared_receipt.receipt_id}")
+        if (existing_reserve is None) != (existing_fill is None):
+            raise CryptoLedgerError("capital_reconciled_order_events_incomplete")
+        if existing_reserve is None:
+            effective_intent = None
+            effective_receipt = None
+            risk_reject_reason = "frozen_champion_position_cap_exceeded"
     _, head_checksum = ledger.head()
     claim_event, _ = ledger._append_event(
         event_type="cycle_claim",
@@ -370,11 +468,11 @@ def _run_prepared_fixture_cycle(
     intent_payload: dict[str, Any] | None = None
     receipt_payload: dict[str, Any] | None = None
     fill_event: dict[str, Any] | None = None
-    if decision.action == "buy":
-        if prepared_intent is None or prepared_receipt is None:
+    if decision.action == "buy" and effective_intent is not None:
+        if effective_receipt is None:
             raise CryptoLedgerError("prepared_order_or_receipt_missing")
-        intent = prepared_intent
-        receipt = prepared_receipt
+        intent = effective_intent
+        receipt = effective_receipt
         reserve_reference = f"reserve:{intent.intent_id}"
         reserve_event = ledger.event_by_reference(reserve_reference)
         if reserve_event is None:
@@ -455,8 +553,8 @@ def _run_prepared_fixture_cycle(
         evidence=evidence,
         champion=champion,
         decision=decision,
-        intent=prepared_intent,
-        receipt=prepared_receipt,
+        intent=effective_intent,
+        receipt=effective_receipt,
     )
     bundle = {
         "contract": RUN_BUNDLE_CONTRACT,
@@ -509,12 +607,17 @@ def _run_prepared_fixture_cycle(
         policy=policy,
         champion=champion,
         decision=decision,
-        expected_intent=prepared_intent,
-        expected_receipt=prepared_receipt,
+        expected_intent=effective_intent,
+        expected_receipt=effective_receipt,
         ledger=ledger,
+        valuation_context=valuation_context,
     )
     _write_projection(bundle_path, bundle)
-    return {"bundle": _canonical_value(bundle), "idempotent_replay": False}
+    return {
+        "bundle": _canonical_value(bundle),
+        "idempotent_replay": False,
+        "risk_reject_reason": risk_reject_reason,
+    }
 
 
 def run_fixture_auto_sim(
@@ -523,6 +626,7 @@ def run_fixture_auto_sim(
     output_root: Path | str,
     policy: CryptoCapitalPolicy = CRYPTO_CAPITAL_POLICY,
     champion: FrozenChampionCandidate = FROZEN_CHAMPION,
+    account_valuation_fixtures: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run one deterministic local cycle and return bundle + replay metadata."""
 
@@ -546,6 +650,10 @@ def run_fixture_auto_sim(
         if prepared_intent is not None
         else None
     )
+    valuation_context = _valuation_context_from_fixtures(
+        evidence,
+        account_valuation_fixtures,
+    )
     root = Path(output_root)
     if root.exists() and root.is_symlink():
         raise CryptoSafetyError("output_root_symlink_not_allowed")
@@ -566,7 +674,12 @@ def run_fixture_auto_sim(
             and child.lstat().st_nlink != 1
         ):
             raise CryptoSafetyError("output_nested_hardlink_not_allowed")
-    run_id = _run_id(evidence, policy=policy, champion=champion)
+    run_id = _run_id(
+        evidence,
+        policy=policy,
+        champion=champion,
+        valuation_context=valuation_context,
+    )
     bundle_path = root / "runs" / f"{run_id}.json"
     ledger = _open_runtime_ledger(root / "capital", policy=policy)
     with ledger._cycle_lock():
@@ -581,6 +694,7 @@ def run_fixture_auto_sim(
             decision=decision,
             prepared_intent=prepared_intent,
             prepared_receipt=prepared_receipt,
+            valuation_context=valuation_context,
         )
     try:
         sidecar = _journal_llm_sidecar(root, run_id=run_id, evidence=evidence)

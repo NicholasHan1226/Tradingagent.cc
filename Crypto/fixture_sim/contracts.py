@@ -375,7 +375,12 @@ def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _aware_utc(value: Any, *, field_name: str) -> datetime:
+def _aware_utc(
+    value: Any,
+    *,
+    field_name: str,
+    require_minute_alignment: bool = True,
+) -> datetime:
     raw = str(value or "").strip()
     if not raw:
         raise CryptoEvidenceError(f"{field_name}_timestamp_required")
@@ -386,7 +391,7 @@ def _aware_utc(value: Any, *, field_name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise CryptoEvidenceError(f"{field_name}_timezone_required")
     parsed = parsed.astimezone(timezone.utc)
-    if parsed.second != 0 or parsed.microsecond != 0:
+    if require_minute_alignment and (parsed.second != 0 or parsed.microsecond != 0):
         raise CryptoEvidenceError(f"{field_name}_must_align_to_minute")
     return parsed
 
@@ -473,6 +478,7 @@ def _non_authority_fields() -> dict[str, Any]:
         "execution_eligible": False,
         "execution_authority": False,
         "durable_execution_receipt": False,
+        "production_eligible": False,
         "outbox_id": None,
         "capital_commit_id": None,
         "durability_scope": DURABILITY_SCOPE,
@@ -629,7 +635,6 @@ class QualifiedFixtureEvidence:
                 "network_used": False,
             },
             **_non_authority_fields(),
-            "production_eligible": False,
             "real_trading_enabled": False,
         }
 
@@ -816,6 +821,7 @@ class OrderIntent:
     execution_eligible: bool = False
     execution_authority: bool = False
     durable_execution_receipt: bool = False
+    production_eligible: bool = False
     outbox_id: str | None = None
     capital_commit_id: str | None = None
     durability_scope: str = DURABILITY_SCOPE
@@ -886,6 +892,7 @@ class OrderIntent:
             or self.execution_eligible is not False
             or self.execution_authority is not False
             or self.durable_execution_receipt is not False
+            or self.production_eligible is not False
             or self.outbox_id is not None
             or self.capital_commit_id is not None
             or self.durability_scope != DURABILITY_SCOPE
@@ -922,6 +929,7 @@ class PaperFillReceipt:
     execution_eligible: bool = False
     execution_authority: bool = False
     durable_execution_receipt: bool = False
+    production_eligible: bool = False
     outbox_id: str | None = None
     capital_commit_id: str | None = None
     durability_scope: str = DURABILITY_SCOPE
@@ -974,6 +982,7 @@ class PaperFillReceipt:
             or self.execution_eligible is not False
             or self.execution_authority is not False
             or self.durable_execution_receipt is not False
+            or self.production_eligible is not False
             or self.outbox_id is not None
             or self.capital_commit_id is not None
             or self.durability_scope != DURABILITY_SCOPE
