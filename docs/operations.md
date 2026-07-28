@@ -664,6 +664,15 @@ append-only/原子 fixture 状态；不得删除 bundle 或恢复旧数据入口
 该 timer 只自动积累 `non_production_fixture`。它不生成次日参考文件，不连接
 broker，不授予 durable capital，也不改变 `REAL_TRADING_ENABLED=false`。
 
+2026-07-28 安装态：不可变 release
+`b7263e8b9506c45043beff9575bdb651292aa0e6` 已由
+`/opt/investment/releases/tradingagent/current` 指向；secret-free env、service
+和 timer 已安装并通过 `systemd-analyze verify`，但 timer 保持
+`disabled/inactive`。原因是手工状态停在13:45而安装时已到13:55目标窗口，
+13:50形成真实缺口；禁止以旧行配新 receipt、改写 decision time 或跳过缺口。
+下一次允许启用的窗口是新交易日私有目录和参考输入已冻结、且可从09:35第一根
+连续K线开始时。该安装态不是自动模拟已启动的证明。
+
 盘后日线的 `observation_session=T` 只是 current observation。在预测前冻结且独立验证的交易日历没有给出下一 session 之前，daily-only planner 必须写 `paper_trade_session=null` 并固定 `action=abstain/status=completed_with_blocks`。每个 symbol 至少需要 21 个 forward-collected session 才能覆盖 20 日 momentum/volatility 的最小数学窗口；但缺交易日连续性和公司行动/复权 authority 时，即使计数达到 21 也仍是 blocked。当前 membership ledger 不注册任何 label horizon；缺 calendar/minute/market-truth/adjustment authority 不得生成或回填标签。缺分钟/L1 evidence 时不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：

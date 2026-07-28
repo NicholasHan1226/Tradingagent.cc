@@ -1272,6 +1272,31 @@ entries:
       - publish_calibrated_probability_expected_return_or_predictive_edge
       - authorize_broker_or_real_trading
     successor: ashare_minute_first_reachable_fill_then_timer_candidate
+  - entry_id: tradingagent_ashare_minute_auto_accumulator
+    state: CURRENT_VERIFIED
+    layer: server_installed_disabled_simulation_only
+    owner: TradingAgent
+    canonical_path: Ashare/minute_auto_runner.py
+    production_verified: false
+    last_verified_at: "2026-07-28"
+    evidence:
+      - STATUS.md
+      - Ashare/minute_auto_runner.py
+      - deploy/systemd/tradingagent-ashare-minute-paper.service
+      - deploy/systemd/tradingagent-ashare-minute-paper.timer
+      - tests/test_ashare_minute_auto_runner.py
+    allowed_uses:
+      - select_one_expected_delayed_five_minute_bar_for_an_initialized_session
+      - install_the_simulation_only_service_timer_and_secret_free_environment_disabled
+      - preserve_bar_continuity_and_fail_closed_on_gap_duplicate_or_degraded_evidence
+      - prove_the_installed_candidate_without_enabling_automatic_simulation
+    prohibited_uses:
+      - infer_timer_enabled_or_automatic_simulation_started
+      - backfill_skip_or_retimestamp_a_missing_bar
+      - accept_an_old_row_with_a_later_receipt_as_historical_point_in_time_evidence
+      - infer_cross_day_initialization_crash_recovery_or_continuous_runtime
+      - infer_durable_capital_broker_or_real_trading
+    successor: initialize_next_session_then_enable_and_observe_the_simulation_only_timer
   - entry_id: tradingagent_cnfutures_fixture_closed_loop
     state: CURRENT_VERIFIED
     layer: repository_contract

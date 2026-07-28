@@ -17,8 +17,8 @@ Decision Ledger 与对账。TradingDatas 已将 `cn.dataset.rt_min` 从10只扩�
 主板并完成真实30/30回读；该数据约晚一个完整5分钟K线，只取得
 observation/data accumulation 与 delayed-paper 资格，不满足 TA 的30秒执行证据
 门禁。TA代码已支持500只首批扫描与最多6000只主板容量，但500只真实分片运行仍由
-TradingDatas单独验收，不能由代码容量推断生产覆盖。TA worker/timer、durable
-capital runtime 和自动模拟交易仍未启动；服务器已用正式18082的30只精确分钟
+TradingDatas单独验收，不能由代码容量推断生产覆盖。TA observation worker、
+durable capital runtime 和自动模拟交易仍未启动；服务器已用正式18082的30只精确分钟
 快照手工推进非生产 delayed-paper one-shot，开始积累特征、候选、未成交回执、
 待处理模拟订单、Decision Ledger 和四个隔离反事实账本。
 
@@ -38,9 +38,11 @@ capital runtime 和自动模拟交易仍未启动；服务器已用正式18082�
   5分钟 delayed-paper 与500→全量监控容量代码另以 root-owned、只读不可变
   release 安装在
   `/opt/investment/releases/tradingagent/ac828bf5da25ab061f0b3cc785577f18432334e2`；
-  UID 987 导入验证通过，但没有 current 切换、worker/timer 或交易启用。
-  这些 release 都不是 active/current 切换，也没有启动 front、worker、timer
-  或真实交易。
+  自动累计 wrapper 和 tracked unit 对应的不可变 release
+  `/opt/investment/releases/tradingagent/b7263e8b9506c45043beff9575bdb651292aa0e6`
+  已成为 `/opt/investment/releases/tradingagent/current`。这只切换了
+  simulation-only 自动累计代码入口；front、observation worker、分钟 timer、
+  broker 与真实交易仍未启动。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。TA 不固定跨仓 catalog 版本或 active
   数量，每次运行均以正式 catalog 动态发现并逐数据集失败关闭。
@@ -94,6 +96,16 @@ capital runtime 和自动模拟交易仍未启动；服务器已用正式18082�
   两账本各形成1个T+1持仓并继续保留下一候选挂单；同一13:45快照重放退出2且
   bundle SHA不变。状态 bundle 为 `non_production_fixture`、0600、可重启且无
   资本/执行 authority。
+- 自动累计候选 `b7263e8…` 已普通提交并同步 GitHub main；本地完整测试为
+  `3782 passed`，服务器不可变 release 上分钟相关测试为 `57 passed`。
+  `/etc/tradingagent/ashare-minute-paper.env`、tracked service/timer 与
+  `current` 指针已安装并通过 `systemd-analyze verify`，环境仍固定
+  `REAL_TRADING_ENABLED=false`。timer 当前 `disabled/inactive`：手工状态停在
+  13:45，而安装时按真实时钟应处理13:55，13:50缺口触发失败关闭；对隔离副本
+  尝试旧13:50时，TradingDatas 正确返回最新14:00 receipt 元数据，因证据时序
+  与390秒上限失败关闭。正式 bundle SHA保持
+  `2812f88d34d52df67ed2275f439f1a9904e5c1165a1988b2e3964edbf7511130`，
+  系统没有回填、跳过或改写时间。
 - 动态 builder 服务器只读运行时，calendar 与 security-master 为
   `runtime_state=success/degraded=false`；daily 为
   `runtime_state=stale/degraded=true`。因此返回
@@ -230,17 +242,19 @@ TA worker/timer，也不负责修改 TradingDatas 采集调度。
   30只主板的5分钟 OHLCV/amount 读取和既有小批连续性。二者都不是可训练历史
   PIT，也没有绑定 durable capital/outbox 或 TA 生产 worker。
 - `rt_min` 约晚一根完整K线且不含 bid/ask；当前只用于数据与非生产模拟样本
-  积累。保守下一可达K线策略已在手工 one-shot 中运行，但自动 timer、durable
-  capital 或更高权限仍需独立启用门禁；连续5个交易日用于稳定性与扩容复核，
-  不再阻塞首批模拟决策。
+  积累。保守下一可达K线策略已在手工 one-shot 中运行；自动 timer 已安装但因
+  当日中途缺口保持禁用，下一交易日必须先冻结09:35前的当日参考输入，再从首根
+  连续K线启动。durable capital 或更高权限仍需独立门禁；连续5个交易日用于
+  稳定性与扩容复核，不再阻塞首批模拟决策。
 - front 继续停止；本阶段不恢复 `tradingagent.cc` 页面。tracked base unit 已安装
-  但保持 inactive/disabled/runtime-masked，旧 drop-in 已退役。当前也没有
-  current pointer、自动 worker 或 observation timer 激活。
+  但保持 inactive/disabled/runtime-masked，旧 drop-in 已退役。分钟累计已有
+  独立 current pointer，但自动 worker 与 observation/minute timer 均未激活。
 - 专用 UID 987 已通过新的 root-owned versioned Python runtime 执行真实入口和
   audit；旧 `/opt/tradingagent/venv` 不再被 TA active unit 引用。动态 manifest
   rollover 已完成失败关闭和恢复后 PASS 验收，手工 one-shot 与幂等重放已完成；
-  tracked unit、secret-free env 与 `current` 指针尚未安装，失败恢复和 timer
-  激活仍未完成。
+  分钟自动累计的 tracked unit、secret-free env 与 `current` 指针已安装，
+  但跨日初始化、首次自动触发、崩溃恢复与连续运行验收仍未完成，因此 timer 保持
+  disabled/inactive。
 - 旧 8082、旧服务器 runtime 和退役文档只能按各自 ownership 与证据链清理；
   不以删除代替依赖清零证明。
 
@@ -259,8 +273,10 @@ TA worker/timer，也不负责修改 TradingDatas 采集调度。
 4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
    主板 observation，也不把汇总数据冒充个股权限；
 5. 当前真实 delayed-paper one-shot 已完成首次可达K线结算与重复快照不变复核；
-   下一独立候选是把同一入口接入专用 TA timer，且缺当日参考快照或任何数据退化
-   时失败关闭。连续5个交易日是稳定性/扩容复核门，不再阻塞首批模拟决策。
+   专用 TA timer 已安装但未启用。下一停止线是在下一交易日开盘前冻结当日私有
+   参考输入，从09:35第一根开始启用并验证首轮、下一轮、重复轮、崩溃恢复和盘后
+   停止；缺参考快照、分钟缺口或任何数据退化时继续失败关闭。连续5个交易日是
+   稳定性/扩容复核门，不再阻塞首批模拟决策。
    durable capital 或更高权限的自动 paper
    仍须完整数据、日历、执行与资本权威通过后开放
    `Signal -> TargetPosition -> Risk -> PaperFill -> Reconcile -> Attribution`
