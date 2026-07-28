@@ -14,10 +14,12 @@ manifest，隔离 observation one-shot 和同 root 幂等重放均 PASS。仓库
 5分钟 fixture/mock 研究闭环：严格或显式 delayed-paper 分钟证据之后可生成透明
 滚动特征、未经校准的确定性排名、第一根真正可达K线模拟结算、四个隔离反事实账本、
 Decision Ledger 与对账。TradingDatas 已将 `cn.dataset.rt_min` 从10只扩为30只
-主板并完成真实30/30回读；该数据约晚一个完整5分钟K线，只取得
+主板并完成真实30/30自动回读；该数据约晚一个完整5分钟K线，只取得
 observation/data accumulation 与 delayed-paper 资格，不满足 TA 的30秒执行证据
-门禁。TA代码已支持500只首批扫描与最多6000只主板容量，但500只真实分片运行仍由
-TradingDatas单独验收，不能由代码容量推断生产覆盖。TA observation worker 与
+门禁。TA现役代码已支持显式审核的500只Universe：分钟分页/行预算按Universe与
+catalog上限派生，Universe内容SHA进入manifest，上一日参考价和每根分钟快照都必须
+500/500精确覆盖；但500只真实分片运行仍由TradingDatas单独验收，不能由代码容量
+推断生产覆盖。TA observation worker 与
 durable capital runtime 仍未启动；服务器已用正式18082的30只精确分钟快照手工推进
 非生产 delayed-paper one-shot，并已启用仅用于 fixture 自动累计的分钟调度与次日
 会话初始化调度。首次分钟自动触发因当日历史缺口失败关闭且账本不变；它不是一次成功
@@ -39,9 +41,11 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   5分钟 delayed-paper 与500→全量监控容量代码另以 root-owned、只读不可变
   release 安装在
   `/opt/investment/releases/tradingagent/ac828bf5da25ab061f0b3cc785577f18432334e2`；
-  自动累计 wrapper、次日会话初始化器和 tracked unit 对应的不可变 release
-  `/opt/investment/releases/tradingagent/437fa274f5cfc47bac6ae03f7a26270ec404659c`
-  已成为 `/opt/investment/releases/tradingagent/current`。这只切换并启用了
+  自动累计 wrapper、次日会话初始化器和 tracked unit 的上一回滚 release 是
+  `/opt/investment/releases/tradingagent/437fa274f5cfc47bac6ae03f7a26270ec404659c`。
+  500只会话消费能力对应的 root-owned、只读不可变 release
+  `/opt/investment/releases/tradingagent/65ee4f012fc673b0680d63a5a87195b1c7061adb`
+  已成为 `/opt/investment/releases/tradingagent/current`。这只更新了
   simulation-only 调度入口；front、observation worker、broker 与真实交易仍未启动。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。TA 不固定跨仓 catalog 版本或 active
@@ -57,6 +61,14 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   provider→SQLite receipt→正式18082 `30/30` 回读，元数据为
   `ready/success/fresh/valid/non-degraded`。上游约晚一个完整5分钟K线，不能
   宣称 `bar_end -> observed_at <= 30s`，且数据不含 L1/bid-ask。
+- 2026-07-28 15:05自动采集轮已把最终15:00 bar落库；TA身份经正式18082精确
+  查询为30/30、ready/success/fresh/valid/non-degraded，receipt与lineage完整。
+  这证明当前30只链路完成当日自动收盘，不代表500只已在生产采集。
+- 500只TA消费变更已通过全仓`3792 passed`与GitHub前后端CI，PR #51普通合并为
+  `65ee4f012fc673b0680d63a5a87195b1c7061adb`；服务器现役release对500行预算
+  smoke PASS。TradingDatas的500候选固定为5个100只分片，只有同一bar五片全部
+  成功且500个`(ts_code,time)`唯一完整时才可handoff；当前尚未取得连续两轮
+  500/500正式证据，所以生产数据覆盖仍是30只。
 - 当前首轮 delayed-paper 使用的 previous-close 来自上一完成交易日的
   `daily.close`；非停牌状态只对正式 `rt_min` 完成K线且成交量为正的30只成立，
   两类证据均以 row/envelope hash 绑定。TradingDatas 随后独立回读
