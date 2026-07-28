@@ -46,8 +46,10 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   500只会话消费能力的上一回滚 release 是
   `/opt/investment/releases/tradingagent/65ee4f012fc673b0680d63a5a87195b1c7061adb`；
   支持由 `ASHARE_MINUTE_UNIVERSE_SOURCE` 装载审核 Universe 的 root-owned、
-  只读不可变 release
-  `/opt/investment/releases/tradingagent/f81acb983ed72d0bbfa9d2331a67d62837289dd2`
+  只读不可变 release 的直接回滚点是
+  `/opt/investment/releases/tradingagent/f81acb983ed72d0bbfa9d2331a67d62837289dd2`。
+  精确48次分钟timer窗口对应的 root-owned、只读不可变 release
+  `/opt/investment/releases/tradingagent/d6f5f2cf6bfdf3826537bda65000f1b32304ed73`
   已成为 `/opt/investment/releases/tradingagent/current`。这只更新了
   simulation-only 调度入口；front、observation worker、broker 与真实交易仍未启动。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
@@ -128,9 +130,10 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   ready/fresh/valid/non-degraded、receipt与lineage完整且
   same-replay一致。因此行情数据仍在累计，正式fixture账本不推进是连续性与
   冻结合同门禁，而不是把当天缺口或catalog漂移静默洗白。
-- 现役分钟timer的旧日历表达式会在午休后段和收盘后继续触发，导致已知缺口被
-  重复记录但不产生新样本。当前主线候选已把触发窗口收敛为每交易日精确48次：
-  `09:40–11:35`与`13:10–15:05`，保留首次缺口失败关闭且不做历史补单。
+- 现役分钟timer已把旧日历表达式收敛为每交易日精确48次：
+  `09:40–11:35`与`13:10–15:05`。服务器展开验证为48个不重复触发点，安装后
+  下一触发为`2026-07-29 09:40 CST`；已知缺口仍只保留失败关闭证据且不做历史
+  补单，午休后段和收盘后不再重复空转。
 - TradingDatas 已修正 `20260729` SSE日历
   (`is_open=1/pretrade_date=20260728`) 的envelope水位：未来适用日只保留在row，
   `data_through=observed_at`为实际观察时刻。发布切换瞬间TA initializer曾一次
@@ -209,7 +212,7 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
 |---|---|---|
 | 本地主线 | `main` 已含 provider-neutral client、分页/证据门禁、动态 manifest builder 和 0710 secret parent 安全遍历 | 代码存在不等于服务器已激活 |
 | GitHub 主线 | delayed-paper与500→全量监控容量已普通合并，GitHub CI通过 | CI 不等于500只真实数据覆盖或模拟盘已启动 |
-| 服务器代码 | `437fa27…` simulation-only分钟累计/会话初始化 release 已安装并切 current；历史 observation/runtime release 保留 | current 只指TA模拟入口，不等于durable capital、broker或真实交易 |
+| 服务器代码 | `d6f5f2c…` simulation-only分钟累计/会话初始化与精确48次timer release 已安装并切 current；`f81acb9…`及更早验证release保留 | current 只指TA模拟入口，不等于durable capital、broker或真实交易 |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
 | 数据验收 | 三核心日频 manifest 和 `20260724` observation/重放 PASS；`rt_min` 已有30只主板真实30/30回读；上游50/100/200只分片压测完整 | 500只动态分片尚未正式发布/回读；分钟数据约晚一根K线，不是历史PIT、训练样本、L1或低延迟执行证明 |
 | 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；30只 delayed-paper 手工 one-shot 已保存模拟状态；分钟与会话timer enabled/active，但首轮分钟自动触发因当日缺口失败关闭且账本不变；无 broker 或真实交易 | 启用调度不等于已有成功自动模拟轮次、durable capital 或真实执行 |
