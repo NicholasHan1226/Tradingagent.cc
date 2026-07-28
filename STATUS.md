@@ -108,8 +108,8 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   `2812f88d34d52df67ed2275f439f1a9904e5c1165a1988b2e3964edbf7511130`，
   系统没有回填、跳过或改写时间。TD中途发布参考数据后catalog由本会话冻结的
   `v1-d27aa31fbfb60a3c`变为`v1-541b1314702f4897`；已开始的会话不原地换约。
-  使用当前catalog执行的TA受限只读查询分别对14:30与14:35精确bar完成双跑，
-  两次均为30/30、ready/fresh/valid/non-degraded、receipt与lineage完整且
+  使用当前catalog执行的TA受限只读查询分别对14:30、14:35与14:40精确bar完成双跑，
+  三次均为30/30、ready/fresh/valid/non-degraded、receipt与lineage完整且
   same-replay一致。因此行情数据仍在累计，正式fixture账本不推进是连续性与
   冻结合同门禁，而不是把当天缺口或catalog漂移静默洗白。
 - TradingDatas 已采集 `20260729` SSE日历行
