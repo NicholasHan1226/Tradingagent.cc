@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import Ashare.minute_session_initializer as initializer_module
 from Ashare.minute_session_initializer import (
     MinuteSessionInitializerError,
     _scaled_minute_profile,
@@ -417,6 +418,41 @@ def test_explicit_universe_source_rejects_ineligible_security(
             universe_source=source,
             transport_factory=_factory(FixtureTransport()),
         )
+
+
+def test_cli_uses_reviewed_universe_source_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "reviewed-universe-500.json"
+    source.write_text("[]\n", encoding="utf-8")
+    captured: dict[str, Any] = {}
+
+    def fake_initialize(**kwargs: Any) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"status": "pass", "real_trading_enabled": False}
+
+    monkeypatch.setenv("ASHARE_MINUTE_UNIVERSE_SOURCE", str(source))
+    monkeypatch.setattr(
+        initializer_module,
+        "initialize_minute_session",
+        fake_initialize,
+    )
+
+    assert (
+        initializer_module.main(
+            [
+                "--state-root",
+                str(tmp_path / "state"),
+                "--token-file",
+                "/run/private/token",
+                "--now",
+                "2026-07-29T09:20:00+08:00",
+            ]
+        )
+        == 0
+    )
+    assert captured["universe_source"] == source
 
 
 def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
