@@ -112,13 +112,13 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   三次均为30/30、ready/fresh/valid/non-degraded、receipt与lineage完整且
   same-replay一致。因此行情数据仍在累计，正式fixture账本不推进是连续性与
   冻结合同门禁，而不是把当天缺口或catalog漂移静默洗白。
-- TradingDatas 已采集 `20260729` SSE日历行
-  (`is_open=1/pretrade_date=20260728`)，但首次修正后的envelope把未来适用日
-  投影为晚于`observed_at`的`data_through`。TA受限initializer按通用证据合同
-  返回`metadata.data_through must not be after observed_at`并失败关闭；未创建
-  `20260729`目录，既有bundle不变。下一步由TradingDatas保留未来日历事实行，同时
-  把envelope水位投影为实际已观察/入库时刻，再做UID987 parity；TA不为单一数据集
-  放宽所有数据的通用未来证据门禁。
+- TradingDatas 已修正 `20260729` SSE日历
+  (`is_open=1/pretrade_date=20260728`) 的envelope水位：未来适用日只保留在row，
+  `data_through=observed_at`为实际观察时刻。发布切换瞬间TA initializer曾一次
+  `minute_session_catalog_http_failed`，5秒后重跑已通过catalog与calendar，
+  当前只在`minute_session_daily_universe_incomplete`失败关闭；未创建
+  `20260729`目录，既有bundle不变。明早会话剩余门禁已收敛为盘后采集并验证
+  `20260728`日线对30只审核Universe的完整覆盖。
 - 动态 builder 服务器只读运行时，calendar 与 security-master 为
   `runtime_state=success/degraded=false`；daily 为
   `runtime_state=stale/degraded=true`。因此返回
