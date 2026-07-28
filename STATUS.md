@@ -138,9 +138,21 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   (`is_open=1/pretrade_date=20260728`) 的envelope水位：未来适用日只保留在row，
   `data_through=observed_at`为实际观察时刻。发布切换瞬间TA initializer曾一次
   `minute_session_catalog_http_failed`，5秒后重跑已通过catalog与calendar，
-  当前只在`minute_session_daily_universe_incomplete`失败关闭；未创建
-  `20260729`目录，既有bundle不变。明早会话剩余门禁已收敛为盘后采集并验证
-  `20260728`日线对30只审核Universe的完整覆盖。
+  当时只在`minute_session_daily_universe_incomplete`失败关闭；未创建
+  `20260729`目录，既有bundle不变。
+- TradingDatas 16:30盘后通用采集于16:30:25成功结束，`cn.equity.daily`与
+  `cn.dataset.rt_min`均写入success receipt。TA UID987随后经正式18082对
+  `trade_date=20260728`和30只审核Universe执行有界双跑：返回30/30，
+  `state=ready/degraded=false/freshness=fresh/quality=valid`，lineage完整，
+  receipt、`data_through`和`observed_at`非空，且无游标。使用现役
+  `d6f5f2c…`在独立evidence root初始化`20260729`时首次PASS、重放
+  `reused=true`，Universe SHA为
+  `0e26f54fc2ab391f0187a5787f9955b90e8a2ff21969957565749b733e035203`。
+  隔离目录仅生成三项0600输入；无`state-bundle`、资本、订单或执行authority，
+  正式`/var/lib/tradingagent/ashare-minute-paper/20260729`仍不存在。一次辅助
+  摘要脚本因误读非合同字段`runtime_state`失败，修正后只读取冻结的
+  QueryMetadata字段并通过；没有掩盖失败或修改运行态。明早09:20 timer的实际
+  正式初始化、首根连续分钟bar和首个成功自动模拟轮仍需独立读回。
 - 动态 builder 服务器只读运行时，calendar 与 security-master 为
   `runtime_state=success/degraded=false`；daily 为
   `runtime_state=stale/degraded=true`。因此返回
@@ -278,9 +290,9 @@ simulation-only分钟/会话timer，不负责修改 TradingDatas 采集调度。
   PIT，也没有绑定 durable capital/outbox 或 TA 生产 worker。
 - `rt_min` 约晚一根完整K线且不含 bid/ask；当前只用于数据与非生产模拟样本
   积累。保守下一可达K线策略已在手工 one-shot 中运行；自动 timer 已启用，但
-  当日中途缺口使首轮自动触发失败关闭且不改账本。下一交易日仍必须由09:20
-  initializer先冻结当日参考输入，再从首根连续K线启动。durable capital 或更高
-  权限仍需独立门禁；连续5个交易日用于
+  当日中途缺口使首轮自动触发失败关闭且不改账本。下一交易日输入已完成隔离
+  30/30初始化与幂等重放，但正式状态仍必须由09:20 initializer冻结，再从首根
+  连续K线启动。durable capital 或更高权限仍需独立门禁；连续5个交易日用于
   稳定性与扩容复核，不再阻塞首批模拟决策。
 - front 继续停止；本阶段不恢复 `tradingagent.cc` 页面。tracked base unit 已安装
   但保持 inactive/disabled/runtime-masked，旧 drop-in 已退役。分钟累计已有
@@ -291,7 +303,8 @@ simulation-only分钟/会话timer，不负责修改 TradingDatas 采集调度。
   rollover 已完成失败关闭和恢复后 PASS 验收，手工 one-shot 与幂等重放已完成；
   分钟自动累计的 tracked unit、secret-free env 与 `current` 指针已安装并启用。
   首次自动触发已证明缺口下失败关闭且bundle不变；真实次日pre-open初始化、首个成功
-  自动轮次、崩溃恢复与连续运行验收仍未完成。
+  自动轮次、崩溃恢复与连续运行验收仍未完成。次日隔离预检已证明30只参考输入
+  可生成且精确重放，但它不替代09:20正式timer读回。
 - 旧 8082、旧服务器 runtime 和退役文档只能按各自 ownership 与证据链清理；
   不以删除代替依赖清零证明。
 
@@ -311,8 +324,8 @@ simulation-only分钟/会话timer，不负责修改 TradingDatas 采集调度。
    主板 observation，也不把汇总数据冒充个股权限；
 5. 当前真实 delayed-paper one-shot 已完成首次可达K线结算与重复快照不变复核；
    专用 TA 分钟 timer 与次日会话初始化 timer 已安装并启用。下一停止线是在下一
-   交易日开盘前冻结当日私有
-   参考输入，从09:35第一根开始启用并验证首轮、下一轮、重复轮、崩溃恢复和盘后
+   交易日09:20核验正式目录与隔离预检一致，并从09:35首根数据到达后的09:40
+   调度开始验证首轮、下一轮、重复轮、崩溃恢复和盘后
    停止；缺参考快照、分钟缺口或任何数据退化时继续失败关闭。连续5个交易日是
    稳定性/扩容复核门，不再阻塞首批模拟决策。
    durable capital 或更高权限的自动 paper
