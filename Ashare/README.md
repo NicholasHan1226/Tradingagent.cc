@@ -195,10 +195,11 @@ only the single bar expected behind the frozen five-minute provider lag,
 requires continuity with the last atomic bundle, and then calls the same
 one-shot runner. It never catches up a gap with late information. A missing
 daily session directory is a safe no-op; a missing intermediate bar, malformed
-state, duplicate concurrent process, degraded dataset or incomplete 30-symbol
-snapshot fails closed. The wrapper does not prepare the next day's universe or
-reference facts, so a day cannot begin automatically until those inputs have
-been frozen under that day's private `0700` directory.
+state, duplicate concurrent process, degraded dataset or a snapshot that does
+not exactly cover the reviewed universe fails closed. The wrapper does not
+prepare the next day's universe or reference facts, so a day cannot begin
+automatically until those inputs have been frozen under that day's private
+`0700` directory.
 
 `minute_session_initializer.py` closes that pre-open preparation gap without
 adding a provider route. At 09:20 it reads the current TradingDatas catalog,
@@ -208,6 +209,16 @@ revalidates the current `rt_min` catalog contract, copies the already-reviewed
 universe, and atomically publishes only `minute-manifest.json`,
 `reference-facts.json`, and `universe.json`. It never creates
 `state-bundle.json`.
+
+For a reviewed scale transition, the initializer accepts an explicit absolute
+`--universe-source` artifact. It derives `page_limit`, `max_rows` and
+`max_pages` from that universe and the current catalog page limit, then binds
+the canonical universe SHA into the published manifest. A 500-symbol artifact
+therefore uses a 500-row budget when the catalog permits it; it is not silently
+truncated to the preceding 30-symbol canary. The supplied artifact must still
+pass the main-board, listing-age and risk checks, have complete prior-close
+coverage, and match every exact minute snapshot before any simulated step can
+proceed.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every actual bar must

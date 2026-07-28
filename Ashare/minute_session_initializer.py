@@ -1,10 +1,11 @@
 """Prepare one private A-share delayed-paper session from TradingDatas.
 
-The initializer is intentionally small.  It reuses the previously reviewed
-30-symbol universe, proves that the target day is open, reads the preceding
-session's closes through the fixed TradingDatas catalog/query API, and writes
-the three immutable inputs consumed by ``minute_auto_runner``.  It never
-creates capital, orders, fills, or a state bundle.
+The initializer is intentionally small.  It reuses a previously reviewed
+universe or an explicitly supplied reviewed universe artifact, proves that the
+target day is open, reads the preceding session's closes through the fixed
+TradingDatas catalog/query API, and writes the three immutable inputs consumed
+by ``minute_auto_runner``.  It never creates capital, orders, fills, or a state
+bundle.
 """
 
 from __future__ import annotations
@@ -210,6 +211,29 @@ def _query_contract(
     return schema_major, required_fields, min(page_size, 500)
 
 
+def _scaled_minute_profile(
+    template_profile: Mapping[str, Any],
+    *,
+    symbol_count: int,
+    catalog_page_size: int,
+) -> dict[str, Any]:
+    if (
+        isinstance(symbol_count, bool)
+        or not isinstance(symbol_count, int)
+        or symbol_count <= 0
+        or isinstance(catalog_page_size, bool)
+        or not isinstance(catalog_page_size, int)
+        or catalog_page_size <= 0
+    ):
+        raise MinuteSessionInitializerError("minute_session_profile_scale_invalid")
+    page_limit = min(symbol_count, catalog_page_size, 500)
+    profile = dict(template_profile)
+    profile["page_limit"] = page_limit
+    profile["max_rows"] = symbol_count
+    profile["max_pages"] = (symbol_count + page_limit - 1) // page_limit
+    return profile
+
+
 def _query_twice(
     *,
     client: SharedSignalsV1Client,
@@ -348,6 +372,7 @@ def initialize_minute_session(
     transport_id: str = "http-json-v1",
     timeout_seconds: float = 20.0,
     transport_factory: TransportFactory = build_runtime_transport,
+    universe_source: Path | str | None = None,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -378,12 +403,26 @@ def initialize_minute_session(
         raise MinuteSessionInitializerError(
             "minute_session_template_authority_mismatch"
         )
-    universe_raw = json.loads(
-        (template_root / "universe.json").read_text(encoding="utf-8")
+    universe_path = (
+        template_root / "universe.json"
+        if universe_source is None
+        else Path(universe_source)
     )
+    if universe_source is not None and (
+        not universe_path.is_absolute()
+        or universe_path.is_symlink()
+        or not universe_path.is_file()
+    ):
+        raise MinuteSessionInitializerError("minute_session_universe_source_invalid")
+    universe_raw = json.loads(universe_path.read_text(encoding="utf-8"))
     if not isinstance(universe_raw, list) or not universe_raw:
         raise MinuteSessionInitializerError("minute_session_universe_invalid")
-    universe = load_minute_research_universe(template_root / "universe.json")
+    universe = load_minute_research_universe(universe_path)
+    if any(
+        instrument.eligibility_reason(trade_date=target) is not None
+        for instrument in universe.instruments.values()
+    ):
+        raise MinuteSessionInitializerError("minute_session_universe_ineligible")
     symbols = tuple(sorted(universe.instruments))
 
     transport = transport_factory(
@@ -423,6 +462,19 @@ def initialize_minute_session(
     minute_schema = minute_row.get("schema_major")
     if type(minute_schema) is not int or minute_schema <= 0:
         raise MinuteSessionInitializerError("minute_session_minute_schema_invalid")
+    minute_limits = minute_row.get("limits")
+    minute_page_size = (
+        minute_limits.get("max_page_size")
+        if isinstance(minute_limits, Mapping)
+        else None
+    )
+    if type(minute_page_size) is not int or minute_page_size <= 0:
+        raise MinuteSessionInitializerError("minute_session_minute_limit_invalid")
+    scaled_profile = _scaled_minute_profile(
+        template_config.profile,
+        symbol_count=len(symbols),
+        catalog_page_size=minute_page_size,
+    )
 
     client = SharedSignalsV1Client(
         SharedSignalsV1Config(
@@ -447,7 +499,7 @@ def initialize_minute_session(
         transport_id=transport_id,
         timeout_seconds=timeout_seconds,
         filters={},
-        profile=dict(template_config.profile),
+        profile=scaled_profile,
     )
     profile = current_manifest.build_profile(client)
     if profile.schema_major != minute_schema:
@@ -562,7 +614,8 @@ def initialize_minute_session(
         "transport_id": transport_id,
         "timeout_seconds": timeout_seconds,
         "filters": {},
-        "profile": dict(template_config.profile),
+        "profile": scaled_profile,
+        "universe_sha256": _sha256(universe_raw),
     }
     reused = _publish_day(
         state_root=root,
@@ -579,6 +632,10 @@ def initialize_minute_session(
         "catalog_version": catalog_version,
         "dataset_id": MINUTE_DATASET_ID,
         "symbol_count": len(symbols),
+        "profile_max_pages": scaled_profile["max_pages"],
+        "profile_max_rows": scaled_profile["max_rows"],
+        "profile_page_limit": scaled_profile["page_limit"],
+        "universe_sha256": _sha256(universe_raw),
         "reused": reused,
         "state_bundle_created": False,
         "capital_authority": False,
@@ -593,6 +650,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument(
+        "--universe-source",
+        type=Path,
+        help="Optional absolute, reviewed universe artifact for a scale transition",
+    )
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
     try:
@@ -605,6 +667,7 @@ def main(argv: list[str] | None = None) -> int:
             state_root=args.state_root,
             token_file=args.token_file,
             now=now,
+            universe_source=args.universe_source,
         )
     except (
         MinuteSessionInitializerError,
