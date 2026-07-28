@@ -64,7 +64,7 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
 - 2026-07-28 15:05自动采集轮已把最终15:00 bar落库；TA身份经正式18082精确
   查询为30/30、ready/success/fresh/valid/non-degraded，receipt与lineage完整。
   这证明当前30只链路完成当日自动收盘，不代表500只已在生产采集。
-- 500只TA消费变更已通过全仓`3792 passed`与GitHub前后端CI，PR #51普通合并为
+- 500只TA消费变更已通过全仓`3792 passed`与GitHub前后端CI，并普通合并为
   `65ee4f012fc673b0680d63a5a87195b1c7061adb`；服务器现役release对500行预算
   smoke PASS。TradingDatas的500候选固定为5个100只分片，只有同一bar五片全部
   成功且500个`(ts_code,time)`唯一完整时才可handoff；当前尚未取得连续两轮
