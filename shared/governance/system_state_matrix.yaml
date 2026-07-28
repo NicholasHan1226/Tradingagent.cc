@@ -1225,6 +1225,25 @@ entries:
       - publish_calibrated_probability_expected_return_or_predictive_edge
       - infer_durable_capital_outbox_scheduler_broker_or_real_trading
     successor: ashare_minute_observation_requires_fresh_tradingdatas_handoff
+  - entry_id: tradingagent_ashare_minute_observation_handoff
+    state: CURRENT_VERIFIED
+    layer: server_validated_non_authority_read_only
+    owner: TradingAgent
+    canonical_path: Ashare/minute_canary.py
+    production_verified: false
+    last_verified_at: "2026-07-28"
+    evidence:
+      - STATUS.md
+      - Ashare/minute_canary.py
+    allowed_uses:
+      - consume_tradingdatas_rt_min_via_catalog_query_for_observation
+      - accumulate_ten_symbol_five_minute_ohlcv_amount_evidence
+      - verify_receipt_lineage_and_adjacent_bar_continuity
+    prohibited_uses:
+      - infer_bar_end_to_observed_latency_within_thirty_seconds
+      - infer_l1_bid_ask_or_execution_price_authority
+      - enable_tradingagent_timer_paper_fill_broker_or_real_trading
+    successor: ashare_minute_paper_requires_five_trade_date_observation_and_fresh_reference_data
   - entry_id: tradingagent_cnfutures_fixture_closed_loop
     state: CURRENT_VERIFIED
     layer: repository_contract
