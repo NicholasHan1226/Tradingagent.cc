@@ -232,6 +232,11 @@ TA token file. The dataset ID, catalog version, schema/fields, filters,
 identity, timestamp semantics, unit multipliers and bounded page/row budgets
 must all be explicit in that profile.
 
+Catalog fields advertised only for filtering do not have to appear in
+`default_fields`; every identity and OHLCV field consumed from a row must still
+be present there. This preserves provider-neutral catalog semantics without
+accepting undeclared execution data.
+
 It performs exact catalog drift validation, two bounded query reads,
 pagination/identity checks and the full minute Evidence Gate, then writes a
 0600 observation-only receipt. It cannot create candidates, orders, fills,
