@@ -1274,7 +1274,7 @@ entries:
     successor: ashare_minute_first_reachable_fill_then_timer_candidate
   - entry_id: tradingagent_ashare_minute_auto_accumulator
     state: CURRENT_VERIFIED
-    layer: server_installed_disabled_simulation_only
+    layer: server_enabled_fail_closed_simulation_scheduler
     owner: TradingAgent
     canonical_path: Ashare/minute_auto_runner.py
     production_verified: false
@@ -1287,19 +1287,19 @@ entries:
       - tests/test_ashare_minute_auto_runner.py
     allowed_uses:
       - select_one_expected_delayed_five_minute_bar_for_an_initialized_session
-      - install_the_simulation_only_service_timer_and_secret_free_environment_disabled
+      - run_the_enabled_simulation_only_service_timer_with_secret_free_environment
       - preserve_bar_continuity_and_fail_closed_on_gap_duplicate_or_degraded_evidence
-      - prove_the_installed_candidate_without_enabling_automatic_simulation
+      - prove_automatic_schedule_activation_without_claiming_a_successful_simulation_round
     prohibited_uses:
-      - infer_timer_enabled_or_automatic_simulation_started
+      - infer_a_successful_automatic_simulation_round_from_an_enabled_timer
       - backfill_skip_or_retimestamp_a_missing_bar
       - accept_an_old_row_with_a_later_receipt_as_historical_point_in_time_evidence
       - infer_cross_day_initialization_crash_recovery_or_continuous_runtime
       - infer_durable_capital_broker_or_real_trading
-    successor: initialize_next_session_then_enable_and_observe_the_simulation_only_timer
+    successor: initialize_next_session_then_observe_the_first_successful_simulation_round
   - entry_id: tradingagent_ashare_minute_session_initializer
     state: CURRENT_VERIFIED
-    layer: repository_contract
+    layer: server_enabled_preopen_pending
     owner: TradingAgent
     canonical_path: Ashare/minute_session_initializer.py
     production_verified: false
@@ -1320,9 +1320,9 @@ entries:
       - infer_suspension_truth_from_an_identityless_dataset
       - publish_inputs_from_degraded_incomplete_or_replay_inconsistent_data
       - overwrite_a_started_or_conflicting_session
-      - infer_installed_enabled_or_continuous_runtime
+      - infer_a_successful_preopen_session_from_the_enabled_timer
       - authorize_broker_or_real_trading
-    successor: install_disabled_then_validate_next_open_session_before_timer_activation
+    successor: validate_the_next_open_session_and_first_successful_minute_round
   - entry_id: tradingagent_cnfutures_fixture_closed_loop
     state: CURRENT_VERIFIED
     layer: repository_contract
