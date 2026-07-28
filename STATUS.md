@@ -18,7 +18,9 @@ Decision Ledger 与对账。TradingDatas 已将 `cn.dataset.rt_min` 从10只扩�
 observation/data accumulation 与 delayed-paper 资格，不满足 TA 的30秒执行证据
 门禁。TA代码已支持500只首批扫描与最多6000只主板容量，但500只真实分片运行仍由
 TradingDatas单独验收，不能由代码容量推断生产覆盖。TA worker/timer、durable
-capital runtime 和自动模拟交易仍未启动。
+capital runtime 和自动模拟交易仍未启动；服务器已用正式18082的30只精确分钟
+快照手工推进非生产 delayed-paper one-shot，开始积累特征、候选、未成交回执、
+待处理模拟订单、Decision Ledger 和四个隔离反事实账本。
 
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
   `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
@@ -53,11 +55,12 @@ capital runtime 和自动模拟交易仍未启动。
   provider→SQLite receipt→正式18082 `30/30` 回读，元数据为
   `ready/success/fresh/valid/non-degraded`。上游约晚一个完整5分钟K线，不能
   宣称 `bar_end -> observed_at <= 30s`，且数据不含 L1/bid-ask。
-- 当前交易必需参考数据中，`security_master` 与 `trade_calendar` 为
-  success/non-degraded；`daily`、`stk_limit`、`suspend_d` 与 `adj_factor`
-  仍为 stale/degraded，因而不能据此启用 TA 自动模拟成交。`sw_daily`、
-  `limit_list_ths` 与 `moneyflow_ind_ths` 也仍 degraded，只可等待上游刷新或
-  继续 fail closed。
+- 当前首轮 delayed-paper 使用的 previous-close 来自上一完成交易日的
+  `daily.close`；非停牌状态只对正式 `rt_min` 完成K线且成交量为正的30只成立，
+  两类证据均以 row/envelope hash 绑定。TradingDatas 随后独立回读
+  `stk_limit` 为 ready/fresh/valid，`suspend_d` 为带完整 receipt/lineage 的
+  合法空、non-degraded/valid；它们是后续增强校验，不反向改写本轮已冻结参考
+  证据。`adj_factor`、`sw_daily` 和其它 degraded 数据继续 fail closed。
 - 专用运行身份是 `tradingagent:tradingagent`（UID/GID 987）。token 只从
   `/run/secrets/tradingagent/tradingdatas-read.token` 读取；parent 为
   `root:tradingagent 0710`，leaf 为 `tradingagent:tradingagent 0600` 的 regular
@@ -78,8 +81,19 @@ capital runtime 和自动模拟交易仍未启动。
   个体。五项 committed evidence 和精确幂等重放均 PASS。
 - `index_classify` 在本次重跑时返回 failed/degraded，作为 optional context 被从
   核心 manifest 移除；`context_probe_roles=[]`，不能据此做行业宽度或行业选股。
-- `current_observation_snapshot_emitted=true`、`simulation_started=false`、
+- `current_observation_snapshot_emitted=true`、
+  `delayed_fixture_simulation_started=true`、`automatic_simulation_started=false`、
   `REAL_TRADING_ENABLED=false`。
+- 2026-07-28 服务器以专用 UID、正式18082、不可变代码 release
+  `ac828bf5…` 手工处理 `13:10` 至 `13:45` 八个精确30只分钟快照；每次均
+  `30/30`、metadata ready/fresh/valid/non-degraded、audit rejection 为0。
+  首根建立滚动基线，后续每根形成30个特征/候选；四个50,000 CNY隔离账本均
+  对账通过。两笔历史候选在不可回看的K线上诚实记为 `not_filled`；13:45 快照
+  随后以决策后第一根真正可达K线完成 `002436.SZ` 模拟买入：baseline 100股、
+  dynamic-position 200股，成交价32.15 CNY，费用分别5.03215和5.0643 CNY。
+  两账本各形成1个T+1持仓并继续保留下一候选挂单；同一13:45快照重放退出2且
+  bundle SHA不变。状态 bundle 为 `non_production_fixture`、0600、可重启且无
+  资本/执行 authority。
 - 动态 builder 服务器只读运行时，calendar 与 security-master 为
   `runtime_state=success/degraded=false`；daily 为
   `runtime_state=stale/degraded=true`。因此返回
@@ -154,7 +168,7 @@ capital runtime 和自动模拟交易仍未启动。
 | 服务器代码 | `6db813c…` observation、`eb2e18a…` runtime 与 `94fcdf7…` dynamic builder 不可变 release 已安装、未切 current | release 目录不等于 active worker |
 | 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
 | 数据验收 | 三核心日频 manifest 和 `20260724` observation/重放 PASS；`rt_min` 已有30只主板真实30/30回读；上游50/100/200只分片压测完整 | 500只动态分片尚未正式发布/回读；分钟数据约晚一根K线，不是历史PIT、训练样本、L1或低延迟执行证明 |
-| 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；worker inactive/static，timer不存在；无 broker 或真实交易 | 模拟合同存在不等于自动模拟盘闭环已运行 |
+| 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；30只 delayed-paper 手工 one-shot 已真实运行并原子保存模拟状态；TA worker/timer仍未启用，无 broker 或真实交易 | 手工非生产 fixture 不等于自动模拟盘、durable capital 或真实执行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
 fallback 到该端口。legacy front drop-in 已移出 active systemd 目录，front base
@@ -215,9 +229,10 @@ TA worker/timer，也不负责修改 TradingDatas 采集调度。
 - 当前日频 snapshot 只证明单次 current observation；`rt_min` 当前只证明
   30只主板的5分钟 OHLCV/amount 读取和既有小批连续性。二者都不是可训练历史
   PIT，也没有绑定 durable capital/outbox 或 TA 生产 worker。
-- `rt_min` 约晚一根完整K线且不含 bid/ask；当前只用于数据积累。正式自动模拟
-  成交仍需交易必需参考数据 fresh、连续5个交易日观察，以及明确保守的下一K线
-  模拟成交政策通过独立启用门禁。
+- `rt_min` 约晚一根完整K线且不含 bid/ask；当前只用于数据与非生产模拟样本
+  积累。保守下一可达K线策略已在手工 one-shot 中运行，但自动 timer、durable
+  capital 或更高权限仍需独立启用门禁；连续5个交易日用于稳定性与扩容复核，
+  不再阻塞首批模拟决策。
 - front 继续停止；本阶段不恢复 `tradingagent.cc` 页面。tracked base unit 已安装
   但保持 inactive/disabled/runtime-masked，旧 drop-in 已退役。当前也没有
   current pointer、自动 worker 或 observation timer 激活。
@@ -234,7 +249,8 @@ TA worker/timer，也不负责修改 TradingDatas 采集调度。
 依赖顺序固定为：
 
 1. 保持 TradingDatas 30只主板/5MIN collector 连续运行，核验午休、下午恢复、
-   全天48个bar slot的完整率、重复/冲突和失败receipt；TA仍不启timer；
+   全天48个bar slot的完整率、重复/冲突和失败receipt；首次真正可达K线模拟成交、
+   资金/持仓对账和重复快照失败关闭已完成，继续积累当日手工样本；
 2. 用现有通用采集链刷新 `daily`、`stk_limit`、`suspend_d`、`adj_factor`；
    数据集逐项 fresh/non-degraded 前不进入自动模拟成交；
 3. TradingDatas 以100只/分片完成动态500只 `coverage_canary` 的500/500正式
@@ -242,9 +258,11 @@ TA worker/timer，也不负责修改 TradingDatas 采集调度。
    交易Universe。500稳定后扩到全部合格沪深主板，仍不新增公共route；
 4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
    主板 observation，也不把汇总数据冒充个股权限；
-5. fresh参考数据与一次真实 delayed-paper one-shot 通过后即可开始非权威自动
-   样本积累；连续5个交易日是稳定性/扩容复核门，不再阻塞首批模拟决策。durable
-   capital 或更高权限的自动 paper 仍须完整数据、日历、执行与资本权威通过后开放
+5. 当前真实 delayed-paper one-shot 已完成首次可达K线结算与重复快照不变复核；
+   下一独立候选是把同一入口接入专用 TA timer，且缺当日参考快照或任何数据退化
+   时失败关闭。连续5个交易日是稳定性/扩容复核门，不再阻塞首批模拟决策。
+   durable capital 或更高权限的自动 paper
+   仍须完整数据、日历、执行与资本权威通过后开放
    `Signal -> TargetPosition -> Risk -> PaperFill -> Reconcile -> Attribution`
    闭环；
 6. 只有长期样本、校准和回撤门禁通过后，才讨论模型晋级；真实交易继续保持关闭。

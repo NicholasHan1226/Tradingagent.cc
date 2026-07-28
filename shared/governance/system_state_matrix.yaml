@@ -1250,6 +1250,28 @@ entries:
       - infer_five_hundred_symbol_runtime_coverage_from_batch_benchmarks
       - enable_tradingagent_timer_paper_fill_broker_or_real_trading
     successor: ashare_minute_coverage_canary_then_delayed_paper_requires_fresh_reference_data
+  - entry_id: tradingagent_ashare_minute_delayed_paper_one_shot
+    state: CURRENT_VERIFIED
+    layer: server_validated_non_authority_simulation_only
+    owner: TradingAgent
+    canonical_path: Ashare/minute_paper_runner.py
+    production_verified: false
+    last_verified_at: "2026-07-28"
+    evidence:
+      - STATUS.md
+      - Ashare/minute_paper_runner.py
+      - tests/test_ashare_minute_paper_runner.py
+      - tests/test_ashare_minute_loop.py
+    allowed_uses:
+      - run_manual_non_production_delayed_paper_one_shots
+      - accumulate_thirty_symbol_features_candidates_nonfills_pending_orders_and_fixture_fills
+      - persist_restartable_fixture_books_t_plus_one_positions_decision_ledgers_and_reconciliation
+      - reject_duplicate_snapshot_replay_without_mutating_fixture_state
+    prohibited_uses:
+      - infer_automatic_tradingagent_timer_or_durable_capital
+      - publish_calibrated_probability_expected_return_or_predictive_edge
+      - authorize_broker_or_real_trading
+    successor: ashare_minute_first_reachable_fill_then_timer_candidate
   - entry_id: tradingagent_cnfutures_fixture_closed_loop
     state: CURRENT_VERIFIED
     layer: repository_contract
