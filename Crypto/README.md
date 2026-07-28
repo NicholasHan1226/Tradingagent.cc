@@ -116,6 +116,93 @@ python3 -m Crypto.fixture_auto_sim \
 
 相同 fixture、Champion 和资本 generation 产生相同 run/order/receipt ID；同一输出根再次运行只读回已完成 bundle，不追加第二次 fill。
 
+## Server runtime 与 systemd 候选
+
+`delayed_paper_runtime.py` 是最小 loopback-only server CLI 候选。它尚未部署，
+也不包含正式 catalog、dataset profile、token 或 base URL。实际运行必须由主任务
+提供仓外、secret-free 的
+`/etc/tradingagent/crypto-delayed-paper.runtime.json`；manifest 必须包含：
+
+- `base_url`：loopback IP literal 的 TradingDatas authority；
+- `catalog_version`、完整 `CryptoFiveMinuteDataProfile.to_payload()` 与
+  `profile_sha256`；
+- profile 内四个 dataset 的 schema、字段、filter/order、分页预算和
+  `catalog_contract_sha256`；
+- 全部为 false 的 real/Testnet/Live/model-network/自动晋级/自动扩风险安全项。
+
+runtime 不在本地动态发明 dataset ID，也不会根据新鲜 catalog 重新生成 profile。
+manifest 在读 token 或创建 socket 前完成绝对仓外路径、regular/single-link、
+owner/mode、重复 JSON key、读取中变更与 profile SHA 校验。所有 HTTP/HTTPS
+base URL 均必须是 loopback IP literal；最终 transport 仍复用共享可信 token-file
+边界，只允许：
+
+- `GET /v1/catalog`
+- `POST /v1/query`
+
+token 和输出根不可改写：
+
+- `/run/secrets/tradingagent/tradingdatas-crypto-read.token`
+- `/var/lib/tradingagent/crypto-delayed-paper`
+
+每个 slot 使用固定的 `bar close + 55s` observation cutoff；systemd jitter 或同
+slot 重跑不会改变请求身份。runner 先检查并恢复 pending observation，只有没有
+待恢复资本步骤且确实需要 fresh snapshot 时，才懒读取 token 并构造 HTTP client。
+若崩溃
+恢复跨过时槽，同一 invocation 最多执行两个连续 cycle：`pending + 下一缺失
+window`，或两个连续缺失 window；仍有积压时显式 `backlog_pending`、返回非零并
+由下一轮从最早缺口继续，不会直接跳到最新时槽。恢复项的旧 slot/profile provenance
+与当前 manifest 的 fresh-query catalog/profile 分开报告，实际 transport 计数为
+0 时不会声称使用了网络。
+
+首轮不足 13 根或数据不合格只追加幂等 `data_reject`，不创建或改变资本；只有
+账户从未出现 observation/completion/capital/decision evidence 时的第一次正常
+`crypto_5m_window_incomplete` warm-up 返回成功，同一或后续持续缺窗返回非零。
+401、catalog 漂移、degraded/stale/invalid metadata 同样不 fallback。资本或账本
+损坏统一脱敏失败，不向 systemd stderr 暴露 traceback、路径或载荷。
+
+核心 runtime 与学习完全解耦：它不 import、调用或恢复 learning，不读取或创建
+`evolution/`，也不会因学习失败改变核心 status 或 exit code。每份 runtime
+回执固定输出 `learning_mode=detached_offline_worker`、
+`learning_authority=false`、`learning_invoked=false`；这些字段只声明边界，
+不表示离线学习 worker 已实现或运行。
+
+候选命令形态为：
+
+```bash
+export REAL_TRADING_ENABLED=false
+python3 -m Crypto.delayed_paper_runtime \
+  --runtime-manifest /etc/tradingagent/crypto-delayed-paper.runtime.json \
+  --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token \
+  --output-root /var/lib/tradingagent/crypto-delayed-paper
+```
+
+仓库只跟踪：
+
+- `Crypto/systemd/tradingagent-crypto-delayed-paper.service`
+- `Crypto/systemd/tradingagent-crypto-delayed-paper.timer`
+
+timer 为 24×7、每 5 分钟边界后 55–58 秒触发的候选，`Persistent=false`，包含
+`[Install]`/`WantedBy=timers.target`，供发布侧在完整门禁通过后显式
+`systemctl enable --now`。Git 仓库默认不会安装、enable 或 start；本批也不改
+服务器。2026-07-28 的正式上游 handoff 已给出 loopback
+`http://127.0.0.1:18083`、catalog `v1-e7ea3dd714066d3c`、四个
+schema-major-1 dataset 的 ready/fresh/valid/non-degraded query 证据，以及
+`/run/secrets/tradingagent/tradingdatas-crypto-read.token` 为
+`tradingagent:0600`；这些是部署输入，不是本 unit 已安装的证明。正式部署仍须由
+主任务生成并读回完整仓外 profile manifest（含 access policy、profile 与 contract
+SHA），运行 Linux `systemd-analyze verify/calendar`，在 enable 前读回
+disabled/inactive、enable 后读回 enabled/active，并证明同一 service UID 下不同
+token leaf 的 OS 级隔离。
+
+## 学习解耦边界
+
+本核心候选不包含离线学习 worker 或学习测试，也不生成 `evolution/`。未来学习
+实现只能异步消费核心 append-only observation/completion/decision/capital
+证据，并拥有独立的 checkpoint、完整性审计、资源预算和调度。它必须保持
+`learning_authority=false`，不得自动替换 Champion、扩大风险、修改资本或进入
+Testnet/Live。历史完整性检查与 Challenger 建议属于离线 worker 验收，不能重新
+进入每 5 分钟核心路径。
+
 本批 `fixture_auto_sim.py` 是 `crypto-capital-v1` 本地 fixture opening 闭环的唯一可写入口，但它仍是非权威候选。旧 `workflow.py`、`simulator.py`、`sim_executor.py` 与 `shadow_runner.py` 已变为无条件 fail-closed tombstone，不能通过注入 reader、切换配置或恢复旧 authority 重新启用。`promotion.py` 只保留只读研究 scorecard，永久输出不可自动晋级；shared governance 已把 `crypto-shadow-sim-v1` 降为历史证据并登记 `crypto-capital-v1` 为 `local_fixture_simulated_candidate`，不构成 current/runtime/live authority。
 
 资本链 checksum、进程锁和 package-private writer capability 只防止正常调用误写、协作进程冲突与常见落盘损坏，不是抵御可修改同一 Python 进程、代码或账本文件的恶意主体的安全边界。默认构造的 ledger 只读，writer 仅由 fixture runtime 内部工厂创建；但拥有相同用户文件写权限的恶意或失控进程仍可能改写并重算本地链。未来获得任何生产资本权威前，必须另行验证进程隔离、运行 UID/GID、目录 owner/mode/ACL、只允许单一 writer 以及外部 durable receipt；本地链不得被当作密码学签名或 broker attestation。
@@ -129,17 +216,21 @@ python3 scripts/validate_market_lane.py --lane crypto
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_fixture_auto_sim.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_five_minute_data.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_runner.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_runtime.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_systemd_candidate.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
 ## 明确未实现
 
-- TradingDatas 数据合同代码虽已在 `main@62d76f8…`，但没有 Crypto internal
-  HTTP/runtime/timer、endpoint/port、带认证 transport 或正式 catalog/query
-  receipt readback；Git main 本身不是可调用的数据服务；
+- TradingDatas 已交接正式 Crypto 18083 loopback、catalog version、四个 dataset
+  query 与专用 token leaf 的上游 readback；TradingAgent 本批没有生成/安装仓外
+  runtime manifest，也没有以本 CLI 做联合 readback，不能把 TD 上游成功说成 TA
+  runtime 已运行；
 - 候选回填的 `observed_at` 是采集时点，不是历史 PIT 或实时可用性证明；
-- 没有 scheduler、常驻 daemon、持续 24x7 runtime 或服务器安装态；当前是可被
-  外部安全调度器逐 closed-5m window 调用并恢复的本地 one-cycle runner；
+- 仓库已有 runtime CLI 和默认 disabled 的 tracked service/timer 候选，但没有
+  服务器安装态、enabled/active timer 或成功自动轮；文件存在不等于持续运行；
+- 离线学习 worker 未纳入本核心候选，核心不会创建 `evolution/` 或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
 - 本批 Champion 只覆盖 deterministic buy/observe paper 样本，尚不是完整买卖 round trip；
 - fixture 测试结果不是收益率、胜率或晋级证据。

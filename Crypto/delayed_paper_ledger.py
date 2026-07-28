@@ -26,6 +26,10 @@ from typing import Any, Iterator, Mapping
 OBSERVATION_CONTRACT = "tradingagent.crypto.delayed_paper_observation.v1"
 COMPLETION_CONTRACT = "tradingagent.crypto.delayed_paper_completion.v1"
 DECISION_LEDGER_CONTRACT = "tradingagent.crypto.delayed_paper_decision_ledger.v1"
+OBSERVATION_STATE_CONTRACT = "tradingagent.crypto.delayed_paper_state.v1"
+DECISION_LEDGER_STATE_CONTRACT = (
+    "tradingagent.crypto.delayed_paper_decision_ledger_state.v1"
+)
 LOCAL_AUDIT_DURABILITY = "local_audit_fsync_only"
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
@@ -250,6 +254,46 @@ def _write_immutable_json(path: Path, value: Mapping[str, Any]) -> dict[str, Any
     return canonical
 
 
+def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> dict[str, Any]:
+    canonical = _canonical_value(value)
+    if not isinstance(canonical, dict):
+        raise CryptoDelayedPaperLedgerError("delayed_paper_state_object_required")
+    encoded = (_canonical_json(canonical) + "\n").encode("utf-8")
+    if not encoded or len(encoded) > MAX_ARTIFACT_BYTES:
+        raise CryptoDelayedPaperLedgerError("delayed_paper_state_size_invalid")
+    if path.exists() or path.is_symlink():
+        _regular_single_link(
+            path,
+            reason="delayed_paper_state_file_invalid",
+        )
+    temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    descriptor: int | None = None
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(temporary, flags, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            descriptor = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+        _fsync_directory(path.parent)
+    except OSError as exc:
+        raise CryptoDelayedPaperLedgerError(
+            "delayed_paper_state_persist_failed"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return canonical
+
+
 class CryptoDelayedPaperObservationStore:
     """Immutable observation/completion store plus append-only audit ledger."""
 
@@ -269,6 +313,10 @@ class CryptoDelayedPaperObservationStore:
         self.ledger_path = self.root / "decision_ledger.jsonl"
         self.lock_path = self.root / ".lock"
         self.cycle_lock_path = self.root / ".cycle.lock"
+        self.observation_state_path = self.root / "observation_state.json"
+        self.ledger_state_path = self.root / "decision_ledger_state.json"
+        self.event_index_dir = self.root / "event_index"
+        self.observation_event_index_dir = self.root / "observation_event_index"
 
     @contextmanager
     def _file_lock(self, path: Path) -> Iterator[None]:
@@ -320,6 +368,206 @@ class CryptoDelayedPaperObservationStore:
     def _completion_path(self, observation_id: str) -> Path:
         return self.completions_dir / f"{observation_id}.json"
 
+    @staticmethod
+    def _observation_state_payload(
+        *,
+        latest_observation_id: str | None,
+        latest_market_slot: str | None,
+        pending_observation_id: str | None,
+        observation_count: int,
+        completion_count: int,
+        latest_observation_content_sha256: str | None,
+        latest_completion_sha256: str | None,
+        observations_directory_mtime_ns: int,
+        completions_directory_mtime_ns: int,
+    ) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "contract": OBSERVATION_STATE_CONTRACT,
+            "latest_observation_id": latest_observation_id,
+            "latest_market_slot": latest_market_slot,
+            "pending_observation_id": pending_observation_id,
+            "observation_count": observation_count,
+            "completion_count": completion_count,
+            "latest_observation_content_sha256": (latest_observation_content_sha256),
+            "latest_completion_sha256": latest_completion_sha256,
+            "observations_directory_mtime_ns": (observations_directory_mtime_ns),
+            "completions_directory_mtime_ns": (completions_directory_mtime_ns),
+            **_non_authority_fields(),
+        }
+        state["state_sha256"] = _sha256(state)
+        return state
+
+    def _verify_observation_state(
+        self,
+        state: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        canonical = _canonical_value(state)
+        if not isinstance(canonical, dict):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_observation_state_invalid"
+            )
+        material = dict(canonical)
+        claimed = material.pop("state_sha256", None)
+        counts = (
+            canonical.get("observation_count"),
+            canonical.get("completion_count"),
+        )
+        mtimes = (
+            canonical.get("observations_directory_mtime_ns"),
+            canonical.get("completions_directory_mtime_ns"),
+        )
+        if (
+            canonical.get("contract") != OBSERVATION_STATE_CONTRACT
+            or claimed != _sha256(material)
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in counts
+            )
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in mtimes
+            )
+            or counts[1] > counts[0]
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_observation_state_invalid"
+            )
+        latest_id = canonical.get("latest_observation_id")
+        pending_id = canonical.get("pending_observation_id")
+        if latest_id is None:
+            if (
+                canonical.get("latest_market_slot") is not None
+                or canonical.get("latest_observation_content_sha256") is not None
+                or counts != (0, 0)
+                or pending_id is not None
+            ):
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_observation_state_invalid"
+                )
+            return canonical
+        latest_id = self._observation_id({"observation_id": latest_id})
+        latest = _read_json(self._observation_path(latest_id))
+        self._verify_observation(latest)
+        if (
+            latest.get("market_slot") != canonical.get("latest_market_slot")
+            or latest.get("observation_content_sha256")
+            != canonical.get("latest_observation_content_sha256")
+            or counts[0] <= 0
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_observation_state_invalid"
+            )
+        _market_slot(canonical.get("latest_market_slot"))
+        if pending_id is not None:
+            pending_id = self._observation_id({"observation_id": pending_id})
+            pending = _read_json(self._observation_path(pending_id))
+            self._verify_observation(pending)
+            if self._completion_path(pending_id).exists():
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_observation_state_invalid"
+                )
+        latest_completion_sha = canonical.get("latest_completion_sha256")
+        latest_completion_path = self._completion_path(latest_id)
+        if latest_completion_path.exists():
+            completion = _read_json(latest_completion_path)
+            self._verify_completion(completion, observation=latest)
+            if completion.get("completion_sha256") != latest_completion_sha:
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_observation_state_invalid"
+                )
+        elif latest_id != pending_id or latest_completion_sha is not None:
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_observation_state_invalid"
+            )
+        return canonical
+
+    def _rebuild_observation_state(self) -> dict[str, Any]:
+        observations: list[tuple[datetime, dict[str, Any]]] = []
+        pending: list[str] = []
+        completion_count = 0
+        latest_completion_sha: str | None = None
+        for path in sorted(self.observations_dir.glob("*.json")):
+            observation = _read_json(path)
+            observation_id = self._verify_observation(observation)
+            if path.name != f"{observation_id}.json":
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_observation_filename_mismatch"
+                )
+            slot = _market_slot(observation.get("market_slot"))
+            completion_path = self._completion_path(observation_id)
+            if completion_path.exists():
+                completion = _read_json(completion_path)
+                self._verify_completion(
+                    completion,
+                    observation=observation,
+                )
+                completion_count += 1
+            else:
+                pending.append(observation_id)
+            observations.append((slot, observation))
+        if len(pending) > 1:
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_multiple_pending_observations"
+            )
+        observations.sort(key=lambda item: item[0])
+        latest = observations[-1][1] if observations else None
+        if latest is not None:
+            latest_path = self._completion_path(str(latest["observation_id"]))
+            if latest_path.exists():
+                latest_completion_sha = _read_json(latest_path).get("completion_sha256")
+        state = self._observation_state_payload(
+            latest_observation_id=(
+                str(latest["observation_id"]) if latest is not None else None
+            ),
+            latest_market_slot=(
+                str(latest["market_slot"]) if latest is not None else None
+            ),
+            pending_observation_id=(pending[0] if pending else None),
+            observation_count=len(observations),
+            completion_count=completion_count,
+            latest_observation_content_sha256=(
+                str(latest["observation_content_sha256"])
+                if latest is not None
+                else None
+            ),
+            latest_completion_sha256=latest_completion_sha,
+            observations_directory_mtime_ns=(self.observations_dir.stat().st_mtime_ns),
+            completions_directory_mtime_ns=(self.completions_dir.stat().st_mtime_ns),
+        )
+        _write_json_atomic(self.observation_state_path, state)
+        return state
+
+    def _observation_state(self) -> dict[str, Any]:
+        if not self.observation_state_path.exists():
+            return self._rebuild_observation_state()
+        raw = _read_json(self.observation_state_path)
+        if (
+            raw.get("observations_directory_mtime_ns")
+            != self.observations_dir.stat().st_mtime_ns
+            or raw.get("completions_directory_mtime_ns")
+            != self.completions_dir.stat().st_mtime_ns
+        ):
+            return self._rebuild_observation_state()
+        return self._verify_observation_state(raw)
+
+    def runtime_checkpoint(self) -> dict[str, Any]:
+        """Return O(1) latest/pending state after one-time legacy rebuild."""
+
+        with self._locked():
+            state = self._observation_state()
+            pending_id = state.get("pending_observation_id")
+            pending = (
+                _read_json(self._observation_path(str(pending_id)))
+                if pending_id is not None
+                else None
+            )
+            return {
+                "pending": pending,
+                "latest_market_slot": state.get("latest_market_slot"),
+                "observation_count": state.get("observation_count"),
+                "completion_count": state.get("completion_count"),
+            }
+
     def _verify_observation(self, observation: Mapping[str, Any]) -> str:
         observation_id = self._observation_id(observation)
         if observation.get("contract") != OBSERVATION_CONTRACT:
@@ -342,23 +590,19 @@ class CryptoDelayedPaperObservationStore:
             )
         observation_id = self._verify_observation(canonical)
         with self._locked():
+            state = self._observation_state()
             market_slot = canonical.get("market_slot")
             parsed_market_slot = _market_slot(market_slot)
-            for existing_path in sorted(self.observations_dir.glob("*.json")):
-                existing = _read_json(existing_path)
-                existing_id = self._verify_observation(existing)
+            latest_id = state.get("latest_observation_id")
+            pending_id = state.get("pending_observation_id")
+            existing = (
+                _read_json(self._observation_path(str(latest_id)))
+                if latest_id is not None
+                else None
+            )
+            if existing is not None:
                 existing_market_slot = existing.get("market_slot")
                 parsed_existing_slot = _market_slot(existing_market_slot)
-                completion_path = self._completion_path(existing_id)
-                if completion_path.exists():
-                    self._verify_completion(
-                        _read_json(completion_path),
-                        observation=existing,
-                    )
-                elif existing_id != observation_id:
-                    raise CryptoDelayedPaperLedgerError(
-                        "delayed_paper_prior_observation_pending"
-                    )
                 if existing_market_slot == market_slot and existing.get(
                     "observation_content_sha256"
                 ) != canonical.get("observation_content_sha256"):
@@ -369,34 +613,68 @@ class CryptoDelayedPaperObservationStore:
                     raise CryptoDelayedPaperLedgerError(
                         "delayed_paper_slot_not_monotonic"
                     )
-            return _write_immutable_json(
+                if pending_id is not None and pending_id != observation_id:
+                    raise CryptoDelayedPaperLedgerError(
+                        "delayed_paper_prior_observation_pending"
+                    )
+            existed = self._observation_path(observation_id).exists()
+            stored = _write_immutable_json(
                 self._observation_path(observation_id),
                 canonical,
             )
+            completion_path = self._completion_path(observation_id)
+            completion = (
+                _read_json(completion_path) if completion_path.exists() else None
+            )
+            if completion is not None:
+                self._verify_completion(
+                    completion,
+                    observation=stored,
+                )
+            next_state = self._observation_state_payload(
+                latest_observation_id=observation_id,
+                latest_market_slot=str(market_slot),
+                pending_observation_id=(
+                    None if completion is not None else observation_id
+                ),
+                observation_count=(
+                    int(state["observation_count"]) + (0 if existed else 1)
+                ),
+                completion_count=int(state["completion_count"]),
+                latest_observation_content_sha256=str(
+                    stored["observation_content_sha256"]
+                ),
+                latest_completion_sha256=(
+                    str(completion["completion_sha256"])
+                    if completion is not None
+                    else None
+                ),
+                observations_directory_mtime_ns=(
+                    self.observations_dir.stat().st_mtime_ns
+                ),
+                completions_directory_mtime_ns=(
+                    self.completions_dir.stat().st_mtime_ns
+                ),
+            )
+            _write_json_atomic(
+                self.observation_state_path,
+                next_state,
+            )
+            return stored
 
     def pending_observation(self) -> dict[str, Any] | None:
         with self._locked():
-            pending: list[dict[str, Any]] = []
-            for path in sorted(self.observations_dir.glob("*.json")):
-                observation = _read_json(path)
-                observation_id = self._verify_observation(observation)
-                if path.name != f"{observation_id}.json":
-                    raise CryptoDelayedPaperLedgerError(
-                        "delayed_paper_observation_filename_mismatch"
-                    )
-                completion_path = self._completion_path(observation_id)
-                if completion_path.exists():
-                    self._verify_completion(
-                        _read_json(completion_path),
-                        observation=observation,
-                    )
-                else:
-                    pending.append(observation)
-            if len(pending) > 1:
+            state = self._observation_state()
+            pending_id = state.get("pending_observation_id")
+            if pending_id is None:
+                return None
+            observation = _read_json(self._observation_path(str(pending_id)))
+            self._verify_observation(observation)
+            if self._completion_path(str(pending_id)).exists():
                 raise CryptoDelayedPaperLedgerError(
-                    "delayed_paper_multiple_pending_observations"
+                    "delayed_paper_observation_state_invalid"
                 )
-            return pending[0] if pending else None
+            return observation
 
     def _verify_completion(
         self,
@@ -493,6 +771,7 @@ class CryptoDelayedPaperObservationStore:
         }
         completion["completion_sha256"] = _sha256(completion)
         with self._locked():
+            state = self._observation_state()
             stored_observation = _read_json(self._observation_path(observation_id))
             self._verify_observation(stored_observation)
             if _canonical_json(stored_observation) != _canonical_json(
@@ -501,11 +780,47 @@ class CryptoDelayedPaperObservationStore:
                 raise CryptoDelayedPaperLedgerError(
                     "delayed_paper_completion_observation_conflict"
                 )
+            completion_path = self._completion_path(observation_id)
+            existed = completion_path.exists()
             stored = _write_immutable_json(
-                self._completion_path(observation_id),
+                completion_path,
                 completion,
             )
             self._verify_completion(stored, observation=stored_observation)
+            latest_id = state.get("latest_observation_id")
+            next_state = self._observation_state_payload(
+                latest_observation_id=(
+                    str(latest_id) if latest_id is not None else None
+                ),
+                latest_market_slot=state.get("latest_market_slot"),
+                pending_observation_id=(
+                    None
+                    if state.get("pending_observation_id") == observation_id
+                    else state.get("pending_observation_id")
+                ),
+                observation_count=int(state["observation_count"]),
+                completion_count=(
+                    int(state["completion_count"]) + (0 if existed else 1)
+                ),
+                latest_observation_content_sha256=state.get(
+                    "latest_observation_content_sha256"
+                ),
+                latest_completion_sha256=(
+                    str(stored["completion_sha256"])
+                    if latest_id == observation_id
+                    else state.get("latest_completion_sha256")
+                ),
+                observations_directory_mtime_ns=(
+                    self.observations_dir.stat().st_mtime_ns
+                ),
+                completions_directory_mtime_ns=(
+                    self.completions_dir.stat().st_mtime_ns
+                ),
+            )
+            _write_json_atomic(
+                self.observation_state_path,
+                next_state,
+            )
             return stored
 
     def _read_ledger(self) -> list[dict[str, Any]]:
@@ -616,6 +931,290 @@ class CryptoDelayedPaperObservationStore:
         os.replace(self.ledger_path, target)
         _fsync_directory(self.root)
 
+    @staticmethod
+    def _safe_event_id(value: Any) -> str:
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > 160
+            or any(
+                character not in "abcdefghijklmnopqrstuvwxyz0123456789-_"
+                for character in value
+            )
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_id_invalid"
+            )
+        return value
+
+    @staticmethod
+    def _safe_symbol(value: Any) -> str:
+        if (
+            not isinstance(value, str)
+            or not value
+            or len(value) > 24
+            or any(
+                character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                for character in value
+            )
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_symbol_invalid"
+            )
+        return value
+
+    def _write_event_indexes(self, row: Mapping[str, Any]) -> None:
+        event_id = self._safe_event_id(row.get("event_id"))
+        _ensure_directory(self.event_index_dir)
+        _write_immutable_json(
+            self.event_index_dir / f"{event_id}.json",
+            row,
+        )
+        if row.get("event_type") not in {"decision", "risk_reject"}:
+            return
+        observation_id = self._observation_id(row)
+        symbol = self._safe_symbol(row.get("symbol"))
+        observation_dir = self.observation_event_index_dir / observation_id
+        _ensure_directory(self.observation_event_index_dir)
+        _ensure_directory(observation_dir)
+        _write_immutable_json(
+            observation_dir / f"{symbol}.json",
+            row,
+        )
+
+    def _ledger_event_at_sequence(self, sequence: int) -> dict[str, Any]:
+        state = self._ledger_runtime_state()
+        if sequence <= 0 or sequence > int(state["sequence"]):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            )
+        current_start = int(state["current_start_sequence"])
+        if sequence >= current_start:
+            current_rows = self._current_rows_from_runtime_state(state)
+            offset = sequence - current_start
+            if offset < 0 or offset >= len(current_rows):
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_decision_event_index_invalid"
+                )
+            return current_rows[offset]
+
+        start_sequence = 1
+        previous_checksum = "0" * 64
+        for path in self._segment_paths():
+            rows = self._read_ledger_file(
+                path,
+                start_sequence=start_sequence,
+                previous_checksum=previous_checksum,
+            )
+            if rows and sequence <= int(rows[-1]["sequence"]):
+                offset = sequence - start_sequence
+                if offset < 0 or offset >= len(rows):
+                    raise CryptoDelayedPaperLedgerError(
+                        "delayed_paper_decision_event_index_invalid"
+                    )
+                return rows[offset]
+            if rows:
+                previous_checksum = str(rows[-1]["checksum"])
+                start_sequence = int(rows[-1]["sequence"]) + 1
+        raise CryptoDelayedPaperLedgerError(
+            "delayed_paper_decision_event_index_invalid"
+        )
+
+    def _verify_indexed_event(
+        self,
+        row: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        canonical = _canonical_value(row)
+        if not isinstance(canonical, dict):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            )
+        event_id = self._safe_event_id(canonical.get("event_id"))
+        sequence = canonical.get("sequence")
+        previous_checksum = canonical.get("previous_checksum")
+        checksum = canonical.get("checksum")
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence <= 0
+            or not isinstance(previous_checksum, str)
+            or len(previous_checksum) != 64
+            or any(
+                character not in "0123456789abcdef" for character in previous_checksum
+            )
+            or not isinstance(checksum, str)
+            or len(checksum) != 64
+            or any(character not in "0123456789abcdef" for character in checksum)
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            )
+        material = dict(canonical)
+        material.pop("checksum")
+        if checksum != _sha256(material):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            )
+        authoritative = _read_json(self.event_index_dir / f"{event_id}.json")
+        if _canonical_json(authoritative) != _canonical_json(canonical):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            )
+        ledger_row = self._ledger_event_at_sequence(sequence)
+        if _canonical_json(ledger_row) != _canonical_json(canonical):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            )
+        return canonical
+
+    def events_for_observation(
+        self,
+        observation_id: str,
+    ) -> list[dict[str, Any]]:
+        """Read the two indexed decision events without replaying history."""
+
+        validated_id = self._observation_id({"observation_id": observation_id})
+        observation_dir = self.observation_event_index_dir / validated_id
+        if not observation_dir.is_dir():
+            rows = [
+                row
+                for row in self._read_ledger()
+                if row.get("observation_id") == validated_id
+                and row.get("event_type") in {"decision", "risk_reject"}
+            ]
+            for row in rows:
+                self._write_event_indexes(row)
+            return rows
+        rows: list[dict[str, Any]] = []
+        for path in sorted(observation_dir.glob("*.json")):
+            symbol = self._safe_symbol(path.stem)
+            row = self._verify_indexed_event(_read_json(path))
+            if (
+                row.get("observation_id") != validated_id
+                or row.get("symbol") != symbol
+                or row.get("event_type") not in {"decision", "risk_reject"}
+            ):
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_observation_event_index_invalid"
+                )
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _ledger_state_payload(
+        *,
+        sequence: int,
+        last_checksum: str,
+        segment_count: int,
+        current_start_sequence: int,
+        current_start_previous_checksum: str,
+        current_row_count: int,
+        current_file_sha256: str | None,
+    ) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "contract": DECISION_LEDGER_STATE_CONTRACT,
+            "sequence": sequence,
+            "last_checksum": last_checksum,
+            "segment_count": segment_count,
+            "current_start_sequence": current_start_sequence,
+            "current_start_previous_checksum": (current_start_previous_checksum),
+            "current_row_count": current_row_count,
+            "current_file_sha256": current_file_sha256,
+            **_non_authority_fields(),
+        }
+        state["state_sha256"] = _sha256(state)
+        return state
+
+    def _rebuild_ledger_runtime_state(self) -> dict[str, Any]:
+        rows, current_rows, segment_count = self._read_ledger_state()
+        for row in rows:
+            self._write_event_indexes(row)
+        last_checksum = str(rows[-1]["checksum"]) if rows else "0" * 64
+        current_start_sequence = (
+            int(current_rows[0]["sequence"]) if current_rows else len(rows) + 1
+        )
+        current_start_previous = (
+            str(current_rows[0]["previous_checksum"]) if current_rows else last_checksum
+        )
+        current_sha = (
+            hashlib.sha256(self.ledger_path.read_bytes()).hexdigest()
+            if self.ledger_path.exists()
+            else None
+        )
+        state = self._ledger_state_payload(
+            sequence=len(rows),
+            last_checksum=last_checksum,
+            segment_count=segment_count,
+            current_start_sequence=current_start_sequence,
+            current_start_previous_checksum=current_start_previous,
+            current_row_count=len(current_rows),
+            current_file_sha256=current_sha,
+        )
+        _write_json_atomic(self.ledger_state_path, state)
+        return state
+
+    def _ledger_runtime_state(self) -> dict[str, Any]:
+        if not self.ledger_state_path.exists():
+            return self._rebuild_ledger_runtime_state()
+        state = _read_json(self.ledger_state_path)
+        material = dict(state)
+        claimed = material.pop("state_sha256", None)
+        integer_fields = (
+            state.get("sequence"),
+            state.get("segment_count"),
+            state.get("current_start_sequence"),
+            state.get("current_row_count"),
+        )
+        if (
+            state.get("contract") != DECISION_LEDGER_STATE_CONTRACT
+            or claimed != _sha256(material)
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in integer_fields
+            )
+            or state.get("current_start_sequence")
+            != state.get("sequence") - state.get("current_row_count") + 1
+            or not isinstance(state.get("last_checksum"), str)
+            or len(str(state.get("last_checksum"))) != 64
+            or not isinstance(
+                state.get("current_start_previous_checksum"),
+                str,
+            )
+            or len(str(state.get("current_start_previous_checksum"))) != 64
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_state_invalid"
+            )
+        expected_current_sha = state.get("current_file_sha256")
+        if self.ledger_path.exists():
+            actual_current_sha = hashlib.sha256(
+                self.ledger_path.read_bytes()
+            ).hexdigest()
+            if actual_current_sha != expected_current_sha:
+                return self._rebuild_ledger_runtime_state()
+        elif expected_current_sha is not None or state.get("current_row_count") != 0:
+            return self._rebuild_ledger_runtime_state()
+        return state
+
+    def _current_rows_from_runtime_state(
+        self,
+        state: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        if not self.ledger_path.exists():
+            return []
+        rows = self._read_ledger_file(
+            self.ledger_path,
+            start_sequence=int(state["current_start_sequence"]),
+            previous_checksum=str(state["current_start_previous_checksum"]),
+        )
+        if len(rows) != state.get("current_row_count") or (
+            rows and rows[-1].get("checksum") != state.get("last_checksum")
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_state_invalid"
+            )
+        return rows
+
     def append_event(self, event: Mapping[str, Any]) -> dict[str, Any]:
         canonical = _canonical_value(event)
         if not isinstance(canonical, dict):
@@ -638,26 +1237,26 @@ class CryptoDelayedPaperObservationStore:
                     "delayed_paper_decision_event_authority_invalid"
                 )
         with self._locked():
-            rows, current_rows, segment_count = self._read_ledger_state()
-            matches = [row for row in rows if row.get("event_id") == event_id]
-            if matches:
-                if len(matches) != 1:
-                    raise CryptoDelayedPaperLedgerError(
-                        "delayed_paper_decision_event_duplicated"
-                    )
-                existing = dict(matches[0])
+            state = self._ledger_runtime_state()
+            event_id = self._safe_event_id(event_id)
+            event_index_path = self.event_index_dir / f"{event_id}.json"
+            if event_index_path.exists():
+                indexed = self._verify_indexed_event(_read_json(event_index_path))
+                existing = dict(indexed)
                 for key in forbidden:
                     existing.pop(key, None)
                 if _canonical_json(existing) != _canonical_json(canonical):
                     raise CryptoDelayedPaperLedgerError(
                         "delayed_paper_decision_event_content_conflict"
                     )
-                return matches[0]
+                self._write_event_indexes(indexed)
+                return indexed
 
+            current_rows = self._current_rows_from_runtime_state(state)
             row = {
                 **canonical,
-                "sequence": len(rows) + 1,
-                "previous_checksum": (rows[-1]["checksum"] if rows else "0" * 64),
+                "sequence": int(state["sequence"]) + 1,
+                "previous_checksum": str(state["last_checksum"]),
             }
             row["checksum"] = _sha256(row)
             candidate_current = [*current_rows, row]
@@ -670,20 +1269,42 @@ class CryptoDelayedPaperObservationStore:
                     raise CryptoDelayedPaperLedgerError(
                         "delayed_paper_decision_event_too_large"
                     )
+                segment_count = int(state["segment_count"])
                 self._rotate_current_ledger(segment_count)
                 candidate_current = [row]
+                segment_count += 1
+                current_start_sequence = int(row["sequence"])
+                current_start_previous = str(row["previous_checksum"])
+            else:
+                segment_count = int(state["segment_count"])
+                current_start_sequence = int(state["current_start_sequence"])
+                current_start_previous = str(state["current_start_previous_checksum"])
             _write_decision_ledger_atomic(
                 self.ledger_path,
                 candidate_current,
             )
+            self._write_event_indexes(row)
+            current_file_sha = hashlib.sha256(self.ledger_path.read_bytes()).hexdigest()
+            next_state = self._ledger_state_payload(
+                sequence=int(row["sequence"]),
+                last_checksum=str(row["checksum"]),
+                segment_count=segment_count,
+                current_start_sequence=current_start_sequence,
+                current_start_previous_checksum=current_start_previous,
+                current_row_count=len(candidate_current),
+                current_file_sha256=current_file_sha,
+            )
+            _write_json_atomic(self.ledger_state_path, next_state)
             return row
 
 
 __all__ = [
     "COMPLETION_CONTRACT",
     "DECISION_LEDGER_CONTRACT",
+    "DECISION_LEDGER_STATE_CONTRACT",
     "LOCAL_AUDIT_DURABILITY",
     "OBSERVATION_CONTRACT",
+    "OBSERVATION_STATE_CONTRACT",
     "CryptoDelayedPaperLedgerError",
     "CryptoDelayedPaperObservationStore",
 ]
