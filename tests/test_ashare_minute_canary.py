@@ -109,7 +109,7 @@ class _Transport:
                     "lineage": {
                         "complete": True,
                         "provider_neutral": True,
-                        "provider": "fixture",
+                        "providers": ["fixture"],
                         "transport_service": "quicksync",
                     },
                     "receipt_id": "receipt-rt-min-1",
