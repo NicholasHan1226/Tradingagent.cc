@@ -654,8 +654,11 @@ deploy/systemd/tradingagent-ashare-minute-paper.service
 deploy/systemd/tradingagent-ashare-minute-paper.timer
 ```
 
-timer 在工作日两个交易时段的每个5分钟边界后40秒触发，给独立 TradingDatas
-collector 留出完成窗口。启用前必须依次通过：不可变 release/manifest 校验、
+timer 只在工作日48根可处理K线的延迟到达窗口触发：上午
+`09:40–11:35`、下午`13:10–15:05`，每5分钟边界后40秒触发一次，给独立
+TradingDatas collector 留出完成窗口。午休后段和收盘后不再重复触发，因此已知
+缺口只保留一次失败关闭证据，不会在无新K线时制造重复失败日志。启用前必须依次
+通过：不可变 release/manifest 校验、
 `systemd-analyze verify`、禁用状态手工 one-shot、状态 SHA 读回、下一轮自动
 触发、资金/持仓/费用对账和重复快照不变。回滚只执行
 `systemctl disable --now tradingagent-ashare-minute-paper.timer`，保留已有

@@ -15,6 +15,9 @@ from Ashare.minute_auto_runner import (
 from Ashare.minute_data import SHANGHAI
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 def _at(value: str) -> datetime:
     return datetime.fromisoformat(value).replace(tzinfo=SHANGHAI)
 
@@ -156,3 +159,27 @@ def test_real_trading_flag_fails_closed(
             token_file=Path("/run/private/token"),
             now=_at("2026-07-28T09:40:40"),
         )
+
+
+def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
+    timer = (
+        REPO_ROOT
+        / "deploy/systemd/tradingagent-ashare-minute-paper.timer"
+    ).read_text(encoding="utf-8")
+
+    calendar_lines = tuple(
+        line for line in timer.splitlines() if line.startswith("OnCalendar=")
+    )
+
+    assert calendar_lines == (
+        "OnCalendar=Mon..Fri *-*-* 09:40/5:40",
+        "OnCalendar=Mon..Fri *-*-* 10:00/5:40",
+        "OnCalendar=Mon..Fri *-*-* 11:00..35/5:40",
+        "OnCalendar=Mon..Fri *-*-* 13:10/5:40",
+        "OnCalendar=Mon..Fri *-*-* 14:00/5:40",
+        "OnCalendar=Mon..Fri *-*-* 15:00..05/5:40",
+    )
+    assert "09..11" not in timer
+    assert "13..15" not in timer
+    assert "Persistent=false" in timer
+    assert "Unit=tradingagent-ashare-minute-paper.service" in timer

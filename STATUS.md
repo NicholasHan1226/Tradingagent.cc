@@ -128,6 +128,9 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   ready/fresh/valid/non-degraded、receipt与lineage完整且
   same-replay一致。因此行情数据仍在累计，正式fixture账本不推进是连续性与
   冻结合同门禁，而不是把当天缺口或catalog漂移静默洗白。
+- 现役分钟timer的旧日历表达式会在午休后段和收盘后继续触发，导致已知缺口被
+  重复记录但不产生新样本。当前主线候选已把触发窗口收敛为每交易日精确48次：
+  `09:40–11:35`与`13:10–15:05`，保留首次缺口失败关闭且不做历史补单。
 - TradingDatas 已修正 `20260729` SSE日历
   (`is_open=1/pretrade_date=20260728`) 的envelope水位：未来适用日只保留在row，
   `data_through=observed_at`为实际观察时刻。发布切换瞬间TA initializer曾一次

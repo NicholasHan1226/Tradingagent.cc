@@ -2,8 +2,12 @@
 Description=TradingAgent A-share delayed five-minute paper timer
 
 [Timer]
-OnCalendar=Mon..Fri *-*-* 09..11:00/5:40
-OnCalendar=Mon..Fri *-*-* 13..15:00/5:40
+OnCalendar=Mon..Fri *-*-* 09:40/5:40
+OnCalendar=Mon..Fri *-*-* 10:00/5:40
+OnCalendar=Mon..Fri *-*-* 11:00..35/5:40
+OnCalendar=Mon..Fri *-*-* 13:10/5:40
+OnCalendar=Mon..Fri *-*-* 14:00/5:40
+OnCalendar=Mon..Fri *-*-* 15:00..05/5:40
 AccuracySec=1s
 RandomizedDelaySec=10s
 Persistent=false
