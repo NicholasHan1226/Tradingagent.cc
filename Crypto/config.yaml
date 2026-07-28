@@ -11,10 +11,9 @@ safety:
   direct_execution_enabled: false
 data:
   reader: tradingdatas_v1_catalog_query
-  # Fixture/mock-only until the provider-neutral catalog handoff supplies IDs.
-  daily_table: null
-  intraday_table: null
-  events_table: null
+  # Candidate dataset IDs are injected only by fixture/test profiles until
+  # TradingDatas main and its formal internal catalog endpoint are read back.
+  binding_scope: fixture_only
 universe:
   max_symbols: 50
   min_close: 0.00000001
@@ -23,7 +22,7 @@ session:
   timezone: UTC
   type: 24x7
 risk:
-  max_positions: 10
+  max_positions: 2
   max_single_position_pct: 0.15
 fees:
   taker_bps: 10

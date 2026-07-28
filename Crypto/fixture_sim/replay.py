@@ -13,6 +13,7 @@ from typing import Any, Mapping
 from Crypto.capital_policy import CryptoCapitalPolicy
 
 from .contracts import (
+    ALLOWED_SYMBOLS,
     CYCLE_CLAIM_CONTRACT,
     LLM_SIDECAR_CONTRACT,
     RUN_BUNDLE_CONTRACT,
@@ -29,8 +30,10 @@ from .contracts import (
     _assert_canonical_champion,
     _assert_canonical_policy,
     _assert_recursive_non_authority,
+    _aware_utc,
     _canonical_json,
     _canonical_value,
+    _decimal,
     _non_authority_fields,
     _sha256,
 )
@@ -220,9 +223,14 @@ def _run_id(
     *,
     policy: CryptoCapitalPolicy,
     champion: FrozenChampionCandidate,
+    valuation_context: Mapping[str, Any] | None = None,
 ) -> str:
     _assert_canonical_policy(policy)
     _assert_canonical_champion(champion)
+    normalized_valuation = _normalize_valuation_context(
+        evidence,
+        valuation_context,
+    )
     material = {
         "market_evidence_sha256": evidence.market_evidence_sha256,
         "execution_slot": evidence.next_executable_quote.observed_at,
@@ -230,7 +238,95 @@ def _run_id(
         "capital_generation": policy.generation,
         "champion_sha256": champion.sha256,
     }
+    if len(normalized_valuation["marks"]) > 1:
+        material["valuation_context"] = normalized_valuation
     return f"crypto-fixture-run-{_sha256(material)[:24]}"
+
+
+def _normalize_valuation_context(
+    evidence: QualifiedFixtureEvidence,
+    valuation_context: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if valuation_context is None:
+        valuation_context = {
+            "valuation_slot": evidence.next_executable_quote.observed_at,
+            "marks": {
+                evidence.symbol: {
+                    "price": evidence.next_executable_quote.bid,
+                    "observed_at": evidence.next_executable_quote.observed_at,
+                    "evidence_receipt_id": evidence.receipt_id,
+                    "market_evidence_sha256": evidence.market_evidence_sha256,
+                }
+            },
+        }
+    if not isinstance(valuation_context, Mapping) or set(valuation_context) != {
+        "valuation_slot",
+        "marks",
+    }:
+        raise CryptoEvidenceError("capital_valuation_context_schema_invalid")
+    valuation_slot = _aware_utc(
+        valuation_context.get("valuation_slot"),
+        field_name="capital_valuation_slot",
+    )
+    marks = valuation_context.get("marks")
+    if (
+        not isinstance(marks, Mapping)
+        or not 1 <= len(marks) <= len(ALLOWED_SYMBOLS)
+        or evidence.symbol not in marks
+        or any(
+            not isinstance(symbol, str) or symbol not in ALLOWED_SYMBOLS
+            for symbol in marks
+        )
+    ):
+        raise CryptoEvidenceError("capital_valuation_marks_invalid")
+    normalized_marks: dict[str, Any] = {}
+    for symbol in sorted(marks):
+        raw = marks[symbol]
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "price",
+            "observed_at",
+            "evidence_receipt_id",
+            "market_evidence_sha256",
+        }:
+            raise CryptoEvidenceError("capital_valuation_mark_schema_invalid")
+        price = _decimal(
+            raw.get("price"),
+            field_name=f"capital_valuation_mark_{symbol}",
+            positive=True,
+        )
+        observed_at = _aware_utc(
+            raw.get("observed_at"),
+            field_name=f"capital_valuation_mark_observed_at_{symbol}",
+        )
+        receipt_id = str(raw.get("evidence_receipt_id") or "").strip()
+        evidence_sha256 = str(raw.get("market_evidence_sha256") or "").strip()
+        if (
+            observed_at != valuation_slot
+            or not receipt_id
+            or len(evidence_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in evidence_sha256)
+        ):
+            raise CryptoEvidenceError("capital_valuation_mark_binding_invalid")
+        normalized_marks[symbol] = {
+            "price": price,
+            "observed_at": observed_at,
+            "evidence_receipt_id": receipt_id,
+            "market_evidence_sha256": evidence_sha256,
+        }
+    current = normalized_marks[evidence.symbol]
+    if (
+        valuation_slot != evidence.next_executable_quote.observed_at
+        or current["price"] != evidence.next_executable_quote.bid
+        or current["evidence_receipt_id"] != evidence.receipt_id
+        or current["market_evidence_sha256"] != evidence.market_evidence_sha256
+    ):
+        raise CryptoEvidenceError("capital_valuation_current_evidence_mismatch")
+    return _canonical_value(
+        {
+            "valuation_slot": valuation_slot,
+            "marks": normalized_marks,
+        }
+    )
 
 
 def _business_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -250,6 +346,7 @@ def _cycle_claim_payload(
     evidence: QualifiedFixtureEvidence,
     policy: CryptoCapitalPolicy,
     champion: FrozenChampionCandidate,
+    valuation_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     _assert_canonical_policy(policy)
     _assert_canonical_champion(champion)
@@ -258,7 +355,11 @@ def _cycle_claim_payload(
     # fixture key at a fixed null value so wording changes never alter capital
     # events, run IDs, or bundle identities.
     market_fixture_payload["llm_evidence"] = None
-    return {
+    normalized_valuation = _normalize_valuation_context(
+        evidence,
+        valuation_context,
+    )
+    payload = {
         "contract": CYCLE_CLAIM_CONTRACT,
         "run_id": run_id,
         "fixture_payload": _canonical_value(market_fixture_payload),
@@ -273,6 +374,9 @@ def _cycle_claim_payload(
         "capital_currency": policy.currency,
         **_non_authority_fields(),
     }
+    if len(normalized_valuation["marks"]) > 1:
+        payload["valuation_context"] = normalized_valuation
+    return payload
 
 
 def _reserve_event_payload(
@@ -382,7 +486,6 @@ def _sample_review_payload(
             "network_used": False,
         },
         **_non_authority_fields(),
-        "production_eligible": False,
         "real_trading_enabled": False,
     }
 
@@ -427,6 +530,7 @@ def _verify_run_bundle(
     expected_intent: OrderIntent | None,
     expected_receipt: PaperFillReceipt | None,
     ledger: CryptoCapitalLedger,
+    valuation_context: Mapping[str, Any] | None = None,
 ) -> None:
     _assert_canonical_policy(policy)
     _assert_canonical_champion(champion)
@@ -508,6 +612,7 @@ def _verify_run_bundle(
                 evidence=evidence,
                 policy=policy,
                 champion=champion,
+                valuation_context=valuation_context,
             )
         )
     ):

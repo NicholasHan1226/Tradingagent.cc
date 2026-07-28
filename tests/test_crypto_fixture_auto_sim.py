@@ -350,6 +350,10 @@ def test_constructed_order_and_receipt_contracts_fail_closed() -> None:
         replace(receipt, notional=Decimal("999"))
     with pytest.raises(CryptoSafetyError, match="must_remain_simulated"):
         replace(receipt, real_trading_enabled=True)
+    with pytest.raises(CryptoSafetyError, match="must_remain_simulated"):
+        replace(intent, production_eligible=True)
+    with pytest.raises(CryptoSafetyError, match="must_remain_simulated"):
+        replace(receipt, production_eligible=True)
     with pytest.raises(CryptoSafetyError, match="capital_authority_invalid"):
         replace(intent, authority_generation=True)
     with pytest.raises(CryptoSafetyError, match="capital_authority_invalid"):
@@ -461,12 +465,43 @@ def test_crash_after_ledger_commit_recovers_without_duplicate_fill(
 
     recovered = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
     assert recovered["idempotent_replay"] is False
+    assert recovered["risk_reject_reason"] is None
+    assert recovered["bundle"]["order_intent"] is not None
+    assert recovered["bundle"]["paper_receipt"] is not None
     assert recovered["bundle"]["capital"]["final"]["head_sequence"] == 5
     assert len(events_path.read_text(encoding="utf-8").splitlines()) == 5
 
     replay = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
     assert replay["idempotent_replay"] is True
     assert len(events_path.read_text(encoding="utf-8").splitlines()) == 5
+
+
+def test_risk_reject_reconcile_recovers_without_inventing_a_fill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+    second_buy = _shifted_fixture(_fixture(), minutes=5, suffix="second-buy-crash")
+    original_write_projection = fixture_runtime._write_projection
+    crashed = False
+
+    def crash_once(path: Path, payload: dict[str, object]) -> None:
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise OSError("risk reject bundle projection crash")
+        original_write_projection(path, payload)
+
+    monkeypatch.setattr(fixture_runtime, "_write_projection", crash_once)
+    with pytest.raises(OSError, match="risk reject bundle projection crash"):
+        run_fixture_auto_sim(second_buy, output_root=tmp_path)
+
+    recovered = run_fixture_auto_sim(second_buy, output_root=tmp_path)
+    assert recovered["risk_reject_reason"] == "frozen_champion_position_cap_exceeded"
+    assert recovered["bundle"]["order_intent"] is None
+    assert recovered["bundle"]["paper_receipt"] is None
+    assert recovered["bundle"]["capital"]["fill_event_id"] is None
+    assert recovered["bundle"]["capital"]["fill_event_checksum"] is None
 
 
 @pytest.mark.parametrize("failed_head_write", [1, 2, 3, 4, 5])
@@ -572,6 +607,30 @@ def test_rehashed_bundle_cannot_forge_reconciled_capital(tmp_path: Path) -> None
         run_fixture_auto_sim(_fixture(), output_root=tmp_path)
 
 
+def test_filled_bundle_cannot_be_reclassified_as_risk_reject(
+    tmp_path: Path,
+) -> None:
+    first = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+    bundle_path = tmp_path / "runs" / f"{first['bundle']['run_id']}.json"
+    payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+    payload["order_intent"] = None
+    payload["paper_receipt"] = None
+    material = dict(payload)
+    material.pop("business_bundle_sha256")
+    payload["business_bundle_sha256"] = fixture_auto_sim._sha256(material)
+    bundle_path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        CryptoLedgerError,
+        match="persisted_risk_reject_ledger_mismatch",
+    ):
+        run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+
+
 @pytest.mark.parametrize(
     "section,field,value,match",
     [
@@ -632,6 +691,45 @@ def test_rehashed_bundle_rejects_added_authority_fields(
 
     with pytest.raises(
         (CryptoLedgerError, CryptoSafetyError), match="schema_mismatch|non_authority"
+    ):
+        run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        (),
+        ("capital",),
+        ("safety",),
+        ("evidence_qualification",),
+        ("order_intent",),
+        ("paper_receipt",),
+        ("sample_review",),
+    ],
+)
+def test_rehashed_bundle_rejects_missing_production_eligibility(
+    tmp_path: Path,
+    path: tuple[str, ...],
+) -> None:
+    first = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+    bundle_path = tmp_path / "runs" / f"{first['bundle']['run_id']}.json"
+    payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+    target = payload
+    for key in path:
+        target = target[key]
+    target.pop("production_eligible")
+    material = dict(payload)
+    material.pop("business_bundle_sha256")
+    payload["business_bundle_sha256"] = fixture_auto_sim._sha256(material)
+    bundle_path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        (CryptoLedgerError, CryptoSafetyError),
+        match="schema_mismatch|mismatch|missing|non_authority",
     ):
         run_fixture_auto_sim(_fixture(), output_root=tmp_path)
 
@@ -724,6 +822,7 @@ def test_non_object_llm_sidecar_rows_cannot_block_committed_core(
                 "execution_eligible": False,
                 "execution_authority": False,
                 "durable_execution_receipt": False,
+                "production_eligible": False,
                 "outbox_id": None,
                 "capital_commit_id": None,
                 "durability_scope": "local_fixture_fsync_only",
@@ -1036,23 +1135,29 @@ def test_incomplete_claim_blocks_later_cycle_until_original_recovers(
     assert later_result["bundle"]["capital"]["final"]["head_sequence"] == 7
 
 
-def test_position_cap_rejection_does_not_leave_incomplete_cycle(
+def test_position_cap_rejection_commits_mark_only_reconcile(
     tmp_path: Path,
 ) -> None:
-    run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+    first = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
     second_buy = _shifted_fixture(_fixture(), minutes=5, suffix="second-buy")
 
-    with pytest.raises(CryptoLedgerError, match="position_cap_exceeded"):
-        run_fixture_auto_sim(second_buy, output_root=tmp_path)
+    rejected = run_fixture_auto_sim(second_buy, output_root=tmp_path)
+    assert rejected["risk_reject_reason"] == "frozen_champion_position_cap_exceeded"
+    assert rejected["bundle"]["order_intent"] is None
+    assert rejected["bundle"]["paper_receipt"] is None
+    assert (
+        rejected["bundle"]["capital"]["final"]["positions"]
+        == first["bundle"]["capital"]["final"]["positions"]
+    )
     events_path = tmp_path / "capital" / "events.jsonl"
-    assert len(events_path.read_text(encoding="utf-8").splitlines()) == 5
+    assert len(events_path.read_text(encoding="utf-8").splitlines()) == 7
 
     later_observation = _shifted_fixture(
-        _observation_fixture(), minutes=5, suffix="post-cap-observation"
+        _observation_fixture(), minutes=10, suffix="post-cap-observation"
     )
     result = run_fixture_auto_sim(later_observation, output_root=tmp_path)
     assert result["bundle"]["decision"]["action"] == "observe"
-    assert result["bundle"]["capital"]["final"]["head_sequence"] == 7
+    assert result["bundle"]["capital"]["final"]["head_sequence"] == 9
 
 
 def test_same_symbol_historical_slot_cannot_regress_account_marks(
@@ -1275,14 +1380,45 @@ def test_global_valuation_watermark_rejects_cross_symbol_time_regression(
 
 def test_receipt_and_bundle_are_explicitly_non_authoritative(tmp_path: Path) -> None:
     bundle = run_fixture_auto_sim(_fixture(), output_root=tmp_path)["bundle"]
-    for payload in (bundle, bundle["paper_receipt"]):
+    artifact_layers = (
+        bundle,
+        bundle["capital"],
+        bundle["capital"]["before"],
+        bundle["capital"]["after_fill"],
+        bundle["capital"]["final"],
+        bundle["safety"],
+        bundle["evidence_qualification"],
+        bundle["order_intent"],
+        bundle["paper_receipt"],
+        bundle["sample_review"],
+    )
+    for payload in artifact_layers:
         assert payload["execution_eligible"] is False
         assert payload["execution_authority"] is False
         assert payload["durable_execution_receipt"] is False
+        assert payload["production_eligible"] is False
         assert payload["outbox_id"] is None
         assert payload["capital_commit_id"] is None
         assert payload["durability_scope"] == "local_fixture_fsync_only"
     assert bundle["paper_receipt"]["status"] == "fixture_simulated"
+    capital_events = [
+        json.loads(line)
+        for line in (tmp_path / "capital" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert capital_events
+    assert all(
+        event["payload"]["production_eligible"] is False for event in capital_events
+    )
+    sidecars = [
+        json.loads(line)
+        for line in (tmp_path / "sidecars" / "llm_evidence.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert sidecars
+    assert all(sidecar["production_eligible"] is False for sidecar in sidecars)
 
 
 def test_partial_tail_and_nested_symlink_fail_closed(tmp_path: Path) -> None:

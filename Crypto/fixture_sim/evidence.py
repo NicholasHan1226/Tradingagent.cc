@@ -117,7 +117,9 @@ def _parse_executable_quote(
     if quote_symbol != symbol:
         raise CryptoEvidenceError("execution_quote_symbol_mismatch")
     observed_at = _aware_utc(
-        payload.get("observed_at"), field_name="execution_quote_observed_at"
+        payload.get("observed_at"),
+        field_name="execution_quote_observed_at",
+        require_minute_alignment=False,
     )
     if observed_at < decision_observed_at:
         raise CryptoEvidenceError("execution_quote_precedes_decision_observation")
@@ -231,11 +233,15 @@ def qualify_fixture_evidence(payload: Mapping[str, Any]) -> QualifiedFixtureEvid
         or lineage.get("source") != f"checked_in_{source_kind}"
     ):
         raise CryptoEvidenceError("fixture_lineage_binding_invalid")
-    observed_at = _aware_utc(metadata.get("observed_at"), field_name="observed_at")
+    observed_at = _aware_utc(
+        metadata.get("observed_at"),
+        field_name="observed_at",
+        require_minute_alignment=False,
+    )
     data_through = _aware_utc(metadata.get("data_through"), field_name="data_through")
     if data_through > observed_at or data_through > as_of:
         raise CryptoEvidenceError("fixture_timestamp_order_invalid")
-    if observed_at - data_through > timedelta(minutes=5):
+    if observed_at - data_through >= timedelta(minutes=6):
         raise CryptoEvidenceError("fixture_closed_bar_observation_lag_exceeded")
 
     rules = _parse_rules(payload.get("instrument"), symbol=symbol)

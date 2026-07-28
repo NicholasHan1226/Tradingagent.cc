@@ -17,6 +17,38 @@
 
 ## 当前模块边界
 
+- `five_minute_data.py` 是 Crypto 专属、transport-free 的 TradingDatas
+  catalog/query consumer port。它只接受显式注入的 typed client 和 catalog
+  profile；当前 profile 只能在 fixture 中绑定 BTC/ETH 各自的 5m bar 与
+  instrument-rules 四个候选 dataset，checked-in 配置仍保持未配置。每个 dataset
+  必须独立完成 catalog freeze、bounded query、分页完整性、same-observation、
+  receipt/lineage/freshness/quality 门禁。Binance kline 的 source
+  `close_time` 按 inclusive last millisecond 解释，再派生本地逻辑 5m
+  boundary；不得虚构 `closed`、`frequency` 或 `active` 上游字段。
+  typed snapshot 在进入 runner 前还必须重新绑定精确 profile、四份
+  symbol/kind/dataset/catalog proof、请求窗口、cutoff、row/page budget 和
+  freshness；仅重算本地 digest 不能把其它窗口或 future proof 带入资本链。
+  上游数据合同代码已合入 TradingDatas
+  `main@62d76f8cdcc7671a9523ac15905ab2eb3152e387`；此前 isolated canary
+  `025fd24…` 已证明
+  `symbol eq + open_time between + as_of + desc + limit=13` 返回精确连续窗口；
+  但仍没有正式 Crypto internal HTTP/runtime/timer 与带认证 readback handoff。
+  本模块继续 fixture-only，并必须执行 bounded cursor traversal；non-null
+  cursor 可继续遍历，循环、跨页重复、预算超限或最终窗口不完整才失败关闭，
+  禁止忽略 cursor 或接受截断首屏。
+- `delayed_paper_runner.py` 只编排已验证 snapshot、Crypto 本地 audit-only
+  Decision Ledger 和现有 `run_fixture_auto_sim` 唯一资本写入口。前 12 根 bar
+  形成 1h/15m 决策，第 13 根已闭合 bar 仅提供其 open 作为
+  `next_closed_bar_open_counterfactual`，并明确使用本地 spread model；实际
+  source `observed_at` 是最早可用水位，quote/decision/order/receipt 不得早于
+  它。两个 symbol 必须在任何资本调用前全部 preflight；完整 runner cycle
+  进程锁与 pending invariant 禁止多个未完成 observation。已有仓位的后续 buy
+  由唯一 fixture capital writer 形成 mark-only risk reconcile，不增加仓位。
+  同一 observation 的两份合格 fixture 必须共同形成绑定 receipt/digest 的
+  account valuation context，并在每次 core 调用中同时更新全部持仓 mark；
+  停机或数据拒绝造成的多 slot 间隔不得因另一持仓旧 mark 卡死恢复。
+  `delayed_paper_ledger.py` 只保存分段、原子、可恢复的审计事件，不保存或计算
+  现金、仓位、订单或成交，不能成为第二资本 authority。
 - `fixture_auto_sim.py` 是薄兼容 facade；实现位于 `fixture_sim/`。该网络关闭纵向切片只接受显式 fixture/mock，以 1h regime、15m decision、closed 5m 证据及 observed-at-or-later executable quote 生成冻结 Champion 的本地 `fixture_simulated` intent/receipt，并写入 Crypto 自有 append-only 资本链、对账和非晋级复盘；它没有 execution authority，也不是 TradingDatas adapter、scheduler、Testnet 或 Live runtime。
 - 本批纵向切片是 `crypto-capital-v1` 本地 fixture opening 闭环的唯一可写入口，但仍固定为 `local_fixture_simulated_candidate`，没有 execution/runtime/live authority。旧 `crypto-shadow-sim-v1` 仅保留历史证据。
 - ledger 默认构造只读，只有 `fixture_sim/runtime.py` 可通过包内工厂取得写 capability；checksum、文件锁和进程内 capability 仅是协作与损坏防护，不隔离可改代码或文件的同 UID 恶意/失控进程。生产前必须另做单 writer inventory、OS 权限/进程隔离和外部 durable receipt 验证。
