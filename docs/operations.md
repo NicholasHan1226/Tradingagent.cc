@@ -627,6 +627,43 @@ python3 tools/run_ashare_observation.py \
 
 退出码：`0=观察绑定或精确重放通过`、`2=数据/范围/存储门禁阻断`、`64=参数、manifest、token-file或transport配置无效`。stdout 只输出 secret-free 摘要；systemd/journal 日志不得把 token、Authorization、manifest正文或 provider自由文本 reason 写出。专用 `tradingagent:tradingagent` 身份与 TA-scoped token-file 已完成服务器 handoff；tracked worker unit 已串联 runtime audit → dynamic manifest builder → observation runner，但仍是 **non-enableable code candidate**。在正式 18082 上完成 disabled unit 手工 one-shot、精确重放、失败恢复和回滚验收前，禁止 enable/install timer，也不得声称每日自动观察、自动模拟或生产激活。周末或节假日 one-shot 必须让 `decision_as_of` 反映实际观察时间，并由完整 `trade_calendar` 证明日线 filter 是最新已完成开市日；不得把自然日硬改成行情日，也不得把 session-date `data_through` 伪造成收盘时刻。
 
+### 5分钟 delayed-paper 自动积累
+
+`Ashare.minute_auto_runner` 只为已初始化的当日私有目录选择一根当前应到达的
+5分钟K线，并委托同一个 `minute_paper_runner`。目录固定为：
+
+```text
+/var/lib/tradingagent/ashare-minute-paper/YYYYMMDD/
+├── minute-manifest.json
+├── reference-facts.json
+├── universe.json
+└── state-bundle.json
+```
+
+目录必须 `0700`，输入和 bundle 必须 `0600` 且归
+`tradingagent:tradingagent`。缺目录时安全 no-op；已有状态与目标K线不连续、
+重复并发、数据退化或30只不完整时失败关闭，不补历史、不跳过缺口。服务只读取
+`/run/secrets/tradingagent/tradingdatas-read.token`，仍只调用
+`GET /v1/catalog` 与 `POST /v1/query`。
+
+安装候选：
+
+```text
+deploy/systemd/tradingagent-ashare-minute-paper.env.example
+deploy/systemd/tradingagent-ashare-minute-paper.service
+deploy/systemd/tradingagent-ashare-minute-paper.timer
+```
+
+timer 在工作日两个交易时段的每个5分钟边界后40秒触发，给独立 TradingDatas
+collector 留出完成窗口。启用前必须依次通过：不可变 release/manifest 校验、
+`systemd-analyze verify`、禁用状态手工 one-shot、状态 SHA 读回、下一轮自动
+触发、资金/持仓/费用对账和重复快照不变。回滚只执行
+`systemctl disable --now tradingagent-ashare-minute-paper.timer`，保留已有
+append-only/原子 fixture 状态；不得删除 bundle 或恢复旧数据入口。
+
+该 timer 只自动积累 `non_production_fixture`。它不生成次日参考文件，不连接
+broker，不授予 durable capital，也不改变 `REAL_TRADING_ENABLED=false`。
+
 盘后日线的 `observation_session=T` 只是 current observation。在预测前冻结且独立验证的交易日历没有给出下一 session 之前，daily-only planner 必须写 `paper_trade_session=null` 并固定 `action=abstain/status=completed_with_blocks`。每个 symbol 至少需要 21 个 forward-collected session 才能覆盖 20 日 momentum/volatility 的最小数学窗口；但缺交易日连续性和公司行动/复权 authority 时，即使计数达到 21 也仍是 blocked。当前 membership ledger 不注册任何 label horizon；缺 calendar/minute/market-truth/adjustment authority 不得生成或回填标签。缺分钟/L1 evidence 时不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：

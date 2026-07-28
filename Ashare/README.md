@@ -190,6 +190,28 @@ now a stability and scaling review gate, not a prerequisite for collecting the
 first simulated decisions. It still cannot enable a broker, real order, live
 transition or the strict 30-second execution tier.
 
+`minute_auto_runner.py` is the minimal scheduler-facing wrapper. It derives
+only the single bar expected behind the frozen five-minute provider lag,
+requires continuity with the last atomic bundle, and then calls the same
+one-shot runner. It never catches up a gap with late information. A missing
+daily session directory is a safe no-op; a missing intermediate bar, malformed
+state, duplicate concurrent process, degraded dataset or incomplete 30-symbol
+snapshot fails closed. The wrapper does not prepare the next day's universe or
+reference facts, so a day cannot begin automatically until those inputs have
+been frozen under that day's private `0700` directory.
+
+The tracked systemd candidate runs at second 40 after each five-minute boundary
+during the two A-share sessions, after the independent TradingDatas collector.
+It remains a non-production fixture accumulator:
+
+```text
+deploy/systemd/tradingagent-ashare-minute-paper.service
+deploy/systemd/tradingagent-ashare-minute-paper.timer
+```
+
+Enabling this timer does not enable the observation worker, durable capital,
+broker execution, the public frontend or `REAL_TRADING_ENABLED`.
+
 `MinuteRollingFeatureEngine` requires consecutive accepted snapshots. Its
 transparent V1 features are close-to-close return, intrabar return, bar range,
 volume/amount change and an optional bounded context adjustment. The resulting
