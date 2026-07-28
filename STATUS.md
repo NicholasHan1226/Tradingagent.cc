@@ -25,6 +25,31 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
 会话初始化调度。首次分钟自动触发因当日历史缺口失败关闭且账本不变；它不是一次成功
 自动模拟轮次，更不授予 broker 或真实交易权限。
 
+### Crypto 核心自动模拟
+
+2026-07-28，Crypto “核心先跑、学习解耦”切片已普通合并，精确提交和 PR 证据
+保存在日期化运行报告中。GitHub `front` 与 `test` CI 均通过。服务器 `current`
+已切到同一不可变 release；正式 runtime manifest
+绑定 18083 catalog `v1-e7ea3dd714066d3c`、BTCUSDT/ETHUSDT 的两组 closed-5m
+与两组 rules dataset，以及 profile SHA
+`4f5bb40106cf2f63b25a784acae0f13072112afca98dd380e11dab66e19fbe38`。
+
+一次手工 one-shot、同窗口幂等重放和随后两个相邻自动轮次均 PASS。首个冻结检查点
+的市场槽连续为 `15:15Z`、`15:20Z`、`15:25Z`；随后自动轮已继续到 `15:30Z`，
+共有 4 个 observation、4 个 completion，`pending=null`。资本与决策事件序列连续
+且 ID 唯一，全部运行快照的资本状态均 `balanced=true`；重放前后 13 个非锁文件的
+组合 SHA 均为
+`ec1646906218627a8b9122d5fa201618685556e7eb8be841d349a928e10e5350`，
+未产生重复成交或账本改写。Crypto timer 当前为 `enabled/active`，但仍严格是
+sim-only：`REAL_TRADING_ENABLED=false`、无 broker/Testnet/Live、无模型网络、
+无自动晋级或扩风险。核心 runtime 不读取或创建 `evolution/`，
+`learning_invoked=false`；离线学习 worker 尚未部署，不阻塞 5 分钟核心。
+
+完整非敏感运行证据位于
+`/opt/investment/release-evidence/tradingagent/20260728T151230Z-crypto-core-e8ba46d7e0cab847d0fa037290e7368c69c54655`。
+24 小时连续观察尚未完成，因此当前结论是“自动 sim-only 数据/决策/资本/对账闭环
+已启动”，不是工程稳定期已验收，更不是生产交易就绪。
+
 - 本地、`origin/main` 与 GitHub `main` 的当前一致性以交付时
   `git rev-parse HEAD origin/main` 读回为准；本轮 observation 运行代码锚点为
   `6db813c…`；本轮 runtime/front 修复代码锚点为 `eb2e18a…`。
@@ -48,10 +73,12 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   支持由 `ASHARE_MINUTE_UNIVERSE_SOURCE` 装载审核 Universe 的 root-owned、
   只读不可变 release 的直接回滚点是
   `/opt/investment/releases/tradingagent/f81acb983ed72d0bbfa9d2331a67d62837289dd2`。
-  精确48次分钟timer窗口对应的 root-owned、只读不可变 release
-  `/opt/investment/releases/tradingagent/d6f5f2cf6bfdf3826537bda65000f1b32304ed73`
-  已成为 `/opt/investment/releases/tradingagent/current`。这只更新了
-  simulation-only 调度入口；front、observation worker、broker 与真实交易仍未启动。
+  当前 `/opt/investment/releases/tradingagent/current` 指向
+  `/opt/investment/releases/tradingagent/e8ba46d7e0cab847d0fa037290e7368c69c54655`；
+  直接回滚点为
+  `/opt/investment/releases/tradingagent/b4f5d600f3d8bb317375a05b2f613e8a06e89c52`。
+  该切换增加 Crypto sim-only 核心，A股现役 minute session/paper 入口及四个
+  unit 字节未变；front、observation worker、broker 与真实交易仍未启动。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
   `GET /v1/catalog` 与 `POST /v1/query`。TA 不固定跨仓 catalog 版本或 active
   数量，每次运行均以正式 catalog 动态发现并逐数据集失败关闭。
@@ -233,11 +260,11 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
 | 层级 | 当前事实 | 不能据此推断 |
 |---|---|---|
 | 本地主线 | `main` 已含 provider-neutral client、分页/证据门禁、动态 manifest builder 和 0710 secret parent 安全遍历 | 代码存在不等于服务器已激活 |
-| GitHub 主线 | delayed-paper与500→全量监控容量已普通合并，GitHub CI通过 | CI 不等于500只真实数据覆盖或模拟盘已启动 |
-| 服务器代码 | `d6f5f2c…` simulation-only分钟累计/会话初始化与精确48次timer release 已安装并切 current；`f81acb9…`及更早验证release保留 | current 只指TA模拟入口，不等于durable capital、broker或真实交易 |
-| 服务身份 | UID/GID 987、专用 token-file、正式 18082 认证可用 | token 可读不等于任一 dataset 可用 |
-| 数据验收 | 三核心日频 manifest 和 `20260724` observation/重放 PASS；`rt_min` 已有30只主板真实30/30回读；上游50/100/200只分片压测完整 | 500只动态分片尚未正式发布/回读；分钟数据约晚一根K线，不是历史PIT、训练样本、L1或低延迟执行证明 |
-| 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；30只 delayed-paper 手工 one-shot 已保存模拟状态；分钟与会话timer enabled/active，但首轮分钟自动触发因当日缺口失败关闭且账本不变；无 broker 或真实交易 | 启用调度不等于已有成功自动模拟轮次、durable capital 或真实执行 |
+| GitHub 主线 | A股 delayed-paper、500只消费容量、A股离线学习候选和 Crypto 解耦核心均已普通合并，GitHub CI通过 | CI 不等于500只真实覆盖、A股学习已启用或24小时 Crypto稳定性已验收 |
+| 服务器代码 | `e8ba46d…` 已成为 current，`b4f5d60…` 保留为直接回滚；A股现役入口字节未变 | current 只指TA simulation-only入口，不等于broker或真实交易 |
+| 服务身份 | UID/GID 987；18082 与18083分别使用独立专用 token-file，权威TA transport认证可用 | token 可读不等于任一 dataset 可用 |
+| 数据验收 | A股三核心日频 observation/重放 PASS，`rt_min` 有30只真实30/30回读；Crypto 四个冻结 dataset 已由正式18083提供 ready/fresh/valid/non-degraded 数据 | A股500只尚未正式发布/回读；Crypto历史回填不是历史PIT；两者均不是L1或低延迟执行证明 |
+| 交易能力 | front inactive/disabled 且 runtime-masked，8787 closed；A股分钟/会话 timer 保持 enabled/active；Crypto one-shot、幂等重放与两个相邻自动轮次 PASS，Crypto timer enabled/active；无 broker 或真实交易 | 自动 sim-only 闭环不等于24小时稳定性、模型有效性、durable execution authority或真实执行 |
 
 旧 `8082` listener 仍由旧系统所有者保留，当前 observation consumer 没有探测或
 fallback 到该端口。legacy front drop-in 已移出 active systemd 目录，front base
