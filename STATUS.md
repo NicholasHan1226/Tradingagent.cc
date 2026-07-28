@@ -40,14 +40,14 @@ capital runtime 和自动模拟交易仍未启动。
   这些 release 都不是 active/current 切换，也没有启动 front、worker、timer
   或真实交易。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
-  `GET /v1/catalog` 与 `POST /v1/query`。最新 TA 自身读回为
-  `catalog_version=v1-06e8544b4bc715b1`，190 total / 101 active / 89 paused。
-- TradingDatas 权威 main/origin/production release 为
-  `226ee7646ab03075da1c2adfaef8986a34e5e64e`。其通用
+  `GET /v1/catalog` 与 `POST /v1/query`。TA 不固定跨仓 catalog 版本或 active
+  数量，每次运行均以正式 catalog 动态发现并逐数据集失败关闭。
+- TradingDatas 的通用
   `tradingdatas-provider-native-collect.timer` 已由 TradingDatas owner 启用，
   固定 `OnCalendar=*-*-* *:0/5:00`、`AccuracySec=1s`、
   `RandomizedDelaySec=15s`、`Persistent=true`；这不是 TA timer，也不授予
-  TA 模拟或真实交易权限。
+  TA 模拟或真实交易权限。TD 的 current release、catalog 和扩容回执以其正式
+  独立任务 handoff 为准，不在 TA 文档中硬编码成永久当前值。
 - `cn.dataset.rt_min` schema major 2 先以10只股票证明相邻bar连续性，随后
   TradingDatas release `d0edb51…` 完成30只主板的真实
   provider→SQLite receipt→正式18082 `30/30` 回读，元数据为
