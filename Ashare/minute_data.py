@@ -141,12 +141,20 @@ def _valid_quality(metadata_quality: Mapping[str, Any]) -> bool:
 
 
 def _complete_lineage(lineage: Mapping[str, Any] | None) -> bool:
+    providers = lineage.get("providers") if isinstance(lineage, Mapping) else None
     return bool(
         isinstance(lineage, Mapping)
         and lineage.get("complete") is True
         and lineage.get("provider_neutral") is True
-        and isinstance(lineage.get("provider"), str)
-        and bool(lineage.get("provider"))
+        and isinstance(providers, list)
+        and bool(providers)
+        and all(
+            isinstance(provider, str)
+            and bool(provider)
+            and provider == provider.strip()
+            for provider in providers
+        )
+        and len(providers) == len(set(providers))
         and isinstance(lineage.get("transport_service"), str)
         and bool(lineage.get("transport_service"))
     )

@@ -137,7 +137,7 @@ def _metadata(**overrides: Any) -> dict[str, Any]:
         "lineage": {
             "complete": True,
             "provider_neutral": True,
-            "provider": "fixture",
+            "providers": ["fixture"],
             "transport_service": "fixture",
         },
         "receipt_id": "receipt-minute-1",
@@ -376,6 +376,17 @@ def test_profile_fails_closed_on_catalog_contract_gaps(
         (_metadata(quality={"state": "degraded"}), "minute_metadata_quality_invalid"),
         (
             _metadata(lineage={"complete": False}),
+            "minute_metadata_lineage_incomplete",
+        ),
+        (
+            _metadata(
+                lineage={
+                    "complete": True,
+                    "provider_neutral": True,
+                    "provider": "fixture",
+                    "transport_service": "fixture",
+                }
+            ),
             "minute_metadata_lineage_incomplete",
         ),
     ],
