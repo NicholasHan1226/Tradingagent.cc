@@ -658,6 +658,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
     try:
+        configured_universe_source = args.universe_source
+        if configured_universe_source is None:
+            environment_source = os.environ.get(
+                "ASHARE_MINUTE_UNIVERSE_SOURCE", ""
+            ).strip()
+            if environment_source:
+                configured_universe_source = Path(environment_source)
         now = (
             datetime.now(tz=SHANGHAI)
             if args.now is None
@@ -667,7 +674,7 @@ def main(argv: list[str] | None = None) -> int:
             state_root=args.state_root,
             token_file=args.token_file,
             now=now,
-            universe_source=args.universe_source,
+            universe_source=configured_universe_source,
         )
     except (
         MinuteSessionInitializerError,

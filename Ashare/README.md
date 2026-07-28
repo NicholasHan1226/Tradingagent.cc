@@ -218,7 +218,9 @@ therefore uses a 500-row budget when the catalog permits it; it is not silently
 truncated to the preceding 30-symbol canary. The supplied artifact must still
 pass the main-board, listing-age and risk checks, have complete prior-close
 coverage, and match every exact minute snapshot before any simulated step can
-proceed.
+proceed. The same absolute path can be supplied to the scheduled initializer as
+`ASHARE_MINUTE_UNIVERSE_SOURCE`; when absent, the prior reviewed session
+universe remains the default.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every actual bar must
