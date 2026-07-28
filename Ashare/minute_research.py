@@ -19,7 +19,12 @@ from zoneinfo import ZoneInfo
 
 from shared.universe.policy import is_mainboard_tradable
 
-from .minute_data import FIVE_MINUTES, MinuteBarEvidence, MinuteBarSnapshot
+from .minute_data import (
+    FIVE_MINUTES,
+    MinuteBarEvidence,
+    MinuteBarSnapshot,
+    MinuteEvidenceUse,
+)
 
 
 SCORE_SEMANTICS = "uncalibrated_deterministic_rank_score"
@@ -31,10 +36,13 @@ ALLOWED_RESEARCH_THEMES = frozenset(
         "ai_semiconductor_infrastructure",
         "robotics_industrial_automation",
         "innovative_medicine",
+        "mainboard_opportunity_scan",
         "broad_market_control",
     }
 )
 TRADE_RESEARCH_THEMES = ALLOWED_RESEARCH_THEMES - {"broad_market_control"}
+INITIAL_MONITOR_LIMIT = 500
+FULL_MAINBOARD_MONITOR_LIMIT = 6_000
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -318,19 +326,19 @@ class MinuteRankedCandidate:
 
 
 class MinuteResearchUniverse:
-    """Small-account monitored universe with context series kept separate."""
+    """Broad monitored universe with small-account execution kept separate."""
 
     def __init__(
         self,
         *,
         instruments: tuple[MinuteUniverseInstrument, ...],
-        initial_monitor_limit: int = 10,
-        expanded_monitor_limit: int = 60,
+        initial_monitor_limit: int = INITIAL_MONITOR_LIMIT,
+        expanded_monitor_limit: int = FULL_MAINBOARD_MONITOR_LIMIT,
         expanded: bool = False,
     ) -> None:
         if (
-            initial_monitor_limit != 10
-            or expanded_monitor_limit != 60
+            initial_monitor_limit != INITIAL_MONITOR_LIMIT
+            or expanded_monitor_limit != FULL_MAINBOARD_MONITOR_LIMIT
             or not isinstance(expanded, bool)
         ):
             raise MinuteResearchContractError("minute_universe_capacity_invalid")
@@ -496,6 +504,15 @@ class MinuteRollingFeatureEngine:
                 raise MinuteResearchContractError(
                     "minute_feature_state_bar_invalid"
                 ) from exc
+        raw_evidence_use = payload.get(
+            "evidence_use", MinuteEvidenceUse.LOW_LATENCY_EXECUTION.value
+        )
+        try:
+            payload["evidence_use"] = MinuteEvidenceUse(str(raw_evidence_use))
+        except ValueError as exc:
+            raise MinuteResearchContractError(
+                "minute_feature_state_bar_invalid"
+            ) from exc
         try:
             return MinuteBarEvidence(**payload)
         except (TypeError, ValueError) as exc:

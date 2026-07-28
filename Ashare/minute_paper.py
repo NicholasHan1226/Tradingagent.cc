@@ -70,16 +70,40 @@ def _aware(value: object, reason: str) -> datetime:
     return value
 
 
-def _next_supported_bar_end(value: datetime) -> datetime | None:
+def _first_bar_start_after(value: datetime) -> datetime | None:
+    """Return the first tradable five-minute boundary strictly after decision."""
+
     local = value.astimezone(SHANGHAI)
-    clock = local.time()
-    if time(9, 35) <= clock < time(11, 30):
-        return local + FIVE_MINUTES
-    if clock == time(11, 30):
-        return local.replace(hour=13, minute=5)
-    if time(13, 5) <= clock < time(14, 55):
-        return local + FIVE_MINUTES
+    morning_start = local.replace(hour=9, minute=30, second=0, microsecond=0)
+    morning_end = local.replace(hour=11, minute=30, second=0, microsecond=0)
+    afternoon_start = local.replace(hour=13, minute=0, second=0, microsecond=0)
+    afternoon_end = local.replace(hour=15, minute=0, second=0, microsecond=0)
+    if local < morning_start:
+        return morning_start
+    if local < morning_end:
+        elapsed = local - morning_start
+        steps = int(elapsed // FIVE_MINUTES) + 1
+        candidate = morning_start + steps * FIVE_MINUTES
+        return candidate if candidate < morning_end else afternoon_start
+    if local < afternoon_start:
+        return afternoon_start
+    if local < afternoon_end:
+        elapsed = local - afternoon_start
+        steps = int(elapsed // FIVE_MINUTES) + 1
+        candidate = afternoon_start + steps * FIVE_MINUTES
+        return candidate if candidate < afternoon_end else None
     return None
+
+
+def expected_minute_execution_bar_end(
+    decision_bar: MinuteBarEvidence,
+) -> datetime | None:
+    """Earliest completed bar whose open was reachable after the decision."""
+
+    if not isinstance(decision_bar, MinuteBarEvidence):
+        raise MinutePaperContractError("minute_decision_bar_invalid")
+    bar_start = _first_bar_start_after(decision_bar.decision_time)
+    return None if bar_start is None else bar_start + FIVE_MINUTES
 
 
 @dataclass(frozen=True)
@@ -96,10 +120,12 @@ class MinuteExecutionPair:
             raise MinutePaperContractError("minute_execution_pair_bar_invalid")
         if self.decision_bar.symbol != self.execution_bar.symbol:
             raise MinutePaperContractError("minute_execution_pair_symbol_mismatch")
-        expected = _next_supported_bar_end(self.decision_bar.bar_end)
+        expected = expected_minute_execution_bar_end(self.decision_bar)
         if expected is None or self.execution_bar.bar_end != expected:
-            raise MinutePaperContractError("minute_execution_must_use_next_bar")
-        if self.execution_bar.bar_start < self.decision_bar.bar_end:
+            raise MinutePaperContractError(
+                "minute_execution_must_use_first_reachable_bar"
+            )
+        if self.execution_bar.bar_start <= self.decision_bar.decision_time:
             raise MinutePaperContractError("minute_same_bar_execution_forbidden")
         if self.execution_bar.decision_time < self.execution_bar.available_at:
             raise MinutePaperContractError("minute_execution_evidence_future")
@@ -110,8 +136,9 @@ class MinuteSmallAccountConstraints:
     """Operating constraints layered on the canonical 50,000 CNY authority."""
 
     policy: SmallAccountPolicy
-    initial_monitor_count: int = 10
-    expanded_monitor_count: int = 60
+    canary_monitor_count: int = 10
+    initial_monitor_count: int = 500
+    expanded_monitor_count: int = 6_000
     operating_max_positions: int = 6
     minimum_operating_positions: int = 4
 
@@ -121,8 +148,9 @@ class MinuteSmallAccountConstraints:
         if self.policy.initial_equity_cny != 50_000.0:
             raise MinutePaperContractError("minute_initial_equity_invalid")
         if (
-            self.initial_monitor_count != 10
-            or self.expanded_monitor_count != 60
+            self.canary_monitor_count != 10
+            or self.initial_monitor_count != 500
+            or self.expanded_monitor_count != 6_000
             or not 4
             <= self.minimum_operating_positions
             <= self.operating_max_positions
@@ -353,6 +381,15 @@ def build_minute_paper_market_snapshot(
         "bar_low": bar.low_cny,
         "bar_volume_shares": bar.volume_shares,
         "minute_evidence_sha256": bar.sha256,
+        "decision_minute_evidence_use": pair.decision_bar.evidence_use.value,
+        "decision_execution_latency_eligible": (
+            pair.decision_bar.execution_latency_eligible
+        ),
+        "execution_minute_evidence_use": bar.evidence_use.value,
+        "execution_latency_eligible": bar.execution_latency_eligible,
+        "delayed_paper_eligible": bool(
+            pair.decision_bar.delayed_paper_eligible and bar.delayed_paper_eligible
+        ),
     }
     return MinutePaperMarketSnapshot(
         order_id=order_id,
@@ -1151,6 +1188,7 @@ __all__ = [
     "MinutePaperMarketSnapshot",
     "MinuteSmallAccountConstraints",
     "build_minute_paper_market_snapshot",
+    "expected_minute_execution_bar_end",
     "minute_action_allowed_during_data_failure",
     "minute_decision_record",
 ]

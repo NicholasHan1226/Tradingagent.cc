@@ -37,6 +37,7 @@ from shared.universe.policy import is_mainboard_tradable
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 FIVE_MINUTES = timedelta(minutes=5)
 MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
+MAX_DELAYED_PAPER_LATENCY = timedelta(seconds=390)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
 
@@ -177,6 +178,13 @@ def _session_for_bar(bar_start: datetime, bar_end: datetime) -> str:
 class MinuteTimestampSemantics(str, Enum):
     BAR_END = "bar_end"
     BAR_START = "bar_start"
+
+
+class MinuteEvidenceUse(str, Enum):
+    """Explicit latency tier; delayed evidence can never masquerade as live."""
+
+    LOW_LATENCY_EXECUTION = "low_latency_execution"
+    DELAYED_PAPER = "delayed_paper"
 
 
 @dataclass(frozen=True)
@@ -485,6 +493,7 @@ class MinuteBarEvidence:
     envelope_proof_sha256: str
     source_row_sha256: str
     reference_evidence_sha256: str
+    evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION
 
     def __post_init__(self) -> None:
         if not is_mainboard_tradable(self.symbol):
@@ -526,7 +535,14 @@ class MinuteBarEvidence:
             raise MinuteDataContractError("minute_weekend_bar_forbidden")
         if not (bar_end <= data_through <= observed <= available <= decision):
             raise MinuteDataContractError("minute_evidence_time_order_invalid")
-        if available - bar_end > MAX_MINUTE_DATA_LATENCY:
+        if not isinstance(self.evidence_use, MinuteEvidenceUse):
+            raise MinuteDataContractError("minute_evidence_use_invalid")
+        maximum_latency = (
+            MAX_MINUTE_DATA_LATENCY
+            if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION
+            else MAX_DELAYED_PAPER_LATENCY
+        )
+        if available - bar_end > maximum_latency:
             raise MinuteDataContractError("minute_evidence_latency_exceeded")
         if self.suspended is not False:
             raise MinuteDataContractError("minute_suspended_instrument")
@@ -549,6 +565,17 @@ class MinuteBarEvidence:
     @property
     def identity(self) -> tuple[str, datetime]:
         return self.symbol, self.bar_end
+
+    @property
+    def execution_latency_eligible(self) -> bool:
+        return bool(
+            self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION
+            and self.available_at - self.bar_end <= MAX_MINUTE_DATA_LATENCY
+        )
+
+    @property
+    def delayed_paper_eligible(self) -> bool:
+        return self.available_at - self.bar_end <= MAX_DELAYED_PAPER_LATENCY
 
     def canonical_payload(self) -> dict[str, Any]:
         def stamp(value: datetime) -> str:
@@ -578,6 +605,7 @@ class MinuteBarEvidence:
             "envelope_proof_sha256": self.envelope_proof_sha256,
             "source_row_sha256": self.source_row_sha256,
             "reference_evidence_sha256": self.reference_evidence_sha256,
+            "evidence_use": self.evidence_use.value,
         }
 
     @property
@@ -771,6 +799,7 @@ class MinuteMarketDataPort(Protocol):
         trading_dates: frozenset[date],
         audit_ledger: MinuteEvidenceAuditLedger,
         reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
+        evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     ) -> MinuteBarSnapshot: ...
 
 
@@ -800,6 +829,7 @@ def _map_run(
     decision_time: datetime,
     trading_dates: frozenset[date],
     reference_facts: Mapping[str, MinuteReferenceFact] | None,
+    evidence_use: MinuteEvidenceUse,
 ) -> tuple[MinuteBarEvidence, ...]:
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
@@ -926,6 +956,7 @@ def _map_run(
             envelope_proof_sha256=envelope_proof_sha,
             source_row_sha256=source_row_sha,
             reference_evidence_sha256=reference_evidence_sha,
+            evidence_use=evidence_use,
         )
         previous = seen.get(evidence.identity)
         if previous is not None:
@@ -951,6 +982,7 @@ def snapshot_from_runs(
     trading_dates: frozenset[date],
     audit_ledger: MinuteEvidenceAuditLedger,
     reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
+    evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
 ) -> MinuteBarSnapshot:
     """Map two bounded reads and require identical same-observation semantics."""
 
@@ -972,6 +1004,7 @@ def snapshot_from_runs(
             decision_time=decision_time,
             trading_dates=trading_dates,
             reference_facts=reference_facts,
+            evidence_use=evidence_use,
         )
         replay_bars = _map_run(
             profile=profile,
@@ -979,6 +1012,7 @@ def snapshot_from_runs(
             decision_time=decision_time,
             trading_dates=trading_dates,
             reference_facts=reference_facts,
+            evidence_use=evidence_use,
         )
         if [bar.sha256 for bar in bars] != [bar.sha256 for bar in replay_bars]:
             raise MinuteDataContractError("minute_same_observation_mismatch")
@@ -1024,6 +1058,7 @@ class TradingDatasMinuteMarketDataPort:
         trading_dates: frozenset[date],
         audit_ledger: MinuteEvidenceAuditLedger,
         reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
+        evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
         try:
@@ -1095,6 +1130,7 @@ class TradingDatasMinuteMarketDataPort:
                 trading_dates=trading_dates,
                 audit_ledger=audit_ledger,
                 reference_facts=reference_facts,
+                evidence_use=evidence_use,
             )
         except MinuteDataContractError as exc:
             if len(audit_ledger.records()) == audit_count_before:
@@ -1162,6 +1198,7 @@ __all__ = [
     "FIXED_CATALOG_ROUTE",
     "FIXED_QUERY_ROUTE",
     "FIVE_MINUTES",
+    "MAX_DELAYED_PAPER_LATENCY",
     "MAX_MINUTE_DATA_LATENCY",
     "MinuteBarEvidence",
     "MinuteBarSnapshot",
@@ -1169,6 +1206,7 @@ __all__ = [
     "MinuteDatasetProfile",
     "MinuteEvidenceAuditLedger",
     "MinuteEvidenceAuditRecord",
+    "MinuteEvidenceUse",
     "MinuteMarketDataPort",
     "MinuteReferenceFact",
     "MinuteTimestampSemantics",

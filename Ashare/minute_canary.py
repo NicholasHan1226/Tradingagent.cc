@@ -19,8 +19,10 @@ from typing import Any
 
 from Ashare.minute_data import (
     MinuteDataContractError,
+    MinuteBarSnapshot,
     MinuteDatasetProfile,
     MinuteEvidenceAuditLedger,
+    MinuteEvidenceUse,
     MinuteReferenceFact,
     MinuteTimestampSemantics,
     TradingDatasMinuteMarketDataPort,
@@ -233,29 +235,25 @@ def run_minute_canary(
     decision_time: datetime,
     trading_date: date,
     reference_facts: Mapping[str, MinuteReferenceFact],
+    evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> dict[str, Any]:
-    if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
-        raise MinuteCanaryConfigurationError("real_trading_must_remain_disabled")
-    transport = transport_factory(
-        config.transport_id,
+    profile, snapshot, audit = load_minute_snapshot(
+        config,
         token_file=token_file,
-        base_url=config.base_url,
-    )
-    client = SharedSignalsV1Client(config.client_config(), transport=transport)
-    profile = config.build_profile(client)
-    audit = MinuteEvidenceAuditLedger()
-    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
-        profile=profile,
-        filters=config.filters,
         decision_time=decision_time,
-        trading_dates=frozenset({trading_date}),
-        audit_ledger=audit,
+        trading_date=trading_date,
         reference_facts=reference_facts,
+        evidence_use=evidence_use,
+        transport_factory=transport_factory,
     )
     return {
         "status": "pass",
         "authority_tier": "observation_only",
+        "evidence_use": evidence_use.value,
+        "execution_latency_eligible": all(
+            bar.execution_latency_eligible for bar in snapshot.bars
+        ),
         "real_trading_enabled": False,
         "dataset_id": profile.dataset_id,
         "catalog_version": profile.catalog_version,
@@ -276,6 +274,40 @@ def run_minute_canary(
         ],
         "audit_rejections": len(audit.records()),
     }
+
+
+def load_minute_snapshot(
+    config: MinuteCanaryConfig,
+    *,
+    token_file: Path | str,
+    decision_time: datetime,
+    trading_date: date,
+    reference_facts: Mapping[str, MinuteReferenceFact],
+    evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    transport_factory: TransportFactory = build_runtime_transport,
+) -> tuple[MinuteDatasetProfile, MinuteBarSnapshot, MinuteEvidenceAuditLedger]:
+    """Load one exact-bar snapshot for observation or explicit delayed paper."""
+
+    if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
+        raise MinuteCanaryConfigurationError("real_trading_must_remain_disabled")
+    transport = transport_factory(
+        config.transport_id,
+        token_file=token_file,
+        base_url=config.base_url,
+    )
+    client = SharedSignalsV1Client(config.client_config(), transport=transport)
+    profile = config.build_profile(client)
+    audit = MinuteEvidenceAuditLedger()
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters=config.filters,
+        decision_time=decision_time,
+        trading_dates=frozenset({trading_date}),
+        audit_ledger=audit,
+        reference_facts=reference_facts,
+        evidence_use=evidence_use,
+    )
+    return profile, snapshot, audit
 
 
 def _write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
@@ -324,6 +356,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--decision-time", required=True)
     parser.add_argument("--trading-date", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--evidence-use",
+        choices=tuple(value.value for value in MinuteEvidenceUse),
+        default=MinuteEvidenceUse.LOW_LATENCY_EXECUTION.value,
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -335,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             decision_time=datetime.fromisoformat(args.decision_time),
             trading_date=date.fromisoformat(args.trading_date),
             reference_facts=load_reference_facts(args.reference_facts),
+            evidence_use=MinuteEvidenceUse(args.evidence_use),
         )
         _write_receipt(args.output, receipt)
     except (
@@ -364,6 +402,7 @@ __all__ = [
     "MinuteCanaryConfig",
     "MinuteCanaryConfigurationError",
     "load_minute_canary_config",
+    "load_minute_snapshot",
     "load_reference_facts",
     "main",
     "run_minute_canary",
