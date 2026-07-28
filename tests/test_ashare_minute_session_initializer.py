@@ -10,6 +10,7 @@ import pytest
 
 from Ashare.minute_session_initializer import (
     MinuteSessionInitializerError,
+    _scaled_minute_profile,
     initialize_minute_session,
 )
 from shared.data.sharedsignals_v1 import HTTPResponse
@@ -93,10 +94,12 @@ class FixtureTransport:
         open_day: bool = True,
         daily_degraded: bool = False,
         omit_symbol: str | None = None,
+        daily_rows: list[dict[str, Any]] | None = None,
     ) -> None:
         self.open_day = open_day
         self.daily_degraded = daily_degraded
         self.omit_symbol = omit_symbol
+        self.daily_rows = daily_rows
         self.calls: list[dict[str, Any]] = []
 
     def __call__(
@@ -140,10 +143,22 @@ class FixtureTransport:
             ]
             degraded = False
         elif dataset_id == "cn.equity.daily":
-            rows = [
-                {"ts_code": "000001.SZ", "trade_date": "20260728", "close": 11.11},
-                {"ts_code": "600000.SH", "trade_date": "20260728", "close": 13.14},
-            ]
+            rows = (
+                copy.deepcopy(self.daily_rows)
+                if self.daily_rows is not None
+                else [
+                    {
+                        "ts_code": "000001.SZ",
+                        "trade_date": "20260728",
+                        "close": 11.11,
+                    },
+                    {
+                        "ts_code": "600000.SH",
+                        "trade_date": "20260728",
+                        "close": 13.14,
+                    },
+                ]
+            )
             if self.omit_symbol is not None:
                 rows = [row for row in rows if row["ts_code"] != self.omit_symbol]
             degraded = self.daily_degraded
@@ -234,6 +249,33 @@ def _template(root: Path) -> Path:
     return day
 
 
+def _large_universe(count: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    universe: list[dict[str, Any]] = []
+    daily: list[dict[str, Any]] = []
+    for offset in range(count):
+        symbol = f"{600000 + offset:06d}.SH"
+        universe.append(
+            {
+                "symbol": symbol,
+                "name": f"主板样本{offset:03d}",
+                "industry": "主板扫描",
+                "research_theme": "mainboard_opportunity_scan",
+                "list_date": "2020-01-01",
+                "risk_warning": False,
+                "delisting_risk": False,
+                "context_only": False,
+            }
+        )
+        daily.append(
+            {
+                "ts_code": symbol,
+                "trade_date": "20260728",
+                "close": 10.0 + offset / 100,
+            }
+        )
+    return universe, daily
+
+
 def _factory(transport: FixtureTransport):
     def build(
         transport_id: str,
@@ -276,6 +318,9 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
     ]
     manifest = json.loads((day / "minute-manifest.json").read_text())
     assert manifest["catalog_version"] == CATALOG_VERSION
+    assert manifest["profile"]["max_pages"] == 1
+    assert manifest["profile"]["max_rows"] == 2
+    assert manifest["profile"]["page_limit"] == 2
     references = json.loads((day / "reference-facts.json").read_text())
     assert [row["symbol"] for row in references] == ["000001.SZ", "600000.SH"]
     assert [row["previous_close_cny"] for row in references] == [11.11, 13.14]
@@ -293,6 +338,85 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
         "trade_date": {"eq": "20260728"},
         "ts_code": {"in": ["000001.SZ", "600000.SH"]},
     }
+
+
+def test_initializer_promotes_explicit_reviewed_universe_to_500(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(500)
+    source = tmp_path / "reviewed-universe-500.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        transport_factory=_factory(FixtureTransport(daily_rows=daily)),
+    )
+
+    assert result["status"] == "pass"
+    assert result["symbol_count"] == 500
+    assert result["profile_max_pages"] == 1
+    assert result["profile_max_rows"] == 500
+    assert result["profile_page_limit"] == 500
+    day = tmp_path / "20260729"
+    manifest = json.loads((day / "minute-manifest.json").read_text())
+    published_universe = json.loads((day / "universe.json").read_text())
+    assert manifest["profile"]["max_pages"] == 1
+    assert manifest["profile"]["max_rows"] == 500
+    assert manifest["profile"]["page_limit"] == 500
+    assert manifest["universe_sha256"] == result["universe_sha256"]
+    assert published_universe == universe
+
+
+def test_scaled_profile_uses_catalog_page_budget() -> None:
+    profile = _scaled_minute_profile(
+        {"max_pages": 1, "max_rows": 30, "page_limit": 30},
+        symbol_count=500,
+        catalog_page_size=200,
+    )
+
+    assert profile == {"max_pages": 3, "max_rows": 500, "page_limit": 200}
+
+
+def test_explicit_universe_source_must_be_absolute(tmp_path: Path) -> None:
+    _template(tmp_path)
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_universe_source_invalid",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            universe_source=Path("relative-universe.json"),
+            transport_factory=_factory(FixtureTransport()),
+        )
+
+
+def test_explicit_universe_source_rejects_ineligible_security(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, _ = _large_universe(2)
+    universe[0]["risk_warning"] = True
+    source = tmp_path / "reviewed-universe-ineligible.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_universe_ineligible",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            universe_source=source,
+            transport_factory=_factory(FixtureTransport()),
+        )
 
 
 def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
