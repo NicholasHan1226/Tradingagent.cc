@@ -14,6 +14,7 @@ tests/test_ashare_minute_paper.py
 tests/test_ashare_minute_loop.py
 tests/test_ashare_minute_paper_runner.py
 tests/test_ashare_minute_auto_runner.py
+tests/test_ashare_minute_session_initializer.py
 tests/test_cn_futures_fixture_closed_loop.py
 tests/test_crypto_fixture_auto_sim.py
 tests/test_crypto_authority_retirement.py

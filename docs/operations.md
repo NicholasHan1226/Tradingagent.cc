@@ -673,6 +673,20 @@ broker，不授予 durable capital，也不改变 `REAL_TRADING_ENABLED=false`�
 下一次允许启用的窗口是新交易日私有目录和参考输入已冻结、且可从09:35第一根
 连续K线开始时。该安装态不是自动模拟已启动的证明。
 
+次日输入候选由 `Ashare.minute_session_initializer` 在09:20准备。它只读取正式
+catalog/query，使用交易日历的 `pretrade_date` 和审核过Universe的上一交易日
+`daily.close`，并原子发布三项0600输入；不建立账本、不生成订单、不运行模拟
+成交。对应候选为：
+
+```text
+deploy/systemd/tradingagent-ashare-minute-session.service
+deploy/systemd/tradingagent-ashare-minute-session.timer
+```
+
+初始化器对相同输入精确幂等；目标目录已存在但字节不同、已有
+`state-bundle.json`、日线降级、目录漂移或股票缺失时退出2。只有初始化器当日
+PASS，才允许在09:35前启用分钟累计 timer；二者均不授予真实交易权限。
+
 盘后日线的 `observation_session=T` 只是 current observation。在预测前冻结且独立验证的交易日历没有给出下一 session 之前，daily-only planner 必须写 `paper_trade_session=null` 并固定 `action=abstain/status=completed_with_blocks`。每个 symbol 至少需要 21 个 forward-collected session 才能覆盖 20 日 momentum/volatility 的最小数学窗口；但缺交易日连续性和公司行动/复权 authority 时，即使计数达到 21 也仍是 blocked。当前 membership ledger 不注册任何 label horizon；缺 calendar/minute/market-truth/adjustment authority 不得生成或回填标签。缺分钟/L1 evidence 时不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用。
 
 DeepSeek 已有默认关闭的官方HTTPS transport本地候选；以下仍是安全默认，不会联网：

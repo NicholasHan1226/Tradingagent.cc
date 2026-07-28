@@ -1297,6 +1297,32 @@ entries:
       - infer_cross_day_initialization_crash_recovery_or_continuous_runtime
       - infer_durable_capital_broker_or_real_trading
     successor: initialize_next_session_then_enable_and_observe_the_simulation_only_timer
+  - entry_id: tradingagent_ashare_minute_session_initializer
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: Ashare/minute_session_initializer.py
+    production_verified: false
+    last_verified_at: "2026-07-28"
+    evidence:
+      - Ashare/README.md
+      - Ashare/minute_session_initializer.py
+      - deploy/systemd/tradingagent-ashare-minute-session.service
+      - deploy/systemd/tradingagent-ashare-minute-session.timer
+      - tests/test_ashare_minute_session_initializer.py
+    allowed_uses:
+      - prove_the_current_trading_date_and_previous_open_session_from_trade_calendar
+      - bind_reviewed_universe_previous_close_to_ready_daily_envelope_evidence
+      - atomically_prepare_three_private_non_production_session_inputs
+      - return_closed_day_noop_and_exact_idempotent_replay
+    prohibited_uses:
+      - create_state_bundle_capital_order_fill_or_execution_authority
+      - infer_suspension_truth_from_an_identityless_dataset
+      - publish_inputs_from_degraded_incomplete_or_replay_inconsistent_data
+      - overwrite_a_started_or_conflicting_session
+      - infer_installed_enabled_or_continuous_runtime
+      - authorize_broker_or_real_trading
+    successor: install_disabled_then_validate_next_open_session_before_timer_activation
   - entry_id: tradingagent_cnfutures_fixture_closed_loop
     state: CURRENT_VERIFIED
     layer: repository_contract

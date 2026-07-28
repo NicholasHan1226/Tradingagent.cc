@@ -200,6 +200,22 @@ snapshot fails closed. The wrapper does not prepare the next day's universe or
 reference facts, so a day cannot begin automatically until those inputs have
 been frozen under that day's private `0700` directory.
 
+`minute_session_initializer.py` closes that pre-open preparation gap without
+adding a provider route. At 09:20 it reads the current TradingDatas catalog,
+proves the target date is open, obtains `pretrade_date`, and fetches only the
+reviewed universe's prior-session `daily.close` rows through `/v1/query`. It
+revalidates the current `rt_min` catalog contract, copies the already-reviewed
+universe, and atomically publishes only `minute-manifest.json`,
+`reference-facts.json`, and `universe.json`. It never creates
+`state-bundle.json`.
+
+The initializer's `suspended=false` value is explicitly provisional: it is not
+a claim derived from an identityless suspension dataset. Every actual bar must
+still be completed and have positive volume, otherwise the minute Evidence
+Gate blocks the entire snapshot. A closed day is a safe no-op; degraded daily
+evidence, catalog drift, missing symbols, replay mismatch, conflicting existing
+inputs, or an already-started target session fails closed.
+
 The tracked systemd candidate runs at second 40 after each five-minute boundary
 during the two A-share sessions, after the independent TradingDatas collector.
 It remains a non-production fixture accumulator:
@@ -207,6 +223,8 @@ It remains a non-production fixture accumulator:
 ```text
 deploy/systemd/tradingagent-ashare-minute-paper.service
 deploy/systemd/tradingagent-ashare-minute-paper.timer
+deploy/systemd/tradingagent-ashare-minute-session.service
+deploy/systemd/tradingagent-ashare-minute-session.timer
 ```
 
 Enabling this timer does not enable the observation worker, durable capital,
