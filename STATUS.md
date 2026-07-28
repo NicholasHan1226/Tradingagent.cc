@@ -43,8 +43,11 @@ durable capital runtime 仍未启动；服务器已用正式18082的30只精确�
   `/opt/investment/releases/tradingagent/ac828bf5da25ab061f0b3cc785577f18432334e2`；
   自动累计 wrapper、次日会话初始化器和 tracked unit 的上一回滚 release 是
   `/opt/investment/releases/tradingagent/437fa274f5cfc47bac6ae03f7a26270ec404659c`。
-  500只会话消费能力对应的 root-owned、只读不可变 release
-  `/opt/investment/releases/tradingagent/65ee4f012fc673b0680d63a5a87195b1c7061adb`
+  500只会话消费能力的上一回滚 release 是
+  `/opt/investment/releases/tradingagent/65ee4f012fc673b0680d63a5a87195b1c7061adb`；
+  支持由 `ASHARE_MINUTE_UNIVERSE_SOURCE` 装载审核 Universe 的 root-owned、
+  只读不可变 release
+  `/opt/investment/releases/tradingagent/f81acb983ed72d0bbfa9d2331a67d62837289dd2`
   已成为 `/opt/investment/releases/tradingagent/current`。这只更新了
   simulation-only 调度入口；front、observation worker、broker 与真实交易仍未启动。
 - TradingDatas 正式内部端点为 `http://127.0.0.1:18082`，只消费
@@ -301,7 +304,8 @@ simulation-only分钟/会话timer，不负责修改 TradingDatas 采集调度。
 4. 等 `index_classify`/`sw_daily` 恢复健康后，独立加入行业上下文，不阻断核心
    主板 observation，也不把汇总数据冒充个股权限；
 5. 当前真实 delayed-paper one-shot 已完成首次可达K线结算与重复快照不变复核；
-   专用 TA timer 已安装但未启用。下一停止线是在下一交易日开盘前冻结当日私有
+   专用 TA 分钟 timer 与次日会话初始化 timer 已安装并启用。下一停止线是在下一
+   交易日开盘前冻结当日私有
    参考输入，从09:35第一根开始启用并验证首轮、下一轮、重复轮、崩溃恢复和盘后
    停止；缺参考快照、分钟缺口或任何数据退化时继续失败关闭。连续5个交易日是
    稳定性/扩容复核门，不再阻塞首批模拟决策。
