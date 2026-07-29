@@ -9,6 +9,11 @@
 > leaf owner/mode/readback 和相邻自动轮全部验证后，才可把 Crypto 恢复标记为
 > runtime PASS。
 
+> 同轮 A股预开盘恢复发现：严格 token 读取恢复后，30-symbol
+> `cn.equity.daily` 单次 `in` 查询被正式 18082 的读取预算以 HTTP 503
+> 失败关闭。当前候选把上一交易日参考价读取拆为每批最多 10 只、每批独立双跑和
+> envelope 证据绑定；只有正式 30/30 初始化与幂等重放通过后才进入当日分钟模拟。
+
 ## 当前结论
 
 TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer token-file
