@@ -12,8 +12,13 @@ from typing import Any, Callable
 
 import pytest
 
+import Crypto.delayed_paper_epoch as epoch_module
 import Crypto.delayed_paper_runtime as runtime_module
 import Crypto.delayed_paper_runner as runner_module
+from Crypto.delayed_paper_epoch import (
+    load_crypto_delayed_paper_epoch_manifest,
+    prepare_crypto_delayed_paper_epoch,
+)
 from Crypto.delayed_paper_ledger import (
     CryptoDelayedPaperLedgerError,
     CryptoDelayedPaperObservationStore,
@@ -22,7 +27,7 @@ from Crypto.delayed_paper_runtime import (
     CRYPTO_RUNTIME_CONTRACT,
     CryptoDelayedPaperRuntimeError,
     load_crypto_delayed_paper_runtime_manifest,
-    run_crypto_delayed_paper_server_once,
+    run_crypto_delayed_paper_server_once as _core_run_crypto_delayed_paper_server_once,
 )
 from Crypto.five_minute_data import _sha256 as crypto_profile_sha256
 from shared.data.sharedsignals_v1 import HTTPResponse
@@ -38,6 +43,8 @@ from tests.test_crypto_5m_support import (
     metadata,
     profile,
 )
+
+_TEST_EPOCH_ID = "crypto-delayed-paper-epoch-g2-runtime-test"
 
 
 def _manifest_payload(
@@ -101,10 +108,64 @@ def _runtime_paths(
     tmp_path: Path,
 ) -> tuple[Path, Path]:
     token_file = tmp_path / "tradingdatas-crypto-read.token"
-    output_root = tmp_path / "crypto-delayed-paper"
+    archived_root = tmp_path / "crypto-delayed-paper-archive"
+    epoch_parent = tmp_path / "crypto-delayed-paper-epochs"
+    output_root = epoch_parent / _TEST_EPOCH_ID
+    epoch_manifest = tmp_path / "crypto-delayed-paper.epoch.json"
+    archived_root.mkdir(parents=True, mode=0o700)
+    epoch_parent.mkdir(parents=True, mode=0o700)
+    epoch_payload = {
+        "schema": "tradingagent.crypto.delayed_paper_epoch_manifest.v1",
+        "epoch_id": _TEST_EPOCH_ID,
+        "epoch_generation": 2,
+        "current_output_root": str(output_root),
+        "archived_output_root": str(archived_root),
+        "archived_epoch_policy": "read_only_archive_no_resume",
+        "capital_baseline_policy_id": "crypto-capital-v1",
+        "aggregate_with_archived_epoch": False,
+        "safety": {
+            "real_trading_enabled": False,
+            "production_eligible": False,
+            "execution_authority": False,
+            "testnet_enabled": False,
+            "live_broker_enabled": False,
+            "model_network_enabled": False,
+            "automatic_promotion_enabled": False,
+            "automatic_risk_expansion_enabled": False,
+        },
+    }
+    epoch_manifest.write_text(
+        json.dumps(
+            epoch_payload,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    epoch_manifest.chmod(0o600)
+    monkeypatch.setattr(epoch_module, "LEGACY_ARCHIVE_ROOT", archived_root)
+    monkeypatch.setattr(epoch_module, "EPOCH_ROOT_PARENT", epoch_parent)
+    monkeypatch.setattr(epoch_module, "EPOCH_MANIFEST_PATH", epoch_manifest)
     monkeypatch.setattr(runtime_module, "RUNTIME_TOKEN_FILE", token_file)
-    monkeypatch.setattr(runtime_module, "RUNTIME_OUTPUT_ROOT", output_root)
+    context = load_crypto_delayed_paper_epoch_manifest(epoch_manifest)
+    prepare_crypto_delayed_paper_epoch(context)
+    monkeypatch.setattr(
+        runtime_module,
+        "_TEST_EPOCH_CONTEXT",
+        context,
+        raising=False,
+    )
     return token_file, output_root
+
+
+def run_crypto_delayed_paper_server_once(**kwargs: Any) -> dict[str, Any]:
+    return _core_run_crypto_delayed_paper_server_once(
+        **kwargs,
+        epoch_context=runtime_module._TEST_EPOCH_CONTEXT,
+    )
 
 
 def _factory(
@@ -487,15 +548,17 @@ def test_degraded_metadata_and_catalog_drift_reject_without_capital(
     assert runtime_module.crypto_runtime_receipt_exit_code(degraded_receipt) == 2
     assert not (output_root / "capital").exists()
 
-    drift_root = tmp_path / "drift-root"
-    monkeypatch.setattr(runtime_module, "RUNTIME_OUTPUT_ROOT", drift_root)
+    drift_token, drift_root = _runtime_paths(
+        monkeypatch,
+        tmp_path / "drift-runtime",
+    )
     drift_manifest = _write_manifest(
         tmp_path / "drift",
         payload=_manifest_payload(catalog_version="formal-catalog-drift-v2"),
     )
     drift_receipt = run_crypto_delayed_paper_server_once(
         runtime_manifest=drift_manifest,
-        token_file=token_file,
+        token_file=drift_token,
         output_root=drift_root,
         now=WINDOW_END + timedelta(seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),

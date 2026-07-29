@@ -7,9 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SYSTEMD_ROOT = ROOT / "Crypto" / "systemd"
 SERVICE = SYSTEMD_ROOT / "tradingagent-crypto-delayed-paper.service"
 TIMER = SYSTEMD_ROOT / "tradingagent-crypto-delayed-paper.timer"
-TOKEN_TMPFILES = (
-    SYSTEMD_ROOT / "tradingagent-crypto-read-token.tmpfiles.conf"
-)
+TOKEN_TMPFILES = SYSTEMD_ROOT / "tradingagent-crypto-read-token.tmpfiles.conf"
 
 
 def test_crypto_runtime_service_is_loopback_only_and_simulation_only() -> None:
@@ -24,11 +22,16 @@ def test_crypto_runtime_service_is_loopback_only_and_simulation_only() -> None:
     assert (
         "--runtime-manifest /etc/tradingagent/crypto-delayed-paper.runtime.json"
     ) in text
+    assert "-m Crypto.delayed_paper_epoch_runtime" in text
+    assert "-m Crypto.delayed_paper_runtime " not in text
     assert (
         "--token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token"
     ) in text
-    assert ("--output-root /var/lib/tradingagent/crypto-delayed-paper") in text
-    assert "StateDirectory=tradingagent/crypto-delayed-paper" in text
+    assert (
+        "--epoch-manifest /etc/tradingagent/crypto-delayed-paper.epoch.json"
+    ) in text
+    assert "--output-root" not in text
+    assert "StateDirectory=tradingagent/crypto-delayed-paper-epochs" in text
     assert "StateDirectoryMode=0700" in text
     assert "UMask=0077" in text
     assert "TimeoutStartSec=120s" in text
@@ -44,13 +47,16 @@ def test_crypto_runtime_service_is_loopback_only_and_simulation_only() -> None:
     assert "IPAddressDeny=any" in text
     assert "IPAddressAllow=localhost" in text
     assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in text
-    assert ("ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper") in text
+    assert "ReadOnlyPaths=/var/lib/tradingagent/crypto-delayed-paper" in text
+    assert "ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper-epochs" in text
     assert (
         "AssertPathExists=/etc/tradingagent/crypto-delayed-paper.runtime.json"
     ) in text
     assert (
         "AssertPathExists=/run/secrets/tradingagent/tradingdatas-crypto-read.token"
     ) in text
+    assert "AssertPathExists=/etc/tradingagent/crypto-delayed-paper.epoch.json" in text
+    assert "AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper" in text
     assert "ConditionPathExists=" not in text
     assert "EnvironmentFile=" not in text
     assert "tradingdatas-api.service" not in text
@@ -92,6 +98,10 @@ def test_crypto_runtime_timer_is_installable_but_not_enabled_by_repo() -> None:
     assert "systemctl start" not in text
     assert "OnBootSec=" not in text
     assert "OnUnitActiveSec=" not in text
+    assert sorted(
+        path.name
+        for path in SYSTEMD_ROOT.glob("tradingagent-crypto-delayed-paper*.timer")
+    ) == ["tradingagent-crypto-delayed-paper.timer"]
 
 
 def test_crypto_runtime_token_is_recreated_from_canonical_source() -> None:
