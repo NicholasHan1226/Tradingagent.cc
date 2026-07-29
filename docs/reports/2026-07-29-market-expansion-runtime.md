@@ -89,6 +89,19 @@ future/PIT gate。
 既有 pending 动作。2026-07-29 因此是非完整、不可学习交易日。下一交易日从新的
 session initializer 和第一根完整 K 线重新开始。
 
+## 20:32 A股缺口恢复代码收口
+
+- PR [#76](https://github.com/NicholasHan1226/Tradingagent.cc/pull/76) 已普通
+  合并为 `cacb1b1a675665987c8e6d7243377a633f31a23c`；GitHub front/test CI
+  通过，本地 A股全量 `840 passed`。
+- 修复不会改写上述 2026-07-29 历史 bundle，也不会补造 `13:05`。
+- 后续同类事故会把所有跨缺口 pending 模拟订单记为未成交，记录精确缺口，
+  重置滚动特征；恢复第一根完整 K 线只建立基线，下一根连续完整 K 线才重新产生
+  候选。
+- 缺口日始终不能进入全天完整性或离线学习验收，但后续完整 K 线可以继续积累
+  observation、反事实、盯市和对账证据，避免一次缺口使全天永久停止。
+- 本节只证明代码主线与测试，服务器 release/current 仍需单独发布与读回。
+
 ## A股 500 股候选
 
 隔离 clean store 已完成一次：
