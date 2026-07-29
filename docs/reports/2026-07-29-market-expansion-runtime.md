@@ -100,7 +100,10 @@ session initializer 和第一根完整 K 线重新开始。
   候选。
 - 缺口日始终不能进入全天完整性或离线学习验收，但后续完整 K 线可以继续积累
   observation、反事实、盯市和对账证据，避免一次缺口使全天永久停止。
-- 本节只证明代码主线与测试，服务器 release/current 仍需单独发布与读回。
+- 服务器已从 `bc8880dfd3c77ee358736d58e0cf9c377de154b3` 原子切换到
+  `946db638c9ac85410fa697f81dd1c6da02723903`；新 release 的 824 个文件树哈希
+  与本地归档一致，现役解释器模块导入及 systemd unit verify 通过。原两个 A股
+  timer 保持 `enabled/active`，未新增任务；旧 release 保留为直接回滚。
 
 ## A股 500 股候选
 
