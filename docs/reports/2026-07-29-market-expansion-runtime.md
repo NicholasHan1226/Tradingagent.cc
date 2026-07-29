@@ -117,6 +117,27 @@ session initializer 和第一根完整 K 线重新开始。
 - TA 的隔离明日会话预检仍失败关闭；正式 `20260730` 状态目录不存在，未产生
   state bundle、资本、订单或成交。
 
+## 17:58 次日会话预检收口
+
+- TradingDatas 的通用下一日日历合同已通过独立 clean-overlay review：
+  248 个相关测试通过，P0/P1=0。正式不可变 release 为
+  `64695852ff5be23b3cf8a8d1d03a13f7274e4586`，旧
+  `5ac3925c3931a81132ea02abb16f9745033fb6dc` 保留为回滚点。
+- 17:50 通用采集完成后，正式 18082 以 TA UID987 查询
+  `cn.market.trade_calendar(exchange=SSE,cal_date=20260730)` 得到唯一行：
+  `is_open=1,pretrade_date=20260729`。metadata 为
+  `ready/success/fresh/valid/non-degraded`，receipt 与 provider-neutral
+  lineage 完整。
+- 初始化第一次尝试时 `cn.equity.daily` 尚未完成 17:55 盘后刷新，系统按
+  `minute_session_dataset_rejected:cn.equity.daily` 失败关闭，没有生成输入。
+  刷新完成后，30 股日线经三批 10 只有界查询取得 30/30，三批均
+  `ready/fresh/valid/non-degraded`。
+- 隔离 initializer 随后双跑通过：首次 `reused=false`，第二次
+  `reused=true`；`symbol_count=30`，Universe SHA256 为
+  `0e26f54fc2ab391f0187a5787f9955b90e8a2ff21969957565749b733e035203`。
+  目标目录只有 3 项 0600 输入，无 state bundle、资本、订单、成交或账本；
+  正式 `20260730` 状态目录继续不存在，等待 09:18 timer 独立运行。
+
 ## 下一停止线
 
 1. TradingDatas 修复并正式证明 query `as_of` 与 envelope receipt/lineage/
