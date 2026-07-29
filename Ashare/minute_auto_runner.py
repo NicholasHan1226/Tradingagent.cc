@@ -23,7 +23,7 @@ from .minute_paper_runner import run_delayed_minute_paper_once
 
 
 FIVE_MINUTES = timedelta(minutes=5)
-PROVIDER_AVAILABILITY_LAG = FIVE_MINUTES
+PROVIDER_AVAILABILITY_LAG = 2 * FIVE_MINUTES
 STATE_BUNDLE_NAME = "state-bundle.json"
 MANIFEST_NAME = "minute-manifest.json"
 REFERENCE_FACTS_NAME = "reference-facts.json"

@@ -679,8 +679,9 @@ deploy/systemd/tradingagent-ashare-minute-paper.timer
 ```
 
 timer 只在工作日48根可处理K线的延迟到达窗口触发：上午
-`09:44–11:39`、下午`13:14–15:09`，在数据采集边界后约4分钟触发，给独立
-TradingDatas collector 留出完成窗口。午休后段和收盘后不再重复触发，因此已知
+`09:49–11:44`、下午`13:19–15:14`。生产读回证明上游在自然K线边界仍晚一根，
+因此策略固定等待两根5分钟K线，并在对应TradingDatas采集轮后约4分钟触发。
+午休后段和收盘后不再重复触发，因此已知
 缺口只保留一次失败关闭证据，不会在无新K线时制造重复失败日志。启用前必须依次
 通过：不可变 release/manifest 校验、
 `systemd-analyze verify`、禁用状态手工 one-shot、状态 SHA 读回、下一轮自动

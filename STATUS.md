@@ -25,6 +25,11 @@
 > 并将当日固定标为非完整交易日、不可进入学习验收。正常systemd timer不携带该
 > 开关，后续K线仍逐槽连续。
 
+> 同日正式 `rt_min` 读回进一步证明：10:15采集轮的最新完成bar是10:05，
+> 生产可用滞后为两根5分钟K线。分钟runner据此把固定证据lag从5分钟修正为
+> 10分钟，48个timer触发整体后移5分钟；不把`metadata=fresh`误解为请求的下一根
+> bar已经存在。
+
 ## 当前结论
 
 TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer token-file
