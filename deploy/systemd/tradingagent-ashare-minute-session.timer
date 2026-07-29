@@ -2,7 +2,7 @@
 Description=Prepare TradingAgent A-share minute session before market open
 
 [Timer]
-OnCalendar=Mon..Fri *-*-* 09:20:00
+OnCalendar=Mon..Fri *-*-* 09:18:00
 AccuracySec=1s
 RandomizedDelaySec=10s
 Persistent=false

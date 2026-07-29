@@ -20,6 +20,10 @@
   ready/fresh/valid/non-degraded、游标终止和身份守恒，再按 symbol 绑定该批
   envelope metadata；任一批 503、缺行、重复或证据拒绝都不创建当日 inputs，
   禁止退回无界查询或 SQLite。
+- A股现役 TradingDatas 通用采集与 TA 分钟消费必须错峰：session initializer
+  固定 09:18；48 个 delayed-paper 轮次固定在目标 5 分钟边界后约 4 分钟。
+  `expected_available_bar_end` 仍减去一根 5 分钟 provider lag，因此错峰只避免
+  SQLite/receipt 写入窗口的 HTTP 503，不改变被消费 bar、交易日、数量或顺序。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
 - 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是仓库合同层的shadow能力，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport也只是非生产仓库合同；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
 - 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。
