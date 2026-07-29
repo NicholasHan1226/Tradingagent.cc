@@ -34,11 +34,12 @@ HTTP endpoint、token、Binance client、SQLite reader 或 fallback，只复用�
 `binding_scope=fixture_only`，不保存任何生产 dataset ID。
 
 上游数据合同代码已合入 TradingDatas
-`main@62d76f8cdcc7671a9523ac15905ab2eb3152e387`。此前 isolated canary
+`main@62d76f8cdcc7671a9523ac15905ab2eb3152e387`。isolated canary
 `025fd24e2f9f33855b6d2f62ac6489d219033128`（catalog
-`v1-e7ea3dd714066d3c`）提供本地查询证据；但目前仍没有正式 Crypto internal
-HTTP/runtime/timer、endpoint/port 或带认证 readback handoff。因此以下四个 ID
-仍只可在本批显式 fixture/profile 注入中出现，不能据此声称 TA 已获得正式数据：
+`v1-e7ea3dd714066d3c`）提供本地查询证据，后续主集成已完成 18083、专用 token
+leaf、仓外 profile 和核心自动轮的正式 readback。以下四个 ID 仍只能通过冻结
+profile 和 catalog/query 消费，禁止由 TA 动态猜测、直连 Binance/SQLite 或
+fallback：
 
 - `crypto.spot.binance.btcusdt.5m`
 - `crypto.spot.binance.ethusdt.5m`
@@ -118,8 +119,10 @@ python3 -m Crypto.fixture_auto_sim \
 
 ## Server runtime 与 systemd 候选
 
-`delayed_paper_runtime.py` 是最小 loopback-only server CLI 候选。它尚未部署，
-也不包含正式 catalog、dataset profile、token 或 base URL。实际运行必须由主任务
+`delayed_paper_runtime.py` 是最小 loopback-only server CLI。主集成已在
+2026-07-28 以 release
+`e8ba46d7e0cab847d0fa037290e7368c69c54655` 完成 one-shot、幂等重放、相邻
+自动轮和核心 timer enabled/active 的 sim-only 验证。实际运行仍必须由主任务
 提供仓外、secret-free 的
 `/etc/tradingagent/crypto-delayed-paper.runtime.json`；manifest 必须包含：
 
@@ -168,7 +171,7 @@ window`，或两个连续缺失 window；仍有积压时显式 `backlog_pending`
 `evolution/`，也不会因学习失败改变核心 status 或 exit code。每份 runtime
 回执固定输出 `learning_mode=detached_offline_worker`、
 `learning_authority=false`、`learning_invoked=false`；这些字段只声明边界，
-不表示离线学习 worker 已实现或运行。
+不表示离线学习候选已部署或运行。
 
 候选命令形态为：
 
@@ -180,7 +183,7 @@ python3 -m Crypto.delayed_paper_epoch_runtime \
   --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
 ```
 
-仓库只跟踪：
+核心 unit 为：
 
 - `Crypto/systemd/tradingagent-crypto-delayed-paper.service`
 - `Crypto/systemd/tradingagent-crypto-delayed-paper.timer`
@@ -196,27 +199,47 @@ publisher-provisioned credential，不生成、注册、读取或输出 token；
 继续 fail closed。发布侧只能对该精确 tmpfiles 文件执行 scoped create，禁止
 无参运行全局 `systemd-tmpfiles`。
 
-timer 为 24×7、每 5 分钟边界后 55–58 秒触发的候选，`Persistent=false`，包含
-`[Install]`/`WantedBy=timers.target`，供发布侧在完整门禁通过后显式
-`systemctl enable --now`。Git 仓库默认不会安装、enable 或 start；本批也不改
-服务器。2026-07-28 的正式上游 handoff 已给出 loopback
+timer 为 24×7、每 5 分钟边界后 55–58 秒触发，`Persistent=false`，包含
+`[Install]`/`WantedBy=timers.target`；实际 enable/active 状态只以服务器读回为
+准。2026-07-28 的正式上游 handoff 已给出 loopback
 `http://127.0.0.1:18083`、catalog `v1-e7ea3dd714066d3c`、四个
 schema-major-1 dataset 的 ready/fresh/valid/non-degraded query 证据，以及
 `/run/secrets/tradingagent/tradingdatas-crypto-read.token` 为
-`tradingagent:0600`；这些是部署输入，不是本 unit 已安装的证明。正式部署仍须由
-主任务生成并读回完整仓外 profile manifest（含 access policy、profile 与 contract
-SHA），运行 Linux `systemd-analyze verify/calendar`，在 enable 前读回
-disabled/inactive、enable 后读回 enabled/active，并证明同一 service UID 下不同
-token leaf 的 OS 级隔离。
+`tradingagent:0600`。核心 unit 的安装态与这些上游输入仍是两份独立证据；本轮
+learning 候选不读取或修改 manifest、token、18083、核心 unit 或 timer。
 
 ## 学习解耦边界
 
-本核心候选不包含离线学习 worker 或学习测试，也不生成 `evolution/`。未来学习
-实现只能异步消费核心 append-only observation/completion/decision/capital
-证据，并拥有独立的 checkpoint、完整性审计、资源预算和调度。它必须保持
-`learning_authority=false`，不得自动替换 Champion、扩大风险、修改资本或进入
-Testnet/Live。历史完整性检查与 Challenger 建议属于离线 worker 验收，不能重新
-进入每 5 分钟核心路径。
+`delayed_paper_learning_worker.py` 是独立离线候选；核心 runtime 不 import、
+调用或恢复它，也不读取或创建 `evolution/`。学习 worker 只异步消费核心已完成的
+append-only observation/completion/decision/capital 证据，所有输出固定
+`learning_mode=detached_offline_worker`、`learning_authority=false`、
+`execution_authority=false`、`production_eligible=false`。
+
+增量模式只读取核心当前 completion state、自己的 checkpoint 头，以及至多一条
+新增 completion 对应的 receipt/segments，正常单轮工作量与新增量相关。若 worker
+落后超过一条，它返回 `full_scrub_required`，不在每 5 分钟路径扫描历史。写入
+projection receipt 后再写 append-only checkpoint，最后原子更新
+`worker_state.json`；checkpoint 已落盘而 state 尚未更新的崩溃可确定性恢复。
+
+每日 full scrub 独立遍历全部
+`completion → projection receipt → sample/KPI/Challenger segments` 和完整
+checkpoint checksum 链。没有 checkpoint 声明的缺失投影可从核心权威证据补齐；
+一旦 checkpoint 已声明成功，较早 receipt 缺失、旧 segment 篡改、completion
+绑定不一致或 checkpoint 断链都必须失败关闭，不能用较新的成功覆盖。
+Challenger 只追加建议且 `manual_review_required=true`，不得自动替换 Champion、
+扩大风险、修改资本/仓位/订单或进入 Testnet/Live，也不调用网络模型。
+
+tracked 候选包含：
+
+- `tradingagent-crypto-delayed-paper-learning.service/.timer`：每根核心 5 分钟
+  轮次之后独立运行增量 worker；
+- `tradingagent-crypto-delayed-paper-learning-scrub.service/.timer`：每日独立
+  full scrub。
+
+两组 learning timer 均默认未安装、未启用，本候选不部署服务器。只有核心连续
+24 小时门禁通过并经主集成复核后，发布侧才可安装；学习失败不得改变核心 status、
+exit code、资本或订单。
 
 ## Outage epoch restart 候选
 
@@ -297,21 +320,21 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_runtime.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_epoch.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_systemd_candidate.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_learning.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_learning_systemd.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
 ## 明确未实现
 
-- TradingDatas 已交接正式 Crypto 18083 loopback、catalog version、四个 dataset
-  query 与专用 token leaf 的上游 readback；TradingAgent 本批没有生成/安装仓外
-  runtime manifest，也没有以本 CLI 做联合 readback，不能把 TD 上游成功说成 TA
-  runtime 已运行；
+- TradingDatas 18083、catalog、四个 dataset、专用 token leaf 和 TA 核心自动轮
+  已有独立 readback；本 learning 候选不修改或重新部署其中任何一项；
 - 候选回填的 `observed_at` 是采集时点，不是历史 PIT 或实时可用性证明；
-- 仓库已有 runtime CLI 和默认 disabled 的 tracked service/timer 候选，但没有
-  服务器安装态、enabled/active timer 或成功自动轮；文件存在不等于持续运行；
-- outage epoch restart 仍是未部署候选；旧 root 的只读封存、新 manifest、
-  one-shot/幂等/相邻自动轮和 timer 恢复均须由主集成在服务器逐层验证；
-- 离线学习 worker 未纳入本核心候选，核心不会创建 `evolution/` 或执行学习恢复；
+- 核心 runtime 已有 sim-only 自动轮证据，但尚未通过连续 24 小时稳定性门禁；
+- outage epoch 已在服务器以独立 generation-2 root 恢复自动轮；旧 root 保持
+  只读封存，两个 epoch 的资本、收益和样本禁止聚合；
+- 离线学习 worker/service/timer 仍是未部署候选，核心不会创建 `evolution/`
+  或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
 - 本批 Champion 只覆盖 deterministic buy/observe paper 样本，尚不是完整买卖 round trip；
 - fixture 测试结果不是收益率、胜率或晋级证据。

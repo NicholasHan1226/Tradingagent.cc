@@ -7,12 +7,12 @@
 
 ## 现有代码
 - `tradingagent/Crypto/` 内为现役实体代码，不再依赖 `/opt/investment/Crypto/tools/` 旧目录。
-- 当前资本写能力只有 `fixture_auto_sim.py`/`fixture_sim/` 本地非权威纵向切片。`delayed_paper_runtime.py` 只是准备消费正式 loopback TradingDatas 的 server CLI 候选；其 tracked systemd timer 可由发布侧显式 enable，但仓库不会自动安装、enable 或启动。旧 workflow/simulator/executor/shadow writer 已退役为 tombstone；其余 strategy/validation/report 只作研究辅助。TradingDatas 已在 2026-07-28 交接 loopback `127.0.0.1:18083`、catalog `v1-e7ea3dd714066d3c`、四个正式 dataset 及 Crypto 专用 0600 token leaf 的上游证据，但 TradingAgent 尚未安装 unit、写入外部 manifest 或完成自身读回；仍无 Testnet/live 验收，不能称为生产闭环。
+- 当前资本写能力只有 `fixture_auto_sim.py`/`fixture_sim/` 本地非权威纵向切片。`delayed_paper_runtime.py` 已作为 sim-only 核心随 `e8ba46d7e0cab847d0fa037290e7368c69c54655` 发布，并由主集成在 2026-07-28 验证 one-shot、幂等重放、相邻自动轮和 timer enabled/active；这只证明本地 delayed-paper 自动积累，不授予 Testnet/live/production execution authority。`delayed_paper_learning.py` 与 `delayed_paper_learning_worker.py` 是后续独立候选，尚未部署或启用。旧 workflow/simulator/executor/shadow writer 已退役为 tombstone；其余 strategy/validation/report 只作研究辅助。
 - 数据源只读 TradingDatas 的 `GET /v1/catalog` 与 `POST /v1/query`；TradingDatas fresh handoff 前只允许显式 fixture/mock。不得由 Crypto 直接调用 Binance、读取 TradingDatas SQLite，或回退到 `/tushare`、`/source_status`、provider 专用 route。
 
 ## 特点
 - 目标市场语义为 24/7、无交易所统一休市；当前不表示全天候任务已安装。
-- 5min 条件监控仍是待验证目标频率，不是已部署 SLA。`Crypto/systemd/` 保存可由发布侧显式 `systemctl enable --now` 的 timer 候选；仓库本身不会安装、enable 或 start，不能用文件存在或 `[Install]` 推断服务器 timer 已 enabled/active。
+- 5min delayed-paper 核心已开始自动积累，但连续 24 小时稳定性和策略样本质量仍需运行证据。`Crypto/systemd/` 中核心 timer 的服务器状态与新增学习 timer 候选必须分别验证；仓库文件存在或 `[Install]` 不能证明学习 timer 已安装、enabled 或 active。
 - server-local paper、Binance Spot Testnet 和未来 Binance Spot Live 是三份不同合同、账户与凭据域；不能靠切换 base URL 或环境变量升级。当前 `REAL_TRADING_ENABLED=false`，Live adapter 未实现。
 
 ## 当前模块边界
@@ -29,11 +29,11 @@
   symbol/kind/dataset/catalog proof、请求窗口、cutoff、row/page budget 和
   freshness；仅重算本地 digest 不能把其它窗口或 future proof 带入资本链。
   上游数据合同代码已合入 TradingDatas
-  `main@62d76f8cdcc7671a9523ac15905ab2eb3152e387`；此前 isolated canary
+  `main@62d76f8cdcc7671a9523ac15905ab2eb3152e387`；isolated canary
   `025fd24…` 已证明
-  `symbol eq + open_time between + as_of + desc + limit=13` 返回精确连续窗口；
-  但仍没有正式 Crypto internal HTTP/runtime/timer 与带认证 readback handoff。
-  本模块继续 fixture-only，并必须执行 bounded cursor traversal；non-null
+  `symbol eq + open_time between + as_of + desc + limit=13` 返回精确连续窗口，
+  后续主集成已完成 18083 正式 handoff 和核心 delayed-paper 自动轮验证。
+  provider-neutral consumer 仍必须执行 bounded cursor traversal；non-null
   cursor 可继续遍历，循环、跨页重复、预算超限或最终窗口不完整才失败关闭，
   禁止忽略 cursor 或接受截断首屏。
 - `delayed_paper_runner.py` 只编排已验证 snapshot、Crypto 本地 audit-only
@@ -82,12 +82,17 @@
   和无 context 的 Python 调用均已退役为 fail-closed。systemd 只可把一个现役
   service/timer 指向 current epoch，并将旧 root 绑定为只读；回滚只能停新 timer
   并保留两份账本，不能恢复旧 root 写入。
-- 学习投影不属于本核心候选。`delayed_paper_runtime.py` 不得 import、调用或恢复
+- 学习投影不属于核心 runtime。`delayed_paper_runtime.py` 不得 import、调用或恢复
   learning，也不得读取或创建 `evolution/`；核心回执固定声明
   `learning_mode=detached_offline_worker`、`learning_authority=false`、
-  `learning_invoked=false`。未来离线 worker 必须使用独立进程、独立调度和独立
-  失败域，任何学习缺口、损坏或性能问题都不能改变核心 status、exit code、资本、
-  Champion、风险或订单。
+  `learning_invoked=false`。独立 `delayed_paper_learning_worker.py` 只消费已完成
+  observation/completion，正常轮通过 append-only checkpoint 处理至多一条新增
+  completion；出现多条缺口必须交给 daily full scrub。full scrub 校验全部
+  completion→projection receipt→sample/KPI/Challenger segments 及 checkpoint
+  链；未声明投影可确定性补齐，已声明 receipt/segment 缺失、旧段篡改或链断裂
+  必须失败关闭。学习 service/timer 与 daily scrub service/timer 是默认未启用的
+  部署候选，等待核心连续 24 小时门禁和主集成复核；任何学习失败都不能改变核心
+  status、exit code、资本、Champion、风险或订单。
 - `fixture_auto_sim.py` 是薄兼容 facade；实现位于 `fixture_sim/`。该网络关闭纵向切片只接受显式 fixture/mock，以 1h regime、15m decision、closed 5m 证据及 observed-at-or-later executable quote 生成冻结 Champion 的本地 `fixture_simulated` intent/receipt，并写入 Crypto 自有 append-only 资本链、对账和非晋级复盘；它没有 execution authority，也不是 TradingDatas adapter、scheduler、Testnet 或 Live runtime。
 - 本批纵向切片是 `crypto-capital-v1` 本地 fixture opening 闭环的唯一可写入口，但仍固定为 `local_fixture_simulated_candidate`，没有 execution/runtime/live authority。旧 `crypto-shadow-sim-v1` 仅保留历史证据。
 - ledger 默认构造只读，只有 `fixture_sim/runtime.py` 可通过包内工厂取得写 capability；checksum、文件锁和进程内 capability 仅是协作与损坏防护，不隔离可改代码或文件的同 UID 恶意/失控进程。生产前必须另做单 writer inventory、OS 权限/进程隔离和外部 durable receipt 验证。

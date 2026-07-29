@@ -622,9 +622,12 @@ def test_learning_is_detached_and_same_slot_replay_preserves_capital(
     assert "delayed_paper_learning" not in source
     assert '"evolution"' not in source
     assert "'evolution'" not in source
-    assert not (
+    assert (
         Path(runtime_module.__file__).parent / "delayed_paper_learning.py"
-    ).exists()
+    ).is_file()
+    assert (
+        Path(runtime_module.__file__).parent / "delayed_paper_learning_worker.py"
+    ).is_file()
 
     first = run_crypto_delayed_paper_server_once(
         runtime_manifest=manifest_path,

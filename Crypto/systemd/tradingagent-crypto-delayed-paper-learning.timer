@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent Crypto detached delayed-paper learning timer candidate
+
+[Timer]
+OnCalendar=*-*-* *:1/5:30
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=false
+Unit=tradingagent-crypto-delayed-paper-learning.service
+
+[Install]
+WantedBy=timers.target
