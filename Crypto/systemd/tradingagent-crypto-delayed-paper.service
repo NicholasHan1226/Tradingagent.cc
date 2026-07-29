@@ -3,9 +3,11 @@ Description=TradingAgent Crypto closed-5m delayed-paper accumulator candidate
 Wants=network-online.target
 After=network-online.target
 AssertPathExists=/etc/tradingagent/crypto-delayed-paper.runtime.json
+AssertPathExists=/etc/tradingagent/crypto-delayed-paper.epoch.json
 AssertPathExists=/run/secrets/tradingagent/tradingdatas-crypto-read.token
+AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper
 AssertPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
-AssertPathExists=/opt/investment/releases/tradingagent/current/Crypto/delayed_paper_runtime.py
+AssertPathExists=/opt/investment/releases/tradingagent/current/Crypto/delayed_paper_epoch_runtime.py
 
 [Service]
 Type=oneshot
@@ -16,11 +18,11 @@ Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_runtime --runtime-manifest /etc/tradingagent/crypto-delayed-paper.runtime.json --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token --output-root /var/lib/tradingagent/crypto-delayed-paper
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_epoch_runtime --epoch-manifest /etc/tradingagent/crypto-delayed-paper.epoch.json --runtime-manifest /etc/tradingagent/crypto-delayed-paper.runtime.json --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
 TimeoutStartSec=120s
 TimeoutStopSec=15s
 UMask=0077
-StateDirectory=tradingagent/crypto-delayed-paper
+StateDirectory=tradingagent/crypto-delayed-paper-epochs
 StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
@@ -44,7 +46,9 @@ IPAddressAllow=localhost
 ReadOnlyPaths=/opt/investment/releases/tradingagent
 ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1
 ReadOnlyPaths=/etc/tradingagent/crypto-delayed-paper.runtime.json
+ReadOnlyPaths=/etc/tradingagent/crypto-delayed-paper.epoch.json
 ReadOnlyPaths=/run/secrets/tradingagent/tradingdatas-crypto-read.token
-ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper
+ReadOnlyPaths=/var/lib/tradingagent/crypto-delayed-paper
+ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper-epochs
 StandardOutput=journal
 StandardError=journal

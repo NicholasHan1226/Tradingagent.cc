@@ -52,9 +52,11 @@
 - `delayed_paper_runtime.py` 只接受仓外、secret-free、完整冻结的
   `CryptoFiveMinuteDataProfile` manifest。manifest 必须绑定 catalog version、
   profile SHA、四个 dataset contract SHA 与 loopback IP literal base URL；
-  runtime 不从当前 catalog 动态重建或放宽 profile。token leaf 与输出根分别固定为
-  `/run/secrets/tradingagent/tradingdatas-crypto-read.token` 和
-  `/var/lib/tradingagent/crypto-delayed-paper`。HTTP transport 在 runner 确认没有
+  runtime 不从当前 catalog 动态重建或放宽 profile。token leaf 固定为
+  `/run/secrets/tradingagent/tradingdatas-crypto-read.token`；输出根只能来自后述
+  已验证 outage-epoch context，旧
+  `/var/lib/tradingagent/crypto-delayed-paper` 不再是可写 runtime root。HTTP
+  transport 在 runner 确认没有
   pending observation 后才懒构造，因此 pending 崩溃恢复不依赖 token 或
   TradingDatas 可用性；若当前请求时槽更新，同一 invocation 最多按顺序处理
   `pending recovery + 1 fresh` 或两个缺失 fresh window，超过预算显式
@@ -64,6 +66,22 @@
   相同 5m slot 的
   `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不能随 systemd
   jitter 或重跑墙上时钟漂移。
+- 运行中断造成 TradingDatas 当前 envelope 无法证明历史 `as_of` 时，不得改写
+  observation state、跳过旧 root 的缺口或降低 PIT/freshness 门禁。恢复只能使用
+  显式 `delayed_paper_epoch.py` 合同：旧
+  `/var/lib/tradingagent/crypto-delayed-paper` 只读封存；仓外 current-epoch
+  manifest 绑定唯一 `epoch_id`、本次停机恢复专用 `epoch_generation=2` 和
+  `/var/lib/tradingagent/crypto-delayed-paper-epochs/<epoch_id>` 独立 root。
+  新 root 用 `crypto-capital-v1` 的 10,000 USDT local fixture opening baseline
+  重新开始，但旧、新 epoch 的资本、持仓、订单、PnL、收益率和样本禁止聚合。
+  epoch parent 的 `.current_epoch.json` 以 checksum 和进程锁永久钉住唯一
+  generation-2 root；同 generation 换 root、回退 generation 或改写 manifest
+  均失败关闭。未来新 epoch 必须经新的独立合同与候选，不能靠改 manifest 轮换。
+  `delayed_paper_epoch_runtime.py` 是唯一 server wrapper；它先持久化并验证 current
+  anchor 与 root identity，再调用核心。旧 `delayed_paper_runtime.py` 直接 CLI
+  和无 context 的 Python 调用均已退役为 fail-closed。systemd 只可把一个现役
+  service/timer 指向 current epoch，并将旧 root 绑定为只读；回滚只能停新 timer
+  并保留两份账本，不能恢复旧 root 写入。
 - 学习投影不属于本核心候选。`delayed_paper_runtime.py` 不得 import、调用或恢复
   learning，也不得读取或创建 `evolution/`；核心回执固定声明
   `learning_mode=detached_offline_worker`、`learning_authority=false`、

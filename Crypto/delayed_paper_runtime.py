@@ -676,6 +676,7 @@ def _require_exact_service_paths(
     *,
     token_file: Path | str,
     output_root: Path | str,
+    epoch_context: Any | None = None,
 ) -> tuple[Path, Path]:
     token = Path(token_file)
     root = Path(output_root)
@@ -683,10 +684,22 @@ def _require_exact_service_paths(
         raise CryptoDelayedPaperRuntimeError(
             "runtime_token_file_must_equal_dedicated_leaf"
         )
-    if root != RUNTIME_OUTPUT_ROOT:
-        raise CryptoDelayedPaperRuntimeError(
-            "runtime_output_root_must_equal_dedicated_root"
-        )
+    if epoch_context is None:
+        raise CryptoDelayedPaperRuntimeError("runtime_epoch_context_required")
+    else:
+        try:
+            from Crypto.delayed_paper_epoch import (
+                validate_epoch_runtime_context,
+            )
+
+            validate_epoch_runtime_context(
+                epoch_context,
+                output_root=root,
+            )
+        except Exception as exc:
+            raise CryptoDelayedPaperRuntimeError(
+                "runtime_epoch_context_invalid"
+            ) from exc
     if not token.is_absolute() or not root.is_absolute():
         raise CryptoDelayedPaperRuntimeError("runtime_service_paths_must_be_absolute")
     return token, root
@@ -804,6 +817,7 @@ def run_crypto_delayed_paper_server_once(
     output_root: Path | str,
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] = (build_runtime_transport),
+    epoch_context: Any | None = None,
 ) -> dict[str, Any]:
     """Recover pending work, then process up to one additional missing window."""
 
@@ -811,7 +825,15 @@ def run_crypto_delayed_paper_server_once(
     token, root = _require_exact_service_paths(
         token_file=token_file,
         output_root=output_root,
+        epoch_context=epoch_context,
     )
+    epoch_receipt_fields: dict[str, Any] = {}
+    if epoch_context is not None:
+        from Crypto.delayed_paper_epoch import (
+            epoch_runtime_receipt_fields as build_epoch_receipt_fields,
+        )
+
+        epoch_receipt_fields = build_epoch_receipt_fields(epoch_context)
     manifest = load_crypto_delayed_paper_runtime_manifest(runtime_manifest)
     current_request = crypto_runtime_window_request(now)
     state_before = _runtime_observation_state(root)
@@ -961,6 +983,7 @@ def run_crypto_delayed_paper_server_once(
         "core_result": core_result,
         "cycle_results": cycle_results,
         "recovered_observations": recovered_observations,
+        **epoch_receipt_fields,
     }
 
 

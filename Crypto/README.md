@@ -139,10 +139,14 @@ base URL 均必须是 loopback IP literal；最终 transport 仍复用共享可�
 - `GET /v1/catalog`
 - `POST /v1/query`
 
-token 和输出根不可改写：
+token 与 current epoch root 均不可由 CLI 任意改写：
 
 - `/run/secrets/tradingagent/tradingdatas-crypto-read.token`
-- `/var/lib/tradingagent/crypto-delayed-paper`
+- `/etc/tradingagent/crypto-delayed-paper.epoch.json` 精确绑定的
+  `/var/lib/tradingagent/crypto-delayed-paper-epochs/<epoch_id>`
+
+旧 `/var/lib/tradingagent/crypto-delayed-paper` 只作只读 archive，不再是 core
+CLI 的合法输出根。
 
 每个 slot 使用固定的 `bar close + 55s` observation cutoff；systemd jitter 或同
 slot 重跑不会改变请求身份。runner 先检查并恢复 pending observation，只有没有
@@ -170,10 +174,10 @@ window`，或两个连续缺失 window；仍有积压时显式 `backlog_pending`
 
 ```bash
 export REAL_TRADING_ENABLED=false
-python3 -m Crypto.delayed_paper_runtime \
+python3 -m Crypto.delayed_paper_epoch_runtime \
+  --epoch-manifest /etc/tradingagent/crypto-delayed-paper.epoch.json \
   --runtime-manifest /etc/tradingagent/crypto-delayed-paper.runtime.json \
-  --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token \
-  --output-root /var/lib/tradingagent/crypto-delayed-paper
+  --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
 ```
 
 仓库只跟踪：
@@ -214,6 +218,69 @@ token leaf 的 OS 级隔离。
 Testnet/Live。历史完整性检查与 Challenger 建议属于离线 worker 验收，不能重新
 进入每 5 分钟核心路径。
 
+## Outage epoch restart 候选
+
+2026-07-29 ECS 停机后，旧 delayed-paper root 的最后 completion 停在
+`2026-07-28T15:55:00Z`。TradingDatas 当前 envelope 的 `data_through` 已晚于
+核心要回补的历史 `as_of`；核心因此拒绝伪造 PIT 并失败关闭。为停止重复无效尝试，
+主集成已只停用 TA Crypto timer，TradingDatas collector 不受影响。本候选不修改
+历史 state，也不把当前数据伪装成历史可用证据。
+
+`delayed_paper_epoch.py` 新增仓外 current-epoch 合同。manifest 固定为
+`/etc/tradingagent/crypto-delayed-paper.epoch.json`，必须精确声明：
+
+- 唯一 `epoch_id` 与本次停机恢复专用的 `epoch_generation=2`；
+- current root
+  `/var/lib/tradingagent/crypto-delayed-paper-epochs/<epoch_id>`；
+- archived root `/var/lib/tradingagent/crypto-delayed-paper` 及
+  `read_only_archive_no_resume`；
+- `capital_baseline_policy_id=crypto-capital-v1`、
+  `aggregate_with_archived_epoch=false`；
+- real/Testnet/Live/model network/自动晋级/自动扩风险全部关闭。
+
+epoch parent 首次 claim 时还会以进程锁原子写入不可变
+`.current_epoch.json`，把 manifest SHA、唯一 generation-2 root 与 10,000
+USDT baseline 绑定。相同 generation 改用另一 root、回退 generation、复播旧
+manifest 或篡改 current anchor 都失败关闭；未来再建 epoch 必须使用新的审核
+合同和候选，不能只改当前 manifest。
+
+新 root 首次使用前写入不可变 `.epoch_identity.json`，其中的 10,000 USDT、
+capital generation 1 和 `local_fixture_opening_baseline_only` 全部派生自
+`capital_policy.py`，不是 manifest 中的第二资本 authority。已有非空 root 没有
+匹配 identity、identity/manifest 冲突、root 复用、symlink/硬链接/权限异常都会
+失败关闭。`delayed_paper_epoch_runtime.py` 只把已验证 current root 交给核心；
+旧 `delayed_paper_runtime.py` 的直接 CLI 与任何未提供 epoch context 的 Python
+调用均失败关闭，不能继续写 archived root 或另一个任意 root。
+核心的历史 PIT、receipt/lineage、费用、精度、资本和幂等门禁保持不变。首轮从
+调用时刻对应的最新已完成 closed-5m window 开始，不查询旧 epoch 缺失窗口。
+
+tracked service 仍只有
+`tradingagent-crypto-delayed-paper.service`，timer 也仍只有原
+`tradingagent-crypto-delayed-paper.timer`。service 改为：
+
+- 只读 old root；
+- 只写 epoch parent；
+- 读取一个 current-epoch manifest；
+- 不接受 `--output-root`，因此 timer 无法同时指向两个 writer/root。
+
+本仓只生成候选，不部署。发布/迁移顺序固定为：
+
+1. 保持 TA Crypto timer disabled，确认旧 root 的 observation/completion、
+   Decision Ledger、capital ledger 与 pending 状态并生成只读封存证据；
+2. 在服务器外部原子安装 current-epoch manifest，并把旧 root 设为发布侧只读
+   archive；创建仅供 `tradingagent` 写入的 epoch parent；
+3. 安装候选 release 和同名 service，先运行一次 one-shot，验证 epoch identity、
+   独立 10,000 USDT baseline、当前 closed-5m completion 和旧 root 字节不变；
+4. 重跑同一 slot 验证幂等，再验证相邻两个自动轮连续写入同一 epoch；只有这些
+   读回通过后才重新 enable 原 timer。
+
+回滚不允许把 timer 指回旧 root。若 one-shot、幂等或相邻轮失败，保持 timer
+disabled，停止新 service，并同时保留旧 archive 与新 epoch root 作只读审计；
+修正 release 后使用同一 manifest、current anchor 与 epoch identity 继续；若必须
+创建后续 epoch，须经独立人工批准并以新的合同候选实现，不能在本合同中直接提高
+generation 或替换 root。任何情况下都不得跨 epoch 合并现金、仓位、订单、权益、
+PnL、收益率或晋级样本。
+
 本批 `fixture_auto_sim.py` 是 `crypto-capital-v1` 本地 fixture opening 闭环的唯一可写入口，但它仍是非权威候选。旧 `workflow.py`、`simulator.py`、`sim_executor.py` 与 `shadow_runner.py` 已变为无条件 fail-closed tombstone，不能通过注入 reader、切换配置或恢复旧 authority 重新启用。`promotion.py` 只保留只读研究 scorecard，永久输出不可自动晋级；shared governance 已把 `crypto-shadow-sim-v1` 降为历史证据并登记 `crypto-capital-v1` 为 `local_fixture_simulated_candidate`，不构成 current/runtime/live authority。
 
 资本链 checksum、进程锁和 package-private writer capability 只防止正常调用误写、协作进程冲突与常见落盘损坏，不是抵御可修改同一 Python 进程、代码或账本文件的恶意主体的安全边界。默认构造的 ledger 只读，writer 仅由 fixture runtime 内部工厂创建；但拥有相同用户文件写权限的恶意或失控进程仍可能改写并重算本地链。未来获得任何生产资本权威前，必须另行验证进程隔离、运行 UID/GID、目录 owner/mode/ACL、只允许单一 writer 以及外部 durable receipt；本地链不得被当作密码学签名或 broker attestation。
@@ -228,6 +295,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_fixture_auto_s
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_five_minute_data.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_runner.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_runtime.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_epoch.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_systemd_candidate.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
@@ -241,6 +309,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - 候选回填的 `observed_at` 是采集时点，不是历史 PIT 或实时可用性证明；
 - 仓库已有 runtime CLI 和默认 disabled 的 tracked service/timer 候选，但没有
   服务器安装态、enabled/active timer 或成功自动轮；文件存在不等于持续运行；
+- outage epoch restart 仍是未部署候选；旧 root 的只读封存、新 manifest、
+  one-shot/幂等/相邻自动轮和 timer 恢复均须由主集成在服务器逐层验证；
 - 离线学习 worker 未纳入本核心候选，核心不会创建 `evolution/` 或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
 - 本批 Champion 只覆盖 deterministic buy/observe paper 样本，尚不是完整买卖 round trip；
