@@ -1,6 +1,28 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-28 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-29 11:09 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-29 11:09 当前运行事实：** 服务器 `current` 已原子切换到
+> `bc8880dfd3c77ee358736d58e0cf9c377de154b3`。Crypto 在独立 generation-2
+> epoch 中完成一次 one-shot、同槽幂等重放和 10:45、10:50 两个相邻自动轮，
+> 随后又在新 release 上自动推进到 11:00；6 个 observation/completion、
+> 12 个模拟 run、29 条资本事件与 12 条决策事件均无重复 ID，`pending=null`。
+> Crypto timer 为 `enabled/active`，旧 epoch 组合 SHA 未变；全部运行仍为
+> `REAL_TRADING_ENABLED=false`、无 broker/Testnet/Live、无模型网络、无自动晋级
+> 或扩风险。
+
+> **A股当前运行事实：** TradingDatas 已部署通用同质快照门禁；正式 18082
+> 的 10:45 `rt_min` 精确查询为 30/30、30 个唯一股票和单一 bar end，历史
+> 10:25 沪深错位 receipt 不再是当前合同 authority。当前上游约 47 秒可用，
+> 因此仍不满足严格 30 秒执行证据；TA 只允许 12 分钟上限的
+> `DELAYED_PAPER` 非生产模拟层使用。10:57 人工事故恢复从 10:45 合格快照建立
+> 当日 bundle，明确 `late_start=true`、跳过 14 个历史槽、
+> `full_session_complete=false/learning_eligible=false`；11:04 和 11:09
+> 两个相邻自动连续轮成功处理 10:50、10:55 快照，每轮均为30/30、30 个特征、
+> 30 个候选、0 数据拒绝。
+> A股 minute timer 为 `enabled/active`，learning timer 未安装；不回填早盘、
+> 不把 delayed 数据升级为低延迟执行证据，也不授予资本、broker 或真实交易
+> authority。
 
 > 2026-07-29 重启恢复说明：服务器续费恢复后发现 Crypto TA token 的
 > `/run` leaf 没有重启重建规则，核心 timer 因 `AssertPathExists` 连续
