@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-29 20:32 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-29 20:45 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 > **2026-07-29 20:32 A股分钟缺口恢复修复：** PR
 > [#76](https://github.com/NicholasHan1226/Tradingagent.cc/pull/76) 已普通合并，
@@ -10,8 +10,14 @@
 > 形成未成交回执，缺口写入状态校验范围，滚动特征重置；恢复后的第一根完整 K 线
 > 只建立新基线，至少再取得一根连续完整 K 线后才允许产生候选。缺口日永久保持
 > `full_session_complete=false/learning_eligible=false`，但后续完整分钟仍可
-> 继续 observation、反事实、盯市和对账积累。此处只证明代码主线，服务器 current
-> 尚未在本条证据中切换，`REAL_TRADING_ENABLED=false`、无 broker/真实交易不变。
+> 继续 observation、反事实、盯市和对账积累。服务器随后从
+> `bc8880dfd3c77ee358736d58e0cf9c377de154b3` 原子切换到不可变 release
+> `946db638c9ac85410fa697f81dd1c6da02723903`；824 个文件的树 SHA256 为
+> `8d038d075db11218aae9ada56b162323c76604f6c9628cfacba497be46da8b16`，
+> 现役解释器模块导入与 systemd unit verify 通过。两个 A股 timer 继续
+> `enabled/active`，下一次分别为 2026-07-30 09:18 与 09:49；没有新建或启用
+> 其它任务。`REAL_TRADING_ENABLED=false`、无 broker/真实交易不变，旧 release
+> 保留为直接回滚。
 
 > **2026-07-29 17:58 次日会话预检：** TradingDatas 已将仅适用于
 > `trade_calendar` 的 registry-declared 下一日窗口普通合入并安全发布为
