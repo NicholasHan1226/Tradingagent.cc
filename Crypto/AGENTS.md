@@ -65,10 +65,16 @@
   `GET /v1/catalog` 与 `POST /v1/query`，无任何 provider/SQLite/fallback。
   相同 5m slot 的
   `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不能随 systemd
-  jitter 或重跑墙上时钟漂移。
-- 运行中断造成 TradingDatas 当前 envelope 无法证明历史 `as_of` 时，不得改写
-  observation state、跳过旧 root 的缺口或降低 PIT/freshness 门禁。恢复只能使用
-  显式 `delayed_paper_epoch.py` 合同：旧
+  jitter 或重跑墙上时钟漂移。current epoch 已有资本且下一历史 exact-as-of
+  明确不可恢复时，只允许 runtime 在 pending 为空、当前 13 根窗口完整且全部
+  receipt/lineage/freshness/quality 门禁通过、资本链守恒后追加 checksum-bound
+  `data_gap`；该事件保存精确跳过范围、拒绝原因、source proof 和首窗
+  observation/counterfactual，但不调用资本 writer、不生成候选/订单/成交。
+  同槽重放必须验证 gap event/index/ledger 与资本锚点且不得重复；下一根连续窗口
+  才恢复原核心。其它错误、证据不完整、pending、gap 或资本篡改一律 fail closed。
+- generation-1 运行中断造成 TradingDatas 当前 envelope 无法证明历史 `as_of` 时，
+  不得改写 observation state、跳过旧 root 的缺口或降低 PIT/freshness 门禁。
+  当时的恢复只使用显式 `delayed_paper_epoch.py` 合同：旧
   `/var/lib/tradingagent/crypto-delayed-paper` 只读封存；仓外 current-epoch
   manifest 绑定唯一 `epoch_id`、本次停机恢复专用 `epoch_generation=2` 和
   `/var/lib/tradingagent/crypto-delayed-paper-epochs/<epoch_id>` 独立 root。

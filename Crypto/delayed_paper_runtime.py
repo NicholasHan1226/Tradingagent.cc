@@ -22,22 +22,33 @@ from typing import Any, Callable, Mapping
 import urllib.parse
 
 from Crypto.delayed_paper_ledger import (
+    DECISION_LEDGER_CONTRACT,
     CryptoDelayedPaperLedgerError,
     CryptoDelayedPaperObservationStore,
+    _non_authority_fields,
 )
-from Crypto.delayed_paper_runner import run_crypto_delayed_paper_once
+from Crypto.delayed_paper_runner import (
+    FROZEN_SYMBOLS,
+    _data_reject,
+    _prepare_observation,
+    _snapshot_to_observation,
+    run_crypto_delayed_paper_once,
+)
 from Crypto.fixture_sim.contracts import (
     CryptoEvidenceError,
     CryptoFixtureAutoSimError,
+    CryptoLedgerError,
     CryptoSafetyError,
     _assert_simulation_only,
     _validate_json_tree,
 )
+from Crypto.fixture_sim.ledger import CryptoCapitalLedger
 from Crypto.five_minute_data import (
     CryptoBarFieldMap,
     CryptoDatasetQueryProfile,
     CryptoFiveMinuteDataError,
     CryptoFiveMinuteDataProfile,
+    CryptoFiveMinuteSnapshot,
     CryptoFiveMinuteWindowRequest,
     CryptoInstrumentRuleFieldMap,
     CryptoQueryFilterBinding,
@@ -68,6 +79,10 @@ RUNTIME_ACCESS_POLICY_MAX_CHARS = 128
 RUNTIME_TIMEOUT_SECONDS = 2.0
 MAX_CYCLES_PER_INVOCATION = 2
 MAX_PROFILE_PAGE_BUDGET = 10
+OUTAGE_GAP_CONTRACT = "tradingagent.crypto.delayed_paper_data_gap.v1"
+HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON = (
+    "metadata.data_through must not be after the requested as_of"
+)
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXPECTED_SAFETY = {
     "real_trading_enabled": False,
@@ -709,6 +724,8 @@ def _require_exact_service_paths(
 class _RuntimeObservationState:
     pending: Mapping[str, Any] | None
     latest_market_slot: datetime | None
+    latest_observation_slot: datetime | None
+    latest_data_gap: Mapping[str, Any] | None
     had_prior_evidence: bool
 
 
@@ -733,17 +750,197 @@ def _observation_slot(value: Any) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _verified_capital_head(root: Path) -> tuple[int, str]:
+    capital_root = root / "capital"
+    if not capital_root.is_dir():
+        raise CryptoDelayedPaperRuntimeError("runtime_gap_capital_missing")
+    try:
+        ledger = CryptoCapitalLedger(capital_root)
+        sequence, checksum = ledger.head()
+        if sequence <= 0 or len(checksum) != 64:
+            raise CryptoLedgerError("capital_gap_anchor_invalid")
+        for symbol in FROZEN_SYMBOLS:
+            incomplete, _, _ = ledger.account_cycle_guard(symbol=symbol)
+            if incomplete:
+                raise CryptoLedgerError("capital_prior_cycle_incomplete")
+    except (CryptoLedgerError, OSError, TypeError, ValueError) as exc:
+        raise CryptoDelayedPaperRuntimeError("runtime_gap_capital_invalid") from exc
+    return sequence, checksum
+
+
+def _validate_gap_capital_anchor(
+    root: Path,
+    gap: Mapping[str, Any],
+    *,
+    require_current: bool,
+) -> None:
+    sequence, checksum = _verified_capital_head(root)
+    gap_sequence = gap.get("capital_head_sequence")
+    gap_checksum = gap.get("capital_head_checksum")
+    if (
+        isinstance(gap_sequence, bool)
+        or not isinstance(gap_sequence, int)
+        or gap_sequence <= 0
+        or gap_sequence > sequence
+        or not isinstance(gap_checksum, str)
+        or len(gap_checksum) != 64
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+    try:
+        ledger = CryptoCapitalLedger(root / "capital")
+        anchor = ledger.event_by_checksum(gap_checksum)
+    except (CryptoLedgerError, OSError, TypeError, ValueError) as exc:
+        raise CryptoDelayedPaperRuntimeError("runtime_gap_capital_invalid") from exc
+    if (
+        not isinstance(anchor, Mapping)
+        or anchor.get("sequence") != gap_sequence
+        or (require_current and (gap_sequence != sequence or gap_checksum != checksum))
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_gap_capital_invalid")
+
+
+def _data_gap_id_material(
+    *,
+    prior_market_slot: str,
+    skipped_from: str,
+    skipped_to: str,
+    recovery_market_slot: str,
+    reason_code: str,
+    recovery_observation_content_sha256: str,
+) -> dict[str, Any]:
+    return {
+        "gap_contract": OUTAGE_GAP_CONTRACT,
+        "prior_market_slot": prior_market_slot,
+        "skipped_from": skipped_from,
+        "skipped_to": skipped_to,
+        "recovery_market_slot": recovery_market_slot,
+        "reason_code": reason_code,
+        "recovery_observation_content_sha256": (recovery_observation_content_sha256),
+    }
+
+
+def _validate_data_gap_event(
+    gap: Mapping[str, Any],
+) -> tuple[datetime, datetime]:
+    if (
+        gap.get("contract") != DECISION_LEDGER_CONTRACT
+        or gap.get("gap_contract") != OUTAGE_GAP_CONTRACT
+        or gap.get("event_type") != "data_gap"
+        or gap.get("market") != "crypto"
+        or gap.get("market_session") != "24x7"
+        or gap.get("reason_code") != HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+        or gap.get("candidate_generated") is not False
+        or gap.get("order_generated") is not False
+        or gap.get("fill_generated") is not False
+        or gap.get("capital_effect") != "none_preserved_outage_recovery"
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+    for key, expected in _non_authority_fields().items():
+        if gap.get(key) != expected:
+            raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+
+    prior = _observation_slot(gap.get("prior_market_slot"))
+    skipped_from = _observation_slot(gap.get("skipped_from"))
+    skipped_to = _observation_slot(gap.get("skipped_to"))
+    recovery = _observation_slot(gap.get("recovery_market_slot"))
+    rejected_window_end = _observation_slot(gap.get("rejected_target_window_end"))
+    rejected_cutoff = gap.get("rejected_target_observation_cutoff")
+    if (
+        skipped_from != prior + timedelta(minutes=5)
+        or skipped_to != recovery - timedelta(minutes=5)
+        or skipped_from > skipped_to
+        or rejected_window_end != skipped_from + timedelta(minutes=5)
+        or rejected_cutoff
+        != _iso_utc(rejected_window_end + timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS))
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+
+    observation = gap.get("recovery_observation")
+    source_proof = gap.get("source_proof")
+    counterfactuals = gap.get("recovery_counterfactuals")
+    if (
+        not isinstance(observation, Mapping)
+        or observation.get("market_slot") != _iso_utc(recovery)
+        or not isinstance(source_proof, Mapping)
+        or source_proof.get("same_observation") is not True
+        or source_proof.get("evidence_gate")
+        != {
+            "state": "ready",
+            "freshness": "fresh",
+            "quality_valid": True,
+            "degraded": False,
+            "receipt_lineage_complete": True,
+            "same_observation": True,
+        }
+        or source_proof.get("profile_sha256") != observation.get("profile_sha256")
+        or source_proof.get("market_content_sha256")
+        != observation.get("market_content_sha256")
+        or source_proof.get("source_observation_sha256")
+        != observation.get("source_observation_sha256")
+        or source_proof.get("recovery_observation_content_sha256")
+        != observation.get("observation_content_sha256")
+        or not isinstance(source_proof.get("source_bindings"), Mapping)
+        or source_proof.get("source_bindings") != observation.get("source_bindings")
+        or not isinstance(source_proof.get("catalog_version"), str)
+        or not source_proof.get("catalog_version")
+        or not isinstance(counterfactuals, Mapping)
+        or set(counterfactuals) != set(FROZEN_SYMBOLS)
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+    if any(
+        not isinstance(proof, Mapping)
+        or proof.get("catalog_version") != source_proof.get("catalog_version")
+        for proof in source_proof["source_bindings"].values()
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+    observation_material = dict(observation)
+    claimed_observation_sha = observation_material.pop(
+        "observation_content_sha256",
+        None,
+    )
+    if claimed_observation_sha != _sha256(observation_material):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+    for symbol, item in counterfactuals.items():
+        if (
+            not isinstance(item, Mapping)
+            or item.get("symbol") != symbol
+            or item.get("authority") != "none"
+            or item.get("candidate_generated") is not False
+            or item.get("order_generated") is not False
+            or item.get("fill_generated") is not False
+            or not isinstance(item.get("counterfactual"), Mapping)
+            or not isinstance(item.get("counterfactual_decision"), Mapping)
+        ):
+            raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+
+    id_material = _data_gap_id_material(
+        prior_market_slot=_iso_utc(prior),
+        skipped_from=_iso_utc(skipped_from),
+        skipped_to=_iso_utc(skipped_to),
+        recovery_market_slot=_iso_utc(recovery),
+        reason_code=HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        recovery_observation_content_sha256=str(claimed_observation_sha),
+    )
+    expected_event_id = f"crypto-delayed-data-gap-{_sha256(id_material)[:24]}"
+    if gap.get("event_id") != expected_event_id:
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+    return prior, recovery
+
+
 def _runtime_observation_state(root: Path) -> _RuntimeObservationState:
     delayed_root = root / "delayed_paper"
     if not delayed_root.exists():
         return _RuntimeObservationState(
             pending=None,
             latest_market_slot=None,
+            latest_observation_slot=None,
+            latest_data_gap=None,
             had_prior_evidence=(root / "capital").exists(),
         )
     try:
         store = CryptoDelayedPaperObservationStore(root)
         checkpoint = store.runtime_checkpoint()
+        gap_events = store.data_gap_events()
     except (
         CryptoDelayedPaperLedgerError,
         OSError,
@@ -754,10 +951,45 @@ def _runtime_observation_state(root: Path) -> _RuntimeObservationState:
             "runtime_observation_state_invalid"
         ) from exc
     latest_raw = checkpoint.get("latest_market_slot")
-    latest = _observation_slot(latest_raw) if latest_raw is not None else None
+    latest_observation = (
+        _observation_slot(latest_raw) if latest_raw is not None else None
+    )
+    latest_gap: Mapping[str, Any] | None = None
+    latest_gap_slot: datetime | None = None
+    previous_gap_slot: datetime | None = None
+    for gap in gap_events:
+        _, recovery_slot = _validate_data_gap_event(gap)
+        if previous_gap_slot is not None and recovery_slot <= previous_gap_slot:
+            raise CryptoDelayedPaperRuntimeError("runtime_data_gap_invalid")
+        previous_gap_slot = recovery_slot
+        latest_gap = gap
+        latest_gap_slot = recovery_slot
+    if latest_gap is not None:
+        _validate_gap_capital_anchor(
+            root,
+            latest_gap,
+            require_current=(
+                latest_observation is None
+                or (
+                    latest_gap_slot is not None and latest_gap_slot > latest_observation
+                )
+            ),
+        )
+    latest = latest_observation
+    if latest_gap_slot is not None and (latest is None or latest_gap_slot > latest):
+        latest = latest_gap_slot
+    pending = checkpoint.get("pending")
+    if (
+        pending is not None
+        and latest_gap_slot is not None
+        and (latest_observation is None or latest_gap_slot > latest_observation)
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_data_gap_pending_conflict")
     return _RuntimeObservationState(
-        pending=checkpoint.get("pending"),
+        pending=pending,
         latest_market_slot=latest,
+        latest_observation_slot=latest_observation,
+        latest_data_gap=latest_gap,
         had_prior_evidence=bool(
             int(checkpoint.get("observation_count") or 0) > 0
             or store.ledger_path.exists()
@@ -808,6 +1040,185 @@ def _run_core_safely(
         ValueError,
     ) as exc:
         raise CryptoDelayedPaperRuntimeError("runtime_core_cycle_failed") from exc
+
+
+def _build_outage_gap_event(
+    *,
+    prior_market_slot: datetime,
+    historical_request: CryptoFiveMinuteWindowRequest,
+    current_request: CryptoFiveMinuteWindowRequest,
+    catalog_version: str,
+    observation: Mapping[str, Any],
+    prepared: Mapping[
+        str,
+        tuple[dict[str, Any], dict[str, Any], dict[str, Any]],
+    ],
+    capital_head_sequence: int,
+    capital_head_checksum: str,
+) -> dict[str, Any]:
+    recovery_market_slot = _observation_slot(observation.get("market_slot"))
+    skipped_from = prior_market_slot + timedelta(minutes=5)
+    skipped_to = recovery_market_slot - timedelta(minutes=5)
+    if (
+        historical_request.window_end != skipped_from + timedelta(minutes=5)
+        or current_request.window_end != recovery_market_slot + timedelta(minutes=5)
+        or skipped_from > skipped_to
+    ):
+        raise CryptoDelayedPaperRuntimeError("runtime_outage_gap_not_recoverable")
+    observation_sha = observation.get("observation_content_sha256")
+    if not isinstance(observation_sha, str) or len(observation_sha) != 64:
+        raise CryptoDelayedPaperRuntimeError("runtime_outage_gap_observation_invalid")
+    id_material = _data_gap_id_material(
+        prior_market_slot=_iso_utc(prior_market_slot),
+        skipped_from=_iso_utc(skipped_from),
+        skipped_to=_iso_utc(skipped_to),
+        recovery_market_slot=_iso_utc(recovery_market_slot),
+        reason_code=HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        recovery_observation_content_sha256=observation_sha,
+    )
+    counterfactuals: dict[str, Any] = {}
+    for symbol in FROZEN_SYMBOLS:
+        _, counterfactual, decision = prepared[symbol]
+        counterfactuals[symbol] = {
+            "symbol": symbol,
+            "disposition": "outage_recovery_counterfactual_only",
+            "counterfactual": counterfactual,
+            "counterfactual_decision": decision,
+            "candidate_generated": False,
+            "order_generated": False,
+            "fill_generated": False,
+            "authority": "none",
+            **_non_authority_fields(),
+        }
+    event = {
+        "contract": DECISION_LEDGER_CONTRACT,
+        "gap_contract": OUTAGE_GAP_CONTRACT,
+        "event_id": f"crypto-delayed-data-gap-{_sha256(id_material)[:24]}",
+        "event_type": "data_gap",
+        "market": "crypto",
+        "market_session": "24x7",
+        "prior_market_slot": _iso_utc(prior_market_slot),
+        "skipped_from": _iso_utc(skipped_from),
+        "skipped_to": _iso_utc(skipped_to),
+        "recovery_market_slot": _iso_utc(recovery_market_slot),
+        "reason_code": HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        "rejected_target_window_end": _iso_utc(historical_request.window_end),
+        "rejected_target_observation_cutoff": _iso_utc(
+            historical_request.observation_cutoff
+        ),
+        "source_proof": {
+            "catalog_version": catalog_version,
+            "profile_sha256": observation.get("profile_sha256"),
+            "market_content_sha256": observation.get("market_content_sha256"),
+            "source_observation_sha256": observation.get("source_observation_sha256"),
+            "recovery_observation_content_sha256": observation_sha,
+            "same_observation": observation.get("same_observation"),
+            "evidence_gate": {
+                "state": "ready",
+                "freshness": "fresh",
+                "quality_valid": True,
+                "degraded": False,
+                "receipt_lineage_complete": True,
+                "same_observation": True,
+            },
+            "source_bindings": observation.get("source_bindings"),
+            "current_window_end": _iso_utc(current_request.window_end),
+            "current_observation_cutoff": _iso_utc(current_request.observation_cutoff),
+        },
+        "recovery_observation": observation,
+        "recovery_counterfactuals": counterfactuals,
+        "capital_head_sequence": capital_head_sequence,
+        "capital_head_checksum": capital_head_checksum,
+        "capital_effect": "none_preserved_outage_recovery",
+        "candidate_generated": False,
+        "order_generated": False,
+        "fill_generated": False,
+        **_non_authority_fields(),
+    }
+    _validate_data_gap_event(event)
+    return event
+
+
+def _attempt_outage_gap_recovery(
+    *,
+    port: _LazyCryptoFiveMinutePort,
+    profile: CryptoFiveMinuteDataProfile,
+    historical_request: CryptoFiveMinuteWindowRequest,
+    current_request: CryptoFiveMinuteWindowRequest,
+    catalog_version: str,
+    root: Path,
+    expected_latest_observation_slot: datetime,
+) -> dict[str, Any]:
+    store = CryptoDelayedPaperObservationStore(root)
+    with store.cycle():
+        checkpoint = store.runtime_checkpoint()
+        if checkpoint.get("pending") is not None:
+            raise CryptoDelayedPaperRuntimeError("runtime_outage_gap_pending_forbidden")
+        checkpoint_slot = checkpoint.get("latest_market_slot")
+        if (
+            checkpoint_slot is None
+            or _observation_slot(checkpoint_slot) != expected_latest_observation_slot
+        ):
+            raise CryptoDelayedPaperRuntimeError("runtime_outage_gap_state_changed")
+        existing_gaps = store.data_gap_events()
+        if existing_gaps:
+            _, latest_gap_slot = _validate_data_gap_event(existing_gaps[-1])
+            if latest_gap_slot >= expected_latest_observation_slot:
+                raise CryptoDelayedPaperRuntimeError("runtime_outage_gap_state_changed")
+        try:
+            snapshot = port.load_snapshot(
+                profile=profile,
+                request=current_request,
+            )
+            if not isinstance(snapshot, CryptoFiveMinuteSnapshot):
+                raise CryptoFiveMinuteDataError("crypto_5m_snapshot_type_invalid")
+            snapshot.verify_against(
+                profile=profile,
+                request=current_request,
+            )
+            observation = _snapshot_to_observation(snapshot)
+            prepared = _prepare_observation(
+                observation,
+                llm_evidence=None,
+            )
+        except CryptoFiveMinuteDataError as exc:
+            return _data_reject(
+                store=store,
+                profile=profile,
+                request=current_request,
+                reason_code=(getattr(exc, "reason_code", None) or str(exc)),
+            )
+        capital_head_sequence, capital_head_checksum = _verified_capital_head(root)
+        event = _build_outage_gap_event(
+            prior_market_slot=expected_latest_observation_slot,
+            historical_request=historical_request,
+            current_request=current_request,
+            catalog_version=catalog_version,
+            observation=observation,
+            prepared=prepared,
+            capital_head_sequence=capital_head_sequence,
+            capital_head_checksum=capital_head_checksum,
+        )
+        stored = store.append_event(event)
+        _, recovery_slot = _validate_data_gap_event(stored)
+        _validate_gap_capital_anchor(root, stored, require_current=True)
+        return {
+            "contract": OUTAGE_GAP_CONTRACT,
+            "status": "completed",
+            "reason_code": "crypto_outage_gap_recovered",
+            "event_id": stored["event_id"],
+            "event_checksum": stored["checksum"],
+            "skipped_from": stored["skipped_from"],
+            "skipped_to": stored["skipped_to"],
+            "recovery_market_slot": _iso_utc(recovery_slot),
+            "capital_head_sequence": capital_head_sequence,
+            "capital_head_checksum": capital_head_checksum,
+            "capital_effect": "none_preserved_outage_recovery",
+            "candidate_generated": False,
+            "order_generated": False,
+            "fill_generated": False,
+            **_non_authority_fields(),
+        }
 
 
 def run_crypto_delayed_paper_server_once(
@@ -908,14 +1319,48 @@ def run_crypto_delayed_paper_server_once(
                 "result": result,
             }
         )
+        if (
+            result.get("status") == "data_reject"
+            and result.get("reason_code") == HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+            and pending is None
+            and state_before.latest_observation_slot is not None
+            and state_before.latest_observation_slot == state_before.latest_market_slot
+            and target_window_end < current_request.window_end
+            and len(cycle_results) < MAX_CYCLES_PER_INVOCATION
+        ):
+            gap_result = _attempt_outage_gap_recovery(
+                port=lazy_port,
+                profile=manifest.profile,
+                historical_request=request,
+                current_request=current_request,
+                catalog_version=manifest.catalog_version,
+                root=root,
+                expected_latest_observation_slot=(state_before.latest_observation_slot),
+            )
+            cycle_results.append(
+                {
+                    "cycle_kind": "outage_gap_recovery",
+                    "target_window_end": _iso_utc(current_request.window_end),
+                    "result": gap_result,
+                }
+            )
+            if gap_result.get("status") == "completed":
+                latest_completed_window_end = current_request.window_end
+            break
         if result.get("status") != "completed":
             break
         latest_completed_window_end = target_window_end
 
+    outage_gap_attempt_failed = bool(
+        cycle_results
+        and cycle_results[-1]["cycle_kind"] == "outage_gap_recovery"
+        and cycle_results[-1]["result"].get("status") != "completed"
+    )
     backlog_remaining = bool(
         latest_completed_window_end is not None
         and latest_completed_window_end < current_request.window_end
         and len(cycle_results) >= MAX_CYCLES_PER_INVOCATION
+        and not outage_gap_attempt_failed
     )
     if not cycle_results:
         core_result: Mapping[str, Any] = {
@@ -957,6 +1402,11 @@ def run_crypto_delayed_paper_server_once(
         ),
         "fresh_cycle_count": sum(
             item["cycle_kind"] == "fresh_query" for item in cycle_results
+        ),
+        "outage_gap_recovered": any(
+            item["cycle_kind"] == "outage_gap_recovery"
+            and item["result"].get("status") == "completed"
+            for item in cycle_results
         ),
         "backlog_remaining": backlog_remaining,
         "warmup_eligible": warmup_eligible,

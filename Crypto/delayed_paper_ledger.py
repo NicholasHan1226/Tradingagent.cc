@@ -1100,6 +1100,14 @@ class CryptoDelayedPaperObservationStore:
             rows.append(row)
         return rows
 
+    def data_gap_events(self) -> list[dict[str, Any]]:
+        """Return checksum/index/ledger-bound outage gap receipts in sequence."""
+
+        rows = [
+            row for row in self._read_ledger() if row.get("event_type") == "data_gap"
+        ]
+        return [self._verify_indexed_event(row) for row in rows]
+
     @staticmethod
     def _ledger_state_payload(
         *,
