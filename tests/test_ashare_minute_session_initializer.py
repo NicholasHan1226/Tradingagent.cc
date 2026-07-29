@@ -160,6 +160,12 @@ class FixtureTransport:
                     },
                 ]
             )
+            requested_symbols = set(
+                json_body["filters"]["ts_code"]["in"]
+            )
+            rows = [
+                row for row in rows if row["ts_code"] in requested_symbols
+            ]
             if self.omit_symbol is not None:
                 rows = [row for row in rows if row["ts_code"] != self.omit_symbol]
             degraded = self.daily_degraded
@@ -370,6 +376,37 @@ def test_initializer_promotes_explicit_reviewed_universe_to_500(
     assert manifest["profile"]["page_limit"] == 500
     assert manifest["universe_sha256"] == result["universe_sha256"]
     assert published_universe == universe
+
+
+def test_initializer_batches_daily_queries_to_ten_symbols(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(30)
+    source = tmp_path / "reviewed-universe-30.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+    transport = FixtureTransport(daily_rows=daily)
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        transport_factory=_factory(transport),
+    )
+
+    daily_requests = [
+        call["json_body"]
+        for call in transport.calls
+        if isinstance(call["json_body"], dict)
+        and call["json_body"].get("dataset_id") == "cn.equity.daily"
+    ]
+    assert result["symbol_count"] == 30
+    assert len(daily_requests) == 6
+    assert all(
+        len(request["filters"]["ts_code"]["in"]) <= 10
+        for request in daily_requests
+    )
 
 
 def test_scaled_profile_uses_catalog_page_budget() -> None:

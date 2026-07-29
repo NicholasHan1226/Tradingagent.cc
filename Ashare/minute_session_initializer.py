@@ -52,6 +52,7 @@ from shared.data.tradingdatas_transport import (
 CALENDAR_DATASET_ID = "cn.market.trade_calendar"
 DAILY_DATASET_ID = "cn.equity.daily"
 MINUTE_DATASET_ID = "cn.dataset.rt_min"
+DAILY_SYMBOL_BATCH_SIZE = 10
 TransportFactory = Callable[..., HTTPTransport]
 
 
@@ -545,37 +546,41 @@ def initialize_minute_session(
     if previous_session >= target:
         raise MinuteSessionInitializerError("minute_session_pretrade_invalid")
 
-    daily = _query_twice(
-        client=client,
-        request=QueryRequest(
-            dataset_id=DAILY_DATASET_ID,
-            schema_major=daily_contract[0],
-            fields=daily_contract[1],
-            filters={
-                "trade_date": {"eq": compact_pretrade},
-                "ts_code": {"in": list(symbols)},
-            },
-            limit=daily_contract[2],
-        ),
-        identity_fields=("ts_code", "trade_date"),
-        max_pages=20,
-        max_rows=10_000,
-    )
     by_symbol: dict[str, Mapping[str, Any]] = {}
-    for row in daily.data:
-        symbol = row.get("ts_code")
-        if isinstance(symbol, str) and symbol in symbols:
-            if symbol in by_symbol:
-                raise MinuteSessionInitializerError(
-                    "minute_session_daily_duplicate"
-                )
-            by_symbol[symbol] = row
+    metadata_by_symbol: dict[str, dict[str, object]] = {}
+    for offset in range(0, len(symbols), DAILY_SYMBOL_BATCH_SIZE):
+        symbol_batch = symbols[offset : offset + DAILY_SYMBOL_BATCH_SIZE]
+        daily = _query_twice(
+            client=client,
+            request=QueryRequest(
+                dataset_id=DAILY_DATASET_ID,
+                schema_major=daily_contract[0],
+                fields=daily_contract[1],
+                filters={
+                    "trade_date": {"eq": compact_pretrade},
+                    "ts_code": {"in": list(symbol_batch)},
+                },
+                limit=daily_contract[2],
+            ),
+            identity_fields=("ts_code", "trade_date"),
+            max_pages=2,
+            max_rows=DAILY_SYMBOL_BATCH_SIZE,
+        )
+        batch_metadata = _metadata_payload(daily)
+        for row in daily.data:
+            symbol = row.get("ts_code")
+            if isinstance(symbol, str) and symbol in symbol_batch:
+                if symbol in by_symbol:
+                    raise MinuteSessionInitializerError(
+                        "minute_session_daily_duplicate"
+                    )
+                by_symbol[symbol] = row
+                metadata_by_symbol[symbol] = batch_metadata
     if set(by_symbol) != set(symbols):
         raise MinuteSessionInitializerError(
             "minute_session_daily_universe_incomplete"
         )
 
-    metadata = _metadata_payload(daily)
     references: list[dict[str, Any]] = []
     for symbol in symbols:
         row = by_symbol[symbol]
@@ -590,7 +595,7 @@ def initialize_minute_session(
             "target_trading_date": target.isoformat(),
             "previous_session": previous_session.isoformat(),
             "daily_row": dict(row),
-            "daily_envelope_metadata": metadata,
+            "daily_envelope_metadata": metadata_by_symbol[symbol],
             "suspension_semantics": (
                 "provisional_false_rechecked_by_completed_positive_volume_minute_bar"
             ),
