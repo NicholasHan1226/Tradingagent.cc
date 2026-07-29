@@ -1,6 +1,24 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-29 17:00 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-29 17:58 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-29 17:58 次日会话预检：** TradingDatas 已将仅适用于
+> `trade_calendar` 的 registry-declared 下一日窗口普通合入并安全发布为
+> `64695852ff5be23b3cf8a8d1d03a13f7274e4586`，回滚 release
+> `5ac3925c3931a81132ea02abb16f9745033fb6dc` 保留。17:50 通用采集后，
+> 正式 18082 以 TA UID987 查询 `SSE/20260730` 得到唯一行
+> `is_open=1,pretrade_date=20260729`，envelope 为
+> `ready/success/fresh/valid/non-degraded`，receipt 与 lineage 完整。
+> 17:55 盘后日线刷新完成后，当前审核 30 股的 `20260729 daily.close`
+> 三批 10 只均取得 30/30。
+>
+> TA 随后在隔离 evidence root 对 2026-07-30 初始化双跑：首次
+> `reused=false`，第二次 `reused=true`；两次均为 30 只、Universe SHA256
+> `0e26f54fc2ab391f0187a5787f9955b90e8a2ff21969957565749b733e035203`。
+> 隔离目录仅含 `minute-manifest.json`、`reference-facts.json`、
+> `universe.json` 三项 0600 输入；无 state bundle、资本、订单、成交或账本。
+> 正式 `/var/lib/tradingagent/ashare-minute-paper/20260730` 仍不存在，下一门禁
+> 是 2026-07-30 09:18 正式 timer 独立初始化及随后完整分钟闭环。
 
 > **2026-07-29 17:00 盘后增量：** TradingDatas 的 16:30 通用盘后轮已
 > `success/exit0`。正式 18082 以 TA UID987 读取

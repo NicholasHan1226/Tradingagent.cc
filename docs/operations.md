@@ -714,8 +714,10 @@ deploy/systemd/tradingagent-ashare-minute-session.timer
 初始化器对相同输入精确幂等；目标目录已存在但字节不同、已有
 `state-bundle.json`、日线降级、目录漂移或股票缺失时退出2。只有初始化器当日
 PASS，分钟累计timer才会在09:35形成可推进的新会话；否则缺目录安全no-op或失败关闭。
-二者均不授予真实交易权限。当前下一交易日日历尚未由正式catalog/query返回，真实
-09:20初始化仍待TradingDatas补齐日历及盘后daily证据。
+二者均不授予真实交易权限。2026-07-29 盘后，正式catalog/query已提供
+`20260730 is_open=1/pretrade_date=20260729`及审核30股上一交易日日线，隔离
+initializer首次发布与精确幂等复用均通过；正式会话仍须由次日09:18 timer独立
+初始化，不能用隔离证据代替生产运行结果。
 
 盘后日线的 `observation_session=T` 只是 current observation。在预测前冻结且独立验证的交易日历没有给出下一 session 之前，daily-only planner 必须写 `paper_trade_session=null` 并固定 `action=abstain/status=completed_with_blocks`。每个 symbol 至少需要 21 个 forward-collected session 才能覆盖 20 日 momentum/volatility 的最小数学窗口；但缺交易日连续性和公司行动/复权 authority 时，即使计数达到 21 也仍是 blocked。当前 membership ledger 不注册任何 label horizon；缺 calendar/minute/market-truth/adjustment authority 不得生成或回填标签。缺分钟/L1 evidence 时不生成 capital/reservation/order/fill/outbox/reconcile/SampleJournal 副作用。
 
