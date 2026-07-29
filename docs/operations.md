@@ -8,6 +8,13 @@
 - 该系统仅供 Nicholas 个人内部使用。前端/API默认只绑定`127.0.0.1`；`tradingagent.cc`远程入口必须先通过Cloudflare Access或等价单用户认证，禁止匿名公网访问和API直出。DNS、Tunnel/Pages与Access policy分别验收。
 - TradingAgent 只消费显式配置的 TradingDatas `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 TradingDatas 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
 - HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
+- Crypto 的 runtime token 位于 tmpfs，重启后只允许使用
+  `Crypto/systemd/tradingagent-crypto-read-token.tmpfiles.conf` 从发布侧既有
+  root-owned canonical source 做 scoped copy。不得打印或读取 token，不得
+  复用 A股 token，也不得无参执行全局 `systemd-tmpfiles`。恢复后必须读回
+  parent 无 symlink、leaf 为 `tradingagent:tradingagent 0600` regular
+  single-link file，并完成 authenticated catalog 与相邻两个 5 分钟核心轮次；
+  任一失败保持 sim-only fail closed。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
 - 当前唯一订单决策模型是冻结的 rank-score Champion。机会雷达/append-only Ledger、多期限forecast和三风格router已是仓库合同层的shadow能力，只能产生反事实研究artifact，不能影响候选、rank、仓位、风险或订单。默认关闭的DeepSeek HTTPS transport也只是非生产仓库合同；2026-07-18仅有一次隔离真实请求到达provider后被本地evidence schema拒绝，accepted evidence、稳定认证和生产激活仍未验证。live paper scheduler仍是计划项。
 - 模拟日即使阻断新增风险，也必须尽量继续减仓/退出、对账、账本、学习到期检查和报告，并以 `completed_with_blocks` 明示结束；不得伪装成功，也不得切回旧链。

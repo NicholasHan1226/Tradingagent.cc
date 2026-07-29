@@ -7,6 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SYSTEMD_ROOT = ROOT / "Crypto" / "systemd"
 SERVICE = SYSTEMD_ROOT / "tradingagent-crypto-delayed-paper.service"
 TIMER = SYSTEMD_ROOT / "tradingagent-crypto-delayed-paper.timer"
+TOKEN_TMPFILES = (
+    SYSTEMD_ROOT / "tradingagent-crypto-read-token.tmpfiles.conf"
+)
 
 
 def test_crypto_runtime_service_is_loopback_only_and_simulation_only() -> None:
@@ -89,3 +92,15 @@ def test_crypto_runtime_timer_is_installable_but_not_enabled_by_repo() -> None:
     assert "systemctl start" not in text
     assert "OnBootSec=" not in text
     assert "OnUnitActiveSec=" not in text
+
+
+def test_crypto_runtime_token_is_recreated_from_canonical_source() -> None:
+    text = TOKEN_TMPFILES.read_text(encoding="utf-8")
+
+    assert (
+        "C /run/secrets/tradingagent/tradingdatas-crypto-read.token "
+        "0600 tradingagent tradingagent - "
+        "/etc/tradingagent/tradingdatas-crypto-read.token"
+    ) in text
+    assert "token=" not in text.lower()
+    assert "bearer" not in text.lower()

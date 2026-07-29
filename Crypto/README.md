@@ -180,6 +180,17 @@ python3 -m Crypto.delayed_paper_runtime \
 
 - `Crypto/systemd/tradingagent-crypto-delayed-paper.service`
 - `Crypto/systemd/tradingagent-crypto-delayed-paper.timer`
+- `Crypto/systemd/tradingagent-crypto-read-token.tmpfiles.conf`
+
+服务器重启后，Crypto TA read token 必须由上述 tmpfiles 规则从发布侧已经原子
+安装的 root-owned canonical source
+`/etc/tradingagent/tradingdatas-crypto-read.token` 重建到
+`/run/secrets/tradingagent/tradingdatas-crypto-read.token`。规则只复制既有
+publisher-provisioned credential，不生成、注册、读取或输出 token；source
+缺失、owner/mode 不合格或 runtime leaf 不是
+`tradingagent:tradingagent 0600` regular single-link file 时，核心 service
+继续 fail closed。发布侧只能对该精确 tmpfiles 文件执行 scoped create，禁止
+无参运行全局 `systemd-tmpfiles`。
 
 timer 为 24×7、每 5 分钟边界后 55–58 秒触发的候选，`Persistent=false`，包含
 `[Install]`/`WantedBy=timers.target`，供发布侧在完整门禁通过后显式
