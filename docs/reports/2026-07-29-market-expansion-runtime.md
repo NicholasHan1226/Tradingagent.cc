@@ -103,6 +103,20 @@ session initializer 和第一根完整 K 线重新开始。
 该证据不是生产切换。下一门禁是交易时段内两个相邻 bar end 均取得
 `500/500`，并验证单轮耗时、receipt 聚合和失败降级；此前继续使用 30 股生产链。
 
+## 17:00 盘后增量
+
+- 16:30 TradingDatas 通用盘后轮 `success/exit0`。
+- 正式 18082 的 `cn.equity.daily(20260729)` 已由 TA UID987 读回为
+  `ready/success/fresh/valid/non-degraded`，receipt 与 lineage 完整。
+- 当前审核 30 股通过 3 个每批 10 只的有界查询取得 30/30，跨批 30 个唯一
+  `ts_code`，双跑一致。
+- `cn.market.trade_calendar(exchange=SSE,cal_date=20260730)` 仍返回 0 行。
+  现役合同不允许覆盖未来日期，因此没有用 direct shell、手工 SQLite、专用 route
+  或第二 service 绕过。TradingDatas 正在独立评审由 registry 明确声明
+  `known_future_horizon_days=1` 的通用修正。
+- TA 的隔离明日会话预检仍失败关闭；正式 `20260730` 状态目录不存在，未产生
+  state bundle、资本、订单或成交。
+
 ## 下一停止线
 
 1. TradingDatas 修复并正式证明 query `as_of` 与 envelope receipt/lineage/
