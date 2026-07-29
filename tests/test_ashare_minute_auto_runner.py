@@ -49,11 +49,12 @@ def test_session_has_48_bars_and_excludes_lunch() -> None:
     ("now", "expected"),
     (
         ("2026-07-28T09:39:59", None),
-        ("2026-07-28T09:40:40", "09:35"),
-        ("2026-07-28T11:40:40", "11:30"),
-        ("2026-07-28T13:05:40", "11:30"),
-        ("2026-07-28T13:10:40", "13:05"),
-        ("2026-07-28T15:05:40", "15:00"),
+        ("2026-07-28T09:44:59", None),
+        ("2026-07-28T09:45:40", "09:35"),
+        ("2026-07-28T11:45:40", "11:30"),
+        ("2026-07-28T13:10:40", "11:30"),
+        ("2026-07-28T13:15:40", "13:05"),
+        ("2026-07-28T15:10:40", "15:00"),
     ),
 )
 def test_expected_available_bar_respects_provider_lag_and_sessions(
@@ -69,7 +70,7 @@ def test_missing_session_directory_is_safe_noop(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T09:40:40"),
+        now=_at("2026-07-28T09:45:40"),
     )
 
     assert result == {
@@ -105,7 +106,7 @@ def test_gap_fails_closed_without_calling_runner(tmp_path: Path) -> None:
         run_current_delayed_minute_paper(
             state_root=tmp_path,
             token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T13:50:40"),
+            now=_at("2026-07-28T13:55:40"),
             run_once=fake_run_once,
         )
 
@@ -123,14 +124,14 @@ def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:50:40"),
+        now=_at("2026-07-28T13:55:40"),
         run_once=fake_run_once,
     )
 
     assert result == {"status": "pass", "bar_end": "2026-07-28 13:45:00"}
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:50:40")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:40")
     assert calls[0]["trading_date"].isoformat() == "2026-07-28"
     assert (day / ".minute-auto.lock").stat().st_mode & 0o777 == 0o600
 
@@ -160,7 +161,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T10:10:40"),
+        now=_at("2026-07-28T10:15:40"),
         run_once=fake_run_once,
         allow_late_start=True,
     )
@@ -176,7 +177,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     }
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T10:10:40")
+    assert calls[0]["decision_time"] == _at("2026-07-28T10:15:40")
 
 
 def test_real_trading_flag_fails_closed(
@@ -203,13 +204,14 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
     )
 
     assert calendar_lines == (
-        "OnCalendar=Mon..Fri *-*-* 09:44/5:00",
+        "OnCalendar=Mon..Fri *-*-* 09:49/5:00",
         "OnCalendar=Mon..Fri *-*-* 10:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:04..39/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:14/5:00",
+        "OnCalendar=Mon..Fri *-*-* 11:04..44/5:00",
+        "OnCalendar=Mon..Fri *-*-* 13:19/5:00",
         "OnCalendar=Mon..Fri *-*-* 14:04/5:00",
         "OnCalendar=Mon..Fri *-*-* 15:04:00",
         "OnCalendar=Mon..Fri *-*-* 15:09:00",
+        "OnCalendar=Mon..Fri *-*-* 15:14:00",
     )
     assert "09..11" not in timer
     assert "13..15" not in timer
