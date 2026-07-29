@@ -93,24 +93,35 @@ def test_already_processed_bar_is_safe_noop(tmp_path: Path) -> None:
     assert result["reason"] == "bar_already_processed"
 
 
-def test_gap_fails_closed_without_calling_runner(tmp_path: Path) -> None:
+def test_gap_resumes_with_explicit_non_learning_segment_reset(tmp_path: Path) -> None:
     _initialized_day(tmp_path, last_bar="2026-07-28 13:35:00")
-    called = False
+    calls: list[dict[str, object]] = []
 
-    def fake_run_once(**_: object) -> dict[str, object]:
-        nonlocal called
-        called = True
-        return {"status": "pass"}
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"status": "pass", "bar_end": kwargs["bar_end"]}
 
-    with pytest.raises(MinuteAutoRunnerError, match="minute_auto_bar_gap_detected"):
-        run_current_delayed_minute_paper(
-            state_root=tmp_path,
-            token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T13:55:40"),
-            run_once=fake_run_once,
-        )
+    result = run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:55:40"),
+        run_once=fake_run_once,
+    )
 
-    assert called is False
+    assert result == {
+        "status": "pass",
+        "bar_end": "2026-07-28 13:45:00",
+        "gap_recovery": True,
+        "gap_slots": ["2026-07-28 13:40:00"],
+        "full_session_complete": False,
+        "learning_eligible": False,
+        "gap_recovery_reason": "minute_session_gap_detected",
+    }
+    assert len(calls) == 1
+    assert calls[0]["gap_recovery"] == {
+        "reason_code": "minute_session_gap_detected",
+        "skipped_session_slots": ("2026-07-28 13:40:00",),
+    }
 
 
 def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
@@ -169,6 +180,16 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     assert result == {
         "status": "pass",
         "bar_end": "2026-07-28 10:05:00",
+        "gap_recovery": True,
+        "gap_slots": [
+            "2026-07-28 09:35:00",
+            "2026-07-28 09:40:00",
+            "2026-07-28 09:45:00",
+            "2026-07-28 09:50:00",
+            "2026-07-28 09:55:00",
+            "2026-07-28 10:00:00",
+        ],
+        "gap_recovery_reason": "incident_recovery_no_historical_pit",
         "late_start": True,
         "skipped_session_slots": 6,
         "full_session_complete": False,
@@ -178,6 +199,17 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
     assert calls[0]["decision_time"] == _at("2026-07-28T10:15:40")
+    assert calls[0]["gap_recovery"] == {
+        "reason_code": "incident_recovery_no_historical_pit",
+        "skipped_session_slots": (
+            "2026-07-28 09:35:00",
+            "2026-07-28 09:40:00",
+            "2026-07-28 09:45:00",
+            "2026-07-28 09:50:00",
+            "2026-07-28 09:55:00",
+            "2026-07-28 10:00:00",
+        ),
+    }
 
 
 def test_real_trading_flag_fails_closed(

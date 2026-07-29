@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Mapping
 
 from shared.review.decision_ledger import (
@@ -21,7 +21,7 @@ from shared.review.decision_ledger import (
     InMemoryDecisionLedger,
 )
 
-from .minute_data import MinuteBarEvidence, MinuteBarSnapshot
+from .minute_data import SHANGHAI, MinuteBarEvidence, MinuteBarSnapshot
 from .minute_paper import (
     MinuteDecisionOutcome,
     MinuteExecutionPair,
@@ -99,6 +99,48 @@ def _valid_sha256(value: object) -> bool:
         isinstance(value, str)
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _legacy_accepted_bar_ends(
+    feature_engine_state: object,
+    processed_snapshot_hashes: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not processed_snapshot_hashes:
+        return ()
+    if not isinstance(feature_engine_state, Mapping):
+        raise MinuteLoopContractError("minute_loop_session_history_invalid")
+    raw_current = feature_engine_state.get("current")
+    if not isinstance(raw_current, Mapping) or not raw_current:
+        raise MinuteLoopContractError("minute_loop_session_history_invalid")
+    current_ends = {
+        MinuteRollingFeatureEngine._bar_from_payload(value)
+        .bar_end.astimezone(SHANGHAI)
+        .replace(microsecond=0)
+        for value in raw_current.values()
+    }
+    if len(current_ends) != 1:
+        raise MinuteLoopContractError("minute_loop_session_history_invalid")
+    last = next(iter(current_ends))
+    slots: list[datetime] = []
+    for start_clock, end_clock in (
+        (time(9, 35), time(11, 30)),
+        (time(13, 5), time(15, 0)),
+    ):
+        current = datetime.combine(last.date(), start_clock, tzinfo=SHANGHAI)
+        end = datetime.combine(last.date(), end_clock, tzinfo=SHANGHAI)
+        while current <= end:
+            slots.append(current)
+            current += timedelta(minutes=5)
+    if last not in slots:
+        raise MinuteLoopContractError("minute_loop_session_history_invalid")
+    end_index = slots.index(last)
+    count = len(processed_snapshot_hashes)
+    if count > end_index + 1:
+        raise MinuteLoopContractError("minute_loop_session_history_invalid")
+    return tuple(
+        value.strftime("%Y-%m-%d %H:%M:%S")
+        for value in slots[end_index - count + 1 : end_index + 1]
     )
 
 
@@ -390,6 +432,8 @@ class MinuteFixtureClosedLoop:
         ledgers: Mapping[str, InMemoryDecisionLedger] | None = None,
         pending: Mapping[str, MinutePendingFixtureOrder] | None = None,
         processed_snapshot_hashes: tuple[str, ...] = (),
+        accepted_bar_ends: tuple[str, ...] = (),
+        session_gaps: tuple[str, ...] = (),
         minimum_raw_score: float = 0.0,
         exit_raw_score: float = -0.25,
     ) -> None:
@@ -422,6 +466,19 @@ class MinuteFixtureClosedLoop:
         if len(set(processed_snapshot_hashes)) != len(processed_snapshot_hashes):
             raise MinuteLoopContractError("minute_loop_processed_hash_duplicate")
         self._processed_snapshot_hashes = list(processed_snapshot_hashes)
+        if (
+            any(
+                not isinstance(value, str) or not value or value != value.strip()
+                for value in (*accepted_bar_ends, *session_gaps)
+            )
+            or len(set(accepted_bar_ends)) != len(accepted_bar_ends)
+            or len(set(session_gaps)) != len(session_gaps)
+            or set(accepted_bar_ends) & set(session_gaps)
+            or len(accepted_bar_ends) != len(processed_snapshot_hashes)
+        ):
+            raise MinuteLoopContractError("minute_loop_session_history_invalid")
+        self._accepted_bar_ends = list(accepted_bar_ends)
+        self._session_gaps = list(session_gaps)
         self.minimum_raw_score = _finite(
             minimum_raw_score, "minute_loop_minimum_score_invalid"
         )
@@ -436,6 +493,14 @@ class MinuteFixtureClosedLoop:
     @property
     def ledgers(self) -> Mapping[str, InMemoryDecisionLedger]:
         return dict(self._ledgers)
+
+    @property
+    def accepted_bar_ends(self) -> tuple[str, ...]:
+        return tuple(self._accepted_bar_ends)
+
+    @property
+    def session_gaps(self) -> tuple[str, ...]:
+        return tuple(self._session_gaps)
 
     def _append_record(
         self,
@@ -486,7 +551,11 @@ class MinuteFixtureClosedLoop:
             return None
         expected_end = expected_minute_execution_bar_end(pending.decision_bar)
         latest_end = max((bar.bar_end for bar in bars_by_symbol.values()), default=None)
-        if expected_end is not None and latest_end is not None and latest_end < expected_end:
+        if (
+            expected_end is not None
+            and latest_end is not None
+            and latest_end < expected_end
+        ):
             return None
         execution_bar = bars_by_symbol.get(pending.symbol)
         if execution_bar is None:
@@ -761,6 +830,26 @@ class MinuteFixtureClosedLoop:
             raise MinuteLoopContractError("minute_loop_manifest_invalid")
         if snapshot.sha256 in self._processed_snapshot_hashes:
             raise MinuteLoopContractError("minute_loop_snapshot_already_processed")
+        bar_ends = {bar.bar_end for bar in snapshot.bars}
+        if len(bar_ends) != 1:
+            decision_time = max(bar.decision_time for bar in snapshot.bars)
+            reason = "minute_snapshot_mixed_bar_end"
+            self.record_data_failure(
+                decision_time=decision_time,
+                manifest_sha256=manifest_sha256,
+                reason_code=reason,
+            )
+            raise MinuteLoopContractError("minute_loop_research_rejected") from (
+                MinuteResearchContractError(reason)
+            )
+        bar_end_label = (
+            next(iter(bar_ends)).astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M:%S")
+        )
+        if (
+            bar_end_label in self._accepted_bar_ends
+            or bar_end_label in self._session_gaps
+        ):
+            raise MinuteLoopContractError("minute_loop_session_history_conflict")
         decision_time = max(bar.decision_time for bar in snapshot.bars)
         bars_by_symbol = {bar.symbol: bar for bar in snapshot.bars}
         settled = {
@@ -830,6 +919,7 @@ class MinuteFixtureClosedLoop:
                 )
             )
         self._processed_snapshot_hashes.append(snapshot.sha256)
+        self._accepted_bar_ends.append(bar_end_label)
         return MinuteClosedLoopStep(
             snapshot_sha256=snapshot.sha256,
             manifest_sha256=manifest_sha256,
@@ -887,6 +977,36 @@ class MinuteFixtureClosedLoop:
                     requested_notional_cny=0.0,
                     reason_code=reason,
                 )
+
+    def resume_after_gap(
+        self,
+        *,
+        decision_time: datetime,
+        manifest_sha256: str,
+        reason_code: str,
+        skipped_session_slots: tuple[str, ...],
+    ) -> None:
+        """Cancel cross-gap risk and restart features from a fresh baseline."""
+
+        if (
+            not skipped_session_slots
+            or any(
+                not isinstance(value, str) or not value or value != value.strip()
+                for value in skipped_session_slots
+            )
+            or len(set(skipped_session_slots)) != len(skipped_session_slots)
+            or set(skipped_session_slots) & set(self._accepted_bar_ends)
+        ):
+            raise MinuteLoopContractError("minute_loop_gap_history_invalid")
+        self.record_data_failure(
+            decision_time=decision_time,
+            manifest_sha256=manifest_sha256,
+            reason_code=reason_code,
+        )
+        self.feature_engine.reset_for_discontinuity()
+        self._session_gaps.extend(
+            value for value in skipped_session_slots if value not in self._session_gaps
+        )
 
     def reject_pending_by_human(
         self,
@@ -985,6 +1105,8 @@ class MinuteFixtureClosedLoop:
                 for sleeve_id, order in sorted(self._pending.items())
             },
             "processed_snapshot_hashes": list(self._processed_snapshot_hashes),
+            "accepted_bar_ends": list(self._accepted_bar_ends),
+            "session_gaps": list(self._session_gaps),
             "minimum_raw_score": self.minimum_raw_score,
             "exit_raw_score": self.exit_raw_score,
             "real_trading_enabled": False,
@@ -1044,6 +1166,18 @@ class MinuteFixtureClosedLoop:
             str(sleeve_id): _restore_pending(value)
             for sleeve_id, value in raw_pending.items()
         }
+        processed_snapshot_hashes = tuple(
+            payload.get("processed_snapshot_hashes") or ()
+        )
+        raw_accepted = payload.get("accepted_bar_ends")
+        accepted_bar_ends = (
+            _legacy_accepted_bar_ends(
+                payload.get("feature_engine"),
+                processed_snapshot_hashes,
+            )
+            if raw_accepted is None
+            else tuple(raw_accepted or ())
+        )
         return cls(
             universe=universe,
             feature_engine=MinuteRollingFeatureEngine.restore(
@@ -1052,9 +1186,9 @@ class MinuteFixtureClosedLoop:
             counterfactual_books=MinuteCounterfactualBooks.restore(payload["books"]),
             ledgers=ledgers,
             pending=pending,
-            processed_snapshot_hashes=tuple(
-                payload.get("processed_snapshot_hashes") or ()
-            ),
+            processed_snapshot_hashes=processed_snapshot_hashes,
+            accepted_bar_ends=accepted_bar_ends,
+            session_gaps=tuple(payload.get("session_gaps") or ()),
             minimum_raw_score=float(payload["minimum_raw_score"]),
             exit_raw_score=float(payload["exit_raw_score"]),
         )

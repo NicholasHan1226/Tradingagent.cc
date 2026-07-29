@@ -10,12 +10,23 @@ from Ashare.minute_loop import MinuteFixtureClosedLoop, _canonical_sha256
 from Ashare.minute_research import MinuteResearchUniverse
 
 
-def _bundle(path: Path, *, mismatch: bool = False) -> Path:
+def _bundle(
+    path: Path,
+    *,
+    mismatch: bool = False,
+    accepted_bar_ends: list[str] | None = None,
+    session_gaps: list[str] | None = None,
+) -> Path:
     loop = MinuteFixtureClosedLoop(universe=MinuteResearchUniverse(instruments=()))
     state = loop.export_state()
     payload = dict(state)
     payload.pop("state_sha256")
-    payload["processed_snapshot_hashes"] = ["a" * 64]
+    accepted = accepted_bar_ends or ["2026-07-28 09:35:00"]
+    payload["processed_snapshot_hashes"] = [
+        chr(ord("a") + index) * 64 for index in range(len(accepted))
+    ]
+    payload["accepted_bar_ends"] = accepted
+    payload["session_gaps"] = session_gaps or []
     state = {**payload, "state_sha256": _canonical_sha256(payload)}
     bundle = {
         "schema": "tradingagent.ashare.delayed_minute_paper_bundle.v1",
@@ -26,8 +37,10 @@ def _bundle(path: Path, *, mismatch: bool = False) -> Path:
             "status": "pass",
             "authority_tier": "non_production_fixture",
             "real_trading_enabled": False,
-            "bar_end": "2026-07-28 09:35:00",
-            "snapshot_sha256": "b" * 64 if mismatch else "a" * 64,
+            "bar_end": accepted[-1],
+            "snapshot_sha256": (
+                "f" * 64 if mismatch else payload["processed_snapshot_hashes"][-1]
+            ),
             "audit_rejections": 2,
         },
     }
@@ -55,6 +68,33 @@ def test_day_report_is_non_authoritative_and_covers_required_sections(
         "training_authority": False,
         "promotion_authority": False,
         "real_trading_enabled": False,
+    }
+
+
+def test_day_report_keeps_post_gap_observations_but_blocks_learning(
+    tmp_path: Path,
+) -> None:
+    report = build_minute_day_report(
+        state_bundle=_bundle(
+            tmp_path / "state.json",
+            accepted_bar_ends=[
+                "2026-07-28 09:35:00",
+                "2026-07-28 09:45:00",
+            ],
+            session_gaps=["2026-07-28 09:40:00"],
+        )
+    )
+
+    assert report["observed_bar_slots"] == [
+        "2026-07-28 09:35:00",
+        "2026-07-28 09:45:00",
+    ]
+    assert "2026-07-28 09:40:00" in report["missing_bar_slots"]
+    assert report["session_integrity"] == {
+        "full_session_complete": False,
+        "learning_eligible": False,
+        "gap_count": 1,
+        "gaps": ["2026-07-28 09:40:00"],
     }
 
 

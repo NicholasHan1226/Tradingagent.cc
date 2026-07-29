@@ -279,3 +279,41 @@ def test_feature_state_restart_is_integrity_checked() -> None:
     state["real_trading_enabled"] = True
     with pytest.raises(MinuteResearchContractError, match="integrity"):
         MinuteRollingFeatureEngine.restore(state)
+
+
+def test_feature_engine_gap_reset_requires_new_consecutive_baseline() -> None:
+    engine = MinuteRollingFeatureEngine()
+    engine.ingest(_snapshot("2026-07-27T09:35:00+08:00", close=10.0, volume=100_000))
+    assert (
+        len(
+            engine.ingest(
+                _snapshot(
+                    "2026-07-27T09:40:00+08:00",
+                    close=10.1,
+                    volume=120_000,
+                )
+            )
+        )
+        == 2
+    )
+
+    engine.reset_for_discontinuity()
+
+    assert (
+        engine.ingest(
+            _snapshot("2026-07-27T09:50:00+08:00", close=10.2, volume=130_000)
+        )
+        == ()
+    )
+    assert (
+        len(
+            engine.ingest(
+                _snapshot(
+                    "2026-07-27T09:55:00+08:00",
+                    close=10.3,
+                    volume=140_000,
+                )
+            )
+        )
+        == 2
+    )
