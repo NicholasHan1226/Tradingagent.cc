@@ -1,6 +1,17 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-29 17:58 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-29 20:32 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-29 20:32 A股分钟缺口恢复修复：** PR
+> [#76](https://github.com/NicholasHan1226/Tradingagent.cc/pull/76) 已普通合并，
+> GitHub 主线为 `cacb1b1a675665987c8e6d7243377a633f31a23c`；front/test CI
+> 均通过，本地 A股全量测试为 `840 passed`。修复不补造缺失 K 线，也不改写
+> 2026-07-29 的历史 bundle：遇到日内缺口时，所有跨缺口 pending 模拟订单先
+> 形成未成交回执，缺口写入状态校验范围，滚动特征重置；恢复后的第一根完整 K 线
+> 只建立新基线，至少再取得一根连续完整 K 线后才允许产生候选。缺口日永久保持
+> `full_session_complete=false/learning_eligible=false`，但后续完整分钟仍可
+> 继续 observation、反事实、盯市和对账积累。此处只证明代码主线，服务器 current
+> 尚未在本条证据中切换，`REAL_TRADING_ENABLED=false`、无 broker/真实交易不变。
 
 > **2026-07-29 17:58 次日会话预检：** TradingDatas 已将仅适用于
 > `trade_calendar` 的 registry-declared 下一日窗口普通合入并安全发布为

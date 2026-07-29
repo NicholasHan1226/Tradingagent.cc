@@ -657,8 +657,12 @@ python3 tools/run_ashare_observation.py \
 ```
 
 目录必须 `0700`，输入和 bundle 必须 `0600` 且归
-`tradingagent:tradingagent`。缺目录时安全 no-op；已有状态与目标K线不连续、
-重复并发、数据退化或30只不完整时失败关闭，不补历史、不跳过缺口。服务只读取
+`tradingagent:tradingagent`。缺目录时安全 no-op；重复并发、数据退化或30只
+不完整时失败关闭。分钟缺口不得被历史回填或用后一根冒充：所有跨缺口 pending
+模拟订单必须先形成未成交回执，缺口写入 `session_gaps`，滚动特征重置；恢复后的
+第一根完整 K 线只建立新基线，至少再取得一根连续完整 K 线后才允许产生候选。
+该日永久保持 `full_session_complete=false/learning_eligible=false`，但后续完整
+分钟可继续 observation、反事实、盯市和对账积累。服务只读取
 `/run/secrets/tradingagent/tradingdatas-read.token`，仍只调用
 `GET /v1/catalog` 与 `POST /v1/query`。
 
@@ -667,8 +671,8 @@ python3 tools/run_ashare_observation.py \
 最新、已完成且证据合格的延迟K线建立当日状态。该回执必须包含
 `late_start=true`、实际跳过槽位数、`full_session_complete=false` 与
 `learning_eligible=false`；systemd service/timer不携带该开关。首个状态建立后，
-后续自动轮仍要求逐槽连续。该日可以积累工程和决策样本，但不能进入完整交易日、
-模型晋级或离线学习验收。
+后续发生的日内缺口按同一分段恢复规则处理，不允许跨缺口结算 pending 或沿用旧滚动
+特征。该日可以积累工程和决策样本，但不能进入完整交易日、模型晋级或离线学习验收。
 
 安装候选：
 
@@ -698,8 +702,10 @@ broker，不授予 durable capital，也不改变 `REAL_TRADING_ENABLED=false`�
 service/timer与次日会话service/timer已安装并通过 `systemd-analyze verify`。
 两项timer均为`enabled/active`，环境固定`REAL_TRADING_ENABLED=false`。
 14:25:44首次分钟自动触发因手工状态停在13:45、13:50存在真实缺口而退出2；
-timer继续排定，正式bundle SHA未变。禁止以旧行配新receipt、改写decision time或
-跳过缺口。启用timer只证明调度生效和门禁有效，不证明已有成功自动模拟轮次。
+timer继续排定，正式bundle SHA未变。该历史结果保持不改写；后续版本只允许按上述
+分段恢复规则取消跨缺口 pending、记录缺口并重建基线。禁止以旧行配新receipt、
+改写decision time或把缺口日升级为学习样本。启用timer只证明调度生效和门禁有效，
+不证明已有成功自动模拟轮次。
 
 次日输入候选由 `Ashare.minute_session_initializer` 在09:18准备。它只读取正式
 catalog/query，使用交易日历的 `pretrade_date` 和审核过Universe的上一交易日
