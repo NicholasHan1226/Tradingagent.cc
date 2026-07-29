@@ -662,6 +662,14 @@ python3 tools/run_ashare_observation.py \
 `/run/secrets/tradingagent/tradingdatas-read.token`，仍只调用
 `GET /v1/catalog` 与 `POST /v1/query`。
 
+服务器停机或上游事故导致当日09:35首槽已错过时，不允许把事后数据回填成实时
+模拟。仅可人工运行一次 `Ashare.minute_auto_runner --allow-late-start`，从当时
+最新、已完成且证据合格的延迟K线建立当日状态。该回执必须包含
+`late_start=true`、实际跳过槽位数、`full_session_complete=false` 与
+`learning_eligible=false`；systemd service/timer不携带该开关。首个状态建立后，
+后续自动轮仍要求逐槽连续。该日可以积累工程和决策样本，但不能进入完整交易日、
+模型晋级或离线学习验收。
+
 安装候选：
 
 ```text
@@ -671,7 +679,7 @@ deploy/systemd/tradingagent-ashare-minute-paper.timer
 ```
 
 timer 只在工作日48根可处理K线的延迟到达窗口触发：上午
-`09:40–11:35`、下午`13:10–15:05`，每5分钟边界后40秒触发一次，给独立
+`09:44–11:39`、下午`13:14–15:09`，在数据采集边界后约4分钟触发，给独立
 TradingDatas collector 留出完成窗口。午休后段和收盘后不再重复触发，因此已知
 缺口只保留一次失败关闭证据，不会在无新K线时制造重复失败日志。启用前必须依次
 通过：不可变 release/manifest 校验、
@@ -692,7 +700,7 @@ service/timer与次日会话service/timer已安装并通过 `systemd-analyze ver
 timer继续排定，正式bundle SHA未变。禁止以旧行配新receipt、改写decision time或
 跳过缺口。启用timer只证明调度生效和门禁有效，不证明已有成功自动模拟轮次。
 
-次日输入候选由 `Ashare.minute_session_initializer` 在09:20准备。它只读取正式
+次日输入候选由 `Ashare.minute_session_initializer` 在09:18准备。它只读取正式
 catalog/query，使用交易日历的 `pretrade_date` 和审核过Universe的上一交易日
 `daily.close`，并原子发布三项0600输入；不建立账本、不生成订单、不运行模拟
 成交。对应候选为：

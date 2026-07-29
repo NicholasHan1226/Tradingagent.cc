@@ -147,6 +147,38 @@ def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
         )
 
 
+def test_manual_late_start_is_explicit_and_never_learning_eligible(
+    tmp_path: Path,
+) -> None:
+    day = _initialized_day(tmp_path, last_bar=None)
+    calls: list[dict[str, object]] = []
+
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"status": "pass", "bar_end": kwargs["bar_end"]}
+
+    result = run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T10:10:40"),
+        run_once=fake_run_once,
+        allow_late_start=True,
+    )
+
+    assert result == {
+        "status": "pass",
+        "bar_end": "2026-07-28 10:05:00",
+        "late_start": True,
+        "skipped_session_slots": 6,
+        "full_session_complete": False,
+        "learning_eligible": False,
+        "late_start_reason": "incident_recovery_no_historical_pit",
+    }
+    assert len(calls) == 1
+    assert calls[0]["state_bundle"] == day / "state-bundle.json"
+    assert calls[0]["decision_time"] == _at("2026-07-28T10:10:40")
+
+
 def test_real_trading_flag_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -163,8 +195,7 @@ def test_real_trading_flag_fails_closed(
 
 def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
     timer = (
-        REPO_ROOT
-        / "deploy/systemd/tradingagent-ashare-minute-paper.timer"
+        REPO_ROOT / "deploy/systemd/tradingagent-ashare-minute-paper.timer"
     ).read_text(encoding="utf-8")
 
     calendar_lines = tuple(
