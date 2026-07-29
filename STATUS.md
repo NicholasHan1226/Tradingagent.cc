@@ -2,6 +2,13 @@
 
 > 最后更新：2026-07-28 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> 2026-07-29 重启恢复说明：服务器续费恢复后发现 Crypto TA token 的
+> `/run` leaf 没有重启重建规则，核心 timer 因 `AssertPathExists` 连续
+> fail closed，未产生重复成交或账本改写。仓库候选已补充从既有 root-owned
+> canonical source 进行 scoped tmpfiles copy 的规则；只有代码合并、服务器安装、
+> leaf owner/mode/readback 和相邻自动轮全部验证后，才可把 Crypto 恢复标记为
+> runtime PASS。
+
 ## 当前结论
 
 TradingAgent 已完成 TradingDatas 正式内部 API 的专用身份、Bearer token-file
