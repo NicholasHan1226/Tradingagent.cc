@@ -1,6 +1,36 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-29 11:09 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-29 16:05 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-29 16:05 最新运行结论：** TradingDatas 的 A股与 Crypto
+> 数据采集均在自动运行，但两个 TradingAgent 模拟闭环当前都保持失败关闭，
+> 不能写成“全天稳定完成”。Crypto 数据面已扩为 10 个币种、20 个行情/规则
+> dataset；正式 18083 readback 为 20/20 `ready/fresh/valid/non-degraded`。
+> 10 个 5 分钟行情 dataset 各有 51,844 行，时间范围
+> `2026-01-30T07:35:00Z` 至 `2026-07-29T07:50:00Z`，逐币种均无重复时间、
+> 无 5 分钟间隔缺口；180 天回填与后续增量采集已经衔接。Crypto TA 核心 timer
+> 仍为 `enabled/inactive`：补跑旧槽时，TradingDatas 返回行已按 `as_of`
+> 正确过滤，但 envelope `data_through` 仍绑定更晚的全局 receipt，TA 因
+> `metadata.data_through must not be after the requested as_of` 正确拒绝。
+> 既有 10,000 USDT 模拟资本、持仓、成交和 append-only ledger 未改写。
+
+> **A股同轮结论：** TradingDatas 30 股 5 分钟 timer 与正式 18082 API
+> 持续运行；2026-07-29 下午 `13:10–15:00` 每个 bar end 均可正式查询
+> 30/30，只有午后首根 `13:05` 返回零行。TA 当日状态最后成功处理
+> `11:30`，且仍有待结算模拟动作，因此没有用 `13:10` 冒充下一根成交价，
+> 下午所有轮次均以 `minute_query_returned_no_bars` / continuity gate
+> 失败关闭。既有 bundle 停在 10 个已处理快照，资本与历史订单未回填或改写。
+> A股 TA timer 保持 `enabled/active`，下一次为 2026-07-30 新会话；今天不补单，
+> 不进入学习验收。500 股 TradingDatas 候选仅完成隔离单快照
+> `500/500`，生产仍为 30 股，待下一交易日两根相邻实时快照后再决定切换。
+
+> **代码与学习边界：** Crypto 离线学习 worker 已合入
+> `origin/main@69e03e6bbfbfcfd2ee4541b471e106a67f7c8d1f`，但学习 timer
+> 尚未部署或启用；核心连续运行未满 24 小时，不能自动产生 Challenger 晋级。
+> A股盘后学习同样未启用。两市场继续固定
+> `REAL_TRADING_ENABLED=false`，无 broker/Testnet/Live、无真实模型网络、
+> 无自动晋级或风险扩张。详细证据见
+> [2026-07-29 市场扩容与运行收口](docs/reports/2026-07-29-market-expansion-runtime.md)。
 
 > **2026-07-29 11:09 当前运行事实：** 服务器 `current` 已原子切换到
 > `bc8880dfd3c77ee358736d58e0cf9c377de154b3`。Crypto 在独立 generation-2
