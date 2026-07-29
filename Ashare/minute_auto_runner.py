@@ -43,18 +43,10 @@ def _aware(value: datetime) -> datetime:
 def session_bar_ends(trading_date: date) -> tuple[datetime, ...]:
     """Return the 48 completed five-minute bar ends for one A-share session."""
 
-    morning_start = datetime.combine(
-        trading_date, time(9, 35), tzinfo=SHANGHAI
-    )
-    morning_end = datetime.combine(
-        trading_date, time(11, 30), tzinfo=SHANGHAI
-    )
-    afternoon_start = datetime.combine(
-        trading_date, time(13, 5), tzinfo=SHANGHAI
-    )
-    afternoon_end = datetime.combine(
-        trading_date, time(15, 0), tzinfo=SHANGHAI
-    )
+    morning_start = datetime.combine(trading_date, time(9, 35), tzinfo=SHANGHAI)
+    morning_end = datetime.combine(trading_date, time(11, 30), tzinfo=SHANGHAI)
+    afternoon_start = datetime.combine(trading_date, time(13, 5), tzinfo=SHANGHAI)
+    afternoon_end = datetime.combine(trading_date, time(15, 0), tzinfo=SHANGHAI)
     values: list[datetime] = []
     current = morning_start
     while current <= morning_end:
@@ -152,6 +144,7 @@ def run_current_delayed_minute_paper(
     token_file: Path | str,
     now: datetime,
     run_once: Callable[..., dict[str, object]] = run_delayed_minute_paper_once,
+    allow_late_start: bool = False,
 ) -> dict[str, object]:
     """Process exactly one expected current delayed bar or return a safe no-op."""
 
@@ -187,7 +180,11 @@ def run_current_delayed_minute_paper(
                 "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
                 "real_trading_enabled": False,
             }
-        _assert_continuity(target=target, last_processed=last_processed)
+        slots = session_bar_ends(target.date())
+        target_index = slots.index(target)
+        late_start = last_processed is None and target_index > 0 and allow_late_start
+        if not late_start:
+            _assert_continuity(target=target, last_processed=last_processed)
         required = {
             "manifest": day_root / MANIFEST_NAME,
             "reference_facts_path": day_root / REFERENCE_FACTS_NAME,
@@ -203,7 +200,18 @@ def run_current_delayed_minute_paper(
             trading_date=target.date(),
             bar_end=target.strftime("%Y-%m-%d %H:%M:%S"),
         )
-        return dict(receipt)
+        result = dict(receipt)
+        if late_start:
+            result.update(
+                {
+                    "late_start": True,
+                    "skipped_session_slots": target_index,
+                    "full_session_complete": False,
+                    "learning_eligible": False,
+                    "late_start_reason": "incident_recovery_no_historical_pit",
+                }
+            )
+        return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -216,6 +224,14 @@ def main(argv: list[str] | None = None) -> int:
         "--now",
         help="Explicit aware ISO timestamp for controlled replay; omit in service",
     )
+    parser.add_argument(
+        "--allow-late-start",
+        action="store_true",
+        help=(
+            "Manually start an initialized sim-only day after 09:35 without "
+            "claiming full-session or learning eligibility"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         now = (
@@ -227,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
             state_root=args.state_root,
             token_file=args.token_file,
             now=now,
+            allow_late_start=args.allow_late_start,
         )
     except (MinuteAutoRunnerError, OSError, ValueError):
         print("automatic delayed minute paper runner failed closed", file=sys.stderr)
