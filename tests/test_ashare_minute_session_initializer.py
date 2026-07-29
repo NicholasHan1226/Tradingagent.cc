@@ -606,6 +606,6 @@ def test_session_units_are_preopen_simulation_only_and_sandboxed() -> None:
     ):
         assert forbidden not in service.lower()
 
-    assert "OnCalendar=Mon..Fri *-*-* 09:20:00" in timer
+    assert "OnCalendar=Mon..Fri *-*-* 09:18:00" in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-session.service" in timer
