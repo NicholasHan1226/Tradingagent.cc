@@ -69,9 +69,7 @@ def load_minute_research_universe(path: Path | str) -> MinuteResearchUniverse:
         try:
             instruments.append(MinuteUniverseInstrument(**row))
         except (TypeError, ValueError, MinuteResearchContractError) as exc:
-            raise MinutePaperRunnerError(
-                "minute_paper_universe_row_invalid"
-            ) from exc
+            raise MinutePaperRunnerError("minute_paper_universe_row_invalid") from exc
     return MinuteResearchUniverse(
         instruments=tuple(instruments),
         expanded=(
@@ -112,6 +110,33 @@ def _load_loop_bundle(
     ):
         raise MinutePaperRunnerError("minute_paper_universe_drift")
     return loop
+
+
+def _validated_gap_recovery(
+    value: Mapping[str, object] | None,
+) -> tuple[str, tuple[str, ...]] | None:
+    if value is None:
+        return None
+    reason = value.get("reason_code")
+    raw_slots = value.get("skipped_session_slots")
+    if (
+        reason
+        not in {
+            "minute_session_gap_detected",
+            "incident_recovery_no_historical_pit",
+        }
+        or not isinstance(raw_slots, (list, tuple))
+        or not raw_slots
+        or any(
+            not isinstance(slot, str) or not slot or slot != slot.strip()
+            for slot in raw_slots
+        )
+    ):
+        raise MinutePaperRunnerError("minute_paper_gap_recovery_invalid")
+    slots = tuple(raw_slots)
+    if len(set(slots)) != len(slots):
+        raise MinutePaperRunnerError("minute_paper_gap_recovery_invalid")
+    return str(reason), slots
 
 
 def _atomic_write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -155,6 +180,7 @@ def run_delayed_minute_paper_once(
     decision_time: datetime,
     trading_date: date,
     bar_end: str,
+    gap_recovery: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     """Process one exact completed bar in the delayed, simulation-only tier."""
 
@@ -180,7 +206,17 @@ def run_delayed_minute_paper_once(
     )
     if set(bar.symbol for bar in snapshot.bars) != universe_symbols:
         raise MinutePaperRunnerError("minute_paper_snapshot_universe_incomplete")
-    loop = _load_loop_bundle(Path(state_bundle), universe=universe)
+    state_path = Path(state_bundle)
+    recovery = _validated_gap_recovery(gap_recovery)
+    loop = _load_loop_bundle(state_path, universe=universe)
+    if recovery is not None:
+        reason_code, skipped_slots = recovery
+        loop.resume_after_gap(
+            decision_time=decision_time,
+            manifest_sha256=profile.catalog_contract_sha256,
+            reason_code=reason_code,
+            skipped_session_slots=skipped_slots,
+        )
     step = loop.process_snapshot(
         snapshot=snapshot,
         manifest_sha256=profile.catalog_contract_sha256,
@@ -226,6 +262,16 @@ def run_delayed_minute_paper_once(
         ],
         "attribution": attribution,
     }
+    if recovery is not None:
+        receipt.update(
+            {
+                "gap_recovery": True,
+                "gap_slots": list(recovery[1]),
+                "full_session_complete": False,
+                "learning_eligible": False,
+                "gap_recovery_reason": recovery[0],
+            }
+        )
     bundle = {
         "schema": "tradingagent.ashare.delayed_minute_paper_bundle.v1",
         "authority_tier": "non_production_fixture",
@@ -233,7 +279,7 @@ def run_delayed_minute_paper_once(
         "loop_state": loop.export_state(),
         "last_receipt": receipt,
     }
-    _atomic_write_json(Path(state_bundle), bundle)
+    _atomic_write_json(state_path, bundle)
     return receipt
 
 

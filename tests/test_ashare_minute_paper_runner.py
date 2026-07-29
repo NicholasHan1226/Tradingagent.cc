@@ -236,6 +236,59 @@ def test_runner_persists_fixture_state_and_waits_for_reachable_fill(
     assert oct(state.stat().st_mode & 0o777) == "0o600"
 
 
+def test_runner_persists_gap_recovery_and_blocks_learning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, references, universe = _write_inputs(tmp_path)
+    snapshots = iter(
+        (
+            _snapshot("2026-07-28T09:35:00+08:00", 10.0),
+            _snapshot("2026-07-28T09:45:00+08:00", 10.2),
+        )
+    )
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        return _profile(), next(snapshots), MinuteEvidenceAuditLedger()
+
+    monkeypatch.setattr("Ashare.minute_paper_runner.load_minute_snapshot", fake_load)
+    state = tmp_path / "state" / "bundle.json"
+    common = {
+        "manifest": manifest,
+        "reference_facts_path": references,
+        "universe_path": universe,
+        "token_file": tmp_path / "token",
+        "state_bundle": state,
+        "trading_date": date(2026, 7, 28),
+    }
+    run_delayed_minute_paper_once(
+        **common,
+        decision_time=datetime.fromisoformat("2026-07-28T09:45:07+08:00"),
+        bar_end="2026-07-28 09:35:00",
+    )
+    receipt = run_delayed_minute_paper_once(
+        **common,
+        decision_time=datetime.fromisoformat("2026-07-28T09:55:07+08:00"),
+        bar_end="2026-07-28 09:45:00",
+        gap_recovery={
+            "reason_code": "minute_session_gap_detected",
+            "skipped_session_slots": ("2026-07-28 09:40:00",),
+        },
+    )
+
+    assert receipt["feature_count"] == 0
+    assert receipt["candidate_count"] == 0
+    assert receipt["gap_recovery"] is True
+    assert receipt["gap_slots"] == ["2026-07-28 09:40:00"]
+    assert receipt["full_session_complete"] is False
+    assert receipt["learning_eligible"] is False
+    bundle = json.loads(state.read_text(encoding="utf-8"))
+    assert bundle["loop_state"]["accepted_bar_ends"] == [
+        "2026-07-28 09:35:00",
+        "2026-07-28 09:45:00",
+    ]
+    assert bundle["loop_state"]["session_gaps"] == ["2026-07-28 09:40:00"]
+
+
 def test_runner_rejects_mixed_bar_end_despite_complete_symbol_set(
     tmp_path: Path, monkeypatch
 ) -> None:

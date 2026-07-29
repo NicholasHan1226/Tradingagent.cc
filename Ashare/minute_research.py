@@ -397,6 +397,12 @@ class MinuteRollingFeatureEngine:
     def current_bars(self) -> Mapping[str, MinuteBarEvidence]:
         return dict(self._current)
 
+    def reset_for_discontinuity(self) -> None:
+        """Start a new rolling segment without manufacturing a missing bar."""
+
+        self._previous.clear()
+        self._current.clear()
+
     def ingest(
         self,
         snapshot: MinuteBarSnapshot,

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from Ashare.minute_auto_runner import session_bar_ends
+from Ashare.minute_data import SHANGHAI
 from Ashare.minute_loop import MinuteFixtureClosedLoop, _canonical_sha256
 from Ashare.minute_offline_learning import (
     JOURNAL_NAME,
@@ -13,6 +15,7 @@ from Ashare.minute_offline_learning import (
     write_minute_offline_learning_projection,
 )
 from Ashare.minute_research import MinuteResearchUniverse
+from datetime import date
 
 
 def _bundle(
@@ -28,6 +31,11 @@ def _bundle(
     payload.pop("state_sha256")
     count = 48 if complete else 1
     payload["processed_snapshot_hashes"] = [f"{index:064x}" for index in range(count)]
+    payload["accepted_bar_ends"] = [
+        value.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M:%S")
+        for value in session_bar_ends(date(2026, 7, 28))[:count]
+    ]
+    payload["session_gaps"] = []
     state = {**payload, "state_sha256": _canonical_sha256(payload)}
     bundle = {
         "schema": "tradingagent.ashare.delayed_minute_paper_bundle.v1",

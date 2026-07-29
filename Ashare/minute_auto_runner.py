@@ -122,6 +122,30 @@ def _assert_continuity(
         raise MinuteAutoRunnerError("minute_auto_bar_gap_detected")
 
 
+def _skipped_session_slots(
+    *,
+    target: datetime,
+    last_processed: datetime,
+) -> tuple[str, ...]:
+    slots = session_bar_ends(target.astimezone(SHANGHAI).date())
+    local_last = last_processed.astimezone(SHANGHAI)
+    if (
+        target not in slots
+        or local_last.date() != target.date()
+        or local_last not in slots
+    ):
+        _assert_continuity(target=target, last_processed=last_processed)
+        raise MinuteAutoRunnerError("minute_auto_gap_state_invalid")
+    last_index = slots.index(local_last)
+    target_index = slots.index(target)
+    if target_index <= last_index:
+        raise MinuteAutoRunnerError("minute_auto_gap_state_invalid")
+    return tuple(
+        value.strftime("%Y-%m-%d %H:%M:%S")
+        for value in slots[last_index + 1 : target_index]
+    )
+
+
 @contextmanager
 def _exclusive_lock(day_root: Path) -> Iterator[None]:
     lock_path = day_root / ".minute-auto.lock"
@@ -183,7 +207,17 @@ def run_current_delayed_minute_paper(
         slots = session_bar_ends(target.date())
         target_index = slots.index(target)
         late_start = last_processed is None and target_index > 0 and allow_late_start
-        if not late_start:
+        skipped_slots: tuple[str, ...] = ()
+        if last_processed is not None:
+            skipped_slots = _skipped_session_slots(
+                target=target,
+                last_processed=last_processed,
+            )
+        elif late_start:
+            skipped_slots = tuple(
+                value.strftime("%Y-%m-%d %H:%M:%S") for value in slots[:target_index]
+            )
+        else:
             _assert_continuity(target=target, last_processed=last_processed)
         required = {
             "manifest": day_root / MANIFEST_NAME,
@@ -192,15 +226,38 @@ def run_current_delayed_minute_paper(
         }
         if any(not path.is_file() for path in required.values()):
             raise MinuteAutoRunnerError("minute_auto_session_inputs_missing")
-        receipt = run_once(
+        run_kwargs: dict[str, object] = {
             **required,
-            token_file=token,
-            state_bundle=state_bundle,
-            decision_time=decision_time,
-            trading_date=target.date(),
-            bar_end=target.strftime("%Y-%m-%d %H:%M:%S"),
+            "token_file": token,
+            "state_bundle": state_bundle,
+            "decision_time": decision_time,
+            "trading_date": target.date(),
+            "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        if skipped_slots:
+            recovery_reason = (
+                "incident_recovery_no_historical_pit"
+                if late_start
+                else "minute_session_gap_detected"
+            )
+            run_kwargs["gap_recovery"] = {
+                "reason_code": recovery_reason,
+                "skipped_session_slots": skipped_slots,
+            }
+        receipt = run_once(
+            **run_kwargs,
         )
         result = dict(receipt)
+        if skipped_slots:
+            result.update(
+                {
+                    "gap_recovery": True,
+                    "gap_slots": list(skipped_slots),
+                    "full_session_complete": False,
+                    "learning_eligible": False,
+                    "gap_recovery_reason": recovery_reason,
+                }
+            )
         if late_start:
             result.update(
                 {

@@ -15,6 +15,7 @@ from Ashare.minute_loop import (
     MinuteFixtureClosedLoop,
     MinuteLoopContractError,
     SLEEVE_IDS,
+    _canonical_sha256,
 )
 from Ashare.minute_research import (
     MinuteResearchUniverse,
@@ -381,6 +382,47 @@ def test_data_failure_cancels_pending_new_risk_and_human_reject_is_audited() -> 
         )
 
 
+def test_gap_recovery_cancels_pending_and_restarts_features_without_order() -> None:
+    loop = MinuteFixtureClosedLoop(universe=_universe())
+    manifest = _sha("9")
+    loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T09:35:00+08:00", close=10.0, volume=100_000),
+        manifest_sha256=manifest,
+    )
+    loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T09:40:00+08:00", close=10.1, volume=120_000),
+        manifest_sha256=manifest,
+        auxiliary_evidence=_auxiliary("2026-07-27T09:40:00+08:00"),
+    )
+    assert set(loop.pending) == set(SLEEVE_IDS)
+
+    loop.resume_after_gap(
+        decision_time=datetime.fromisoformat("2026-07-27T09:55:20+08:00"),
+        manifest_sha256=manifest,
+        reason_code="minute_session_gap_detected",
+        skipped_session_slots=(
+            "2026-07-27 09:45:00",
+            "2026-07-27 09:50:00",
+        ),
+    )
+    assert loop.pending == {}
+
+    resumed = loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T09:55:00+08:00", close=10.2, volume=130_000),
+        manifest_sha256=manifest,
+    )
+    assert resumed.feature_count == 0
+    assert resumed.candidate_count == 0
+    assert all(step.scheduled_order is None for step in resumed.sleeves)
+
+    next_step = loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T10:00:00+08:00", close=10.3, volume=140_000),
+        manifest_sha256=manifest,
+        auxiliary_evidence=_auxiliary("2026-07-27T10:00:00+08:00"),
+    )
+    assert next_step.feature_count == 2
+
+
 def test_restart_preserves_pending_books_ledgers_and_blocks_replay() -> None:
     loop = MinuteFixtureClosedLoop(universe=_universe())
     manifest = _sha("e")
@@ -409,6 +451,33 @@ def test_restart_preserves_pending_books_ledgers_and_blocks_replay() -> None:
     state["minimum_raw_score"] = 999
     with pytest.raises(MinuteLoopContractError, match="integrity"):
         MinuteFixtureClosedLoop.restore(state)
+
+
+def test_legacy_state_derives_contiguous_accepted_slots_with_integrity() -> None:
+    loop = MinuteFixtureClosedLoop(universe=_universe())
+    manifest = _sha("e")
+    loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T09:35:00+08:00", close=10.0, volume=100_000),
+        manifest_sha256=manifest,
+    )
+    loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T09:40:00+08:00", close=10.1, volume=120_000),
+        manifest_sha256=manifest,
+    )
+    state = loop.export_state()
+    payload = dict(state)
+    payload.pop("state_sha256")
+    payload.pop("accepted_bar_ends")
+    payload.pop("session_gaps")
+    legacy = {**payload, "state_sha256": _canonical_sha256(payload)}
+
+    restored = MinuteFixtureClosedLoop.restore(legacy)
+
+    assert restored.accepted_bar_ends == (
+        "2026-07-27 09:35:00",
+        "2026-07-27 09:40:00",
+    )
+    assert restored.session_gaps == ()
 
 
 def test_attribution_keeps_four_fixture_accounts_separate() -> None:

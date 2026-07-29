@@ -51,8 +51,11 @@ def _slot(value: datetime) -> str:
 
 
 def _receipt_slots(
-    receipt: Mapping[str, Any], processed: list[object]
-) -> tuple[str, list[str]]:
+    receipt: Mapping[str, Any],
+    processed: list[object],
+    accepted_bar_ends: object,
+    session_gaps: object,
+) -> tuple[str, list[str], list[str], list[str]]:
     raw_end = receipt.get("bar_end")
     if not isinstance(raw_end, str):
         raise MinuteDayReportError("minute_day_report_receipt_invalid")
@@ -67,10 +70,48 @@ def _receipt_slots(
     slots = list(session_bar_ends(end.date()))
     if end not in slots:
         raise MinuteDayReportError("minute_day_report_session_invalid")
+    expected = [_slot(item) for item in slots]
     end_index = slots.index(end)
-    if len(processed) != end_index + 1:
-        raise MinuteDayReportError("minute_day_report_bar_continuity_invalid")
-    return end.date().isoformat(), [_slot(item) for item in slots]
+    if accepted_bar_ends is None:
+        if len(processed) != end_index + 1:
+            raise MinuteDayReportError("minute_day_report_bar_continuity_invalid")
+        observed = expected[: len(processed)]
+        gaps: list[str] = []
+    else:
+        if (
+            not isinstance(accepted_bar_ends, list)
+            or not accepted_bar_ends
+            or any(not isinstance(value, str) for value in accepted_bar_ends)
+            or len(set(accepted_bar_ends)) != len(accepted_bar_ends)
+            or len(accepted_bar_ends) != len(processed)
+            or accepted_bar_ends[-1] != raw_end
+            or any(value not in expected for value in accepted_bar_ends)
+        ):
+            raise MinuteDayReportError("minute_day_report_session_history_invalid")
+        accepted_set = set(accepted_bar_ends)
+        ordered_accepted = [value for value in expected if value in accepted_set]
+        if (
+            accepted_bar_ends != ordered_accepted
+            or not isinstance(session_gaps, list)
+            or any(not isinstance(value, str) for value in session_gaps)
+            or len(set(session_gaps)) != len(session_gaps)
+            or any(value not in expected for value in session_gaps)
+            or set(accepted_bar_ends) & set(session_gaps)
+        ):
+            raise MinuteDayReportError("minute_day_report_session_history_invalid")
+        gap_set = set(session_gaps)
+        ordered_gaps = [value for value in expected if value in gap_set]
+        known_missing = [
+            value for value in expected[:end_index] if value not in accepted_set
+        ]
+        if session_gaps != ordered_gaps or session_gaps != known_missing:
+            raise MinuteDayReportError("minute_day_report_session_history_invalid")
+        observed = list(accepted_bar_ends)
+        gaps = list(session_gaps)
+    missing = [value for value in expected if value not in set(observed)]
+    if any(value not in missing for value in gaps):
+        raise MinuteDayReportError("minute_day_report_session_history_invalid")
+    return end.date().isoformat(), expected, observed, missing
 
 
 def _reason_counts(records: list[Any]) -> dict[str, int]:
@@ -143,11 +184,14 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     except (MinuteLoopContractError, ValueError) as exc:
         raise MinuteDayReportError("minute_day_report_state_integrity_failed") from exc
     state = loop.export_state()
-    trading_date, expected = _receipt_slots(
-        receipt, list(state["processed_snapshot_hashes"])
+    trading_date, expected, observed, missing = _receipt_slots(
+        receipt,
+        list(state["processed_snapshot_hashes"]),
+        state.get("accepted_bar_ends"),
+        state.get("session_gaps", []),
     )
-    observed = expected[: len(state["processed_snapshot_hashes"])]
-    missing = expected[len(observed) :]
+    raw_gaps = state.get("session_gaps", [])
+    gaps = list(raw_gaps) if isinstance(raw_gaps, list) else []
     current = loop.feature_engine.export_state().get("current")
     if not isinstance(current, Mapping):
         raise MinuteDayReportError("minute_day_report_feature_state_invalid")
@@ -177,11 +221,25 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     all_records = [
         record for ledger in loop.ledgers.values() for record in ledger.records()
     ]
+    full_session_complete = len(observed) == len(expected) and not gaps
+    reconciliation_complete = all(
+        summary["reconciliation_status"] == "fixture_reconciled"
+        for summary in sleeves.values()
+    )
+    learning_eligible = (
+        full_session_complete and audit_rejections == 0 and reconciliation_complete
+    )
     return {
         "trading_date": trading_date,
         "expected_bar_slots": expected,
         "observed_bar_slots": observed,
         "missing_bar_slots": missing,
+        "session_integrity": {
+            "full_session_complete": full_session_complete,
+            "learning_eligible": learning_eligible,
+            "gap_count": len(gaps),
+            "gaps": gaps,
+        },
         "evidence": {
             "accepted_count": len(observed),
             "rejected_count": audit_rejections,
