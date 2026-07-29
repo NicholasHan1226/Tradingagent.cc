@@ -1,6 +1,18 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-29 16:05 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-29 17:00 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-29 17:00 盘后增量：** TradingDatas 的 16:30 通用盘后轮已
+> `success/exit0`。正式 18082 以 TA UID987 读取
+> `cn.equity.daily(trade_date=20260729)` 为
+> `ready/success/fresh/valid/non-degraded`，并带完整 receipt/lineage；
+> 当前审核 30 股经 3 个每批 10 只的有界查询取得 30/30、30 个唯一股票，
+> 双跑一致。明日会话初始化仍只阻塞于
+> `cn.market.trade_calendar(exchange=SSE,cal_date=20260730)` 返回 0 行。
+> 现役 TD 合同没有受控未来日期 override，因而未绕过合同执行 one-shot；
+> TD 正在单独评审仅由 registry 声明 `known_future_horizon_days=1` 的通用修正。
+> 隔离预检 root 只含 3 项 0600 输入模板，正式 `20260730` 目录仍不存在，
+> 未创建 state bundle、资本、订单或成交。
 
 > **2026-07-29 16:05 最新运行结论：** TradingDatas 的 A股与 Crypto
 > 数据采集均在自动运行，但两个 TradingAgent 模拟闭环当前都保持失败关闭，
