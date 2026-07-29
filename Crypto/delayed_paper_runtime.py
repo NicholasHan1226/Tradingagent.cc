@@ -83,6 +83,13 @@ OUTAGE_GAP_CONTRACT = "tradingagent.crypto.delayed_paper_data_gap.v1"
 HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON = (
     "metadata.data_through must not be after the requested as_of"
 )
+HISTORICAL_WINDOW_INCOMPLETE_UNRECOVERABLE_REASON = "crypto_5m_window_incomplete"
+HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
+    {
+        HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        HISTORICAL_WINDOW_INCOMPLETE_UNRECOVERABLE_REASON,
+    }
+)
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXPECTED_SAFETY = {
     "real_trading_enabled": False,
@@ -828,7 +835,7 @@ def _validate_data_gap_event(
         or gap.get("event_type") != "data_gap"
         or gap.get("market") != "crypto"
         or gap.get("market_session") != "24x7"
-        or gap.get("reason_code") != HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+        or gap.get("reason_code") not in HISTORICAL_GAP_RECOVERY_REASONS
         or gap.get("candidate_generated") is not False
         or gap.get("order_generated") is not False
         or gap.get("fill_generated") is not False
@@ -918,7 +925,7 @@ def _validate_data_gap_event(
         skipped_from=_iso_utc(skipped_from),
         skipped_to=_iso_utc(skipped_to),
         recovery_market_slot=_iso_utc(recovery),
-        reason_code=HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        reason_code=str(gap.get("reason_code")),
         recovery_observation_content_sha256=str(claimed_observation_sha),
     )
     expected_event_id = f"crypto-delayed-data-gap-{_sha256(id_material)[:24]}"
@@ -1055,6 +1062,7 @@ def _build_outage_gap_event(
     ],
     capital_head_sequence: int,
     capital_head_checksum: str,
+    reason_code: str,
 ) -> dict[str, Any]:
     recovery_market_slot = _observation_slot(observation.get("market_slot"))
     skipped_from = prior_market_slot + timedelta(minutes=5)
@@ -1073,7 +1081,7 @@ def _build_outage_gap_event(
         skipped_from=_iso_utc(skipped_from),
         skipped_to=_iso_utc(skipped_to),
         recovery_market_slot=_iso_utc(recovery_market_slot),
-        reason_code=HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        reason_code=reason_code,
         recovery_observation_content_sha256=observation_sha,
     )
     counterfactuals: dict[str, Any] = {}
@@ -1101,7 +1109,7 @@ def _build_outage_gap_event(
         "skipped_from": _iso_utc(skipped_from),
         "skipped_to": _iso_utc(skipped_to),
         "recovery_market_slot": _iso_utc(recovery_market_slot),
-        "reason_code": HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        "reason_code": reason_code,
         "rejected_target_window_end": _iso_utc(historical_request.window_end),
         "rejected_target_observation_cutoff": _iso_utc(
             historical_request.observation_cutoff
@@ -1148,6 +1156,7 @@ def _attempt_outage_gap_recovery(
     catalog_version: str,
     root: Path,
     expected_latest_observation_slot: datetime,
+    reason_code: str,
 ) -> dict[str, Any]:
     store = CryptoDelayedPaperObservationStore(root)
     with store.cycle():
@@ -1198,6 +1207,7 @@ def _attempt_outage_gap_recovery(
             prepared=prepared,
             capital_head_sequence=capital_head_sequence,
             capital_head_checksum=capital_head_checksum,
+            reason_code=reason_code,
         )
         stored = store.append_event(event)
         _, recovery_slot = _validate_data_gap_event(stored)
@@ -1321,7 +1331,7 @@ def run_crypto_delayed_paper_server_once(
         )
         if (
             result.get("status") == "data_reject"
-            and result.get("reason_code") == HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+            and result.get("reason_code") in HISTORICAL_GAP_RECOVERY_REASONS
             and pending is None
             and state_before.latest_observation_slot is not None
             and state_before.latest_observation_slot == state_before.latest_market_slot
@@ -1336,6 +1346,7 @@ def run_crypto_delayed_paper_server_once(
                 catalog_version=manifest.catalog_version,
                 root=root,
                 expected_latest_observation_slot=(state_before.latest_observation_slot),
+                reason_code=str(result.get("reason_code")),
             )
             cycle_results.append(
                 {

@@ -926,9 +926,17 @@ def test_bounded_backlog_progresses_without_skipping_slots(
     )
 
 
+@pytest.mark.parametrize(
+    "unrecoverable_reason",
+    [
+        runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON,
+        runtime_module.HISTORICAL_WINDOW_INCOMPLETE_UNRECOVERABLE_REASON,
+    ],
+)
 def test_explicit_outage_gap_recovers_latest_window_without_capital_side_effect(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    unrecoverable_reason: str,
 ) -> None:
     token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
     manifest_path = _write_manifest(tmp_path)
@@ -954,9 +962,7 @@ def test_explicit_outage_gap_recovers_latest_window_without_capital_side_effect(
                 store=CryptoDelayedPaperObservationStore(output_root),
                 profile=kwargs["profile"],
                 request=request,
-                reason_code=(
-                    runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
-                ),
+                reason_code=unrecoverable_reason,
             )
         return original_run_core(**kwargs)
 
@@ -1002,9 +1008,7 @@ def test_explicit_outage_gap_recovers_latest_window_without_capital_side_effect(
     ]
     assert len(gap_rows) == 1
     gap = gap_rows[0]
-    assert gap["reason_code"] == (
-        runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
-    )
+    assert gap["reason_code"] == unrecoverable_reason
     assert gap["source_proof"]["same_observation"] is True
     assert gap["source_proof"]["evidence_gate"] == {
         "state": "ready",

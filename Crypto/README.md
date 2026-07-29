@@ -305,10 +305,10 @@ generation 或替换 root。任何情况下都不得跨 epoch 合并现金、仓
 PnL、收益率或晋级样本。
 
 current generation-2 epoch 内若再次停机，runtime 仍先严格读取下一历史
-exact-as-of；只有该读取以固定
-`metadata.data_through must not be after the requested as_of` 原因拒绝、pending
-为空、最新 13 根 closed-5m 窗口及 receipt/lineage/freshness/quality 全部合格，
-并且现有资本链完整守恒时，才追加一条 checksum/index/ledger-bound `data_gap`。
+exact-as-of；只有该读取明确因历史 `data_through` 越过 cutoff，或因历史窗口已
+无法重建为连续 13 根而拒绝、pending 为空、最新 13 根 closed-5m 窗口及
+receipt/lineage/freshness/quality 全部合格，并且现有资本链完整守恒时，才追加
+一条 checksum/index/ledger-bound `data_gap`。
 它精确记录 skipped range、拒绝请求、source proof、资本 head 锚点和恢复首窗的
 observation/counterfactual；不调用资本 writer，不创建 run、候选、订单或成交，
 也不写 learning completion。相同槽只做无网络幂等校验，下一根连续窗口才回到
