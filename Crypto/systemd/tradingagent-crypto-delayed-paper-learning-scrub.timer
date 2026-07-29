@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent Crypto detached delayed-paper learning daily full scrub timer candidate
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+AccuracySec=1s
+RandomizedDelaySec=5m
+Persistent=false
+Unit=tradingagent-crypto-delayed-paper-learning-scrub.service
+
+[Install]
+WantedBy=timers.target

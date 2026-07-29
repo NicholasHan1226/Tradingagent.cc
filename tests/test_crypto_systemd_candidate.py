@@ -84,7 +84,7 @@ def test_crypto_runtime_service_is_loopback_only_and_simulation_only() -> None:
         assert forbidden not in lowered
 
 
-def test_crypto_runtime_timer_is_installable_but_not_enabled_by_repo() -> None:
+def test_crypto_runtime_timers_are_installable_but_not_enabled_by_repo() -> None:
     text = TIMER.read_text(encoding="utf-8")
 
     assert "OnCalendar=*-*-* *:0/5:55" in text
@@ -101,7 +101,11 @@ def test_crypto_runtime_timer_is_installable_but_not_enabled_by_repo() -> None:
     assert sorted(
         path.name
         for path in SYSTEMD_ROOT.glob("tradingagent-crypto-delayed-paper*.timer")
-    ) == ["tradingagent-crypto-delayed-paper.timer"]
+    ) == [
+        "tradingagent-crypto-delayed-paper-learning-scrub.timer",
+        "tradingagent-crypto-delayed-paper-learning.timer",
+        "tradingagent-crypto-delayed-paper.timer",
+    ]
 
 
 def test_crypto_runtime_token_is_recreated_from_canonical_source() -> None:
