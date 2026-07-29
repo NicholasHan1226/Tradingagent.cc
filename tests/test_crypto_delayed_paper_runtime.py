@@ -197,6 +197,22 @@ def _capital_bytes(root: Path) -> dict[str, bytes]:
     }
 
 
+def _decision_ledger_rows(root: Path) -> list[dict[str, Any]]:
+    delayed_root = root / "delayed_paper"
+    paths = [
+        *sorted(delayed_root.glob("decision_ledger.segment-*.jsonl")),
+        delayed_root / "decision_ledger.jsonl",
+    ]
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        if path.is_file():
+            rows.extend(
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            )
+    return rows
+
+
 def _shifted_transport(minutes: int) -> FixtureTradingDatasTransport:
     delta = timedelta(minutes=minutes)
     shifted_rows = copy.deepcopy(bar_rows())
@@ -908,6 +924,281 @@ def test_bounded_backlog_progresses_without_skipping_slots(
     assert (
         len(list((output_root / "delayed_paper" / "completions").glob("*.json"))) == 4
     )
+
+
+def test_explicit_outage_gap_recovers_latest_window_without_capital_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+    first = run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+    capital_before = _capital_bytes(output_root)
+    runs_before = {
+        path.name: path.read_bytes()
+        for path in sorted((output_root / "runs").glob("*.json"))
+    }
+    original_run_core = runtime_module._run_core_safely
+
+    def reject_unrecoverable_historical(**kwargs: Any) -> dict[str, Any]:
+        request = kwargs["request"]
+        if request.window_end == WINDOW_END + timedelta(minutes=5):
+            return runner_module._data_reject(
+                store=CryptoDelayedPaperObservationStore(output_root),
+                profile=kwargs["profile"],
+                request=request,
+                reason_code=(
+                    runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+                ),
+            )
+        return original_run_core(**kwargs)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_run_core_safely",
+        reject_unrecoverable_historical,
+    )
+    recovered = run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(minutes=30, seconds=55),
+        transport_factory=_factory(_shifted_transport(30)),
+    )
+
+    assert recovered["status"] == "completed"
+    assert recovered["requested_window_consumed"] is True
+    assert recovered["outage_gap_recovered"] is True
+    assert recovered["processed_cycle_count"] == 2
+    assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
+        "fresh_query",
+        "outage_gap_recovery",
+    ]
+    gap_result = recovered["cycle_results"][-1]["result"]
+    assert gap_result["capital_effect"] == "none_preserved_outage_recovery"
+    assert gap_result["skipped_from"] == "2026-07-19T01:05:00Z"
+    assert gap_result["skipped_to"] == "2026-07-19T01:25:00Z"
+    assert gap_result["recovery_market_slot"] == "2026-07-19T01:30:00Z"
+    assert gap_result["candidate_generated"] is False
+    assert gap_result["order_generated"] is False
+    assert gap_result["fill_generated"] is False
+    assert _capital_bytes(output_root) == capital_before
+    assert {
+        path.name: path.read_bytes()
+        for path in sorted((output_root / "runs").glob("*.json"))
+    } == runs_before
+
+    gap_rows = [
+        row
+        for row in _decision_ledger_rows(output_root)
+        if row.get("event_type") == "data_gap"
+    ]
+    assert len(gap_rows) == 1
+    gap = gap_rows[0]
+    assert gap["reason_code"] == (
+        runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+    )
+    assert gap["source_proof"]["same_observation"] is True
+    assert gap["source_proof"]["evidence_gate"] == {
+        "state": "ready",
+        "freshness": "fresh",
+        "quality_valid": True,
+        "degraded": False,
+        "receipt_lineage_complete": True,
+        "same_observation": True,
+    }
+    assert set(gap["source_proof"]["source_bindings"]) == {
+        *BAR_DATASETS.values(),
+        *RULE_DATASETS.values(),
+    }
+    assert set(gap["recovery_counterfactuals"]) == {"BTCUSDT", "ETHUSDT"}
+    assert all(
+        item["authority"] == "none"
+        and item["candidate_generated"] is False
+        and item["order_generated"] is False
+        and item["fill_generated"] is False
+        for item in gap["recovery_counterfactuals"].values()
+    )
+    _assert_recursive_non_authority(gap)
+    _assert_recursive_non_authority(recovered)
+
+    capital_at_replay = _capital_bytes(output_root)
+    ledger_at_replay = [
+        json.dumps(row, sort_keys=True) for row in _decision_ledger_rows(output_root)
+    ]
+
+    def forbidden_factory(*_: Any, **__: Any) -> Callable[..., HTTPResponse]:
+        raise AssertionError("same-slot outage replay must not query TradingDatas")
+
+    replay = run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(minutes=30, seconds=59),
+        transport_factory=forbidden_factory,
+    )
+    assert replay["status"] == "noop"
+    assert replay["outage_gap_recovered"] is False
+    assert replay["market_data_network_used"] is False
+    assert _capital_bytes(output_root) == capital_at_replay
+    assert [
+        json.dumps(row, sort_keys=True) for row in _decision_ledger_rows(output_root)
+    ] == ledger_at_replay
+
+    adjacent = run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(minutes=35, seconds=55),
+        transport_factory=_factory(_shifted_transport(35)),
+    )
+    assert adjacent["status"] == "completed"
+    assert adjacent["outage_gap_recovered"] is False
+    assert adjacent["cycle_results"][0]["cycle_kind"] == "fresh_query"
+    assert adjacent["cycle_results"][0]["target_window_end"] == ("2026-07-19T01:40:00Z")
+    assert (
+        len(
+            [
+                row
+                for row in _decision_ledger_rows(output_root)
+                if row.get("event_type") == "data_gap"
+            ]
+        )
+        == 1
+    )
+
+
+def test_outage_gap_requires_complete_fresh_window_and_preserves_capital(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+    run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    capital_before = _capital_bytes(output_root)
+    original_run_core = runtime_module._run_core_safely
+
+    def reject_unrecoverable_historical(**kwargs: Any) -> dict[str, Any]:
+        if kwargs["request"].window_end == WINDOW_END + timedelta(minutes=5):
+            return runner_module._data_reject(
+                store=CryptoDelayedPaperObservationStore(output_root),
+                profile=kwargs["profile"],
+                request=kwargs["request"],
+                reason_code=(
+                    runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+                ),
+            )
+        return original_run_core(**kwargs)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_run_core_safely",
+        reject_unrecoverable_historical,
+    )
+    incomplete = _shifted_transport(30)
+    incomplete.rows_by_dataset[BAR_DATASETS["BTCUSDT"]].pop()
+    receipt = run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(minutes=30, seconds=55),
+        transport_factory=_factory(incomplete),
+    )
+
+    assert receipt["status"] == "data_reject"
+    assert receipt["outage_gap_recovered"] is False
+    assert _capital_bytes(output_root) == capital_before
+    assert not any(
+        row.get("event_type") == "data_gap"
+        for row in _decision_ledger_rows(output_root)
+    )
+
+
+@pytest.mark.parametrize("tamper_target", ["gap_event", "capital_head"])
+def test_outage_gap_tamper_fails_closed_on_same_slot_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tamper_target: str,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+    run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    original_run_core = runtime_module._run_core_safely
+
+    def reject_unrecoverable_historical(**kwargs: Any) -> dict[str, Any]:
+        if kwargs["request"].window_end == WINDOW_END + timedelta(minutes=5):
+            return runner_module._data_reject(
+                store=CryptoDelayedPaperObservationStore(output_root),
+                profile=kwargs["profile"],
+                request=kwargs["request"],
+                reason_code=(
+                    runtime_module.HISTORICAL_EXACT_AS_OF_UNRECOVERABLE_REASON
+                ),
+            )
+        return original_run_core(**kwargs)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_run_core_safely",
+        reject_unrecoverable_historical,
+    )
+    recovered = run_crypto_delayed_paper_server_once(
+        runtime_manifest=manifest_path,
+        token_file=token_file,
+        output_root=output_root,
+        now=WINDOW_END + timedelta(minutes=30, seconds=55),
+        transport_factory=_factory(_shifted_transport(30)),
+    )
+    assert recovered["status"] == "completed"
+
+    if tamper_target == "gap_event":
+        gap = next(
+            row
+            for row in _decision_ledger_rows(output_root)
+            if row.get("event_type") == "data_gap"
+        )
+        index_path = (
+            output_root / "delayed_paper" / "event_index" / f"{gap['event_id']}.json"
+        )
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload["reason_code"] = "tampered"
+        index_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    else:
+        head_path = output_root / "capital" / "head.json"
+        payload = json.loads(head_path.read_text(encoding="utf-8"))
+        payload["checksum"] = "0" * 64
+        head_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        CryptoDelayedPaperRuntimeError,
+        match="runtime_(observation_state|gap_capital)_invalid",
+    ):
+        run_crypto_delayed_paper_server_once(
+            runtime_manifest=manifest_path,
+            token_file=token_file,
+            output_root=output_root,
+            now=WINDOW_END + timedelta(minutes=30, seconds=59),
+            transport_factory=_factory(_shifted_transport(30)),
+        )
 
 
 def test_completed_same_slot_is_noop_without_network_or_duplicate_capital(

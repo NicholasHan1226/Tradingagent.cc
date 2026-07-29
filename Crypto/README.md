@@ -304,6 +304,17 @@ disabled，停止新 service，并同时保留旧 archive 与新 epoch root 作�
 generation 或替换 root。任何情况下都不得跨 epoch 合并现金、仓位、订单、权益、
 PnL、收益率或晋级样本。
 
+current generation-2 epoch 内若再次停机，runtime 仍先严格读取下一历史
+exact-as-of；只有该读取以固定
+`metadata.data_through must not be after the requested as_of` 原因拒绝、pending
+为空、最新 13 根 closed-5m 窗口及 receipt/lineage/freshness/quality 全部合格，
+并且现有资本链完整守恒时，才追加一条 checksum/index/ledger-bound `data_gap`。
+它精确记录 skipped range、拒绝请求、source proof、资本 head 锚点和恢复首窗的
+observation/counterfactual；不调用资本 writer，不创建 run、候选、订单或成交，
+也不写 learning completion。相同槽只做无网络幂等校验，下一根连续窗口才回到
+正常核心。任一 gap/index/ledger/资本篡改、pending 或 fresh 证据不完整均
+fail closed；本机制不创建新 epoch，也不重置或聚合 10,000 USDT。
+
 本批 `fixture_auto_sim.py` 是 `crypto-capital-v1` 本地 fixture opening 闭环的唯一可写入口，但它仍是非权威候选。旧 `workflow.py`、`simulator.py`、`sim_executor.py` 与 `shadow_runner.py` 已变为无条件 fail-closed tombstone，不能通过注入 reader、切换配置或恢复旧 authority 重新启用。`promotion.py` 只保留只读研究 scorecard，永久输出不可自动晋级；shared governance 已把 `crypto-shadow-sim-v1` 降为历史证据并登记 `crypto-capital-v1` 为 `local_fixture_simulated_candidate`，不构成 current/runtime/live authority。
 
 资本链 checksum、进程锁和 package-private writer capability 只防止正常调用误写、协作进程冲突与常见落盘损坏，不是抵御可修改同一 Python 进程、代码或账本文件的恶意主体的安全边界。默认构造的 ledger 只读，writer 仅由 fixture runtime 内部工厂创建；但拥有相同用户文件写权限的恶意或失控进程仍可能改写并重算本地链。未来获得任何生产资本权威前，必须另行验证进程隔离、运行 UID/GID、目录 owner/mode/ACL、只允许单一 writer 以及外部 durable receipt；本地链不得被当作密码学签名或 broker attestation。
