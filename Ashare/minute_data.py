@@ -37,7 +37,7 @@ from shared.universe.policy import is_mainboard_tradable
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 FIVE_MINUTES = timedelta(minutes=5)
 MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
-MAX_DELAYED_PAPER_LATENCY = timedelta(seconds=390)
+MAX_DELAYED_PAPER_LATENCY = timedelta(minutes=12)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
 

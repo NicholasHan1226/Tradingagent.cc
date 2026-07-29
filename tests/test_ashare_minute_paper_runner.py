@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 import json
 from pathlib import Path
+
+import pytest
 
 from Ashare.minute_canary import MinuteCanaryConfig
 from Ashare.minute_data import (
@@ -13,7 +16,11 @@ from Ashare.minute_data import (
     MinuteEvidenceUse,
     MinuteTimestampSemantics,
 )
-from Ashare.minute_paper_runner import run_delayed_minute_paper_once
+from Ashare.minute_loop import MinuteLoopContractError
+from Ashare.minute_paper_runner import (
+    MinutePaperRunnerError,
+    run_delayed_minute_paper_once,
+)
 
 
 def _sha(character: str) -> str:
@@ -202,9 +209,7 @@ def test_runner_persists_fixture_state_and_waits_for_reachable_fill(
                 universe_path=universe,
                 token_file=tmp_path / "token",
                 state_bundle=state,
-                decision_time=datetime.fromisoformat(
-                    f"2026-07-28T{end}+08:00"
-                )
+                decision_time=datetime.fromisoformat(f"2026-07-28T{end}+08:00")
                 + timedelta(minutes=5, seconds=7),
                 trading_date=date(2026, 7, 28),
                 bar_end=f"2026-07-28 {end}",
@@ -229,3 +234,85 @@ def test_runner_persists_fixture_state_and_waits_for_reachable_fill(
     assert persisted["real_trading_enabled"] is False
     assert persisted["last_receipt"] == receipts[-1]
     assert oct(state.stat().st_mode & 0o777) == "0o600"
+
+
+def test_runner_rejects_mixed_bar_end_despite_complete_symbol_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, references, universe = _write_inputs(tmp_path)
+    requested_end = "2026-07-28 10:20:00"
+    snapshot = _snapshot("2026-07-28T10:20:00+08:00", 10.0)
+    mixed_end = datetime.fromisoformat("2026-07-28T10:25:00+08:00")
+    mixed_bar = replace(
+        snapshot.bars[1],
+        bar_start=mixed_end - timedelta(minutes=5),
+        bar_end=mixed_end,
+        data_through=mixed_end + timedelta(minutes=10),
+        observed_at=mixed_end + timedelta(minutes=10),
+        available_at=mixed_end + timedelta(minutes=10),
+        decision_time=mixed_end + timedelta(minutes=10, seconds=1),
+    )
+    mixed_snapshot = replace(snapshot, bars=(snapshot.bars[0], mixed_bar))
+    seen_filters: list[dict] = []
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        seen_filters.append(dict(config.filters))
+        return _profile(), mixed_snapshot, MinuteEvidenceAuditLedger()
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot",
+        fake_load,
+    )
+    state = tmp_path / "state" / "bundle.json"
+
+    with pytest.raises(MinuteLoopContractError, match="research_rejected") as error:
+        run_delayed_minute_paper_once(
+            manifest=manifest,
+            reference_facts_path=references,
+            universe_path=universe,
+            token_file=tmp_path / "token",
+            state_bundle=state,
+            decision_time=datetime.fromisoformat("2026-07-28T10:35:01+08:00"),
+            trading_date=date(2026, 7, 28),
+            bar_end=requested_end,
+        )
+
+    assert error.value.__cause__ is not None
+    assert str(error.value.__cause__) == "minute_snapshot_mixed_bar_end"
+    assert seen_filters == [{"time": {"eq": requested_end}}]
+    assert not state.exists()
+
+
+def test_runner_requires_exact_universe_coverage_before_state_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, references, universe = _write_inputs(tmp_path)
+    snapshot = _snapshot("2026-07-28T10:20:00+08:00", 10.0)
+    partial_snapshot = replace(
+        snapshot,
+        bars=snapshot.bars[:1],
+        row_count=1,
+    )
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        return _profile(), partial_snapshot, MinuteEvidenceAuditLedger()
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot",
+        fake_load,
+    )
+    state = tmp_path / "state" / "bundle.json"
+
+    with pytest.raises(MinutePaperRunnerError, match="universe_incomplete"):
+        run_delayed_minute_paper_once(
+            manifest=manifest,
+            reference_facts_path=references,
+            universe_path=universe,
+            token_file=tmp_path / "token",
+            state_bundle=state,
+            decision_time=datetime.fromisoformat("2026-07-28T10:30:01+08:00"),
+            trading_date=date(2026, 7, 28),
+            bar_end="2026-07-28 10:20:00",
+        )
+
+    assert not state.exists()

@@ -508,28 +508,29 @@ def test_latency_future_and_replay_mismatch_fail_closed() -> None:
             trading_dates=frozenset({date(2026, 7, 27)}),
             audit_ledger=audit,
         )
+    assert audit.records()[0].reason_code == "minute_evidence_latency_exceeded"
 
 
-def test_delayed_paper_accepts_one_bar_provider_lag_without_execution_authority() -> (
-    None
-):
+def test_delayed_paper_accepts_ten_minute_lag_without_execution_authority() -> None:
     delayed = _metadata(
-        observed_at="2026-07-27T09:45:28+08:00",
-        data_through="2026-07-27T09:45:26+08:00",
+        observed_at="2026-07-27T09:50:00+08:00",
+        data_through="2026-07-27T09:50:00+08:00",
     )
     snapshot, audit = _load(
         _Transport(metadata=delayed),
-        decision_time="2026-07-27T09:45:29+08:00",
+        decision_time="2026-07-27T09:50:01+08:00",
         evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
     )
     assert audit.records() == ()
-    assert all(bar.evidence_use is MinuteEvidenceUse.DELAYED_PAPER for bar in snapshot.bars)
+    assert all(
+        bar.evidence_use is MinuteEvidenceUse.DELAYED_PAPER for bar in snapshot.bars
+    )
     assert all(bar.delayed_paper_eligible is True for bar in snapshot.bars)
     assert all(bar.execution_latency_eligible is False for bar in snapshot.bars)
 
     too_late = _metadata(
-        observed_at="2026-07-27T09:46:31+08:00",
-        data_through="2026-07-27T09:46:30+08:00",
+        observed_at="2026-07-27T09:52:01+08:00",
+        data_through="2026-07-27T09:52:01+08:00",
     )
     client = _client(_Transport(metadata=too_late))
     profile = _profile(client)
@@ -538,11 +539,12 @@ def test_delayed_paper_accepts_one_bar_provider_lag_without_execution_authority(
         TradingDatasMinuteMarketDataPort(client).load_snapshot(
             profile=profile,
             filters={},
-            decision_time=datetime.fromisoformat("2026-07-27T09:46:32+08:00"),
+            decision_time=datetime.fromisoformat("2026-07-27T09:52:02+08:00"),
             trading_dates=frozenset({date(2026, 7, 27)}),
             audit_ledger=late_audit,
             evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
         )
+    assert late_audit.records()[0].reason_code == "minute_evidence_latency_exceeded"
 
     changed_client = _client(_Transport(replay_change=True))
     changed_profile = _profile(changed_client)

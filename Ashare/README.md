@@ -105,8 +105,9 @@ a production-ready minute dataset.
   close or a trade date;
 - `bar_end <= data_through <= observed_at == available_at <= decision_time`;
 - an explicit latency tier: `low_latency_execution` remains capped at 30
-  seconds; `delayed_paper` is capped at 390 seconds and is permanently
-  ineligible to claim low-latency execution evidence;
+  seconds; the non-production `delayed_paper` observation/simulation tier is
+  capped at 720 seconds and is permanently ineligible to claim low-latency
+  execution evidence;
 - positive valid OHLC prices, nonnegative amount, positive volume, no
   suspension, and no duplicate/conflicting `(symbol, bar_end)` identity;
 - envelope state `ready`, `degraded=false`, freshness `fresh/stale=false`,
@@ -115,8 +116,11 @@ a production-ready minute dataset.
 Rejected data creates `MinuteEvidenceAuditRecord` only. It is never feature-,
 candidate-, or execution-eligible. The delayed tier exists solely because the
 current TradingDatas/QuickSync five-minute source is observed about one
-completed bar late. It preserves the real `observed_at/available_at` timestamp
-and never rewrites it to satisfy the 30-second gate.
+to two completed bars late. It preserves the real `observed_at/available_at`
+timestamp and never rewrites it to satisfy the 30-second gate. The wider
+delayed-paper ceiling does not relax exact requested-bar coverage, Universe
+identity, metadata, replay or same-observation requirements: partial, mixed
+bar-end or degraded snapshots still fail closed.
 
 ### Small-account fixture simulation
 
