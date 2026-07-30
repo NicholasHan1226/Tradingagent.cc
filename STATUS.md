@@ -2,8 +2,8 @@
 
 > 最后更新：2026-07-30 14:30 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
-> **2026-07-30 14:30 双市场运行收口：** TradingAgent 主线、GitHub
-> `origin/main` 与服务器不可变 release 当前均为
+> **2026-07-30 14:30 双市场运行收口：** TradingAgent 当前运行代码基线与
+> 服务器不可变 release 均为
 > `db9707a5d1385d354035c829179289dfd1e1b5e8`。Crypto 5 分钟核心 timer
 > 为 `enabled/active`，最近自动轮 `success/exit0`；10,000 USDT 模拟账户
 > `balanced=true`，现金约 7,998.21 USDT，保留 BTC/ETH 两笔既有模拟持仓与
