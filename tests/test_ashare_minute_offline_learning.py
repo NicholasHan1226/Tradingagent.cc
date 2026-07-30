@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import date
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -15,7 +19,6 @@ from Ashare.minute_offline_learning import (
     write_minute_offline_learning_projection,
 )
 from Ashare.minute_research import MinuteResearchUniverse
-from datetime import date
 
 
 def _bundle(
@@ -158,3 +161,30 @@ def test_tracked_timer_candidate_is_not_an_enabled_runtime() -> None:
     assert "disabled by default" in timer
     assert "REAL_TRADING_ENABLED=false" in service
     assert "shared/review" not in service
+
+
+def test_module_cli_persists_projection_and_prints_result(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path / "cli-incomplete.json")
+    root = (tmp_path / "cli-learning").resolve()
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "Ashare.minute_offline_learning",
+            "--state-bundle",
+            str(bundle),
+            "--learning-root",
+            str(root),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={"PATH": os.environ["PATH"], "REAL_TRADING_ENABLED": "false"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    result = json.loads(completed.stdout)
+    assert result["appended"] is True
+    assert result["projection"]["status"] == "blocked"
+    assert (root / JOURNAL_NAME).is_file()
+    assert (root / "minute_fixture_learning_latest.json").is_file()
