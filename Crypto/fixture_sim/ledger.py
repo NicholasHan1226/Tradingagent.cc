@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import fcntl
 import json
 import os
@@ -171,6 +172,11 @@ class CryptoCapitalLedger:
         self.lock_path = self.root / ".lock"
         self.cycle_lock_path = self.root / ".cycle.lock"
         self._write_enabled = _write_capability is _LEDGER_WRITE_CAPABILITY
+        self._cycle_lock_held = False
+        self._cycle_rows_cache: list[dict[str, Any]] | None = None
+        self._cycle_state_cache: dict[str, Any] | None = None
+        self._cycle_checksum_cache: str | None = None
+        self._cycle_events_fingerprint: tuple[int, int, int, int] | None = None
 
     def _require_writer(self) -> None:
         if not self._write_enabled:
@@ -205,10 +211,59 @@ class CryptoCapitalLedger:
         self._assert_safe_paths()
         with self.cycle_lock_path.open("a+", encoding="utf-8") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            self._cycle_lock_held = True
+            self._clear_cycle_cache()
             try:
                 yield
             finally:
+                self._clear_cycle_cache()
+                self._cycle_lock_held = False
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+    def _clear_cycle_cache(self) -> None:
+        self._cycle_rows_cache = None
+        self._cycle_state_cache = None
+        self._cycle_checksum_cache = None
+        self._cycle_events_fingerprint = None
+
+    def _events_fingerprint(self) -> tuple[int, int, int, int] | None:
+        if not self.events_path.exists():
+            return None
+        node = self.events_path.stat()
+        return (node.st_dev, node.st_ino, node.st_size, node.st_mtime_ns)
+
+    def _cache_cycle_replay(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        state: dict[str, Any],
+        checksum: str,
+    ) -> None:
+        if not self._cycle_lock_held:
+            return
+        self._cycle_rows_cache = [dict(row) for row in rows]
+        self._cycle_state_cache = state
+        self._cycle_checksum_cache = checksum
+        self._cycle_events_fingerprint = self._events_fingerprint()
+
+    def _validated_rows_state(
+        self,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+        if (
+            self._cycle_lock_held
+            and self._cycle_rows_cache is not None
+            and self._cycle_state_cache is not None
+            and self._cycle_checksum_cache is not None
+            and self._cycle_events_fingerprint == self._events_fingerprint()
+        ):
+            return (
+                self._cycle_rows_cache,
+                self._cycle_state_cache,
+                self._cycle_checksum_cache,
+            )
+        rows = self._read_events()
+        state, checksum = self._validate_and_replay(rows)
+        self._cache_cycle_replay(rows, state, checksum)
+        return rows, state, checksum
 
     @staticmethod
     def _empty_state() -> dict[str, Any]:
@@ -366,8 +421,9 @@ class CryptoCapitalLedger:
         with self.lock_path.open("a+", encoding="utf-8") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             rows = self._read_events_unlocked()
-            checksum = self._validate_event_rows_without_head(rows)
+            state, checksum = self._replay_event_rows_without_head(rows)
             self._repair_head_locked(rows, checksum)
+            self._cache_cycle_replay(rows, state, checksum)
             return checksum
 
     @staticmethod
@@ -875,8 +931,7 @@ class CryptoCapitalLedger:
         mark_slots: Mapping[str, Any] | None = None,
         valuation_slot: Any,
     ) -> dict[str, Any]:
-        rows = self._read_events()
-        state, checksum = self._validate_and_replay(rows)
+        rows, state, checksum = self._validated_rows_state()
         payload = self._snapshot_payload(
             state,
             marks=marks or {},
@@ -888,21 +943,18 @@ class CryptoCapitalLedger:
         return payload
 
     def head(self) -> tuple[int, str]:
-        rows = self._read_events()
-        _, checksum = self._validate_and_replay(rows)
+        rows, _, checksum = self._validated_rows_state()
         return len(rows), checksum
 
     def cycle_guard(self, *, symbol: str) -> tuple[set[str], datetime | None]:
-        rows = self._read_events()
-        state, _ = self._validate_and_replay(rows)
+        _, state, _ = self._validated_rows_state()
         incomplete = set(state["cycle_claims"]) - set(state["reconciled_runs"])
         return incomplete, state["last_valuation_by_symbol"].get(symbol)
 
     def account_cycle_guard(
         self, *, symbol: str
     ) -> tuple[set[str], datetime | None, datetime | None]:
-        rows = self._read_events()
-        state, _ = self._validate_and_replay(rows)
+        _, state, _ = self._validated_rows_state()
         incomplete = set(state["cycle_claims"]) - set(state["reconciled_runs"])
         return (
             incomplete,
@@ -911,16 +963,14 @@ class CryptoCapitalLedger:
         )
 
     def event_by_reference(self, reference_id: str) -> dict[str, Any] | None:
-        rows = self._read_events()
-        self._validate_and_replay(rows)
+        rows, _, _ = self._validated_rows_state()
         matches = [row for row in rows if row.get("reference_id") == reference_id]
         if len(matches) > 1:
             raise CryptoLedgerError("capital_reference_id_duplicated")
         return dict(matches[0]) if matches else None
 
     def event_by_checksum(self, checksum: str) -> dict[str, Any] | None:
-        rows = self._read_events()
-        self._validate_and_replay(rows)
+        rows, _, _ = self._validated_rows_state()
         matches = [row for row in rows if row.get("checksum") == checksum]
         if len(matches) > 1:
             raise CryptoLedgerError("capital_event_checksum_duplicated")
@@ -942,8 +992,19 @@ class CryptoCapitalLedger:
         self._assert_safe_paths()
         with self.lock_path.open("a+", encoding="utf-8") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            rows = self._read_events_unlocked()
-            current_checksum = self._validate_event_rows_without_head(rows)
+            if (
+                self._cycle_lock_held
+                and self._cycle_rows_cache is not None
+                and self._cycle_state_cache is not None
+                and self._cycle_checksum_cache is not None
+                and self._cycle_events_fingerprint == self._events_fingerprint()
+            ):
+                rows = self._cycle_rows_cache
+                state = self._cycle_state_cache
+                current_checksum = self._cycle_checksum_cache
+            else:
+                rows = self._read_events_unlocked()
+                state, current_checksum = self._replay_event_rows_without_head(rows)
             self._repair_head_locked(rows, current_checksum)
             canonical_payload = _canonical_value(payload)
             for row in rows:
@@ -968,8 +1029,8 @@ class CryptoCapitalLedger:
             }
             event = dict(event_without_checksum)
             event["checksum"] = self._event_checksum(event_without_checksum)
-            test_rows = [*rows, event]
-            self._validate_event_rows_without_head(test_rows)
+            next_state = copy.deepcopy(state)
+            self._apply_event(next_state, event)
             with self.events_path.open("a", encoding="utf-8") as stream:
                 stream.write(_canonical_json(event) + "\n")
                 stream.flush()
@@ -980,11 +1041,22 @@ class CryptoCapitalLedger:
             finally:
                 os.close(directory_fd)
             self._write_head(sequence=sequence, checksum=event["checksum"])
+            self._cache_cycle_replay(
+                [*rows, event],
+                next_state,
+                event["checksum"],
+            )
             return event, False
 
     def _validate_event_rows_without_head(
         self, rows: Sequence[Mapping[str, Any]]
     ) -> str:
+        _, checksum = self._replay_event_rows_without_head(rows)
+        return checksum
+
+    def _replay_event_rows_without_head(
+        self, rows: Sequence[Mapping[str, Any]]
+    ) -> tuple[dict[str, Any], str]:
         state = self._empty_state()
         previous_checksum = ""
         for index, row in enumerate(rows, start=1):
@@ -1000,7 +1072,7 @@ class CryptoCapitalLedger:
                 raise CryptoLedgerError("capital_candidate_checksum_invalid")
             self._apply_event(state, row)
             previous_checksum = checksum
-        return previous_checksum
+        return state, previous_checksum
 
     def _write_head(self, *, sequence: int, checksum: str) -> None:
         payload = {

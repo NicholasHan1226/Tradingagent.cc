@@ -442,6 +442,47 @@ def test_same_slot_replay_is_idempotent_and_does_not_append(tmp_path: Path) -> N
     assert len(events_path.read_text(encoding="utf-8").splitlines()) == 5
 
 
+def test_each_fixture_cycle_validates_capital_history_only_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_read_events = CryptoCapitalLedger._read_events_unlocked
+    read_calls: list[Path] = []
+
+    def record_read(self: CryptoCapitalLedger) -> list[dict[str, object]]:
+        read_calls.append(self.events_path)
+        return original_read_events(self)
+
+    monkeypatch.setattr(
+        CryptoCapitalLedger,
+        "_read_events_unlocked",
+        record_read,
+    )
+
+    first = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+    assert first["idempotent_replay"] is False
+    assert read_calls == [tmp_path / "capital" / "events.jsonl"]
+
+    second = run_fixture_auto_sim(_fixture(), output_root=tmp_path)
+    assert second["idempotent_replay"] is True
+    assert read_calls == [
+        tmp_path / "capital" / "events.jsonl",
+        tmp_path / "capital" / "events.jsonl",
+    ]
+
+
+def test_cycle_cache_detects_external_event_file_mutation(tmp_path: Path) -> None:
+    ledger = fixture_runtime._open_runtime_ledger(tmp_path / "capital")
+
+    with ledger._cycle_lock():
+        ledger._ensure_opening()
+        ledger.head()
+        with ledger.events_path.open("ab") as stream:
+            stream.write(b"{partial")
+        with pytest.raises(CryptoLedgerError, match="partial_tail"):
+            ledger.head()
+
+
 def test_crash_after_ledger_commit_recovers_without_duplicate_fill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
