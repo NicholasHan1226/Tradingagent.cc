@@ -1,6 +1,17 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 20:15 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-31 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-31 多市场运行拓扑与模型路线合同：** 仓库新增
+> `tradingagent.runtime_topology.v1`机器合同和校验器，冻结A股、CNFutures、
+> Crypto三个独立market writer/fault domain/state namespace，以及
+> `single_host_sim`、按市场拆机和独立`research-host`三种sim-only放置方式。
+> 数据面仍只允许TradingDatas catalog/query；共享SQLite/NFS双写、第二active
+> writer、provider fallback、自动Champion/风险扩张和真实执行均失败关闭。
+> 架构文档同时冻结LightGBM/校准/DeepSeek evidence优先、Kronos与一个通用时序
+> 模型后置挑战、HMM/GARCH与凸优化分阶段验收路线。这只是仓库架构与测试合同，
+> 未部署新服务器、未迁移现役A股/Crypto状态、未调用模型网络，也未改变任何timer、
+> broker或真实交易权限。
 
 > **2026-07-30 20:15 加速预检收口：** 当前服务器不可变 TradingAgent
 > release 仍为 `1c99cffa43d2f6de587538f371b85291c6ab1d55`，TradingDatas
