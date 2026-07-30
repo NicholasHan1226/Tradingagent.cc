@@ -1,6 +1,47 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 19:37 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 20:15 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-30 20:15 加速预检收口：** 当前服务器不可变 TradingAgent
+> release 仍为 `1c99cffa43d2f6de587538f371b85291c6ab1d55`，TradingDatas
+> A股生产仍为已验证的 30 股 release
+> `5ac3925c3931a81132ea02abb16f9745033fb6dc`。本轮没有切换生产数据面、
+> broker、Testnet/Live、模型网络或真实交易权限。
+>
+> Crypto 核心 timer 全程保持 `enabled/active`，completion/observation 已继续
+> 增长至 292/292。独立 learning full scrub 首次补齐 86 条历史缺失投影至
+> 289，幂等重放恢复 0 条；incremental one-shot 随后投影并重放第 290 条；
+> 本轮末再次对核心新增的 2 条 completion 执行 detached full scrub，
+> `292 completion → 292 projection receipt`，服务 `success/exit0`。
+> 学习侧 sample/KPI/Challenger/checkpoint 均为 292，Challenger 仍只建议且
+> 人工晋级；`model_network_used=false`、`promotion_authorized=false`、
+> `execution_authority=false`、`real_trading_enabled=false`。两个 learning
+> timer 继续 `disabled/inactive`，因此核心不依赖学习成功，24 小时连续稳定
+> 门禁仍未被绕过。首轮、幂等与增量证据分别位于
+> `/opt/investment/release-evidence/tradingagent/20260730T115748Z-crypto-learning-full-scrub-retry-1c99cff/`、
+> `/opt/investment/release-evidence/tradingagent/20260730T115858Z-crypto-learning-full-scrub-idempotent-1c99cff/`
+> 与
+> `/opt/investment/release-evidence/tradingagent/20260730T120457Z-crypto-learning-incremental-1c99cff/`。
+>
+> A股 500 股明日会话的仓外 Universe 已冻结为 500 个沪深主板代码，SHA256
+> `2894024d2dad1a42d3891e7ebb66dcc55475724c2a8a3d454f25d98d63588814`；
+> 正式策略口径为 468 个可进入候选、32 个风险警示代码仅观察。使用现役
+> release、TA UID987、正式 18082 catalog/query 和 token-file 的
+> 2026-07-31 隔离 initializer 已 PASS：500/500 上一交易日 reference、
+> page/row budget 500、Universe SHA 一致，只生成
+> `minute-manifest.json`、`reference-facts.json`、`universe.json`，没有
+> state bundle、资本、订单、成交或真实交易权限。早期辅助审计脚本曾错误使用
+> shell 引号包裹的相对路径；初始化结果未受影响，权威纠正回执为
+> `/opt/investment/release-evidence/tradingagent/20260730T120602Z-ashare500-next-session-preflight-1c99cff/correction-v4-authoritative-audit.json`
+> 及 `evidence-v5.sha256`。
+>
+> 当前剩余唯一 A股 500 放行门禁不是继续改 TA：TradingDatas 必须在
+> 2026-07-31 真实交易时段提供两根相邻、同一 bar end、无重复/缺失、正式
+> API 可终止分页的 500/500 快照，且逐轮
+> `ready/success/fresh/valid/non-degraded`、receipt/lineage 完整。通过后才在
+> `scale500` 隔离 root 运行 late-start runner 并切换 A股 timer；失败则继续
+> 使用现有 30 股链路。当前 A股 timer 仍 `enabled/active`，明日 09:18
+> initializer 与 09:49 minute timer 按现有 30 股生产合同运行。
 
 > **2026-07-30 19:37 双市场收盘/恢复状态：** TradingAgent 本轮运行修复的
 > 权威代码提交与服务器不可变 release 为
