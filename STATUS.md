@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 10:30 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 10:35 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 > **2026-07-30 10:10 A股分钟闭环恢复：** TradingDatas 先从误含
 > 500 股 fanout 的 `78435bb37754fda5bb4d2be6d46a9b63211b7401`
@@ -36,7 +36,9 @@
 > gap-recovery 规则取消跨缺口 pending、重置特征并继续，缺口日保持不可学习。
 > 10:29 自动轮已完成该恢复：30/30，明确记录 10:00、10:05、10:10 三个
 > gap slots，`candidate_count=0`、`pending_sleeves=[]`，没有人工参数、订单或
-> 资本变化。
+> 资本变化。10:34 下一正常自动轮处理 10:20 的 30/30 快照，恢复为 30 个
+> 特征、30 个候选、0 数据拒绝，并重新建立 baseline/dynamic_position
+> delayed-paper 待模拟动作；模拟权益仍为 50,000 CNY、零持仓。
 >
 > 同时，500 股隔离候选已取得 10:20 与 10:25 两根相邻实时快照；每根均为
 > 5×100、500 个唯一代码、单一 bar end、零重复，耗时分别 38.3 秒和
