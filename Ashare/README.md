@@ -284,6 +284,10 @@ mainboard ordinary share, belongs to one of the first three research themes,
 is at least 30 calendar days old, and is neither risk-warning nor
 delisting-risk. ChiNext/STAR/index or industry aggregate observations remain
 `context_only` and cannot become a feature symbol, candidate or order.
+An exact provider cohort may retain risk-warning or delisting-risk mainboard
+rows for snapshot identity, completeness and rejection auditing; the session
+initializer preserves their risk flags and the eligibility gate permanently
+excludes them from candidates and orders.
 
 `MinuteFixtureClosedLoop` processes one completed cross-sectional snapshot at a
 time:
