@@ -14,7 +14,7 @@ from Ashare.minute_session_initializer import (
     _scaled_minute_profile,
     initialize_minute_session,
 )
-from shared.data.sharedsignals_v1 import HTTPResponse
+from shared.data.sharedsignals_v1 import HTTPResponse, SharedSignalsV1Error
 
 
 CATALOG_VERSION = "v1-minute-session-fixture"
@@ -31,7 +31,12 @@ def _field(name: str) -> dict[str, Any]:
     }
 
 
-def _catalog_row(dataset_id: str, fields: list[str]) -> dict[str, Any]:
+def _catalog_row(
+    dataset_id: str,
+    fields: list[str],
+    *,
+    max_page_size: int = 500,
+) -> dict[str, Any]:
     return {
         "dataset_id": dataset_id,
         "schema_major": 2,
@@ -41,12 +46,15 @@ def _catalog_row(dataset_id: str, fields: list[str]) -> dict[str, Any]:
         "filter_operators": {
             name: ["eq", "in", "gte", "lte", "between"] for name in fields
         },
-        "limits": {"max_page_size": 500, "max_lookback_days": 36500},
+        "limits": {
+            "max_page_size": max_page_size,
+            "max_lookback_days": 36500,
+        },
         "availability": {"activation_states": ["active"]},
     }
 
 
-def _catalog_rows() -> list[dict[str, Any]]:
+def _catalog_rows(*, daily_max_page_size: int = 500) -> list[dict[str, Any]]:
     return [
         _catalog_row(
             "cn.market.trade_calendar",
@@ -55,6 +63,7 @@ def _catalog_rows() -> list[dict[str, Any]]:
         _catalog_row(
             "cn.equity.daily",
             ["ts_code", "trade_date", "close"],
+            max_page_size=daily_max_page_size,
         ),
         _catalog_row(
             "cn.dataset.rt_min",
@@ -96,11 +105,30 @@ class FixtureTransport:
         daily_degraded: bool = False,
         omit_symbol: str | None = None,
         daily_rows: list[dict[str, Any]] | None = None,
+        daily_max_page_size: int = 500,
+        daily_response_page_size: int | None = None,
+        daily_http_status: int | None = None,
+        daily_timeout: bool = False,
+        daily_catalog_drift: bool = False,
+        daily_duplicate: bool = False,
+        daily_replay_change: bool = False,
+        daily_wrong_trade_date: bool = False,
+        catalog_http_status: int | None = None,
     ) -> None:
         self.open_day = open_day
         self.daily_degraded = daily_degraded
         self.omit_symbol = omit_symbol
         self.daily_rows = daily_rows
+        self.daily_max_page_size = daily_max_page_size
+        self.daily_response_page_size = daily_response_page_size
+        self.daily_http_status = daily_http_status
+        self.daily_timeout = daily_timeout
+        self.daily_catalog_drift = daily_catalog_drift
+        self.daily_duplicate = daily_duplicate
+        self.daily_replay_change = daily_replay_change
+        self.daily_wrong_trade_date = daily_wrong_trade_date
+        self.catalog_http_status = catalog_http_status
+        self.daily_base_query_count = 0
         self.calls: list[dict[str, Any]] = []
 
     def __call__(
@@ -122,13 +150,18 @@ class FixtureTransport:
             }
         )
         if method == "GET":
+            if self.catalog_http_status is not None:
+                return HTTPResponse(
+                    status_code=self.catalog_http_status,
+                    json_body={"error": "fixture catalog http failure"},
+                )
             return HTTPResponse(
                 status_code=200,
                 json_body={
                     "api_version": "v1",
                     "catalog_version": CATALOG_VERSION,
                     "request_id": f"catalog-{len(self.calls)}",
-                    "data": _catalog_rows(),
+                    "data": _catalog_rows(daily_max_page_size=self.daily_max_page_size),
                 },
             )
         assert json_body is not None
@@ -144,6 +177,13 @@ class FixtureTransport:
             ]
             degraded = False
         elif dataset_id == "cn.equity.daily":
+            if self.daily_http_status is not None:
+                return HTTPResponse(
+                    status_code=self.daily_http_status,
+                    json_body={"error": "fixture daily http failure"},
+                )
+            if self.daily_timeout:
+                raise TimeoutError("fixture daily timeout")
             rows = (
                 copy.deepcopy(self.daily_rows)
                 if self.daily_rows is not None
@@ -160,14 +200,28 @@ class FixtureTransport:
                     },
                 ]
             )
-            requested_symbols = set(
-                json_body["filters"]["ts_code"]["in"]
-            )
-            rows = [
-                row for row in rows if row["ts_code"] in requested_symbols
-            ]
+            requested_symbols = set(json_body["filters"]["ts_code"]["in"])
+            rows = [row for row in rows if row["ts_code"] in requested_symbols]
             if self.omit_symbol is not None:
                 rows = [row for row in rows if row["ts_code"] != self.omit_symbol]
+            if self.daily_wrong_trade_date and rows:
+                rows[0]["trade_date"] = "20260725"
+            cursor = json_body.get("cursor")
+            if cursor is None:
+                self.daily_base_query_count += 1
+                offset = 0
+            else:
+                offset = int(str(cursor).removeprefix("daily-offset-"))
+            if self.daily_replay_change and self.daily_base_query_count == 2 and rows:
+                rows[0]["close"] += 0.01
+            page_size = self.daily_response_page_size or len(rows)
+            page_rows = rows[offset : offset + page_size]
+            if self.daily_duplicate and offset > 0 and page_rows:
+                page_rows[0] = copy.deepcopy(rows[0])
+            next_offset = offset + page_size
+            next_cursor = (
+                f"daily-offset-{next_offset}" if next_offset < len(rows) else None
+            )
             degraded = self.daily_degraded
         else:
             raise AssertionError(f"unexpected query {dataset_id}")
@@ -175,11 +229,17 @@ class FixtureTransport:
             status_code=200,
             json_body={
                 "api_version": "v1",
-                "catalog_version": CATALOG_VERSION,
+                "catalog_version": (
+                    "v1-minute-session-drift"
+                    if dataset_id == "cn.equity.daily" and self.daily_catalog_drift
+                    else CATALOG_VERSION
+                ),
                 "request_id": f"query-{len(self.calls)}",
                 "dataset_id": dataset_id,
-                "data": rows,
-                "next_cursor": None,
+                "data": page_rows if dataset_id == "cn.equity.daily" else rows,
+                "next_cursor": (
+                    next_cursor if dataset_id == "cn.equity.daily" else None
+                ),
                 "metadata": _metadata(dataset_id, degraded=degraded),
             },
         )
@@ -302,6 +362,15 @@ def _now() -> datetime:
     return datetime.fromisoformat("2026-07-29T09:20:00+08:00")
 
 
+def _daily_requests(transport: FixtureTransport) -> list[dict[str, Any]]:
+    return [
+        call["json_body"]
+        for call in transport.calls
+        if isinstance(call["json_body"], dict)
+        and call["json_body"].get("dataset_id") == "cn.equity.daily"
+    ]
+
+
 def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) -> None:
     _template(tmp_path)
     transport = FixtureTransport()
@@ -334,12 +403,7 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
     assert all(row["suspended"] is False for row in references)
     assert all(len(row["evidence_sha256"]) == 64 for row in references)
     assert not (day / "state-bundle.json").exists()
-    daily_requests = [
-        call["json_body"]
-        for call in transport.calls
-        if isinstance(call["json_body"], dict)
-        and call["json_body"].get("dataset_id") == "cn.equity.daily"
-    ]
+    daily_requests = _daily_requests(transport)
     assert len(daily_requests) == 2
     assert daily_requests[0]["filters"] == {
         "trade_date": {"eq": "20260728"},
@@ -378,12 +442,19 @@ def test_initializer_promotes_explicit_reviewed_universe_to_500(
     assert published_universe == universe
 
 
-def test_initializer_batches_daily_queries_to_ten_symbols(
+@pytest.mark.parametrize(
+    ("symbol_count", "expected_batch_size", "expected_request_count"),
+    [(1, 1, 2), (10, 10, 2), (500, 100, 10)],
+)
+def test_initializer_bounds_daily_batches_by_v1_in_filter_limit(
     tmp_path: Path,
+    symbol_count: int,
+    expected_batch_size: int,
+    expected_request_count: int,
 ) -> None:
     _template(tmp_path)
-    universe, daily = _large_universe(30)
-    source = tmp_path / "reviewed-universe-30.json"
+    universe, daily = _large_universe(symbol_count)
+    source = tmp_path / f"reviewed-universe-{symbol_count}.json"
     source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
     transport = FixtureTransport(daily_rows=daily)
 
@@ -395,18 +466,78 @@ def test_initializer_batches_daily_queries_to_ten_symbols(
         transport_factory=_factory(transport),
     )
 
-    daily_requests = [
-        call["json_body"]
-        for call in transport.calls
-        if isinstance(call["json_body"], dict)
-        and call["json_body"].get("dataset_id") == "cn.equity.daily"
-    ]
-    assert result["symbol_count"] == 30
-    assert len(daily_requests) == 6
+    daily_requests = _daily_requests(transport)
+    assert result["symbol_count"] == symbol_count
+    assert len(daily_requests) == expected_request_count
+    assert all(request["limit"] == expected_batch_size for request in daily_requests)
     assert all(
-        len(request["filters"]["ts_code"]["in"]) <= 10
+        len(request["filters"]["ts_code"]["in"]) == expected_batch_size
         for request in daily_requests
     )
+
+
+def test_initializer_uses_five_catalog_sized_batches_for_500_symbols(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(500)
+    source = tmp_path / "reviewed-universe-500.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+    transport = FixtureTransport(
+        daily_rows=daily,
+        daily_max_page_size=100,
+    )
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        transport_factory=_factory(transport),
+    )
+
+    daily_requests = _daily_requests(transport)
+    assert result["symbol_count"] == 500
+    assert len(daily_requests) == 10
+    assert all(request["limit"] == 100 for request in daily_requests)
+    assert all(
+        len(request["filters"]["ts_code"]["in"]) == 100 for request in daily_requests
+    )
+
+
+def test_initializer_follows_bounded_daily_pagination_for_each_replay(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(10)
+    source = tmp_path / "reviewed-universe-10.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+    transport = FixtureTransport(
+        daily_rows=daily,
+        daily_max_page_size=10,
+        daily_response_page_size=4,
+    )
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        transport_factory=_factory(transport),
+    )
+
+    daily_requests = _daily_requests(transport)
+    assert result["symbol_count"] == 10
+    assert len(daily_requests) == 6
+    assert [request.get("cursor") for request in daily_requests] == [
+        None,
+        "daily-offset-4",
+        "daily-offset-8",
+        None,
+        "daily-offset-4",
+        "daily-offset-8",
+    ]
+    assert all(request["limit"] == 10 for request in daily_requests)
 
 
 def test_scaled_profile_uses_catalog_page_budget() -> None:
@@ -538,9 +669,7 @@ def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
         transport_factory=_factory(FixtureTransport()),
     )
 
-    after = {
-        path.name: path.read_bytes() for path in (tmp_path / "20260729").iterdir()
-    }
+    after = {path.name: path.read_bytes() for path in (tmp_path / "20260729").iterdir()}
     assert first["reused"] is False
     assert second["reused"] is True
     assert before == after
@@ -588,22 +717,183 @@ def test_incomplete_daily_universe_fails_closed(tmp_path: Path) -> None:
             state_root=tmp_path,
             token_file=Path("/run/private/token"),
             now=_now(),
+            transport_factory=_factory(FixtureTransport(omit_symbol="600000.SH")),
+        )
+
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_duplicate_daily_identity_fails_closed_without_publishing(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(10)
+    source = tmp_path / "reviewed-universe-10.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+
+    with pytest.raises(SharedSignalsV1Error, match="duplicate_row_identity"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            universe_source=source,
             transport_factory=_factory(
-                FixtureTransport(omit_symbol="600000.SH")
+                FixtureTransport(
+                    daily_rows=daily,
+                    daily_max_page_size=10,
+                    daily_response_page_size=4,
+                    daily_duplicate=True,
+                )
             ),
         )
 
     assert not (tmp_path / "20260729").exists()
 
 
+def test_wrong_daily_trade_date_fails_exact_identity_check(tmp_path: Path) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_wrong_trade_date=True)
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_daily_identity_mismatch",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert len(_daily_requests(transport)) == 2
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_daily_pagination_page_budget_fails_closed_without_query_storm(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(10)
+    source = tmp_path / "reviewed-universe-10.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+    transport = FixtureTransport(
+        daily_rows=daily,
+        daily_max_page_size=10,
+        daily_response_page_size=1,
+    )
+
+    with pytest.raises(SharedSignalsV1Error, match="page_budget_exceeded"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            universe_source=source,
+            transport_factory=_factory(transport),
+        )
+
+    assert len(_daily_requests(transport)) == 5
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_daily_replay_change_fails_closed_without_publishing(tmp_path: Path) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_replay_change=True)
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_replay_mismatch:cn.equity.daily",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert len(_daily_requests(transport)) == 2
+    assert not (tmp_path / "20260729").exists()
+
+
+@pytest.mark.parametrize("status_code", [413, 429])
+def test_daily_http_error_fails_closed_without_retry_or_publish(
+    tmp_path: Path,
+    status_code: int,
+) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_http_status=status_code)
+
+    with pytest.raises(SharedSignalsV1Error, match=f"HTTP {status_code}"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert len(_daily_requests(transport)) == 1
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_catalog_429_fails_closed_without_query_or_retry(tmp_path: Path) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(catalog_http_status=429)
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_catalog_http_failed",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert len(transport.calls) == 1
+    assert _daily_requests(transport) == []
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_daily_timeout_fails_closed_without_retry_or_publish(tmp_path: Path) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_timeout=True)
+
+    with pytest.raises(TimeoutError, match="fixture daily timeout"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert len(_daily_requests(transport)) == 1
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_daily_catalog_drift_fails_closed_without_retry_or_publish(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_catalog_drift=True)
+
+    with pytest.raises(SharedSignalsV1Error, match="catalog_version"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert len(_daily_requests(transport)) == 1
+    assert not (tmp_path / "20260729").exists()
+
+
 def test_session_units_are_preopen_simulation_only_and_sandboxed() -> None:
     service = (
-        REPO_ROOT
-        / "deploy/systemd/tradingagent-ashare-minute-session.service"
+        REPO_ROOT / "deploy/systemd/tradingagent-ashare-minute-session.service"
     ).read_text(encoding="utf-8")
     timer = (
-        REPO_ROOT
-        / "deploy/systemd/tradingagent-ashare-minute-session.timer"
+        REPO_ROOT / "deploy/systemd/tradingagent-ashare-minute-session.timer"
     ).read_text(encoding="utf-8")
 
     for required in (
