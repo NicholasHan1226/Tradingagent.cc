@@ -253,6 +253,31 @@ epoch 的 `evolution/`、执行 disabled one-shot 与 full scrub；只有核心�
 24 小时门禁通过并经主集成复核后才可 enable timer。学习失败不得改变核心
 status、exit code、资本或订单。
 
+## 退出影子与健康快照
+
+现役 capital generation 的订单、成交和资本事件合同仍只支持
+`buy/observe`。为避免改坏已有 append-only 回放，
+`delayed_paper_exit_shadow.py` 独立读取最新已完成 observation、不可变 run
+bundle、当前 capital head 和已模拟买入回执，按冻结的 v1 规则计算：
+
+- `+3%` 止盈；
+- `-2%` 止损；
+- 最长持有 `24h`；
+- `observe` 且 1h/15m 动量同时转弱；
+- 卖出侧 2bps 保守滑点及 0.1% 费用后的完整往返反事实。
+
+结果按 observation 写入 `evolution/exit_shadow/`，固定
+`counterfactual_only=true`、`authority=none`、无 outbox/capital commit。
+相同 observation 幂等重放必须逐字节相同；源 completion、bundle 或 capital
+head 冲突即失败关闭。该投影不产生模拟卖出，也不改变现金、持仓、订单或核心
+exit code；真实的模拟卖出必须在后续新 capital generation 中单独实现、迁移和
+验证。
+
+`delayed_paper_health.py` 是 no-write 健康读侧，分别报告核心
+observation/completion/pending、资本守恒与 head、退出影子是否追平，以及学习
+checkpoint 是否追平。它只输出单市场 USDT 状态，不跨市场汇总资金，不拥有调度、
+晋级或交易 authority。
+
 ## Outage epoch restart 候选
 
 2026-07-29 ECS 停机后，旧 delayed-paper root 的最后 completion 停在
@@ -345,6 +370,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_systemd_candidate.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_learning.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_learning_systemd.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_exit_shadow.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_health.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
@@ -359,7 +386,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - 离线学习 worker/service/timer 仍是未部署候选，核心不会创建 `evolution/`
   或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
-- 本批 Champion 只覆盖 deterministic buy/observe paper 样本，尚不是完整买卖 round trip；
+- 本批 Champion 只覆盖 deterministic buy/observe paper 样本；退出影子已能形成
+  扣费完整往返反事实，但它不是资本账本中的模拟卖出；
 - fixture 测试结果不是收益率、胜率或晋级证据。
 
 停止本地运行即可回滚本批候选行为；已经产生的 append-only 资本与复盘输出应保留作审计，不得改写为其它账户事实。
