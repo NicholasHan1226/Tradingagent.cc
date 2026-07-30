@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 10:10 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 10:17 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 > **2026-07-30 10:10 A股分钟闭环恢复：** TradingDatas 先从误含
 > 500 股 fanout 的 `78435bb37754fda5bb4d2be6d46a9b63211b7401`
@@ -23,6 +23,14 @@
 > `REAL_TRADING_ENABLED=false`、`capital_authority=false`、
 > `execution_authority=false`。本轮服务器证据保存在
 > `/opt/investment/release-evidence/tradingagent/7bdb2f6701a8fe6e5a7e70678730997c44694108/ashare-20260730-late-start/`。
+>
+> 10:14 的下一次 TA 自动轮随后失败关闭。Fresh consumer readback 显示，
+> TradingDatas 10:15 最新生产 receipt 触发同质快照校验失败；正式 18082
+> 对 09:55、10:00、10:05 的精确查询均投影为
+> `state=failed,degraded=true,quality.valid=false,reasons=[validation_failed]`。
+> TA 没有绕过该 metadata，也没有继续产生候选、订单或资本变更。当前停止线是
+> TradingDatas 以新的单一 bar end 30/30 成功 receipt 恢复数据 authority；
+> 在此之前 A股分钟模拟保持失败关闭，500 股隔离候选不得切入正式 18082。
 
 > **2026-07-30 09:42 Crypto 自动闭环恢复：** PR
 > [#80](https://github.com/NicholasHan1226/Tradingagent.cc/pull/80) 已普通合并，
