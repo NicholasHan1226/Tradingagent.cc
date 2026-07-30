@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -157,6 +158,50 @@ def _universe() -> MinuteResearchUniverse:
     )
 
 
+def _large_universe_and_snapshot(
+    end: str,
+    *,
+    close_offset: float,
+    volume_offset: int,
+) -> tuple[MinuteResearchUniverse, MinuteBarSnapshot]:
+    symbols = tuple(
+        [f"600{index:03d}.SH" for index in range(250)]
+        + [f"000{index:03d}.SZ" for index in range(1, 251)]
+    )
+    universe = MinuteResearchUniverse(
+        instruments=tuple(
+            MinuteUniverseInstrument(
+                symbol=symbol,
+                name=f"Mainboard fixture {index}",
+                industry="mainboard_scan",
+                research_theme="mainboard_opportunity_scan",
+                list_date=date(2000, 1, 1),
+            )
+            for index, symbol in enumerate(symbols)
+        )
+    )
+    bars = tuple(
+        _bar(
+            end,
+            symbol=symbol,
+            close=10.0 + close_offset + index / 10_000,
+            volume=100_000 + volume_offset + index,
+        )
+        for index, symbol in enumerate(symbols)
+    )
+    snapshot = MinuteBarSnapshot(
+        profile=replace(_profile(), max_rows=500, page_limit=500),
+        bars=bars,
+        page_count=1,
+        row_count=500,
+        pagination_trace_sha256=_sha("5"),
+        first_semantic_sha256=_sha("6"),
+        replay_semantic_sha256=_sha("6"),
+        same_observation=True,
+    )
+    return universe, snapshot
+
+
 def _auxiliary(end: str) -> tuple[MinuteAuxiliaryEvidence, ...]:
     decision = datetime.fromisoformat(end) + timedelta(seconds=20)
     event = datetime.fromisoformat(end)
@@ -181,6 +226,45 @@ def _auxiliary(end: str) -> tuple[MinuteAuxiliaryEvidence, ...]:
             expires_at=event + timedelta(minutes=5),
             evidence_sha256=_sha("8"),
         ),
+    )
+
+
+def test_500_symbol_snapshot_reaches_features_and_candidates_without_truncation() -> (
+    None
+):
+    universe, first_snapshot = _large_universe_and_snapshot(
+        "2026-07-27T09:35:00+08:00",
+        close_offset=0.0,
+        volume_offset=0,
+    )
+    loop = MinuteFixtureClosedLoop(universe=universe)
+    manifest = _sha("f")
+
+    first = loop.process_snapshot(
+        snapshot=first_snapshot,
+        manifest_sha256=manifest,
+    )
+    assert first.feature_count == 0
+    assert first.candidate_count == 0
+
+    _, second_snapshot = _large_universe_and_snapshot(
+        "2026-07-27T09:40:00+08:00",
+        close_offset=0.1,
+        volume_offset=20_000,
+    )
+    second = loop.process_snapshot(
+        snapshot=second_snapshot,
+        manifest_sha256=manifest,
+    )
+
+    assert second.feature_count == 500
+    assert second.candidate_count == 500
+    assert second_snapshot.row_count == 500
+    assert all(step.ranked_count == 500 for step in second.sleeves)
+    assert all(
+        step.scheduled_order is None
+        or step.scheduled_order.requested_notional_cny <= 7_500
+        for step in second.sleeves
     )
 
 
