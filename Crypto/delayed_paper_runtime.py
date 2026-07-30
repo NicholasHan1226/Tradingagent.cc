@@ -74,9 +74,9 @@ RUNTIME_MANIFEST_MAX_BYTES = 512 * 1024
 SLOT_CUTOFF_DELAY_SECONDS = 55
 RUNTIME_ACCESS_POLICY_MAX_CHARS = 128
 # Two bounded cycles may consume the profile's full pagination/replay budget.
-# A 2s loopback timeout keeps that worst-case request budget below the systemd
-# 120s stop line instead of relying on the normal one-page response.
-RUNTIME_TIMEOUT_SECONDS = 2.0
+# A 5s loopback timeout keeps that bounded request budget at 100s, below the
+# systemd 120s stop line, instead of relying on the normal one-page response.
+RUNTIME_TIMEOUT_SECONDS = 5.0
 MAX_CYCLES_PER_INVOCATION = 2
 MAX_PROFILE_PAGE_BUDGET = 10
 OUTAGE_GAP_CONTRACT = "tradingagent.crypto.delayed_paper_data_gap.v1"
