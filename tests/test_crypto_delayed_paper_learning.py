@@ -10,9 +10,14 @@ from typing import Any
 
 import pytest
 
+import Crypto.delayed_paper_epoch as epoch_module
 import Crypto.delayed_paper_learning as learning_module
 import Crypto.delayed_paper_runtime as runtime_module
 import Crypto.delayed_paper_learning_worker as worker_module
+from Crypto.delayed_paper_epoch import (
+    load_crypto_delayed_paper_epoch_manifest,
+    prepare_crypto_delayed_paper_epoch,
+)
 from Crypto.delayed_paper_learning import (
     CryptoDelayedPaperLearningError,
     project_crypto_delayed_paper_learning,
@@ -109,6 +114,62 @@ def _projection_paths(
         evolution / "challenger_suggestions" / f"{observation_id}.jsonl",
         evolution / "projection_receipts" / f"{observation_id}.json",
     )
+
+
+def _learning_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Path, Path]:
+    epoch_id = "crypto-delayed-paper-epoch-g2-20260729"
+    archived_root = tmp_path / "crypto-delayed-paper"
+    epoch_parent = tmp_path / "crypto-delayed-paper-epochs"
+    output_root = epoch_parent / epoch_id
+    manifest_path = tmp_path / "crypto-delayed-paper.epoch.json"
+    archived_root.mkdir(mode=0o700)
+    epoch_parent.mkdir(mode=0o700)
+    monkeypatch.setattr(epoch_module, "LEGACY_ARCHIVE_ROOT", archived_root)
+    monkeypatch.setattr(epoch_module, "EPOCH_ROOT_PARENT", epoch_parent)
+    monkeypatch.setattr(epoch_module, "EPOCH_MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(
+        worker_module,
+        "PRODUCTION_EPOCH_MANIFEST",
+        manifest_path,
+    )
+    payload = {
+        "schema": "tradingagent.crypto.delayed_paper_epoch_manifest.v1",
+        "epoch_id": epoch_id,
+        "epoch_generation": 2,
+        "current_output_root": str(output_root),
+        "archived_output_root": str(archived_root),
+        "archived_epoch_policy": "read_only_archive_no_resume",
+        "capital_baseline_policy_id": "crypto-capital-v1",
+        "aggregate_with_archived_epoch": False,
+        "safety": {
+            "real_trading_enabled": False,
+            "production_eligible": False,
+            "execution_authority": False,
+            "testnet_enabled": False,
+            "live_broker_enabled": False,
+            "model_network_enabled": False,
+            "automatic_promotion_enabled": False,
+            "automatic_risk_expansion_enabled": False,
+        },
+    }
+    manifest_path.write_text(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest_path.chmod(0o600)
+    context = load_crypto_delayed_paper_epoch_manifest(manifest_path)
+    prepare_crypto_delayed_paper_epoch(context)
+    return manifest_path, output_root
 
 
 def test_learning_projection_is_append_only_idempotent_and_non_authoritative(
@@ -805,20 +866,15 @@ def test_learning_worker_cli_is_path_pinned_and_emits_non_authority(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    output_root = tmp_path / "approved-output"
-    monkeypatch.setattr(
-        worker_module,
-        "PRODUCTION_OUTPUT_ROOT",
-        output_root,
-    )
+    manifest_path, output_root = _learning_epoch(monkeypatch, tmp_path)
 
     assert (
         worker_module.main(
             [
                 "--mode",
                 "incremental",
-                "--output-root",
-                str(output_root),
+                "--epoch-manifest",
+                str(manifest_path),
             ]
         )
         == 0
@@ -830,18 +886,55 @@ def test_learning_worker_cli_is_path_pinned_and_emits_non_authority(
     assert payload["production_eligible"] is False
     assert payload["outbox_id"] is None
     assert payload["capital_commit_id"] is None
+    assert payload["epoch_id"] == "crypto-delayed-paper-epoch-g2-20260729"
+    assert payload["epoch_generation"] == 2
+    assert payload["epoch_output_root"] == str(output_root)
+    assert payload["aggregate_with_archived_epoch"] is False
 
-    rejected_root = tmp_path / "different-output"
-    assert (
+    with pytest.raises(SystemExit, match="2"):
         worker_module.main(
             [
                 "--mode",
                 "incremental",
                 "--output-root",
-                str(rejected_root),
+                str(tmp_path / "different-output"),
+            ]
+        )
+    assert not (tmp_path / "different-output").exists()
+    assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_learning_worker_rejects_stale_current_epoch_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    manifest_path, output_root = _learning_epoch(monkeypatch, tmp_path)
+    current_path = output_root.parent / ".current_epoch.json"
+    current = json.loads(current_path.read_text(encoding="utf-8"))
+    current["epoch_id"] = "crypto-delayed-paper-epoch-g2-stale"
+    current_path.write_text(
+        json.dumps(
+            current,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        worker_module.main(
+            [
+                "--mode",
+                "incremental",
+                "--epoch-manifest",
+                str(manifest_path),
             ]
         )
         == 2
     )
-    assert not rejected_root.exists()
     assert "failed closed" in capsys.readouterr().err
+    assert not (output_root / "evolution").exists()

@@ -5,6 +5,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SYSTEMD_ROOT = ROOT / "Crypto" / "systemd"
+EPOCH_MANIFEST = "/etc/tradingagent/crypto-delayed-paper.epoch.json"
+EPOCH_ROOT = (
+    "/var/lib/tradingagent/crypto-delayed-paper-epochs/"
+    "crypto-delayed-paper-epoch-g2-20260729"
+)
 INCREMENTAL_SERVICE = (
     SYSTEMD_ROOT / "tradingagent-crypto-delayed-paper-learning.service"
 )
@@ -28,15 +33,26 @@ def test_learning_services_are_offline_simulation_only_and_detached() -> None:
         assert (
             "-m Crypto.delayed_paper_learning_worker "
             f"--mode {mode} "
-            "--output-root /var/lib/tradingagent/crypto-delayed-paper"
+            f"--epoch-manifest {EPOCH_MANIFEST}"
         ) in text
         assert "RestrictAddressFamilies=AF_UNIX" in text
         assert "IPAddressDeny=any" in text
         assert "IPAddressAllow=" not in text
-        assert ("ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper") in text
+        assert f"AssertPathExists={EPOCH_MANIFEST}" in text
+        assert (
+            "AssertPathExists=/var/lib/tradingagent/"
+            "crypto-delayed-paper-epochs/.current_epoch.json"
+        ) in text
+        assert f"AssertPathExists={EPOCH_ROOT}/.epoch_identity.json" in text
+        assert f"AssertPathExists={EPOCH_ROOT}/evolution" in text
+        assert (
+            "ReadOnlyPaths=/var/lib/tradingagent/crypto-delayed-paper-epochs"
+        ) in text
+        assert f"ReadWritePaths={EPOCH_ROOT}/evolution" in text
+        assert "ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper\n" not in text
+        assert "StateDirectory=tradingagent/crypto-delayed-paper" not in text
         assert "EnvironmentFile=" not in text
         assert "/run/secrets/" not in text
-        assert "/etc/tradingagent/" not in text
         assert "network-online.target" not in text
         assert "[Install]" not in text
         lowered = text.lower()

@@ -346,7 +346,7 @@ def validate_epoch_runtime_context(
         EPOCH_ROOT_PARENT,
         reason="epoch_root_parent_untrusted",
     )
-    with _current_epoch_lock():
+    with _current_epoch_read_lock():
         _verify_current_epoch(context)
         _secure_directory(
             context.output_root,
@@ -460,6 +460,41 @@ def _current_epoch_lock() -> Iterator[None]:
         ):
             raise CryptoDelayedPaperEpochError("current_epoch_lock_untrusted")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    except CryptoDelayedPaperEpochError:
+        raise
+    except OSError as exc:
+        raise CryptoDelayedPaperEpochError("current_epoch_lock_untrusted") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+
+@contextmanager
+def _current_epoch_read_lock() -> Iterator[None]:
+    """Take the existing current-epoch lock without creating or writing it."""
+
+    lock_path = _current_epoch_lock_path()
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(lock_path, flags)
+        metadata = os.fstat(descriptor)
+        current = lock_path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o077
+            or current.st_dev != metadata.st_dev
+            or current.st_ino != metadata.st_ino
+            or lock_path.resolve(strict=True) != lock_path
+        ):
+            raise CryptoDelayedPaperEpochError("current_epoch_lock_untrusted")
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
         yield
     except CryptoDelayedPaperEpochError:
         raise
