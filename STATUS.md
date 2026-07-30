@@ -1,6 +1,32 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-29 20:45 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 09:42 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-30 09:42 Crypto 自动闭环恢复：** PR
+> [#80](https://github.com/NicholasHan1226/Tradingagent.cc/pull/80) 已普通合并，
+> `origin/main` 与永久 Crypto lane 均为
+> `7bdb2f6701a8fe6e5a7e70678730997c44694108`，front/test CI SUCCESS，
+> 本地 Crypto 全量 `278 passed`，服务器 runtime `29 passed`。服务器
+> `current` 已原子切换到同 SHA 的 root-owned、只读不可变 release，
+> `1e08e905d13c778bab6fdc5cdf5c4cb7f74b7763` 保留为直接回滚点。
+>
+> 生产失败原因不是资本或交易逻辑，而是 TradingDatas 对旧历史窗口返回
+> `crypto_5m_window_incomplete`；runtime 现只把它与既有明确历史
+> `data_through` cutoff 拒绝一起识别为可审计、不可恢复的数据缺口。首次
+> one-shot 仅追加一条 checksum/index/capital-head 绑定的 `data_gap`，
+> skipped range 为 `2026-07-29T07:15:00Z` 至 `16:20:00Z`，恢复槽为
+> `16:25Z`；候选、订单、成交和资本均未写入，资本与 runs 字节指纹不变。
+> 同槽重放为 `noop`，0 次网络调用且全部账本指纹不变。
+>
+> 下一相邻窗口随后正常进入 core，之后两个相邻自动轮均 SUCCESS。自动运行
+> 至 2026-07-30 09:40 CST 时，generation-2 epoch 已有 166 个
+> observation、166 个 completion、332 个唯一 run，仍只有 1 条
+> data_gap；最新市场槽为 `2026-07-30T01:35:00Z`，pending 为空。资本账本
+> 669 个事件连续且 ID 唯一，现有 10,000 USDT 模拟基线、BTC/ETH 持仓与
+> 费用历史均保留。Crypto TA timer 与 TradingDatas Crypto timer 当前均
+> `enabled/active`。全链继续固定 `REAL_TRADING_ENABLED=false`、
+> `production_eligible=false`、`execution_authority=false`，无
+> broker/Testnet/Live、无模型网络、无学习阻塞、无自动晋级或风险扩张。
 
 > **2026-07-29 20:32 A股分钟缺口恢复修复：** PR
 > [#76](https://github.com/NicholasHan1226/Tradingagent.cc/pull/76) 已普通合并，
