@@ -164,6 +164,7 @@ def test_exit_shadow_is_idempotent_and_never_mutates_capital(tmp_path: Path) -> 
     for item in first["symbols"].values():
         assert item["action"] == "hold"
         assert item["reason_code"] == "exit_threshold_not_met"
+        assert len(item["source_market_evidence_sha256"]) == 64
         assert item["counterfactual_only"] is True
         assert item["execution_authority"] is False
         assert item["capital_commit_id"] is None

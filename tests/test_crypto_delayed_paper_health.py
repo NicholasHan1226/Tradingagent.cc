@@ -6,6 +6,9 @@ from Crypto.delayed_paper_exit_shadow import (
     project_crypto_delayed_paper_exit_shadow,
 )
 from Crypto.delayed_paper_health import build_crypto_delayed_paper_health
+from Crypto.delayed_paper_learning import (
+    run_crypto_delayed_paper_learning_incremental,
+)
 from Crypto.delayed_paper_runner import run_crypto_delayed_paper_once
 from Crypto.five_minute_data import TradingDatasCryptoFiveMinuteDataPort
 from tests.test_crypto_5m_support import (
@@ -65,3 +68,15 @@ def test_health_snapshot_is_read_only_and_separates_projection_state(
     assert second["status"] == "healthy"
     assert second["exit_shadow"]["state"] == "current"
     assert second["exit_shadow"]["projection_sha256"] == projection["projection_sha256"]
+
+    learning = run_crypto_delayed_paper_learning_incremental(output_root=tmp_path)
+    assert learning["status"] == "projected"
+    after_learning = _tree_bytes(tmp_path)
+    third = build_crypto_delayed_paper_health(output_root=tmp_path)
+
+    assert _tree_bytes(tmp_path) == after_learning
+    assert third["learning"]["state"] == "current"
+    assert (
+        third["learning"]["latest_projected_observation_id"]
+        == third["core"]["latest_observation_id"]
+    )

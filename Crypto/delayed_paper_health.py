@@ -20,6 +20,7 @@ from Crypto.delayed_paper_exit_shadow import (
 )
 from Crypto.delayed_paper_learning import (
     CryptoDelayedPaperLearningError,
+    _read_worker_state,
     _verified_sources,
 )
 from Crypto.delayed_paper_ledger import (
@@ -101,18 +102,18 @@ def _learning_state(root: Path, *, observation_id: str) -> dict[str, Any]:
     if not path.exists():
         return {
             "state": "absent",
-            "last_projected_observation_id": None,
+            "latest_projected_observation_id": None,
         }
     try:
-        payload = _read_json(path)
-    except CryptoDelayedPaperLedgerError as exc:
+        payload = _read_worker_state(path)
+    except CryptoDelayedPaperLearningError as exc:
         raise CryptoDelayedPaperHealthError(
             "crypto_health_learning_state_invalid"
         ) from exc
-    projected = payload.get("last_projected_observation_id")
+    projected = payload.get("latest_observation_id")
     return {
         "state": "current" if projected == observation_id else "behind",
-        "last_projected_observation_id": projected,
+        "latest_projected_observation_id": projected,
     }
 
 
