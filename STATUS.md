@@ -1,6 +1,45 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 14:30 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 19:37 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-30 19:37 双市场收盘/恢复状态：** TradingAgent 本轮运行修复的
+> 权威代码提交与服务器不可变 release 为
+> `1c99cffa43d2f6de587538f371b85291c6ab1d55`；后续纯状态文档提交不改变该
+> runtime。Crypto 在 15:30 后因
+> 18083 catalog 响应超过旧 2 秒客户端超时而连续失败关闭；PR
+> [#91](https://github.com/NicholasHan1226/Tradingagent.cc/pull/91)
+> 将 loopback 单请求超时调整为 5 秒。首次生产恢复又诚实暴露旧
+> `TimeoutStartSec=120s` 对两轮完整请求预算缺少运行开销余量，服务在第二轮
+> pending 时被 systemd 终止；服务器立即原子回退，timer 保持关闭，pending
+> 未删除或改写。PR
+> [#92](https://github.com/NicholasHan1226/Tradingagent.cc/pull/92)
+> 随后按真实上限 `2 × (1 catalog + 10 query pages) × 5s = 110s`
+> 将服务停止线调整为 180 秒，保留两轮 backlog 与 outage-gap 恢复语义。
+> 两个 PR 的 front/test CI 均 SUCCESS；最终 release 在服务器通过
+> 34 项精确测试、Crypto 全量 `283 passed, 8 subtests passed` 与
+> `systemd-analyze verify`。
+>
+> 现存 pending 已由同一正式 systemd 单元幂等恢复，后续 backlog 串行追赶，
+> 没有直接 provider/SQLite、手工账本写入或跳槽。恢复 timer 后的两个相邻
+> 自动轮分别推进到 `11:25Z` 与 `11:30Z`，completion
+> `283 → 284 → 285`，均 `success/exit0`、pending 为空。最终只读重放：
+> 285 observations/285 completions、575 条决策事件、1,145 条资本事件、
+> 570 个 run bundles、2 笔既有模拟成交、重复 fill reference=0、
+> 未完成资本 cycle=0、reserved cash=0；现金
+> `7998.21225974 USDT`，BTC `0.01563`、ETH `0.5211`，累计费用
+> `1.99978796 USDT`。Crypto 核心 timer 已恢复
+> `enabled/active`；learning timer 继续关闭，新的 24 小时零失败观察窗口
+> 从本次恢复后重新计算。
+>
+> A股当日状态保持真实缺口：分钟状态只接受 27/48 槽，迟到的 15:00
+> 数据超过 delayed-paper 证据时限而被拒绝，不补写也不冒充完整交易日。
+> A股离线学习 CLI 已由 PR
+> [#90](https://github.com/NicholasHan1226/Tradingagent.cc/pull/90)
+> 修复并完成幂等 one-shot；投影明确为
+> `blocked/fixture_session_incomplete`，training sample=0，未自动训练或晋级。
+> A股核心 timer 继续 `enabled/active`，离线学习 timer 尚未安装/启用。
+> TradingDatas A股生产仍为验证过的 30 股链路；500 股代码修正已合入 TD
+> main，但只有下一交易时段取得两根相邻、真实、完整 500/500 后才允许再次切换。
 
 > **2026-07-30 14:30 双市场运行收口：** TradingAgent 当前运行代码基线与
 > 服务器不可变 release 均为
