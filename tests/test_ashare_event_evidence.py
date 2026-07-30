@@ -56,10 +56,9 @@ def _catalog_row(
         "dataset_id": dataset_id,
         "schema_major": 1,
         "default_fields": list(names),
-        "default_order": ["event_id:asc"],
+        "default_order": [f"{names[0]}:asc"],
         "filter_operators": {
-            "ts_code": ["eq", "in"],
-            "event_time": ["eq", "gte", "lte", "between"],
+            name: ["eq", "in", "gte", "lte", "between"] for name in names
         },
         "limits": {"max_page_size": max_page_size},
         "availability": {"activation_states": ["active" if active else "paused"]},
@@ -261,32 +260,32 @@ def test_first_profiles_accept_catalog_validated_provider_native_aliases() -> No
             "rec_time",
             "name",
         ],
-        "cctv_news": ["date", "title", "content"],
-        "irm_qa_sh": ["ts_code", "pub_time", "q", "a", "name"],
-        "irm_qa_sz": ["ts_code", "pub_time", "q", "a", "name"],
-        "research_report": [
+        "cn.dataset.cctv_news": ["date", "title", "content"],
+        "cn.dataset.irm_qa_sh": ["ts_code", "trade_date", "pub_time", "q", "a", "name"],
+        "cn.dataset.irm_qa_sz": ["ts_code", "trade_date", "pub_time", "q", "a", "name"],
+        "cn.dataset.research_report": [
             "ts_code",
-            "report_date",
+            "trade_date",
             "title",
-            "org_name",
+            "inst_csname",
             "name",
         ],
-        "disclosure_date": [
+        "cn.dataset.disclosure_date": [
             "ts_code",
             "end_date",
             "ann_date",
             "actual_date",
             "name",
         ],
-        "report_rc": [
+        "cn.dataset.report_rc": [
             "ts_code",
             "report_date",
             "report_title",
             "org_name",
             "name",
         ],
-        "broker_recommend": ["month", "broker", "ts_code", "name"],
-        "stk_surv": [
+        "cn.dataset.broker_recommend": ["month", "broker", "ts_code", "name"],
+        "cn.dataset.stk_surv": [
             "ts_code",
             "surv_date",
             "rece_org",
@@ -304,13 +303,196 @@ def test_first_profiles_accept_catalog_validated_provider_native_aliases() -> No
     profiles = port.freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
 
     assert set(profiles.by_dataset) == set(native_fields)
-    assert profiles.by_dataset["cctv_news"].symbol_field is None
-    assert profiles.by_dataset["cctv_news"].default_entity == "CN-MACRO"
-    assert profiles.by_dataset["irm_qa_sh"].title_field == "q"
-    assert profiles.by_dataset["irm_qa_sz"].content_field == "a"
-    assert profiles.by_dataset["research_report"].source_field == "org_name"
-    assert profiles.by_dataset["report_rc"].title_field == "report_title"
-    assert profiles.by_dataset["broker_recommend"].source_field == "broker"
+    assert profiles.by_dataset["cn.dataset.cctv_news"].symbol_field is None
+    assert profiles.by_dataset["cn.dataset.cctv_news"].default_entity == "CN-MACRO"
+    assert profiles.by_dataset["cn.dataset.irm_qa_sh"].title_field == "q"
+    assert profiles.by_dataset["cn.dataset.irm_qa_sz"].content_field == "a"
+    assert (
+        profiles.by_dataset["cn.dataset.research_report"].source_field == "inst_csname"
+    )
+    assert profiles.by_dataset["cn.dataset.report_rc"].title_field == "report_title"
+    assert profiles.by_dataset["cn.dataset.broker_recommend"].source_field == "broker"
+
+
+def test_primary_profiles_match_real_tradingdatas_dataset_ids_and_fields() -> None:
+    native_fields = {
+        "cn.dataset.anns_d": [
+            "ann_date",
+            "ts_code",
+            "name",
+            "title",
+            "url",
+        ],
+        "cn.dataset.cctv_news": ["date", "title", "content"],
+        "cn.dataset.irm_qa_sh": [
+            "ts_code",
+            "name",
+            "trade_date",
+            "q",
+            "a",
+            "pub_time",
+        ],
+        "cn.dataset.irm_qa_sz": [
+            "ts_code",
+            "name",
+            "trade_date",
+            "q",
+            "a",
+            "pub_time",
+            "industry",
+        ],
+        "cn.dataset.research_report": [
+            "trade_date",
+            "abstr",
+            "title",
+            "report_type",
+            "author",
+            "name",
+            "ts_code",
+            "inst_csname",
+            "ind_name",
+            "url",
+        ],
+    }
+    transport = _Transport(
+        catalog_rows=[
+            _catalog_row(dataset_id, fields=fields)
+            for dataset_id, fields in native_fields.items()
+        ]
+    )
+    profiles = TradingDatasAshareEvidencePort(
+        _client(transport, configured_ids=frozenset(PRIMARY_DATASET_IDS))
+    ).freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
+
+    assert set(PRIMARY_DATASET_IDS) == set(native_fields)
+    assert all(
+        dataset_id.startswith("cn.dataset.") for dataset_id in profiles.by_dataset
+    )
+    assert profiles.by_dataset["cn.dataset.anns_d"].identity_fields == (
+        "ann_date",
+        "ts_code",
+        "url",
+    )
+    assert profiles.by_dataset["cn.dataset.cctv_news"].event_time_field == "date"
+    assert profiles.by_dataset["cn.dataset.irm_qa_sh"].event_time_field == "pub_time"
+    assert profiles.by_dataset["cn.dataset.irm_qa_sz"].content_field == "a"
+    assert profiles.by_dataset["cn.dataset.research_report"].identity_fields == (
+        "trade_date",
+        "url",
+    )
+
+
+@pytest.mark.parametrize(
+    ("dataset_id", "fields", "row", "expected_event_time", "expected_source"),
+    [
+        (
+            "cn.dataset.anns_d",
+            ["ann_date", "ts_code", "name", "title", "url"],
+            {
+                "ann_date": "20260731",
+                "ts_code": "600000.SH",
+                "name": "浦发银行",
+                "title": "重大合同公告",
+                "url": "https://fixture.invalid/anns-d.pdf",
+            },
+            "20260731",
+            "cn.dataset.anns_d",
+        ),
+        (
+            "cn.dataset.cctv_news",
+            ["date", "title", "content"],
+            {
+                "date": "20260731",
+                "title": "新闻联播",
+                "content": "宏观政策与产业信息。",
+            },
+            "20260731",
+            "cn.dataset.cctv_news",
+        ),
+        (
+            "cn.dataset.irm_qa_sh",
+            ["ts_code", "name", "trade_date", "q", "a", "pub_time"],
+            {
+                "ts_code": "600000.SH",
+                "name": "浦发银行",
+                "trade_date": "20260731",
+                "q": "项目进展如何？",
+                "a": "项目按计划推进。",
+                "pub_time": "2026-07-31 10:00:00",
+            },
+            "2026-07-31T10:00:00+08:00",
+            "cn.dataset.irm_qa_sh",
+        ),
+        (
+            "cn.dataset.research_report",
+            [
+                "trade_date",
+                "abstr",
+                "title",
+                "report_type",
+                "author",
+                "name",
+                "ts_code",
+                "inst_csname",
+                "ind_name",
+                "url",
+            ],
+            {
+                "trade_date": "20260731",
+                "abstr": "盈利预测保持稳定。",
+                "title": "公司研究报告",
+                "report_type": "个股研报",
+                "author": "研究员",
+                "name": "浦发银行",
+                "ts_code": "600000.SH",
+                "inst_csname": "示例证券",
+                "ind_name": "银行",
+                "url": "https://fixture.invalid/report.pdf",
+            },
+            "20260731",
+            "示例证券",
+        ),
+    ],
+)
+def test_provider_native_primary_rows_are_shadow_mapped_without_authority(
+    dataset_id: str,
+    fields: list[str],
+    row: dict[str, Any],
+    expected_event_time: str,
+    expected_source: str,
+) -> None:
+    catalog_rows = []
+    rows_by_dataset = {}
+    for primary_id in PRIMARY_DATASET_IDS:
+        selected_fields = fields if primary_id == dataset_id else GENERIC_FIELDS
+        catalog_rows.append(_catalog_row(primary_id, fields=selected_fields))
+        rows_by_dataset[primary_id] = (
+            [row] if primary_id == dataset_id else [_row(f"{primary_id}-1")]
+        )
+    transport = _Transport(
+        catalog_rows=catalog_rows,
+        rows_by_dataset=rows_by_dataset,
+    )
+    port = TradingDatasAshareEvidencePort(
+        _client(transport, configured_ids=frozenset(PRIMARY_DATASET_IDS))
+    )
+    audit = AshareEvidenceAuditLedger()
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset[dataset_id]
+
+    event = port.load_event_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+    ).events[0]
+
+    assert event.dataset_id == dataset_id
+    assert event.event_time == expected_event_time
+    assert event.source == expected_source
+    assert event.candidate_eligible is False
+    assert event.execution_eligible is False
+    assert event.training_eligible is False
+    assert event.real_trading_enabled is False
 
 
 def test_event_snapshot_maps_provider_row_and_binds_envelope_availability() -> None:

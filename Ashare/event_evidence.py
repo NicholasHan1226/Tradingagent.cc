@@ -51,18 +51,18 @@ FIXED_QUERY_ROUTE = "POST /v1/query"
 
 PRIMARY_DATASET_IDS = (
     "cn.dataset.anns_d",
-    "cctv_news",
-    "irm_qa_sh",
-    "irm_qa_sz",
-    "research_report",
+    "cn.dataset.cctv_news",
+    "cn.dataset.irm_qa_sh",
+    "cn.dataset.irm_qa_sz",
+    "cn.dataset.research_report",
 )
 OPTIONAL_DATASET_IDS = (
-    "disclosure_date",
-    "report_rc",
-    "broker_recommend",
-    "stk_surv",
+    "cn.dataset.disclosure_date",
+    "cn.dataset.report_rc",
+    "cn.dataset.broker_recommend",
+    "cn.dataset.stk_surv",
 )
-PAUSED_DATASET_IDS = ("major_news", "news")
+PAUSED_DATASET_IDS = ("cn.dataset.major_news", "cn.dataset.news")
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _SHA256_HEX = frozenset("0123456789abcdef")
@@ -223,40 +223,47 @@ class _DatasetSpec:
     url_candidates: tuple[str, ...] = ("url",)
     source_candidates: tuple[str, ...] = ("source",)
     default_entity: str | None = None
+    naive_datetime_timezone: str | None = None
 
 
 _GENERIC_IDENTITY = (("event_id",),)
 _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
     {
         "cn.dataset.anns_d": _DatasetSpec(
-            identity_candidates=_GENERIC_IDENTITY + (("ts_code", "ann_date", "title"),),
+            identity_candidates=_GENERIC_IDENTITY + (("ann_date", "ts_code", "url"),),
             event_time_candidates=("event_time", "ann_date", "rec_time"),
+            naive_datetime_timezone="Asia/Shanghai",
         ),
-        "cctv_news": _DatasetSpec(
+        "cn.dataset.cctv_news": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY + (("date", "title"),),
             event_time_candidates=("event_time", "date"),
             symbol_candidates=("ts_code", "symbol"),
             default_entity="CN-MACRO",
         ),
-        "irm_qa_sh": _DatasetSpec(
+        "cn.dataset.irm_qa_sh": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY + (("ts_code", "pub_time", "q"),),
             event_time_candidates=("event_time", "pub_time", "trade_date"),
             title_candidates=("title", "q", "question"),
             content_candidates=("content", "a", "answer"),
+            naive_datetime_timezone="Asia/Shanghai",
         ),
-        "irm_qa_sz": _DatasetSpec(
+        "cn.dataset.irm_qa_sz": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY + (("ts_code", "pub_time", "q"),),
             event_time_candidates=("event_time", "pub_time", "trade_date"),
             title_candidates=("title", "q", "question"),
             content_candidates=("content", "a", "answer"),
+            naive_datetime_timezone="Asia/Shanghai",
         ),
-        "research_report": _DatasetSpec(
+        "cn.dataset.research_report": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY
-            + (("ts_code", "report_date", "title", "org_name"),),
-            event_time_candidates=("event_time", "report_date", "trade_date"),
-            source_candidates=("source", "org_name"),
+            + (
+                ("trade_date", "url"),
+                ("trade_date", "ts_code", "inst_csname", "title"),
+            ),
+            event_time_candidates=("event_time", "trade_date"),
+            source_candidates=("source", "inst_csname"),
         ),
-        "disclosure_date": _DatasetSpec(
+        "cn.dataset.disclosure_date": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY
             + (("ts_code", "end_date", "ann_date"),),
             event_time_candidates=(
@@ -267,20 +274,20 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             ),
             title_candidates=("title", "name"),
         ),
-        "report_rc": _DatasetSpec(
+        "cn.dataset.report_rc": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY
             + (("ts_code", "report_date", "report_title", "org_name"),),
             event_time_candidates=("event_time", "report_date"),
             title_candidates=("title", "report_title"),
             source_candidates=("source", "org_name"),
         ),
-        "broker_recommend": _DatasetSpec(
+        "cn.dataset.broker_recommend": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY + (("month", "broker", "ts_code"),),
             event_time_candidates=("event_time", "month"),
             title_candidates=("title", "name"),
             source_candidates=("source", "broker"),
         ),
-        "stk_surv": _DatasetSpec(
+        "cn.dataset.stk_surv": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY
             + (("ts_code", "surv_date", "rece_org"),),
             event_time_candidates=("event_time", "surv_date"),
@@ -926,6 +933,26 @@ def _event_time(
     return text, "instant", True
 
 
+def _normalize_provider_event_time(
+    raw: object,
+    *,
+    profile: EvidenceDatasetProfile,
+) -> object:
+    spec = _DATASET_SPECS[profile.dataset_id]
+    if spec.naive_datetime_timezone is None or not isinstance(raw, str):
+        return raw
+    text = raw.strip()
+    if len(text) <= 10:
+        return raw
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return raw
+    if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+        return raw
+    return parsed.replace(tzinfo=ZoneInfo(spec.naive_datetime_timezone)).isoformat()
+
+
 def _map_run(
     *,
     profile: EvidenceDatasetProfile,
@@ -990,7 +1017,10 @@ def _map_run(
     events: list[EventEvidenceSnapshot] = []
     for row in envelope.data:
         event_time, precision, known_time_proven = _event_time(
-            row.get(profile.event_time_field),
+            _normalize_provider_event_time(
+                row.get(profile.event_time_field),
+                profile=profile,
+            ),
             available_at=observed,
         )
         symbol: str | None = None

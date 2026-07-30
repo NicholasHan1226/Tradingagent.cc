@@ -77,11 +77,14 @@ forbidden.
 
 The first catalog-validated profiles are:
 
-- primary: `cn.dataset.anns_d`, `cctv_news`, `irm_qa_sh`, `irm_qa_sz`, and
-  `research_report`;
-- optional, explicitly coverage-degrading: `disclosure_date`, `report_rc`,
-  `broker_recommend`, and `stk_surv`;
-- forbidden fallbacks while paused: `news` and `major_news`.
+- primary: `cn.dataset.anns_d`, `cn.dataset.cctv_news`,
+  `cn.dataset.irm_qa_sh`, `cn.dataset.irm_qa_sz`, and
+  `cn.dataset.research_report`;
+- optional, explicitly coverage-degrading: `cn.dataset.disclosure_date`,
+  `cn.dataset.report_rc`, `cn.dataset.broker_recommend`, and
+  `cn.dataset.stk_surv`;
+- forbidden fallbacks while paused: `cn.dataset.news` and
+  `cn.dataset.major_news`.
 
 Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
 identity must be present in the exact active catalog row. An optional dataset
@@ -98,7 +101,9 @@ remain date-precision evidence. An instant event time records only that the
 event-time field has instant precision (`event_time_instant_proven=true`); it
 does not prove historical availability. All fixture snapshots keep
 `historical_known_time_proven=false` and `pit_feature_eligible=false` until the
-formal handoff.
+formal handoff. Provider-native `pub_time` values without an explicit offset
+are normalized only for the two frozen investor-Q&A datasets using their
+declared `Asia/Shanghai` semantics; the raw TradingDatas row is not rewritten.
 
 Provider-native rows map to immutable `EventEvidenceSnapshot` records with
 event time/precision, availability, canonical mainboard symbol or context
