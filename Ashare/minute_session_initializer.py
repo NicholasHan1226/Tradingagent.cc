@@ -52,7 +52,9 @@ from shared.data.tradingdatas_transport import (
 CALENDAR_DATASET_ID = "cn.market.trade_calendar"
 DAILY_DATASET_ID = "cn.equity.daily"
 MINUTE_DATASET_ID = "cn.dataset.rt_min"
-DAILY_SYMBOL_BATCH_SIZE = 10
+MAX_SESSION_QUERY_LIMIT = 500
+MAX_QUERY_IN_VALUES = 100
+MAX_DAILY_PAGES_PER_BATCH = 5
 TransportFactory = Callable[..., HTTPTransport]
 
 
@@ -110,11 +112,7 @@ def _semantic_payload(envelope: QueryEnvelope) -> dict[str, object]:
 
 def _accept_ready(envelope: QueryEnvelope) -> None:
     gate = DataEvidenceGate(
-        {
-            envelope.dataset_id: DatasetEvidencePolicy(
-                dataset_id=envelope.dataset_id
-            )
-        }
+        {envelope.dataset_id: DatasetEvidencePolicy(dataset_id=envelope.dataset_id)}
     )
     decision = gate.evaluate(envelope)
     if (
@@ -145,9 +143,7 @@ def _fetch_catalog(
     try:
         catalog = parse_catalog_envelope(response.json_body)
     except SharedSignalsV1Error as exc:
-        raise MinuteSessionInitializerError(
-            "minute_session_catalog_invalid"
-        ) from exc
+        raise MinuteSessionInitializerError("minute_session_catalog_invalid") from exc
     return catalog.catalog_version, catalog.data
 
 
@@ -162,10 +158,9 @@ def _catalog_row(
         )
     row = matches[0]
     availability = row.get("availability")
-    if (
-        not isinstance(availability, Mapping)
-        or availability.get("activation_states") != ["active"]
-    ):
+    if not isinstance(availability, Mapping) or availability.get(
+        "activation_states"
+    ) != ["active"]:
         raise MinuteSessionInitializerError(
             f"minute_session_catalog_dataset_inactive:{dataset_id}"
         )
@@ -185,10 +180,7 @@ def _query_contract(
             f"minute_session_schema_invalid:{dataset_id}"
         )
     defaults = row.get("default_fields")
-    if (
-        not isinstance(defaults, list)
-        or not set(required_fields).issubset(defaults)
-    ):
+    if not isinstance(defaults, list) or not set(required_fields).issubset(defaults):
         raise MinuteSessionInitializerError(
             f"minute_session_fields_invalid:{dataset_id}"
         )
@@ -209,7 +201,7 @@ def _query_contract(
         raise MinuteSessionInitializerError(
             f"minute_session_limit_invalid:{dataset_id}"
         )
-    return schema_major, required_fields, min(page_size, 500)
+    return schema_major, required_fields, min(page_size, MAX_SESSION_QUERY_LIMIT)
 
 
 def _scaled_minute_profile(
@@ -322,9 +314,7 @@ def _publish_day(
     }
     if target_root.exists():
         if not target_root.is_dir() or (target_root / "state-bundle.json").exists():
-            raise MinuteSessionInitializerError(
-                "minute_session_target_already_started"
-            )
+            raise MinuteSessionInitializerError("minute_session_target_already_started")
         for name, payload in payloads.items():
             try:
                 existing = (target_root / name).read_bytes()
@@ -357,9 +347,7 @@ def _publish_day(
         finally:
             os.close(root_fd)
     except OSError as exc:
-        raise MinuteSessionInitializerError(
-            "minute_session_publish_failed"
-        ) from exc
+        raise MinuteSessionInitializerError("minute_session_publish_failed") from exc
     return False
 
 
@@ -392,9 +380,7 @@ def initialize_minute_session(
     os.chmod(root, 0o700)
     target = now.astimezone(SHANGHAI).date()
     template_root = _find_template_day(root, target)
-    template_config = load_minute_canary_config(
-        template_root / "minute-manifest.json"
-    )
+    template_config = load_minute_canary_config(template_root / "minute-manifest.json")
     if (
         template_config.base_url != base_url
         or template_config.access_policy_id != access_policy_id
@@ -491,7 +477,7 @@ def initialize_minute_session(
             ),
             access_policy_id=access_policy_id,
             timeout_seconds=timeout_seconds,
-            max_limit=500,
+            max_limit=MAX_SESSION_QUERY_LIMIT,
             cache_ttl_seconds=0,
         ),
         transport=transport,
@@ -545,16 +531,20 @@ def initialize_minute_session(
     try:
         previous_session = datetime.strptime(compact_pretrade, "%Y%m%d").date()
     except ValueError as exc:
-        raise MinuteSessionInitializerError(
-            "minute_session_pretrade_invalid"
-        ) from exc
+        raise MinuteSessionInitializerError("minute_session_pretrade_invalid") from exc
     if previous_session >= target:
         raise MinuteSessionInitializerError("minute_session_pretrade_invalid")
 
     by_symbol: dict[str, Mapping[str, Any]] = {}
     metadata_by_symbol: dict[str, dict[str, object]] = {}
-    for offset in range(0, len(symbols), DAILY_SYMBOL_BATCH_SIZE):
-        symbol_batch = symbols[offset : offset + DAILY_SYMBOL_BATCH_SIZE]
+    daily_batch_size = min(
+        len(symbols),
+        daily_contract[2],
+        MAX_QUERY_IN_VALUES,
+    )
+    for offset in range(0, len(symbols), daily_batch_size):
+        symbol_batch = symbols[offset : offset + daily_batch_size]
+        batch_max_pages = min(len(symbol_batch), MAX_DAILY_PAGES_PER_BATCH)
         daily = _query_twice(
             client=client,
             request=QueryRequest(
@@ -565,35 +555,43 @@ def initialize_minute_session(
                     "trade_date": {"eq": compact_pretrade},
                     "ts_code": {"in": list(symbol_batch)},
                 },
-                limit=daily_contract[2],
+                limit=len(symbol_batch),
             ),
             identity_fields=("ts_code", "trade_date"),
-            max_pages=2,
-            max_rows=DAILY_SYMBOL_BATCH_SIZE,
+            max_pages=batch_max_pages,
+            max_rows=len(symbol_batch),
         )
         batch_metadata = _metadata_payload(daily)
+        batch_rows: dict[str, Mapping[str, Any]] = {}
         for row in daily.data:
             symbol = row.get("ts_code")
-            if isinstance(symbol, str) and symbol in symbol_batch:
-                if symbol in by_symbol:
-                    raise MinuteSessionInitializerError(
-                        "minute_session_daily_duplicate"
-                    )
-                by_symbol[symbol] = row
-                metadata_by_symbol[symbol] = batch_metadata
+            if (
+                not isinstance(symbol, str)
+                or symbol not in symbol_batch
+                or row.get("trade_date") != compact_pretrade
+            ):
+                raise MinuteSessionInitializerError(
+                    "minute_session_daily_identity_mismatch"
+                )
+            if symbol in batch_rows or symbol in by_symbol:
+                raise MinuteSessionInitializerError("minute_session_daily_duplicate")
+            batch_rows[symbol] = row
+        if set(batch_rows) != set(symbol_batch):
+            raise MinuteSessionInitializerError(
+                "minute_session_daily_universe_incomplete"
+            )
+        for symbol, row in batch_rows.items():
+            by_symbol[symbol] = row
+            metadata_by_symbol[symbol] = batch_metadata
     if set(by_symbol) != set(symbols):
-        raise MinuteSessionInitializerError(
-            "minute_session_daily_universe_incomplete"
-        )
+        raise MinuteSessionInitializerError("minute_session_daily_universe_incomplete")
 
     references: list[dict[str, Any]] = []
     for symbol in symbols:
         row = by_symbol[symbol]
         close = row.get("close")
         if isinstance(close, bool) or not isinstance(close, (int, float)) or close <= 0:
-            raise MinuteSessionInitializerError(
-                "minute_session_previous_close_invalid"
-            )
+            raise MinuteSessionInitializerError("minute_session_previous_close_invalid")
         evidence_payload = {
             "schema": "tradingagent.ashare.minute-reference.v1",
             "symbol": symbol,
