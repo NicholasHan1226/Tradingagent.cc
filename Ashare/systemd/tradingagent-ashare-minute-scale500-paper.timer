@@ -1,0 +1,19 @@
+[Unit]
+Description=TradingAgent A-share scale-500 delayed five-minute paper timer
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:49/5:00
+OnCalendar=Mon..Fri *-*-* 10:04/5:00
+OnCalendar=Mon..Fri *-*-* 11:04..44/5:00
+OnCalendar=Mon..Fri *-*-* 13:19/5:00
+OnCalendar=Mon..Fri *-*-* 14:04/5:00
+OnCalendar=Mon..Fri *-*-* 15:04:00
+OnCalendar=Mon..Fri *-*-* 15:09:00
+OnCalendar=Mon..Fri *-*-* 15:19:00
+AccuracySec=1s
+RandomizedDelaySec=10s
+Persistent=false
+Unit=tradingagent-ashare-minute-scale500-paper.service
+
+[Install]
+WantedBy=timers.target

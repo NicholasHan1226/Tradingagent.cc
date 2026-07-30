@@ -263,6 +263,47 @@ Gate blocks the entire snapshot. A closed day is a safe no-op; degraded daily
 evidence, catalog drift, missing symbols, replay mismatch, conflicting existing
 inputs, or an already-started target session fails closed.
 
+### Isolated scale-500 runtime candidate
+
+`minute_scale500_runtime.py` is the AShare-owned selector for a direct,
+simulation-only 500-symbol transition. It requires an absolute, regular,
+single-link, non-writable frozen Universe artifact with exactly 500 unique
+reviewed symbols and an explicit canonical SHA256. The runtime candidate is
+fixed to `http://127.0.0.1:18082`, `cn.dataset.rt_min`, and the existing
+catalog/query clients; it has no provider, database, retry, concurrency, broker,
+or historical-minute fallback.
+
+The scale state root and rollback-30 state root must be disjoint. The selector
+can write only the scale root. The rollback root is mounted read-only and is
+never used to bootstrap a 500 session. The 09:18 initializer reads fresh
+calendar and previous-session daily references through formal TradingDatas and
+publishes no state bundle. Post-close minute rows, a prior 30-symbol bundle, and
+`--allow-late-start` are forbidden as opening evidence.
+
+The first accepted scale observations must be the adjacent 09:35 and 09:40
+500/500 bars. Each still passes the existing exact Universe coverage,
+identity, metadata, receipt/lineage, bounded pagination, and same-observation
+double-read gates. These isolated simulated observations have no capital,
+execution, training, promotion, or real-trading authority. After both pass,
+the same timer continues the 48-slot session. Any missing, partial, mixed-time,
+degraded, identity, lineage, fanout, continuity, authority, or persistence
+failure records one exact reason in the scale gate, exits non-zero, and invokes
+the tracked rollback unit.
+
+Rollback disables the scale timers and restores the preserved 30-symbol timers
+without deleting or rewriting either state root. It does not manufacture a
+same-day 30-symbol session after the 09:18 initializer has passed; that day
+remains fail-closed. The scale timer mirrors the delayed schedule but moves the
+final 15:00-bar attempt to 15:19 so TradingDatas has one bounded final
+publication interval. It remains subject to the 720-second `DELAYED_PAPER`
+evidence latency ceiling; the later timer does not make stale evidence
+eligible.
+
+The tracked files under `Ashare/systemd/` are release candidates only.
+Installing or enabling them requires an immutable release, the frozen artifact
+readback, `REAL_TRADING_ENABLED=false`, systemd verification, old-state byte
+fingerprints, and a tested rollback.
+
 The tracked systemd candidate runs at second 40 after each five-minute boundary
 during the two A-share sessions, after the independent TradingDatas collector.
 It remains a non-production fixture accumulator:
