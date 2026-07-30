@@ -8,6 +8,12 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+from Crypto.delayed_paper_epoch import (
+    EPOCH_MANIFEST_PATH,
+    epoch_runtime_receipt_fields,
+    load_crypto_delayed_paper_epoch_manifest,
+    validate_epoch_runtime_context,
+)
 from Crypto.delayed_paper_learning import (
     _non_authority_fields,
     run_crypto_delayed_paper_learning_full_scrub,
@@ -15,7 +21,7 @@ from Crypto.delayed_paper_learning import (
 )
 
 
-PRODUCTION_OUTPUT_ROOT = Path("/var/lib/tradingagent/crypto-delayed-paper")
+PRODUCTION_EPOCH_MANIFEST = EPOCH_MANIFEST_PATH
 
 
 def learning_worker_exit_code(result: Mapping[str, Any]) -> int:
@@ -45,13 +51,35 @@ def learning_worker_exit_code(result: Mapping[str, Any]) -> int:
 def run_learning_worker_once(
     *,
     mode: str,
-    output_root: Path | str,
+    epoch_manifest: Path | str,
 ) -> dict[str, Any]:
+    manifest_path = Path(epoch_manifest)
+    if manifest_path != PRODUCTION_EPOCH_MANIFEST:
+        raise ValueError("learning_epoch_manifest_path_invalid")
+    context = load_crypto_delayed_paper_epoch_manifest(manifest_path)
+    validate_epoch_runtime_context(
+        context,
+        output_root=context.output_root,
+    )
     if mode == "incremental":
-        return run_crypto_delayed_paper_learning_incremental(output_root=output_root)
-    if mode == "full-scrub":
-        return run_crypto_delayed_paper_learning_full_scrub(output_root=output_root)
-    raise ValueError("unsupported_learning_worker_mode")
+        result = run_crypto_delayed_paper_learning_incremental(
+            output_root=context.output_root
+        )
+    elif mode == "full-scrub":
+        result = run_crypto_delayed_paper_learning_full_scrub(
+            output_root=context.output_root
+        )
+    else:
+        raise ValueError("unsupported_learning_worker_mode")
+    validate_epoch_runtime_context(
+        context,
+        output_root=context.output_root,
+    )
+    return {
+        **result,
+        **epoch_runtime_receipt_fields(context),
+        "epoch_output_root": str(context.output_root),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,12 +92,12 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
     )
     parser.add_argument(
-        "--output-root",
+        "--epoch-manifest",
         type=Path,
-        default=PRODUCTION_OUTPUT_ROOT,
+        default=PRODUCTION_EPOCH_MANIFEST,
     )
     args = parser.parse_args(argv)
-    if args.output_root != PRODUCTION_OUTPUT_ROOT:
+    if args.epoch_manifest != PRODUCTION_EPOCH_MANIFEST:
         print(
             "crypto delayed-paper learning worker failed closed",
             file=sys.stderr,
@@ -78,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run_learning_worker_once(
             mode=args.mode,
-            output_root=args.output_root,
+            epoch_manifest=args.epoch_manifest,
         )
     except Exception:
         print(

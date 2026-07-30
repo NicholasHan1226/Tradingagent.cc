@@ -14,6 +14,7 @@ from Crypto.delayed_paper_epoch import (
     CryptoDelayedPaperEpochError,
     load_crypto_delayed_paper_epoch_manifest,
     prepare_crypto_delayed_paper_epoch,
+    validate_epoch_runtime_context,
 )
 from Crypto.delayed_paper_epoch_runtime import (
     run_crypto_delayed_paper_epoch_once,
@@ -170,6 +171,43 @@ def test_epoch_manifest_creates_immutable_identity_without_touching_archive(
     assert identity["execution_authority"] is False
     assert identity["production_eligible"] is False
     assert _tree_bytes(archived_root) == archived_before
+
+
+def test_runtime_validation_uses_existing_read_only_current_epoch_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path, _, output_root, _ = _configure_paths(monkeypatch, tmp_path)
+    context = load_crypto_delayed_paper_epoch_manifest(manifest_path)
+    prepare_crypto_delayed_paper_epoch(context)
+    lock_path = output_root.parent / ".current_epoch.lock"
+    before = lock_path.stat()
+    original_open = epoch_module.os.open
+    lock_flags: list[int] = []
+
+    def recording_open(
+        path: str | Path,
+        flags: int,
+        mode: int = 0o777,
+    ) -> int:
+        if Path(path) == lock_path:
+            lock_flags.append(flags)
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(epoch_module.os, "open", recording_open)
+    validate_epoch_runtime_context(context, output_root=output_root)
+    after = lock_path.stat()
+
+    assert lock_flags
+    assert all(
+        flags & epoch_module.os.O_ACCMODE == epoch_module.os.O_RDONLY
+        for flags in lock_flags
+    )
+    assert (before.st_ino, before.st_size, before.st_mtime_ns) == (
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    )
 
 
 @pytest.mark.parametrize(

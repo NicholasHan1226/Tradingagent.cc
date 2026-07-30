@@ -2,6 +2,11 @@
 Description=TradingAgent Crypto detached delayed-paper learning worker candidate
 AssertPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
 AssertPathExists=/opt/investment/releases/tradingagent/current/Crypto/delayed_paper_learning_worker.py
+AssertPathExists=/etc/tradingagent/crypto-delayed-paper.epoch.json
+AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper-epochs/.current_epoch.json
+AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper-epochs/.current_epoch.lock
+AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-epoch-g2-20260729/.epoch_identity.json
+AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-epoch-g2-20260729/evolution
 
 [Service]
 Type=oneshot
@@ -12,12 +17,10 @@ Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_learning_worker --mode incremental --output-root /var/lib/tradingagent/crypto-delayed-paper
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_learning_worker --mode incremental --epoch-manifest /etc/tradingagent/crypto-delayed-paper.epoch.json
 TimeoutStartSec=120s
 TimeoutStopSec=15s
 UMask=0077
-StateDirectory=tradingagent/crypto-delayed-paper
-StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -38,6 +41,8 @@ RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
 ReadOnlyPaths=/opt/investment/releases/tradingagent
 ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1
-ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper
+ReadOnlyPaths=/etc/tradingagent/crypto-delayed-paper.epoch.json
+ReadOnlyPaths=/var/lib/tradingagent/crypto-delayed-paper-epochs
+ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-epoch-g2-20260729/evolution
 StandardOutput=journal
 StandardError=journal

@@ -216,6 +216,17 @@ append-only observation/completion/decision/capital 证据，所有输出固定
 `learning_mode=detached_offline_worker`、`learning_authority=false`、
 `execution_authority=false`、`production_eligible=false`。
 
+worker 不接受自由 `--output-root`。它只接受固定
+`--epoch-manifest /etc/tradingagent/crypto-delayed-paper.epoch.json`，复用核心
+epoch loader 并以只读共享锁验证 manifest、`.current_epoch.json`、
+`.current_epoch.lock` 和 `.epoch_identity.json`，再将唯一
+`context.output_root` 交给学习函数；运行结束前再次验证同一 context。tracked
+service 同时静态钉住现役
+`crypto-delayed-paper-epoch-g2-20260729`，只给该 root 的 `evolution/` 写权限，
+其余 epoch parent、资本、订单、运行与决策账本均只读。manifest/current/root
+冲突立即失败关闭；未来切换 epoch 必须人工更新并复核 unit，不扫描 `latest`、
+不自动换 generation、不回退旧 root。
+
 增量模式只读取核心当前 completion state、自己的 checkpoint 头，以及至多一条
 新增 completion 对应的 receipt/segments，正常单轮工作量与新增量相关。若 worker
 落后超过一条，它返回 `full_scrub_required`，不在每 5 分钟路径扫描历史。写入
@@ -237,9 +248,10 @@ tracked 候选包含：
 - `tradingagent-crypto-delayed-paper-learning-scrub.service/.timer`：每日独立
   full scrub。
 
-两组 learning timer 均默认未安装、未启用，本候选不部署服务器。只有核心连续
-24 小时门禁通过并经主集成复核后，发布侧才可安装；学习失败不得改变核心 status、
-exit code、资本或订单。
+两组 learning timer 均由仓库保持默认未启用。发布侧可先安装 unit、创建现役
+epoch 的 `evolution/`、执行 disabled one-shot 与 full scrub；只有核心连续
+24 小时门禁通过并经主集成复核后才可 enable timer。学习失败不得改变核心
+status、exit code、资本或订单。
 
 ## Outage epoch restart 候选
 
