@@ -1,6 +1,39 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 10:35 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 14:30 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-30 14:30 双市场运行收口：** TradingAgent 主线、GitHub
+> `origin/main` 与服务器不可变 release 当前均为
+> `db9707a5d1385d354035c829179289dfd1e1b5e8`。Crypto 5 分钟核心 timer
+> 为 `enabled/active`，最近自动轮 `success/exit0`；10,000 USDT 模拟账户
+> `balanced=true`，现金约 7,998.21 USDT，保留 BTC/ETH 两笔既有模拟持仓与
+> 约 2.00 USDT 累计费用。全链继续
+> `REAL_TRADING_ENABLED=false`、`execution_authority=false`、
+> `production_eligible=false`，无 broker/Testnet/Live、无模型网络或自动
+> 扩风险。离线 learning incremental/full-scrub one-shot 已在当前 release
+> 对 203 个 completion 完成增量投影与全量校验；Challenger 仍需人工晋级。
+> 两个 learning timer 继续 `disabled/inactive`，原因是此前 24 小时窗口仍有
+> 5 次历史失败，尚不能诚实宣称零失败自动学习。
+>
+> A股 500 股会话初始化本身已 PASS：500 个日线 reference、500 个 Universe、
+> Universe SHA256
+> `2894024d2dad1a42d3891e7ebb66dcc55475724c2a8a3d454f25d98d63588814`，
+> 且隔离目录未生成资金、订单或成交状态。但 TradingDatas 首个生产实时轮未能
+> 对目标 13:00 bar 返回 500/500 完整快照，因此按门禁回滚至正式 30 股 release
+> `5ac3925c3931a81132ea02abb16f9745033fb6dc`；这不能写成“500 股已运行”。
+> TradingAgent 随后无损恢复原 30 股 state root，保留上午资金、持仓和账本，
+> 没有删除或改写 scale500 初始化证据。14:24 手动恢复轮处理 14:10 快照 PASS；
+> 14:29 首个自动轮处理 14:15 快照 PASS，30 个特征、30 个候选、0 数据拒绝，
+> baseline/dynamic_position 模拟权益约 50,076.95 CNY，账本
+> `real_trading_enabled=false`。A股 timer 已恢复为 `enabled/active`，中断期间
+> 的 13:05–14:05 缺口被明确记录且不回填，因此当日
+> `full_session_complete=false/learning_eligible=false`。服务器恢复证据位于
+> `/opt/investment/release-evidence/tradingagent/20260730T062454Z-ashare30-runtime-restore/`。
+>
+> 当前下一停止线：A股继续以 30 股积累，500 股只在 TradingDatas 隔离环境重新
+> 验证五个 100 股分片、单一 bar end、完整 receipt/lineage 与两根相邻实时快照，
+> 未通过前不再次切生产；Crypto 核心继续 24×7 运行，学习 timer 只有在新的连续
+> 24 小时零核心/投影失败窗口后才允许启用。
 
 > **2026-07-30 10:10 A股分钟闭环恢复：** TradingDatas 先从误含
 > 500 股 fanout 的 `78435bb37754fda5bb4d2be6d46a9b63211b7401`
