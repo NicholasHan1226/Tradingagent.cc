@@ -6,7 +6,7 @@
 
 | 文件 | 唯一职责 |
 |---|---|
-| [architecture.md](architecture.md) | 三仓边界、A股/CNFutures/Crypto 原生币种隔离资本、样本与原子执行架构 |
+| [architecture.md](architecture.md) | 三仓边界、多市场/多服务器运行拓扑、原生币种隔离资本、模型平面、样本与原子执行架构 |
 | [data_contract.md](data_contract.md) | 输入、capital ledger、执行、样本、标签、KPI 和成熟度字段 |
 | [system_state_matrix.md](system_state_matrix.md) | current、local candidate、target、兼容、历史与退役状态的人工可读投影；机器状态未同步前不得自行晋级 |
 | [universe_contract.md](universe_contract.md) | 市场环境池、账户可交易池、5万元可行池及主板个股零泄漏边界 |

@@ -55,6 +55,34 @@ LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免�
 
 `ProviderRejectedAttemptReceipt`只记录真实HTTP provider envelope到达后被evidence schema/binding拒绝的脱敏审计事实，固定`evidence_journal_eligible=false`、`production_eligible=false`且全部authority为false。它不得进入SampleJournal、任何训练/评测样本、成熟度分母、模型晋级、LLM增量实验或自动演化输入；一次schema-rejected canary只能计入失败率和运维审计，不能作为“调用成功”样本。
 
+### 1.4 成熟模型与研究方案的分阶段门禁
+
+“公开论文、官方benchmark或成熟开源库”只证明方案值得复现，不证明本账户存在实盘
+正期望。所有新模型必须在相同PIT输入、相同候选、相同成本和相同决策cluster上与当前
+基线做paired ablation；未经冻结样本外和反事实对照不能晋级。
+
+| 阶段 | 可开始时间 | 方案 | 必须产出 | 停止线 |
+|---|---|---|---|---|
+| M0 工程基线 | 现在 | 确定性rank、线性/岭回归、现金基线 | 可重放feature/model/prediction receipts | 不宣称概率或收益 |
+| M1 结构化基线 | A股PIT日频/标签可用；Crypto closed-bar链稳定 | LightGBM/DoubleEnsemble研究候选、Isotonic/Platt/MAPIE、DeepSeek证据侧车 | rolling OOS、Brier/Log Loss/ECE、IC/RankIC、覆盖率、费用后增量、LLM引用准确率 | 任何数据泄漏、校准恶化、增量不稳定即保持shadow |
+| M2 时序挑战 | Crypto连续7天工程稳定；A股至少20个交易日模拟并有可用历史PIT | Kronos-small + Chronos-Bolt或TimesFM一个控制组；HMM/GARCH regime | 多期限quantile loss/coverage、状态分层、模型分歧、延迟/成本、删除最佳时期后的结果 | 不允许只凭单次回测替换Champion |
+| M3 组合优化 | 至少60–120个交易日shadow/模拟且信号费用后仍有增量 | 多周期凸优化、no-trade band、现金比较 | turnover/cost/capacity/整数约束可执行性及回撤改善 | 优化器不得改变市场专属硬规则 |
+| M4 人工晋级 | Challenger在冻结OOS与实时shadow均通过 | 人工选择新Champion generation | immutable manifest、回滚、灰度sim-only readback | 自动promotion、自动扩风险和live transition永久关闭 |
+
+随机模型至少使用预先冻结的seed集合并报告均值、离散度与最差分位；不能只挑最好seed。
+时间序列采用purged walk-forward与embargo；横截面结果按日期/行业/市场状态聚类，不能把
+同日500只股票当作500个独立样本。评价至少同时包含：
+
+- 预测：IC/RankIC、Brier、Log Loss、ECE、quantile loss与区间覆盖；
+- 决策：coverage/abstain、Precision@K、错失机会、动作后悔值；
+- 交易：费用后收益、换手、滑点、未成交、资金占用与最小经济订单；
+- 风险：最大回撤、Expected Shortfall、模型/行业/论点集中和连续亏损；
+- 稳定：年份、regime、市场、期限、特征/模型消融与数据漂移；
+- 运营：延迟、失败率、重放、模型服务不可用时core是否仍守恒。
+
+达到统计门槛只生成`promotion_evidence_ready=true`的候选回执；最终仍需人工批准新的
+Champion manifest。模型服务器没有资本、broker、订单或账本写权限。
+
 ## 2. V1 样本与决策账本验收
 
 ### 冻结 Champion observation/counterfactual

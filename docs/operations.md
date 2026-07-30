@@ -372,6 +372,42 @@ export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 export REAL_TRADING_ENABLED=false
 ```
 
+### 2.0 多市场运行拓扑预检
+
+任何单机服务新增、市场拆机、状态目录迁移或模型服务器接入前，先在冻结release运行：
+
+```bash
+python3 scripts/validate_runtime_topology.py
+```
+
+该命令只验证仓库中的逻辑拓扑，不探测服务器，也不产生部署授权。输出必须保持：
+
+- `simulation_only=true`；
+- market精确为`ashare/cn_futures/crypto`；
+- data routes精确为`GET /v1/catalog`和`POST /v1/query`；
+- `single_host_sim`、`split_market_sim`与
+  `split_market_with_research_host_sim`均有效。
+
+拆服务器按市场逐个迁移，不做一次性大切换：
+
+```text
+freeze release/config
+-> 停止该市场旧scheduler并保存append-only head
+-> fencing旧writer
+-> 复制sealed snapshot/segments到目标主机
+-> 以只读模式校验checksum、generation、execution lineage
+-> 配置目标主机独立endpoint与token file
+-> one-shot sim-only
+-> reconcile与幂等重放
+-> 启用目标scheduler
+-> 确认旧主机仍无writer
+```
+
+每次只迁移一个市场。TradingDatas、另两个市场和front保持不动。失败时停止目标scheduler、
+保留所有新事实，并在确认目标writer已fence后恢复旧writer；不得让两台主机同时重试。
+禁止NFS/共享SQLite、复制明文token、使用8082或provider route临时绕过。learning worker可在
+core验证后另行迁移，其失败不回滚core，也不能自动替换Champion。
+
 V1 不提供 TradingDatas 默认地址。仅在 TradingDatas fresh handoff 与上游合同真正冻结、并由获批联调任务提供时，才可显式设置：
 
 ```bash

@@ -57,6 +57,53 @@ Mini/Hermes webhook、文件消费者和`RealSignalQueue`已在仓库合同层�
 写入real/live卡。源码退役不证明服务器或Mini的安装态已清理；零值环境变量只作清理墓碑，
 仍需独立cron/env/process/port只读readback。
 
+### 多市场、多服务器运行拓扑
+
+机器合同为`shared/governance/runtime_topology.yaml`，校验入口为
+`python3 scripts/validate_runtime_topology.py`。它只冻结逻辑角色和安全边界，不写
+生产主机名、IP、token、端口或当前运行状态。
+
+```mermaid
+flowchart LR
+    TD1["TradingDatas A股/期货数据面"] --> AC["A股 core\n单一写者"]
+    TD1 --> FC["CNFutures core\n单一写者"]
+    TD2["TradingDatas Crypto数据面"] --> CC["Crypto core\n单一写者"]
+    AC --> AL["A股 learning\n失败不影响core"]
+    FC --> FL["期货 learning\n失败不影响core"]
+    CC --> CL["Crypto learning\n失败不影响core"]
+    AC --> FP["只读投影"]
+    FC --> FP
+    CC --> FP
+    AL --> MR["Challenger artifacts\n人工晋级"]
+    FL --> MR
+    CL --> MR
+    FP --> UI["front-readonly"]
+```
+
+当前与未来使用同一领域架构：
+
+| 维度 | `single_host_sim` | `split_market_sim` |
+|---|---|---|
+| 部署 | 一台服务器，按服务/目录/credential隔离 | A股、期货、Crypto core分别放置；前端独立控制节点 |
+| 写入 | 每市场一个active writer | 仍是每市场一个active writer，不做active-active |
+| 状态 | 各市场独立本地append-only namespace | 状态继续归该市场writer；不使用NFS/共享SQLite |
+| 故障切换 | 停旧服务、验证账本、再人工恢复 | 先fencing原节点，再由验证过的immutable snapshot在备用节点恢复 |
+| 学习 | 可与对应市场core同机但不同服务 | 可随市场迁移，或使用独立`research-host`承载多市场训练；输出namespace仍分离 |
+| 前端 | 本机只读 | 只消费不可变读侧投影，不直接挂载市场账本 |
+
+跨服务器后，TradingDatas地址和token file由每台主机仓外显式配置。TA继续只使用
+`GET /v1/catalog`与`POST /v1/query`；拆服务器不能引入SQLite、provider专用route、
+8082或文件fallback。远端明文HTTP不被当前transport接受，因此非loopback通信必须使用
+受控HTTPS/私网入口和独立consumer credential。
+
+同一市场的capital ledger、outbox、Decision Ledger和current pointer必须共属一个
+writer identity与state namespace。备机只能读备份或sealed segment；没有完成
+`stop old -> fence -> verify head/checksum -> activate new -> reconcile`前不得成为writer。
+这刻意选择简单的active-passive，而不是为个人内部系统引入分布式锁、Kafka或共享数据库。
+`split_market_with_research_host_sim`额外提供独立研究/GPU主机：它只读冻结feature和sealed
+样本，分别写入各市场的Challenger artifact namespace；不能挂载可写capital/outbox/Decision
+Ledger，也不能成为front或TradingDatas主机。
+
 ### V1 契约与权限边界
 
 - `sharedsignals.query_result.v1`：TradingDatas provider-neutral query envelope 的 immutable compatibility ID。`data[]` 保留 provider-native rows；dataset/catalog/receipt/data-through/observed-at 与完整 provider-neutral lineage 来自 envelope 并组成 source proof，TA 不复制成伪造的行级可知时间、revision 或 receipt。
@@ -139,6 +186,25 @@ Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark �
 DeepSeek adapter只接受精确的冻结离线响应fixture或上述精确HTTP transport；普通callable拒绝。两条路径对`bulk_extraction`构造thinking disabled与`max_tokens=4096`目标，对`slow_research`构造thinking enabled、`reasoning_effort=high`与`max_tokens=8192`目标。A股v1 Prompt保持字节冻结，v2改为固定七字段与逐字artifact ID引用合同，不放宽validator、不修复Markdown、不重试。成功receipt只能在Gateway完成canonical observation字段集、原request/entity/prompt/refs和request/source/material摘要的完整重绑后随`analyze_with_provenance()`结果返回；Adapter不接受外部receipt回调。Bull/Bear provider模式把完整结果交给显式`LLMEvidenceProvenanceRecorder`：accepted/rejected互斥结果只写唯一对应结果Journal；第三条`LLMProviderInvocationJournal`必须与前两条同属由accepted绝对路径锚定的canonical family，以不含调用方request ID的逻辑内容键在网络前追加`in_flight`，并在跨进程锁内覆盖双结果Journal检查、provider调用与唯一终态提交。已完成终态的同ID同内容顺序或并发重放只返回已持久化观察；同一canonical family内的逻辑内容换ID、同ID异内容、双重结果、六个data/head端点别名或任一持久化失败均fail closed。provider调用后崩溃且没有可验证终态时保留`in_flight`并禁止自动补发。三类Journal路径在构造时冻结为绝对路径；端点还做Unicode NFC、大小写、真实路径与现存inode去重，并在持锁读写时验证regular file、单链接、当前euid、`0600`及打开FD与路径inode一致。readback只保留`local-integrity-only`、防御性不可变的descriptor校验视图，不会重建运行时typed receipt。真实HTTP schema/binding失败转为独立audit-only rejected receipt，不含provider正文或normalized evidence hash。动态Prompt、未验证source span、缺外部authority verifier、cutoff后receipt、未知动态对象和credential-shaped输出均fail closed。这些门不是所有语义/编码注入的完备证明；本地receipt/journal也不是外部防篡改authority。已发生的一次schema-rejected provider请求不验证production durable receipt authority、冻结评测、延迟/成本或收益增量。
 
 第一阶段继续使用冻结、可解释的 4–8 特征 rank-score Champion 和现金基线。每份score receipt同时绑定当前人工选择manifest、artifact SHA、model ID/version、完整`FrozenChampionSpec`，以及显式登记在 `tradingagent.numeric_pit_features.v1` namespace 的数值 PIT 特征快照。特征proof继续绑定dataset、source authority receipt、known time、实现SHA、归一化版本和source type；future、LLM、过早或调用方自证的特征均拒绝。决策stage与每个模拟副作用前重新验证current selection和feature proof，不再用字段名关键词黑名单推断来源安全。rank 未经概率/收益校准，因此只用于排序；新仓维持与rank无关的固定probe sizing。后续 Challenger 先从 elastic-net logistic、ridge/Huber/quantile regression 一类低复杂度模型起步；样本和 PIT 足够后才影子评估浅层、单调约束的 LightGBM/XGBoost/CatBoost/EBM/GAM，survival/hazard 用于事件时间。GNN、Transformer、TFT/TCN 和强化学习不进入第一阶段。
+
+模型采用顺序固定为“强基线优先、复杂模型只做增量挑战”：
+
+| 层 | 首选方案 | 市场角色 | 热路径权限 |
+|---|---|---|---|
+| M0 | 当前确定性rank、线性/岭回归基线 | 三市场可解释对照 | 仅现有冻结Champion合同 |
+| M1 | Qlib式PIT dataset + LightGBM/DoubleEnsemble研究候选 | A股横截面排序；Crypto只作派生特征对照 | Challenger，不直接下单 |
+| M1 | Isotonic/Platt/MAPIE conformal校准 | 概率、分位区间和abstain | 校准器不能扩风险 |
+| M1 | DeepSeek evidence sidecar | 公告、新闻、产业事件和证据冲突 | 不得读取账户或形成订单 |
+| M2 | Kronos-small | OHLCV路径与K线表征 | shadow Challenger |
+| M2 | Chronos-Bolt或TimesFM二选一 | 通用时序控制组 | shadow Challenger |
+| M2 | HMM/Markov switching + realized-vol/GARCH | regime和风险温控 | 只允许保持或收紧风险 |
+| M3 | 多周期凸优化 | 成本、换手、现金和仓位比较 | 仍受市场专属整数手/保证金/最小名义门禁 |
+| 暂缓 | FinRL/端到端强化学习、LLM直接交易 | 离线研究 | 不进入生产链 |
+
+模型训练、批量回测、LLM和full scrub属于learning plane；分钟证据门禁、候选、模拟成交、
+资本提交和对账属于core plane。二者通过内容寻址的feature snapshot、model manifest、
+prediction receipt和metric receipt交接，不共享可写账本。learning不可用时core继续使用
+当前冻结Champion或abstain；不能在错误处理中加载“最新模型”、自动在线训练或降低门槛。
 
 ### 当前科学性缺口
 

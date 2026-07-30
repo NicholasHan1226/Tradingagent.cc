@@ -1,0 +1,112 @@
+version: 1
+contract_id: tradingagent.runtime_topology.v1
+
+safety:
+  simulation_only: true
+  real_trading_enabled: false
+  external_execution_enabled: false
+  automatic_promotion_enabled: false
+  automatic_risk_expansion_enabled: false
+  shared_writable_filesystem_allowed: false
+
+data_contract:
+  product: TradingDatas
+  routes:
+    - GET /v1/catalog
+    - POST /v1/query
+  explicit_endpoint_required: true
+  token_file_required: true
+  direct_database_access_allowed: false
+  provider_fallback_allowed: false
+
+market_runtimes:
+  - market: ashare
+    lane_id: ashare
+    currency: CNY
+    capital_authority_id: ashare-capital-v1
+    core_component: ashare-core
+    learning_component: ashare-learning
+    data_component: tradingdatas-ashare
+    fault_domain: market-ashare
+    writer_identity: ashare-sim-writer
+    state_namespace: ashare-minute-paper-scale500
+    service_prefix: tradingagent-ashare
+    schedule_class: exchange_session
+    max_active_writers: 1
+    failover_mode: manual_fenced
+    learning_failure_isolated: true
+
+  - market: cn_futures
+    lane_id: cnfutures
+    currency: CNY
+    capital_authority_id: cn-futures-capital-v1
+    core_component: cnfutures-core
+    learning_component: cnfutures-learning
+    data_component: tradingdatas-ashare
+    fault_domain: market-cn-futures
+    writer_identity: cnfutures-sim-writer
+    state_namespace: cnfutures-paper
+    service_prefix: tradingagent-cnfutures
+    schedule_class: exchange_session_with_night
+    max_active_writers: 1
+    failover_mode: manual_fenced
+    learning_failure_isolated: true
+
+  - market: crypto
+    lane_id: crypto
+    currency: USDT
+    capital_authority_id: crypto-capital-v1
+    core_component: crypto-core
+    learning_component: crypto-learning
+    data_component: tradingdatas-crypto
+    fault_domain: market-crypto
+    writer_identity: crypto-sim-writer
+    state_namespace: crypto-delayed-paper-epochs
+    service_prefix: tradingagent-crypto
+    schedule_class: continuous_24x7
+    max_active_writers: 1
+    failover_mode: manual_fenced
+    learning_failure_isolated: true
+
+deployment_profiles:
+  - profile_id: single_host_sim
+    isolation_level: process
+    learning_placement_policy: with_market_core
+    placements:
+      tradingdatas-ashare: finance-host
+      tradingdatas-crypto: finance-host
+      ashare-core: finance-host
+      ashare-learning: finance-host
+      cnfutures-core: finance-host
+      cnfutures-learning: finance-host
+      crypto-core: finance-host
+      crypto-learning: finance-host
+      front-readonly: finance-host
+
+  - profile_id: split_market_sim
+    isolation_level: host
+    learning_placement_policy: with_market_core
+    placements:
+      tradingdatas-ashare: ashare-data-host
+      tradingdatas-crypto: crypto-data-host
+      ashare-core: ashare-host
+      ashare-learning: ashare-host
+      cnfutures-core: cnfutures-host
+      cnfutures-learning: cnfutures-host
+      crypto-core: crypto-host
+      crypto-learning: crypto-host
+      front-readonly: control-host
+
+  - profile_id: split_market_with_research_host_sim
+    isolation_level: host
+    learning_placement_policy: dedicated_shared_compute
+    placements:
+      tradingdatas-ashare: ashare-data-host
+      tradingdatas-crypto: crypto-data-host
+      ashare-core: ashare-host
+      ashare-learning: research-host
+      cnfutures-core: cnfutures-host
+      cnfutures-learning: research-host
+      crypto-core: crypto-host
+      crypto-learning: research-host
+      front-readonly: control-host
