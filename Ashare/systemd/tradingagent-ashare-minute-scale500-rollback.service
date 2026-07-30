@@ -1,0 +1,10 @@
+[Unit]
+Description=Fail closed from A-share scale-500 to preserved rollback-30 timers
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl disable --now tradingagent-ashare-minute-scale500-session.timer tradingagent-ashare-minute-scale500-paper.timer
+ExecStart=/usr/bin/systemctl enable --now tradingagent-ashare-minute-session.timer
+ExecStart=/usr/bin/systemctl enable --now tradingagent-ashare-minute-paper.timer
+StandardOutput=journal
+StandardError=journal

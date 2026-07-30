@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare isolated A-share scale-500 minute session before market open
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:18:00
+AccuracySec=1s
+RandomizedDelaySec=10s
+Persistent=false
+Unit=tradingagent-ashare-minute-scale500-session.service
+
+[Install]
+WantedBy=timers.target
