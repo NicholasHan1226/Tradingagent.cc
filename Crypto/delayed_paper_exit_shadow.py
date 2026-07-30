@@ -300,7 +300,7 @@ def _symbol_projection(
         "shadow_net_pnl": _money(net_pnl),
         "shadow_return_on_entry_cost": _money(net_pnl / entry_cost),
         "source_entry_receipt_id": order["receipt_id"],
-        "source_market_evidence_sha256": bundle.get("market_evidence_sha256"),
+        "source_market_evidence_sha256": qualification.get("market_evidence_sha256"),
         "source_business_bundle_sha256": bundle.get("business_bundle_sha256"),
         **_non_authority_fields(),
     }
