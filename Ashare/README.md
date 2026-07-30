@@ -242,6 +242,20 @@ proceed. The same absolute path can be supplied to the scheduled initializer as
 `ASHARE_MINUTE_UNIVERSE_SOURCE`; when absent, the prior reviewed session
 universe remains the default.
 
+Prior-session daily references use the same bounded catalog contract instead
+of a fixed 10-symbol batch. The initializer derives each batch from the
+reviewed Universe size, the daily dataset's current `max_page_size`, and the
+500-row TA query ceiling. It separately enforces the provider-neutral V1
+`QueryDefaults.max_in_values=100` filter contract, so a 500-symbol Universe
+always uses five 100-symbol batches even when catalog `max_page_size=500`.
+Every batch is independently read twice, allows at most five cursor pages, and
+has a row budget exactly equal to its requested symbol set. Returned
+`(ts_code, trade_date)` identities must exactly match that set; missing, extra,
+duplicate, over-budget or non-terminating cursor chains, replay-changing,
+catalog-drifting, 413/429, timeout, stale or degraded evidence fails closed.
+There is no automatic retry, concurrency, fallback, provider route or database
+read, so a transport failure cannot become a request storm or partial session.
+
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every actual bar must
 still be completed and have positive volume, otherwise the minute Evidence
