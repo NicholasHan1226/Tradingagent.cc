@@ -228,6 +228,37 @@ def test_learning_projection_is_append_only_idempotent_and_non_authoritative(
     assert not (tmp_path / "evolution" / "sample_journal.jsonl").exists()
 
 
+def test_learning_uses_existing_core_lock_read_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _completed_result(tmp_path)
+    core_lock = tmp_path / "delayed_paper" / ".lock"
+    core_lock.chmod(0o400)
+    original_open = learning_module.os.open
+    core_lock_flags: list[int] = []
+
+    def recording_open(
+        path: str | Path,
+        flags: int,
+        mode: int = 0o777,
+    ) -> int:
+        if Path(path) == core_lock:
+            core_lock_flags.append(flags)
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(learning_module.os, "open", recording_open)
+    result = run_crypto_delayed_paper_learning_full_scrub(output_root=tmp_path)
+
+    assert result["status"] == "recovered"
+    assert core_lock_flags
+    assert all(
+        flags & learning_module.os.O_ACCMODE == learning_module.os.O_RDONLY
+        for flags in core_lock_flags
+    )
+    assert core_lock.stat().st_mode & 0o777 == 0o400
+
+
 def test_data_reject_does_not_create_false_learning_sample(tmp_path: Path) -> None:
     projection = project_crypto_delayed_paper_learning(
         result={

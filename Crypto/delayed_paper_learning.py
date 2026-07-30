@@ -863,11 +863,48 @@ def _verified_completion_record(
     }
 
 
+@contextmanager
+def _core_read_lock(
+    store: CryptoDelayedPaperObservationStore,
+) -> Iterator[None]:
+    """Share the existing core lock without creating or writing it."""
+
+    path = store.lock_path
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        current = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o077
+            or current.st_dev != metadata.st_dev
+            or current.st_ino != metadata.st_ino
+            or path.resolve(strict=True) != path
+        ):
+            raise CryptoDelayedPaperLearningError("learning_core_lock_untrusted")
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        yield
+    except CryptoDelayedPaperLearningError:
+        raise
+    except OSError as exc:
+        raise CryptoDelayedPaperLearningError("learning_core_lock_untrusted") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+
 def _core_completion_state(
     store: CryptoDelayedPaperObservationStore,
 ) -> dict[str, Any]:
     try:
-        with store._locked():
+        with _core_read_lock(store):
             state = store._observation_state()
     except CryptoDelayedPaperLedgerError as exc:
         raise CryptoDelayedPaperLearningError(
