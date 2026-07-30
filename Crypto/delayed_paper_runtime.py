@@ -73,9 +73,9 @@ RUNTIME_OUTPUT_ROOT = Path("/var/lib/tradingagent/crypto-delayed-paper")
 RUNTIME_MANIFEST_MAX_BYTES = 512 * 1024
 SLOT_CUTOFF_DELAY_SECONDS = 55
 RUNTIME_ACCESS_POLICY_MAX_CHARS = 128
-# Two bounded cycles may consume the profile's full pagination/replay budget.
-# A 5s loopback timeout keeps that bounded request budget at 100s, below the
-# systemd 120s stop line, instead of relying on the normal one-page response.
+# Each snapshot may consume one catalog request plus the full ten-page query
+# budget. Two bounded cycles at 5s per request need at most 110s, below the
+# systemd 180s stop line without relying on the normal one-page response.
 RUNTIME_TIMEOUT_SECONDS = 5.0
 MAX_CYCLES_PER_INVOCATION = 2
 MAX_PROFILE_PAGE_BUDGET = 10

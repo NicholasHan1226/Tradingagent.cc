@@ -465,17 +465,17 @@ def test_loopback_timeout_budget_stays_below_systemd_stop_line() -> None:
     assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 5.0
     assert (
         runtime_module.MAX_CYCLES_PER_INVOCATION
-        * runtime_module.MAX_PROFILE_PAGE_BUDGET
+        * (runtime_module.MAX_PROFILE_PAGE_BUDGET + 1)
         * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        == 100.0
+        == 110.0
     )
     assert (
         runtime_module.MAX_CYCLES_PER_INVOCATION
-        * runtime_module.MAX_PROFILE_PAGE_BUDGET
+        * (runtime_module.MAX_PROFILE_PAGE_BUDGET + 1)
         * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        < 120.0
+        < 180.0
     )
-    assert "TimeoutStartSec=120s" in service
+    assert "TimeoutStartSec=180s" in service
 
 
 def test_transport_timeout_is_not_retried_and_has_no_fallback(

@@ -34,7 +34,7 @@ def test_crypto_runtime_service_is_loopback_only_and_simulation_only() -> None:
     assert "StateDirectory=tradingagent/crypto-delayed-paper-epochs" in text
     assert "StateDirectoryMode=0700" in text
     assert "UMask=0077" in text
-    assert "TimeoutStartSec=120s" in text
+    assert "TimeoutStartSec=180s" in text
     assert "NoNewPrivileges=true" in text
     assert "PrivateTmp=true" in text
     assert "PrivateDevices=true" in text

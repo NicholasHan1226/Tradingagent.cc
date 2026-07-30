@@ -19,7 +19,7 @@ Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_epoch_runtime --epoch-manifest /etc/tradingagent/crypto-delayed-paper.epoch.json --runtime-manifest /etc/tradingagent/crypto-delayed-paper.runtime.json --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
-TimeoutStartSec=120s
+TimeoutStartSec=180s
 TimeoutStopSec=15s
 UMask=0077
 StateDirectory=tradingagent/crypto-delayed-paper-epochs
