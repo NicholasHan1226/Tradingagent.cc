@@ -454,6 +454,69 @@ def test_manifest_rejects_unbounded_query_page_budget(tmp_path: Path) -> None:
         load_crypto_delayed_paper_runtime_manifest(path)
 
 
+def test_loopback_timeout_budget_stays_below_systemd_stop_line() -> None:
+    service = (
+        Path(__file__).resolve().parents[1]
+        / "Crypto"
+        / "systemd"
+        / "tradingagent-crypto-delayed-paper.service"
+    ).read_text(encoding="utf-8")
+
+    assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 5.0
+    assert (
+        runtime_module.MAX_CYCLES_PER_INVOCATION
+        * runtime_module.MAX_PROFILE_PAGE_BUDGET
+        * runtime_module.RUNTIME_TIMEOUT_SECONDS
+        == 100.0
+    )
+    assert (
+        runtime_module.MAX_CYCLES_PER_INVOCATION
+        * runtime_module.MAX_PROFILE_PAGE_BUDGET
+        * runtime_module.RUNTIME_TIMEOUT_SECONDS
+        < 120.0
+    )
+    assert "TimeoutStartSec=120s" in service
+
+
+def test_transport_timeout_is_not_retried_and_has_no_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    manifest_path = _write_manifest(tmp_path)
+    calls: list[dict[str, Any]] = []
+
+    def timed_out_transport(**kwargs: Any) -> HTTPResponse:
+        calls.append(copy.deepcopy(kwargs))
+        raise TimeoutError("timed out")
+
+    with pytest.raises(
+        CryptoDelayedPaperRuntimeError,
+        match="runtime_core_cycle_failed",
+    ):
+        run_crypto_delayed_paper_server_once(
+            runtime_manifest=manifest_path,
+            token_file=token_file,
+            output_root=output_root,
+            now=WINDOW_END + timedelta(seconds=55),
+            transport_factory=_factory(timed_out_transport),
+        )
+
+    assert len(calls) == 1
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["url"].endswith("/v1/catalog")
+    assert calls[0]["timeout_seconds"] == 5.0
+    assert all(
+        forbidden not in str(calls).lower()
+        for forbidden in (
+            "/tushare",
+            "/source_status",
+            "api.binance",
+            "sqlite",
+        )
+    )
+
+
 def test_first_short_window_writes_one_idempotent_data_reject_without_capital(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
