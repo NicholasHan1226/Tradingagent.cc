@@ -419,8 +419,13 @@ def initialize_minute_session(
     if not isinstance(universe_raw, list) or not universe_raw:
         raise MinuteSessionInitializerError("minute_session_universe_invalid")
     universe = load_minute_research_universe(universe_path)
+    allowed_observation_exclusions = {
+        "risk_warning_excluded",
+        "delisting_risk_excluded",
+    }
     if any(
-        instrument.eligibility_reason(trade_date=target) is not None
+        (reason := instrument.eligibility_reason(trade_date=target)) is not None
+        and reason not in allowed_observation_exclusions
         for instrument in universe.instruments.values()
     ):
         raise MinuteSessionInitializerError("minute_session_universe_ineligible")

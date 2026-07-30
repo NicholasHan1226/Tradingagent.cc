@@ -435,13 +435,40 @@ def test_explicit_universe_source_must_be_absolute(tmp_path: Path) -> None:
         )
 
 
-def test_explicit_universe_source_rejects_ineligible_security(
+def test_explicit_universe_source_keeps_risk_security_observation_only(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(2)
+    universe[0]["risk_warning"] = True
+    universe[1]["delisting_risk"] = True
+    source = tmp_path / "reviewed-universe-ineligible.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        transport_factory=_factory(FixtureTransport(daily_rows=daily)),
+    )
+    initialized = json.loads(
+        (tmp_path / "20260729" / "universe.json").read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "pass"
+    assert result["symbol_count"] == 2
+    assert initialized[0]["risk_warning"] is True
+    assert initialized[1]["delisting_risk"] is True
+
+
+def test_explicit_universe_source_still_rejects_recent_listing(
     tmp_path: Path,
 ) -> None:
     _template(tmp_path)
     universe, _ = _large_universe(2)
-    universe[0]["risk_warning"] = True
-    source = tmp_path / "reviewed-universe-ineligible.json"
+    universe[0]["list_date"] = "2026-07-01"
+    source = tmp_path / "reviewed-universe-recent-listing.json"
     source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
 
     with pytest.raises(
