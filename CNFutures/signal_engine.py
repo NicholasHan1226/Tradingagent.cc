@@ -243,12 +243,15 @@ def _exit_plan(style: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _index_intraday_directional_signal(
+def _commodity_intraday_trend_signal(
     symbol: str,
     bars: list[dict[str, Any]],
     style: dict[str, Any],
 ) -> dict[str, Any]:
-    style_name = str(style.get("name") or "index_intraday_directional")
+    style_name = str(style.get("name") or "commodity_intraday_trend")
+    style_family = str(
+        style.get("style_family") or "commodity_intraday_trend"
+    ).strip().lower()
     lookback = max(2, int(_safe_float(style.get("momentum_lookback_bars"), 3)))
     ma_window = max(lookback + 1, int(_safe_float(style.get("moving_average_bars"), 6)))
     threshold = abs(_safe_float(style.get("signal_threshold"), 0.0025))
@@ -500,7 +503,7 @@ def _index_intraday_directional_signal(
         confidence = min(0.98, confidence + 0.08)
     exit_plan = _exit_plan(style)
     scenario_tags = {
-        "style_family": "index_intraday_directional",
+        "style_family": style_family,
         "time_bucket": _time_bucket(bars[-1]),
         "direction": action,
         "volatility_bucket": _bucket(recent_range_pct, low=0.002, high=0.006, labels=("low", "normal", "high")),
@@ -510,7 +513,7 @@ def _index_intraday_directional_signal(
     return {
         "symbol": symbol,
         "style": style_name,
-        "style_family": "index_intraday_directional",
+        "style_family": style_family,
         "action": action,
         "side": action,
         "price": latest,
@@ -525,7 +528,7 @@ def _index_intraday_directional_signal(
         "consecutive_aligned_bars": consecutive_aligned_bars,
         "late_chase_pct": late_chase_pct,
         "confidence": confidence,
-        "reason": "index_intraday_direction_confirmed",
+        "reason": "commodity_intraday_trend_confirmed",
         "prediction_horizon_bars": exit_plan["prediction_horizon_bars"],
         "exit_plan": exit_plan,
         "scenario_tags": scenario_tags,
@@ -542,62 +545,18 @@ def generate_style_signal(
 ) -> dict[str, Any]:
     """Generate one simulation signal for a style, or return hold."""
 
-    if str(style.get("style_family") or "").strip().lower() == "index_intraday_directional":
-        return _index_intraday_directional_signal(symbol, bars, style)
+    if str(style.get("style_family") or "").strip().lower() == "commodity_intraday_trend":
+        return _commodity_intraday_trend_signal(symbol, bars, style)
 
-    if _is_night_session_bar(bars[-1]) and not bool(style.get("night_session_allowed", False)):
-        return {
-            "symbol": symbol,
-            "style": str(style.get("name") or "default"),
-            "action": "hold",
-            "reason": "night_session_not_allowed",
-            "confidence": 0.0,
-        }
-
-    if len(bars) < 2:
-        return {"symbol": symbol, "action": "hold", "reason": "insufficient_bars", "confidence": 0.0}
-    latest = _latest_close(bars)
-    previous = _safe_float(bars[-2].get("close"), 0.0)
-    if latest <= 0 or previous <= 0:
-        return {"symbol": symbol, "action": "hold", "reason": "invalid_price", "confidence": 0.0}
-
-    momentum = (latest / previous) - 1.0
-    threshold = abs(_safe_float(style.get("signal_threshold"), 0.01))
-    contrarian = bool(style.get("contrarian", False))
-    volume_ratio = _volume_ratio(bars)
-    style_name = str(style.get("name") or "default")
-
-    action = "hold"
-    if momentum >= threshold:
-        action = "sell" if contrarian else "buy"
-    elif momentum <= -threshold:
-        action = "buy" if contrarian else "sell"
-
-    if action == "hold":
-        return {
-            "symbol": symbol,
-            "style": style_name,
-            "action": "hold",
-            "price": latest,
-            "momentum": momentum,
-            "volume_ratio": volume_ratio,
-            "confidence": 0.0,
-            "reason": "below_threshold",
-        }
-
-    confidence = min(0.95, max(0.10, abs(momentum) / max(threshold, 0.0001) * 0.35))
-    if volume_ratio >= 1.2:
-        confidence = min(0.98, confidence + 0.10)
+    # Do not retain a generic momentum/contrarian fallback.  An unapproved
+    # style must remain observable as a hold rather than turn into a second
+    # executable simulation lane.
     return {
         "symbol": symbol,
-        "style": style_name,
-        "action": action,
-        "side": action,
-        "price": latest,
-        "momentum": momentum,
-        "volume_ratio": volume_ratio,
-        "confidence": confidence,
-        "reason": "trend_confirmed" if not contrarian else "mean_reversion_triggered",
+        "style": str(style.get("name") or "unsupported"),
+        "action": "hold",
+        "reason": "unsupported_strategy",
+        "confidence": 0.0,
         "capital_layer": "simulated",
         "account_type": "simulated",
     }

@@ -2,6 +2,8 @@
 
 CNFutures 是国内期货的长期模拟研究与样本闭环。当前目标是持续保存方向判断、风险拒绝、反事实标签和真实规格模拟成交证据；它不承担 A 股资金加速，也没有实盘日期。
 
+当前唯一可运行候选是豆粕 `M` 的日盘 5 分钟趋势模拟研究；螺纹钢 `RB` 仅可做只读影子评估，不能生成模拟成交。策略范围、禁止项与人工晋级规则见 [STRATEGY_ARCHITECTURE.md](STRATEGY_ARCHITECTURE.md)。
+
 长期规则见 [AGENTS.md](AGENTS.md)。跨市场架构、字段、验收和运行方式分别见：
 
 - [../docs/architecture.md](../docs/architecture.md)
@@ -85,7 +87,7 @@ append-only review journal、前向标签、actual-cost execution evidence、Sam
 以下聚焦测试只使用本地测试输入，不安装 cron、不访问 TradingDatas 或连接真实交易：
 
 ```bash
-REAL_TRADING_ENABLED=false python -m pytest -q \
+REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_fixture_closed_loop.py \
   tests/test_cn_futures_execution_evidence.py \
   tests/test_cn_futures_sim.py \

@@ -20,63 +20,44 @@ DEFAULT_REVIEW_ROOT = Path(__file__).resolve().parents[1] / "shared" / "review"
 
 DEFAULT_UNIVERSE_FILTER: dict[str, Any] = {
     "active_only": True,
-    "max_symbols": 30,
-    "min_distinct_products": 3,
-    "products": ("rb", "cu", "i", "m", "if", "ih", "ic", "im"),
+    "max_symbols": 1,
+    "min_distinct_products": 1,
+    # The runnable research lane is intentionally single-product.  RB is a
+    # read-only shadow comparator and never belongs to this execution universe.
+    "products": ("m",),
 }
 
 DEFAULT_STYLES: dict[str, dict[str, Any]] = {
-    "trend": {
-        "name": "trend",
-        "description": "5-minute trend-following futures simulation lane",
-        "signal_threshold": 0.01,
-        "risk_per_trade": 0.03,
-        "max_margin_usage": 0.30,
-        "products": ("rb", "cu", "i", "m"),
-    },
-    "breakout": {
-        "name": "breakout",
-        "description": "Volume-confirmed breakout futures simulation lane",
-        "signal_threshold": 0.015,
-        "risk_per_trade": 0.02,
-        "max_margin_usage": 0.20,
-        "products": ("rb", "cu", "i", "m"),
-    },
-    "mean_reversion": {
-        "name": "mean_reversion",
-        "description": "Small counter-trend futures simulation lane",
-        "signal_threshold": 0.012,
-        "risk_per_trade": 0.01,
+    "commodity_intraday_trend": {
+        "name": "commodity_intraday_trend",
+        "description": "Day-session-only one-lot commodity trend candidate; simulation only.",
+        "style_family": "commodity_intraday_trend",
+        "signal_threshold": 0.0015,
+        "risk_per_trade": 0.0025,
         "max_margin_usage": 0.10,
-        "contrarian": True,
-        "products": ("rb", "cu", "i", "m"),
-    },
-    "index_intraday_directional": {
-        "name": "index_intraday_directional",
-        "description": "Intraday long/short direction model for China stock index futures; flat-only overnight.",
-        "style_family": "index_intraday_directional",
-        "signal_threshold": 0.0025,
-        "risk_per_trade": 0.01,
-        "max_margin_usage": 0.08,
-        "products": ("if", "ih", "ic", "im"),
+        "products": ("m",),
         "momentum_lookback_bars": 3,
         "moving_average_bars": 6,
         "prediction_horizon_bars": 3,
+        "time_stop_bars": 3,
+        "max_hold_bars": 6,
+        "stop_loss_pct": 0.004,
+        "take_profit_pct": 0.006,
         "no_overnight": True,
         "day_session_only": True,
         "trend_alignment_required": True,
-        "min_volume_ratio": 1.05,
-        "open_cooldown_minutes": 15,
+        "min_volume_ratio": 1.20,
+        "open_cooldown_minutes": 20,
         "gap_cooldown_minutes": 30,
         "max_open_gap_pct": 0.01,
-        "min_recent_range_pct": 0.001,
+        "min_recent_range_pct": 0.0015,
         "min_directional_consistency": 0.60,
-        "max_intrabar_reversal_pct": 0.002,
+        "max_intrabar_reversal_pct": 0.0025,
         "min_signal_to_range_ratio": 0.35,
         "max_bar_gap_minutes": 7,
         "min_body_to_range_ratio": 0.30,
         "min_consecutive_aligned_bars": 2,
-        "max_late_chase_pct": 0.012,
+        "max_late_chase_pct": 0.008,
         "slippage_bps": 2.0,
         "volume_participation": 0.05,
         "flatten_before_session_close_minutes": 10,
@@ -400,6 +381,12 @@ class CNFuturesAdapter(MarketAdapter):
                 "reader_market": READER_MARKET,
             },
             "universe_filter": dict(self.universe_filter),
+            "shadow_research": {
+                "products": ("rb",),
+                "mode": "read_only_evaluation",
+                "execution_eligible": False,
+                "simulated_fill_allowed": False,
+            },
         }
 
     def get_shadow_account(self) -> str:
@@ -467,15 +454,16 @@ class CNFuturesAdapter(MarketAdapter):
                 for name, config in self._styles_override.items()
             }
         styles = {name: dict(config) for name, config in DEFAULT_STYLES.items()}
-        if not self.strategy_dir.exists():
+        # Do not glob-load strategy files: an old JSON file must never silently
+        # rejoin the runnable set.  The one checked-in candidate is deliberately
+        # named here and fails closed to the immutable default when malformed.
+        canonical_path = self.strategy_dir / "commodity_intraday_trend.json"
+        try:
+            payload = json.loads(canonical_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             return self._apply_runtime_styles(styles)
-        for path in sorted(self.strategy_dir.glob("*.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            name = str(payload.get("name") or path.stem)
-            styles[name] = payload
+        if str(payload.get("name") or "").strip() == "commodity_intraday_trend":
+            styles["commodity_intraday_trend"] = payload
         return self._apply_runtime_styles(styles)
 
     def _apply_runtime_styles(

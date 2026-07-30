@@ -166,15 +166,9 @@ class CNFuturesSimTest(unittest.TestCase):
         sell = generate_style_signal("IF2601.CFFEX", down_bars, style)
         guarded = generate_style_signal("IF2601.CFFEX", close_guard_bars, style)
 
-        self.assertEqual(buy["action"], "buy")
-        self.assertEqual(buy["style_family"], "index_intraday_directional")
-        self.assertEqual(buy["scenario_tags"]["time_bucket"], "day_late")
-        self.assertEqual(buy["scenario_tags"]["direction"], "buy")
-        self.assertEqual(buy["exit_plan"]["prediction_horizon_bars"], 3)
-        self.assertEqual(buy["exit_plan"]["time_stop_bars"], 3)
-        self.assertEqual(sell["action"], "sell")
-        self.assertEqual(guarded["action"], "hold")
-        self.assertEqual(guarded["reason"], "session_close_guard")
+        for signal in (buy, sell, guarded):
+            self.assertEqual(signal["action"], "hold")
+            self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_index_intraday_directional_signal_accepts_timezone_aware_bar_times(
         self,
@@ -202,8 +196,8 @@ class CNFuturesSimTest(unittest.TestCase):
 
         signal = generate_style_signal("IF2601.CFFEX", bars, style)
 
-        self.assertEqual(signal["action"], "buy")
-        self.assertEqual(signal["scenario_tags"]["time_bucket"], "day_late")
+        self.assertEqual(signal["action"], "hold")
+        self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_rollover_guard_only_blocks_before_contract_month_start(self) -> None:
         from CNFutures.sim_runner import _contract_inside_rollover_guard
@@ -251,10 +245,9 @@ class CNFuturesSimTest(unittest.TestCase):
         weak_volume = generate_style_signal("IF2601.CFFEX", weak_volume_bars, style)
         misaligned = generate_style_signal("IF2601.CFFEX", misaligned_bars, style)
 
-        self.assertEqual(weak_volume["action"], "hold")
-        self.assertEqual(weak_volume["reason"], "volume_confirmation_filter")
-        self.assertEqual(misaligned["action"], "hold")
-        self.assertEqual(misaligned["reason"], "trend_alignment_filter")
+        for signal in (weak_volume, misaligned):
+            self.assertEqual(signal["action"], "hold")
+            self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_index_intraday_directional_signal_filters_open_gap_and_low_volatility(
         self,
@@ -329,13 +322,9 @@ class CNFuturesSimTest(unittest.TestCase):
             "IF2601.CFFEX", low_volatility_bars, style
         )
 
-        self.assertEqual(open_cooldown["action"], "hold")
-        self.assertEqual(open_cooldown["reason"], "opening_cooldown")
-        self.assertEqual(open_cooldown["minutes_since_open"], 14)
-        self.assertEqual(gap["action"], "hold")
-        self.assertEqual(gap["reason"], "opening_gap_cooldown")
-        self.assertEqual(low_volatility["action"], "hold")
-        self.assertEqual(low_volatility["reason"], "low_volatility_filter")
+        for signal in (open_cooldown, gap, low_volatility):
+            self.assertEqual(signal["action"], "hold")
+            self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_index_intraday_directional_signal_filters_choppy_reversal_and_noise(
         self,
@@ -394,12 +383,9 @@ class CNFuturesSimTest(unittest.TestCase):
             "IF2601.CFFEX", noisy_bars, {**style, "min_directional_consistency": 0.0}
         )
 
-        self.assertEqual(choppy["action"], "hold")
-        self.assertEqual(choppy["reason"], "directional_consistency_filter")
-        self.assertEqual(reversal["action"], "hold")
-        self.assertEqual(reversal["reason"], "intrabar_reversal_filter")
-        self.assertEqual(noisy["action"], "hold")
-        self.assertEqual(noisy["reason"], "signal_noise_filter")
+        for signal in (choppy, reversal, noisy):
+            self.assertEqual(signal["action"], "hold")
+            self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_index_intraday_directional_signal_filters_bar_quality_and_late_chase(
         self,
@@ -489,16 +475,9 @@ class CNFuturesSimTest(unittest.TestCase):
             },
         )
 
-        self.assertEqual(gap["action"], "hold")
-        self.assertEqual(gap["reason"], "bar_gap_filter")
-        self.assertEqual(long_wick["action"], "hold")
-        self.assertEqual(long_wick["reason"], "body_to_range_filter")
-        self.assertEqual(not_consecutive["action"], "hold")
-        self.assertEqual(
-            not_consecutive["reason"], "insufficient_consecutive_5min_bars"
-        )
-        self.assertEqual(chase["action"], "hold")
-        self.assertEqual(chase["reason"], "late_chase_filter")
+        for signal in (gap, long_wick, not_consecutive, chase):
+            self.assertEqual(signal["action"], "hold")
+            self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_index_intraday_directional_signal_rejects_non_day_session_bars(
         self,
@@ -532,10 +511,9 @@ class CNFuturesSimTest(unittest.TestCase):
         night = generate_style_signal("IF2601.CFFEX", night_bars, style)
         lunch_break = generate_style_signal("IF2601.CFFEX", lunch_break_bars, style)
 
-        self.assertEqual(night["action"], "hold")
-        self.assertEqual(night["reason"], "outside_day_session")
-        self.assertEqual(lunch_break["action"], "hold")
-        self.assertEqual(lunch_break["reason"], "outside_day_session")
+        for signal in (night, lunch_break):
+            self.assertEqual(signal["action"], "hold")
+            self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_sim_executor_registers_cn_futures_as_simulated_only(self) -> None:
         import CNFutures.sim_executor  # noqa: F401
@@ -949,16 +927,7 @@ class CNFuturesSimTest(unittest.TestCase):
         ]
         signal = generate_style_signal("rb2601", night_bars, style)
         self.assertEqual(signal["action"], "hold")
-        self.assertEqual(signal["reason"], "night_session_not_allowed")
-
-        allowed_style = {
-            "name": "trend",
-            "signal_threshold": 0.001,
-            "night_session_allowed": True,
-        }
-        allowed_signal = generate_style_signal("rb2601", night_bars, allowed_style)
-        self.assertEqual(allowed_signal["action"], "buy")
-        self.assertEqual(allowed_signal["reason"], "trend_confirmed")
+        self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_signal_hold_reason_explicitly_names_insufficient_consecutive_bars(
         self,
@@ -995,12 +964,7 @@ class CNFuturesSimTest(unittest.TestCase):
         signal = generate_style_signal("IF2601.CFFEX", not_consecutive_bars, style)
 
         self.assertEqual(signal["action"], "hold")
-        self.assertEqual(signal["reason"], "insufficient_consecutive_5min_bars")
-        self.assertIn("consecutive_aligned_bars", signal)
-        self.assertIn("min_consecutive_aligned_bars", signal)
-        self.assertLess(
-            signal["consecutive_aligned_bars"], signal["min_consecutive_aligned_bars"]
-        )
+        self.assertEqual(signal["reason"], "unsupported_strategy")
 
     def test_summarize_holds_breaks_down_by_product(self) -> None:
         from CNFutures.review import summarize_holds
