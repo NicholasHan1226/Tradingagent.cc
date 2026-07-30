@@ -1,6 +1,6 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 10:21 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 10:30 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 > **2026-07-30 10:10 A股分钟闭环恢复：** TradingDatas 先从误含
 > 500 股 fanout 的 `78435bb37754fda5bb4d2be6d46a9b63211b7401`
@@ -34,7 +34,16 @@
 > 30/30、`ready/fresh/valid/non-degraded`，新 receipt 与 lineage 完整。
 > 10:00–10:10 仍是不可补造的真实缺口；TA 将在延迟窗口到达 10:15 后按既有
 > gap-recovery 规则取消跨缺口 pending、重置特征并继续，缺口日保持不可学习。
-> 500 股隔离候选在切入正式 18082 前仍需完成标准 API 分页与回归验收。
+> 10:29 自动轮已完成该恢复：30/30，明确记录 10:00、10:05、10:10 三个
+> gap slots，`candidate_count=0`、`pending_sleeves=[]`，没有人工参数、订单或
+> 资本变化。
+>
+> 同时，500 股隔离候选已取得 10:20 与 10:25 两根相邻实时快照；每根均为
+> 5×100、500 个唯一代码、单一 bar end、零重复，耗时分别 38.3 秒和
+> 15.9 秒。10:20 的隔离标准 API 读回为 5 页终止 cursor，500/500、
+> `ready/success/fresh/valid/non-degraded`，receipt 与 lineage 完整。
+> 500 股仍未合并或切入正式 18082；最终门禁是 10:25 同口径 API 分页读回、
+> 最小回归与独立审查 P0/P1=0。
 
 > **2026-07-30 09:42 Crypto 自动闭环恢复：** PR
 > [#80](https://github.com/NicholasHan1226/Tradingagent.cc/pull/80) 已普通合并，
