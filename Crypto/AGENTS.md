@@ -113,5 +113,11 @@
 - `capital_policy.py` 是 `crypto-capital-v1` 原生 10,000 USDT 本地 fixture opening baseline 的单一代码来源；它不是 execution、durable receipt、production 或 live capital authority。`config.yaml` 只声明账户币种和风险参数，shared kernel 只能引用而不能另设数值。
 - `report.py` 与 `validation.py` 只生成研究辅助证据；`promotion.py` 是只读 scorecard，永久 `eligible_for_sim=false`、`promotion_authority=false`，不能自行晋级或扩风险。
 - LLM sidecar 必须在核心 cycle lock 之外独立追加并限制读取大小；损坏或写入失败只形成无权威 degraded 诊断，不得回滚、重复或阻断已提交的核心资本与 bundle replay。
+- 当前 capital generation 仍是 buy/observe-only。`delayed_paper_exit_shadow.py`
+  只能从已验证 completion、run bundle 与 capital head 生成止盈、止损、最长持有
+  和动量转弱的完整往返反事实；它不得写资本、订单、成交或修改历史 bundle。
+  `delayed_paper_health.py` 只生成 no-write 健康快照。两者都固定
+  `authority=none`，不能冒充已实现的模拟卖出；真正卖出必须进入新的、可回放的
+  capital generation，并与旧账本分代。
 - DeepSeek/LLM 只能作为 `offline_fixture`、`authority=none`、`network_used=false` 的独立 sidecar journal；改变其文本不得改变或阻塞核心 replay、Champion、decision、OrderIntent、数量、费用或资本状态。
 - 旧 `/opt/investment/Crypto/tools/` 名称清单已从仓库删除；历史实现只从 Git 或独立只读归档审计，不再维护第二份 manifest。
