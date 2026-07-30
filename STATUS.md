@@ -1,11 +1,35 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-30 09:42 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-07-30 10:10 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-07-30 10:10 A股分钟闭环恢复：** TradingDatas 先从误含
+> 500 股 fanout 的 `78435bb37754fda5bb4d2be6d46a9b63211b7401`
+> 原子恢复到已验证的固定 30 股 release
+> `5ac3925c3931a81132ea02abb16f9745033fb6dc`。正式 18082 随后以 TA
+> 身份精确读回 09:50、09:55 两根相邻快照；每根均为 30/30、单一 bar
+> end、`ready/success/fresh/valid/non-degraded`，receipt 与 lineage
+> 完整。TradingDatas 5 分钟 timer 已重新 `enabled/active`；500 股仍只在
+> 独立数据库候选中验收，不进入当前生产数据面。
+>
+> 当日 TA 09:18 会话初始化成功，但 09:35–09:45 三个槽因数据 timer
+> 事故缺失。10:03 使用仓库既有 `--allow-late-start` 事故恢复入口建立
+> bundle，只消费 09:50 的 30/30 真实快照，并固定写入
+> `late_start=true`、`gap_recovery=true`、
+> `full_session_complete=false`、`learning_eligible=false`；没有补造
+> 历史 K 线，也没有资本、订单或成交副作用。10:04 同槽自动重放为
+> `bar_already_processed/noop`；10:09 正常 timer 无人工参数处理 09:55
+> 快照，得到 30 个特征、30 个候选、0 数据拒绝，模拟权益仍为 50,000 CNY、
+> 零持仓。A股分钟 timer 继续 `enabled/active`，全链仍为 delayed-paper，
+> `REAL_TRADING_ENABLED=false`、`capital_authority=false`、
+> `execution_authority=false`。本轮服务器证据保存在
+> `/opt/investment/release-evidence/tradingagent/7bdb2f6701a8fe6e5a7e70678730997c44694108/ashare-20260730-late-start/`。
 
 > **2026-07-30 09:42 Crypto 自动闭环恢复：** PR
 > [#80](https://github.com/NicholasHan1226/Tradingagent.cc/pull/80) 已普通合并，
+> 代码 release 为 `7bdb2f6701a8fe6e5a7e70678730997c44694108`；随后状态文档
+> PR [#81](https://github.com/NicholasHan1226/Tradingagent.cc/pull/81) 合入后，
 > `origin/main` 与永久 Crypto lane 均为
-> `7bdb2f6701a8fe6e5a7e70678730997c44694108`，front/test CI SUCCESS，
+> `b067f46f33696980a637b33abb6293694beee09d`。两次 front/test CI 均 SUCCESS，
 > 本地 Crypto 全量 `278 passed`，服务器 runtime `29 passed`。服务器
 > `current` 已原子切换到同 SHA 的 root-owned、只读不可变 release，
 > `1e08e905d13c778bab6fdc5cdf5c4cb7f74b7763` 保留为直接回滚点。
