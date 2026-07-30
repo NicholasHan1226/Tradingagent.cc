@@ -66,6 +66,73 @@ fully excluded. Only canonical context-only indices and sector/industry
 aggregates may enter context; they never enter candidate selection or receipts.
 Promotion, risk expansion, LLM influence, and real trading remain disabled.
 
+## Event, announcement, and sentiment evidence
+
+`event_evidence.py` is a fixture/mock-first, non-production A-share consumer
+port for announcements, news, investor Q&A, and research evidence. It has no
+default transport, token, runtime hook, persistence path, or model invocation.
+The only wire routes are `GET /v1/catalog` and `POST /v1/query`; direct SQLite,
+provider routes, `/tushare`, `/source_status`, and legacy data fallbacks are
+forbidden.
+
+The first catalog-validated profiles are:
+
+- primary: `cn.dataset.anns_d`, `cctv_news`, `irm_qa_sh`, `irm_qa_sz`, and
+  `research_report`;
+- optional, explicitly coverage-degrading: `disclosure_date`, `report_rc`,
+  `broker_recommend`, and `stk_surv`;
+- forbidden fallbacks while paused: `news` and `major_news`.
+
+Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
+identity must be present in the exact active catalog row. An optional dataset
+must also be in the injected client's explicit allow-list before it becomes a
+queryable profile. Query fields and operators are restricted to the frozen
+catalog allow-list. Every bounded query is replayed. Catalog drift,
+pagination/cursor failure, duplicate identity, or same-observation drift fails
+closed. An accepted query envelope must be
+`ready`, fresh, valid, non-degraded, and carry a complete provider-neutral
+lineage, receipt, `data_through`, and timezone-aware `observed_at`.
+`available_at` is exactly the envelope `observed_at`; the adapter never
+backfills or guesses an earlier known time. Date-only historical event fields
+remain date-precision evidence. An instant event time records only that the
+event-time field has instant precision (`event_time_instant_proven=true`); it
+does not prove historical availability. All fixture snapshots keep
+`historical_known_time_proven=false` and `pit_feature_eligible=false` until the
+formal handoff.
+
+Provider-native rows map to immutable `EventEvidenceSnapshot` records with
+event time/precision, availability, canonical mainboard symbol or context
+entity, title/content/URL/source, evidence reference, receipt, lineage hashes,
+and deterministic completeness confidence. That confidence is not a
+calibrated probability. Restricted individual ChiNext, STAR, or Beijing
+symbols fail closed. Invalid evidence produces only an
+`AshareEvidenceAuditRecord`; it cannot become a feature, candidate, trained
+sample, order, or promotion input.
+
+`SentimentEvidenceSnapshot` applies a transparent keyword baseline and an
+explicit primary-dataset coverage weight. Missing evidence reduces the shadow
+score; it never falls back to a paused dataset. The result is a
+counterfactual-only score with `calibrated_probability=null` and all candidate,
+execution, training, promotion, risk, position, and live-trading authority
+flags false. Accepted shadow observations can bind to the existing
+`InMemoryDecisionLedger` only as `SHADOW_ONLY` with zero notional and zero
+fills.
+
+For optional offline LLM review, an instant-proven event can be projected into
+the existing shared `EvidenceArtifact` / `LLMEvidenceRequest` schema. This
+projection only constructs an immutable request object; it does not instantiate
+the gateway, DeepSeek adapter, journal, or any network transport. The fixture
+artifact intentionally has no external source-authority receipt, so the shared
+gateway cannot transmit it until a later formal TradingDatas handoff supplies
+and verifies that authority. LLM output remains shadow evidence and can never
+set an order, position, risk limit, capital action, or promotion state.
+
+Until TradingDatas publishes and independently validates the formal catalog
+handoff and real query parity for these profiles, this entire adapter remains
+fixture/mock-only and is not connected to the scale-500 minute initializer,
+runner, units, environment, timers, production release, or real trading.
+`REAL_TRADING_ENABLED=false`.
+
 ## Five-minute simulation adapter
 
 `minute_data.py` and `minute_paper.py` are the A-share lane's mock-ready
