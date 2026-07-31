@@ -122,6 +122,9 @@ execution, training, promotion, risk, position, and live-trading authority
 flags false. Accepted shadow observations can bind to the existing
 `InMemoryDecisionLedger` only as `SHADOW_ONLY` with zero notional and zero
 fills.
+Coverage distinguishes an exchange-specific investor-Q&A source that is not
+applicable from one that is genuinely missing: an SH symbol is not penalized
+for the SZ-only profile (and vice versa).
 
 For optional offline LLM review, an instant-proven event can be projected into
 the existing shared `EvidenceArtifact` / `LLMEvidenceRequest` schema. This
@@ -288,6 +291,12 @@ Its compact `operational_readiness` projection exposes the deterministic
 `session_incomplete` blockers, so daily accumulation can distinguish a clean
 fixture day from an incomplete one without treating either result as trading
 or training authority.
+The baseline sleeve is the only source for top-level candidate, simulated-fill
+and fee KPIs. Event, flow and dynamic sleeves are separately labelled as a
+non-comparable counterfactual aggregate, so four independent fixture books
+cannot be mistaken for one account's turnover, cost or PnL. New bundles retain
+one receipt per accepted bar; the report sums those audit rejections and marks
+legacy bundles whose earlier per-bar receipt history is unavailable.
 
 `minute_offline_learning.py` is a separate post-close, fixture-only projection.
 It appends verified day summaries only to an A-share-local learning journal,
@@ -360,7 +369,11 @@ are forbidden as opening evidence.
 Normally, the first accepted scale observations must be the adjacent 09:35 and
 09:40 500/500 bars. A one-time, manual `run --allow-late-start` is the only
 exception: it can start only from the runner's exact current completed formal
-bar after an independently verified 500/500 production canary. It never
+bar after an independently verified 500/500 production canary. The static
+late-start candidate requires its secret-free canary receipt and verifies the
+same trading date, exact bar, delayed-paper tier, 500 canonical identities,
+same-observation replay, receipt/lineage proof and frozen Universe digest
+before it invokes the runner. It never
 queries or backfills earlier bars, cannot use mixed/failed observations, and is
 not accepted by `initialize` or either recurring systemd unit. The tracked
 static `tradingagent-ashare-minute-scale500-late-start.service` is the only

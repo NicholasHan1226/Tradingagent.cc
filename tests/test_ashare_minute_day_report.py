@@ -117,6 +117,37 @@ def test_day_report_keeps_post_gap_observations_but_blocks_learning(
     ]
 
 
+def test_day_report_uses_cumulative_per_bar_receipt_history(
+    tmp_path: Path,
+) -> None:
+    path = _bundle(
+        tmp_path / "state.json",
+        accepted_bar_ends=["2026-07-28 09:35:00", "2026-07-28 09:40:00"],
+        audit_rejections=0,
+    )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_history"] = [
+        {
+            **raw["last_receipt"],
+            "bar_end": "2026-07-28 09:35:00",
+            "snapshot_sha256": raw["loop_state"]["processed_snapshot_hashes"][0],
+            "audit_rejections": 1,
+        },
+        raw["last_receipt"],
+    ]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    report = build_minute_day_report(state_bundle=path)
+
+    assert report["evidence"] == {
+        "accepted_count": 2,
+        "rejected_count": 1,
+        "receipt_history_complete": True,
+        "status": "accepted_fixture_evidence_with_rejections",
+    }
+    assert report["operational_readiness"]["audit_rejection_count"] == 1
+
+
 def test_day_report_marks_complete_clean_fixture_as_learning_projection_ready(
     tmp_path: Path,
 ) -> None:
@@ -165,6 +196,52 @@ def test_day_report_exposes_reconciliation_blocker_deterministically(
         "session_incomplete",
     ]
     assert report["operational_readiness"]["reconciliation_complete"] is False
+
+
+def test_day_report_keeps_primary_kpis_separate_from_counterfactual_totals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def summary(_: object, sleeve_id: str, __: object) -> dict[str, object]:
+        fills = {"baseline": 1, "event": 2, "flow": 3, "dynamic_position": 4}
+        records = {"baseline": 5, "event": 6, "flow": 7, "dynamic_position": 8}
+        return {
+            "cash_cny": 50_000.0,
+            "positions": 0.0,
+            "equity_cny": 50_000.0,
+            "realized_pnl_cny": 0.0,
+            "unrealized_pnl_cny": 0.0,
+            "reconciliation_status": "fixture_reconciled",
+            "candidate_count": records[sleeve_id],
+            "disposition_counts": {},
+            "rejection_reason_counts": {"fixture_rejected": records[sleeve_id]},
+            "simulated_fills": fills[sleeve_id],
+            "simulated_not_filled": records[sleeve_id] - fills[sleeve_id],
+            "fees_cny": float(fills[sleeve_id]),
+            "t_plus_1_positions": {},
+        }
+
+    monkeypatch.setattr(minute_day_report, "_book_summary", summary)
+    report = build_minute_day_report(state_bundle=_bundle(tmp_path / "state.json"))
+
+    assert report["candidate_and_rejections"] == {
+        "scope": "baseline_primary_sleeve",
+        "candidate_count": 0,
+        "rejection_reason_counts": {},
+    }
+    assert report["simulated_execution"] == {
+        "scope": "baseline_primary_sleeve",
+        "simulated_fills": 1,
+        "simulated_not_filled": 4,
+        "fees_cny": 1.0,
+    }
+    assert report["counterfactual_execution"] == {
+        "scope": "non_comparable_shadow_aggregate",
+        "sleeve_ids": ["event", "flow", "dynamic_position"],
+        "candidate_count": 0,
+        "simulated_fills": 9,
+        "simulated_not_filled": 12,
+        "fees_cny": 9.0,
+    }
 
 
 @pytest.mark.parametrize("mismatch", [True, False])

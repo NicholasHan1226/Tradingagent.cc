@@ -164,6 +164,90 @@ def _validated_universe(
     return rows, actual_sha256
 
 
+def _validate_late_start_canary(
+    *,
+    canary_receipt: Path | str | None,
+    expected_symbols: frozenset[str],
+    trading_date: str,
+    bar_end: str,
+) -> None:
+    """Bind a manual scale start to one prior exact delayed-paper canary."""
+
+    if canary_receipt is None:
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_missing")
+    path = Path(canary_receipt)
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    raw = _load_json(path, "minute_scale500_late_start_canary_invalid")
+    if not isinstance(raw, Mapping):
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    if (
+        raw.get("status") != "pass"
+        or raw.get("authority_tier") != "observation_only"
+        or raw.get("evidence_use") != "delayed_paper"
+        or raw.get("execution_latency_eligible") is not False
+        or raw.get("real_trading_enabled") is not False
+        or raw.get("trading_date") != trading_date
+        or raw.get("row_count") != EXPECTED_UNIVERSE_COUNT
+        or raw.get("same_observation") is not True
+        or raw.get("lineage_complete") is not True
+        or raw.get("audit_rejections") != 0
+        or not isinstance(raw.get("catalog_contract_sha256"), str)
+        or not _SHA256_PATTERN.fullmatch(raw["catalog_contract_sha256"])
+        or not isinstance(raw.get("snapshot_sha256"), str)
+        or not _SHA256_PATTERN.fullmatch(raw["snapshot_sha256"])
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    decision_time = raw.get("decision_time")
+    if not isinstance(decision_time, str):
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    try:
+        decision = datetime.fromisoformat(decision_time)
+    except ValueError as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_late_start_canary_invalid"
+        ) from exc
+    if decision.tzinfo is None or decision.utcoffset() is None:
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    bars = raw.get("bars")
+    if not isinstance(bars, list) or len(bars) != EXPECTED_UNIVERSE_COUNT:
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    symbols: list[str] = []
+    for item in bars:
+        if not isinstance(item, Mapping):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_canary_invalid"
+            )
+        symbol = item.get("symbol")
+        if (
+            not isinstance(symbol, str)
+            or item.get("bar_end") != bar_end
+            or not isinstance(item.get("receipt_id"), str)
+            or not item["receipt_id"].strip()
+            or not isinstance(item.get("observed_at"), str)
+        ):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_canary_invalid"
+            )
+        try:
+            observed = datetime.fromisoformat(item["observed_at"])
+        except ValueError as exc:
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_canary_invalid"
+            ) from exc
+        if (
+            observed.tzinfo is None
+            or observed.utcoffset() is None
+            or observed > decision
+        ):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_canary_invalid"
+            )
+        symbols.append(symbol)
+    if frozenset(symbols) != expected_symbols or len(symbols) != len(set(symbols)):
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+
+
 def _gate_path(scale_root: Path, trading_date: str) -> Path:
     return scale_root / GATE_DIRECTORY / f"{trading_date.replace('-', '')}.json"
 
@@ -579,6 +663,7 @@ def run_scale500_once(
     expected_universe_sha256: str,
     now: datetime,
     allow_late_start: bool = False,
+    canary_receipt: Path | str | None = None,
     runner: Runner = run_current_delayed_minute_paper,
 ) -> dict[str, object]:
     """Run one exact 500-symbol delayed-paper step or select rollback-30."""
@@ -595,10 +680,11 @@ def run_scale500_once(
         token_file=token_file,
         universe_source=universe_source,
     )
-    _, universe_sha256 = _validated_universe(
+    universe_rows, universe_sha256 = _validated_universe(
         universe_path,
         expected_sha256=expected_universe_sha256,
     )
+    expected_symbols = frozenset(str(row["symbol"]) for row in universe_rows)
     target = expected_available_bar_end(now)
     if target is None:
         return {
@@ -635,6 +721,13 @@ def run_scale500_once(
                 "promotion_authorized": False,
                 "real_trading_enabled": False,
             }
+        if allow_late_start:
+            _validate_late_start_canary(
+                canary_receipt=canary_receipt,
+                expected_symbols=expected_symbols,
+                trading_date=trading_date,
+                bar_end=target.strftime("%Y-%m-%d %H:%M:%S"),
+            )
         _validate_published_session(
             scale_root=scale,
             trading_date=trading_date,
@@ -760,6 +853,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--universe-source", type=Path, required=True)
     parser.add_argument("--expected-universe-sha256", required=True)
     parser.add_argument(
+        "--canary-receipt",
+        type=Path,
+        help="Required secret-free delayed-paper canary receipt for --allow-late-start.",
+    )
+    parser.add_argument(
         "--allow-late-start",
         action="store_true",
         help="Permit one partial-session run from the exact current completed bar.",
@@ -788,6 +886,7 @@ def main(argv: list[str] | None = None) -> int:
             result = run_scale500_once(
                 **kwargs,
                 allow_late_start=args.allow_late_start,
+                canary_receipt=args.canary_receipt,
             )
     except Exception as exc:
         reason = _reason_code(exc)
