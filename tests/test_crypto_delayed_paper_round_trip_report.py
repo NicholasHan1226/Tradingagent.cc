@@ -10,6 +10,7 @@ from Crypto.delayed_paper_round_trip_report import (
     CryptoRoundTripReportError,
     build_crypto_delayed_paper_round_trip_report,
     evaluate_crypto_delayed_paper_round_trip_acceptance,
+    main,
     run_crypto_delayed_paper_round_trip_acceptance_once,
 )
 from Crypto.five_minute_data import TradingDatasCryptoFiveMinuteDataPort
@@ -129,3 +130,7 @@ def test_acceptance_runner_rejects_free_manifest_path(tmp_path: Path) -> None:
         run_crypto_delayed_paper_round_trip_acceptance_once(
             epoch_manifest=tmp_path / "g4.json"
         )
+
+
+def test_module_cli_executes_the_fail_closed_acceptance_path(tmp_path: Path) -> None:
+    assert main(["--epoch-manifest", str(tmp_path / "g4.json")]) == 2
