@@ -2,10 +2,13 @@
 
 The selector owns only an isolated simulation state root. It verifies one
 frozen 500-symbol universe, delegates all market reads to the existing formal
-TradingDatas catalog/query clients, and requires the first two accepted bars to
-be the adjacent 09:35 and 09:40 session observations. It never reads or writes
-the rollback-30 state root. A failure selects the rollback configuration and
-returns a stable reason code for systemd's rollback unit.
+TradingDatas catalog/query clients, and normally requires the first two accepted
+bars to be the adjacent 09:35 and 09:40 session observations. An explicitly
+armed, isolated late start may accept only the runner's exact current completed
+bar; it remains partial-session and permanently ineligible for learning. The
+selector never reads or writes the rollback-30 state root. A failure selects
+the rollback configuration and returns a stable reason code for systemd's
+rollback unit.
 """
 
 from __future__ import annotations
@@ -217,6 +220,9 @@ def _new_gate(
         "expected_universe_count": EXPECTED_UNIVERSE_COUNT,
         "universe_sha256": universe_sha256,
         "validated_bar_ends": [],
+        "partial_session": False,
+        "late_start": False,
+        "late_start_bar_end": None,
         "failure_reason": None,
         "rollback30_state_root": str(rollback_root),
         "capital_layer": "simulated",
@@ -240,7 +246,12 @@ def _load_gate(
     raw = _load_json(path, "minute_scale500_gate_missing_or_invalid")
     if not isinstance(raw, Mapping):
         raise MinuteScale500RuntimeError("minute_scale500_gate_missing_or_invalid")
-    gate = dict(raw)
+    gate = {
+        "partial_session": False,
+        "late_start": False,
+        "late_start_bar_end": None,
+        **dict(raw),
+    }
     validated = gate.get("validated_bar_ends")
     if (
         gate.get("schema") != GATE_SCHEMA
@@ -276,6 +287,29 @@ def _load_gate(
         or any(
             not isinstance(value, str) or not value or value != value.strip()
             for value in validated
+        )
+        or not isinstance(gate.get("partial_session"), bool)
+        or not isinstance(gate.get("late_start"), bool)
+        or (
+            gate.get("late_start_bar_end") is not None
+            and (
+                not isinstance(gate.get("late_start_bar_end"), str)
+                or not gate["late_start_bar_end"]
+                or gate["late_start_bar_end"] != gate["late_start_bar_end"].strip()
+            )
+        )
+        or gate.get("partial_session") != gate.get("late_start")
+        or (
+            gate.get("late_start") is False
+            and gate.get("late_start_bar_end") is not None
+        )
+        or (
+            gate.get("late_start") is True
+            and (
+                gate.get("status") not in {"active", "fallback30_selected"}
+                or len(validated) != 1
+                or gate.get("late_start_bar_end") != validated[0]
+            )
         )
     ):
         raise MinuteScale500RuntimeError("minute_scale500_gate_missing_or_invalid")
@@ -482,7 +516,8 @@ def _validate_runtime_receipt(
     result: Mapping[str, object],
     *,
     expected_bar_end: str,
-) -> None:
+    allow_late_start: bool,
+) -> bool:
     if result.get("status") != "pass":
         raise MinuteScale500RuntimeError("minute_scale500_runtime_not_pass")
     if result.get("bar_end") != expected_bar_end:
@@ -497,8 +532,42 @@ def _validate_runtime_receipt(
         or result.get("real_trading_enabled") is not False
     ):
         raise MinuteScale500RuntimeError("minute_scale500_authority_violation")
-    if result.get("late_start") is True or result.get("gap_recovery") is True:
+    late_start = result.get("late_start") is True
+    if late_start:
+        if not allow_late_start:
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_not_authorized"
+            )
+        if (
+            result.get("gap_recovery") is not True
+            or result.get("late_start_reason") != "incident_recovery_no_historical_pit"
+            or result.get("gap_recovery_reason")
+            != "incident_recovery_no_historical_pit"
+            or isinstance(result.get("skipped_session_slots"), bool)
+            or not isinstance(result.get("skipped_session_slots"), int)
+            or result["skipped_session_slots"] <= 0
+            or result.get("full_session_complete") is not False
+            or result.get("learning_eligible") is not False
+        ):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_receipt_invalid"
+            )
+        return True
+    if result.get("gap_recovery") is True:
         raise MinuteScale500RuntimeError("minute_scale500_gap_or_late_start_forbidden")
+    return False
+
+
+def _partial_session_projection(gate: Mapping[str, object]) -> dict[str, object]:
+    if gate.get("partial_session") is not True:
+        return {}
+    return {
+        "partial_session": True,
+        "late_start": True,
+        "late_start_bar_end": gate["late_start_bar_end"],
+        "learning_eligible": False,
+        "full_session_complete": False,
+    }
 
 
 def run_scale500_once(
@@ -509,6 +578,7 @@ def run_scale500_once(
     universe_source: Path | str,
     expected_universe_sha256: str,
     now: datetime,
+    allow_late_start: bool = False,
     runner: Runner = run_current_delayed_minute_paper,
 ) -> dict[str, object]:
     """Run one exact 500-symbol delayed-paper step or select rollback-30."""
@@ -517,6 +587,8 @@ def run_scale500_once(
         raise MinuteScale500RuntimeError("real_trading_must_remain_disabled")
     if now.tzinfo is None or now.utcoffset() is None:
         raise MinuteScale500RuntimeError("minute_scale500_now_must_be_aware")
+    if not isinstance(allow_late_start, bool):
+        raise MinuteScale500RuntimeError("minute_scale500_late_start_flag_invalid")
     scale, rollback, token, universe_path = _validate_paths(
         scale_state_root=scale_state_root,
         rollback30_state_root=rollback30_state_root,
@@ -573,7 +645,7 @@ def run_scale500_once(
             state_root=scale,
             token_file=token,
             now=now,
-            allow_late_start=False,
+            allow_late_start=allow_late_start,
         )
         if result.get("status") == "noop":
             if result.get("reason") != "bar_already_processed":
@@ -590,31 +662,51 @@ def run_scale500_once(
                 "execution_eligible": False,
                 "training_eligible": False,
                 "promotion_authorized": False,
+                **_partial_session_projection(gate),
             }
         expected_bar_end = target.strftime("%Y-%m-%d %H:%M:%S")
-        _validate_runtime_receipt(result, expected_bar_end=expected_bar_end)
+        late_start = _validate_runtime_receipt(
+            result,
+            expected_bar_end=expected_bar_end,
+            allow_late_start=allow_late_start,
+        )
         validated = list(gate["validated_bar_ends"])
-        if gate["status"] == "pending_two_live_snapshots":
-            first_two = session_bar_ends(target.date())[:2]
-            expected_index = len(validated)
-            if expected_index >= 2:
-                raise MinuteScale500RuntimeError(
-                    "minute_scale500_gate_missing_or_invalid"
-                )
-            expected_acceptance_bar = first_two[expected_index].strftime(
-                "%Y-%m-%d %H:%M:%S"
+        if late_start and (gate["status"] != "pending_two_live_snapshots" or validated):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_gate_not_pending"
             )
-            if expected_bar_end != expected_acceptance_bar:
-                reason = (
-                    "minute_scale500_first_bar_mismatch"
-                    if expected_index == 0
-                    else "minute_scale500_second_bar_mismatch"
-                )
-                raise MinuteScale500RuntimeError(reason)
-            validated.append(expected_bar_end)
-            gate["validated_bar_ends"] = validated
-            if len(validated) == 2:
+        if gate["status"] == "pending_two_live_snapshots":
+            if late_start:
+                if validated:
+                    raise MinuteScale500RuntimeError(
+                        "minute_scale500_gate_missing_or_invalid"
+                    )
                 gate["status"] = "active"
+                gate["validated_bar_ends"] = [expected_bar_end]
+                gate["partial_session"] = True
+                gate["late_start"] = True
+                gate["late_start_bar_end"] = expected_bar_end
+            else:
+                first_two = session_bar_ends(target.date())[:2]
+                expected_index = len(validated)
+                if expected_index >= 2:
+                    raise MinuteScale500RuntimeError(
+                        "minute_scale500_gate_missing_or_invalid"
+                    )
+                expected_acceptance_bar = first_two[expected_index].strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if expected_bar_end != expected_acceptance_bar:
+                    reason = (
+                        "minute_scale500_first_bar_mismatch"
+                        if expected_index == 0
+                        else "minute_scale500_second_bar_mismatch"
+                    )
+                    raise MinuteScale500RuntimeError(reason)
+                validated.append(expected_bar_end)
+                gate["validated_bar_ends"] = validated
+                if len(validated) == 2:
+                    gate["status"] = "active"
             _atomic_write_json(gate_path, gate)
     except Exception as exc:
         reason = _reason_code(exc)
@@ -637,6 +729,7 @@ def run_scale500_once(
         "execution_eligible": False,
         "training_eligible": False,
         "promotion_authorized": False,
+        **_partial_session_projection(gate),
     }
 
 
@@ -666,6 +759,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--universe-source", type=Path, required=True)
     parser.add_argument("--expected-universe-sha256", required=True)
+    parser.add_argument(
+        "--allow-late-start",
+        action="store_true",
+        help="Permit one partial-session run from the exact current completed bar.",
+    )
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
     try:
@@ -682,11 +780,15 @@ def main(argv: list[str] | None = None) -> int:
             "expected_universe_sha256": args.expected_universe_sha256,
             "now": now,
         }
-        result = (
-            initialize_scale500_session(**kwargs)
-            if args.command == "initialize"
-            else run_scale500_once(**kwargs)
-        )
+        if args.command == "initialize":
+            if args.allow_late_start:
+                raise MinuteScale500RuntimeError("minute_scale500_late_start_run_only")
+            result = initialize_scale500_session(**kwargs)
+        else:
+            result = run_scale500_once(
+                **kwargs,
+                allow_late_start=args.allow_late_start,
+            )
     except Exception as exc:
         reason = _reason_code(exc)
         print(
