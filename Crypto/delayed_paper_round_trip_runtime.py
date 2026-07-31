@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_epoch import (
+    ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
     ROUND_TRIP_EPOCH_MANIFEST_PATH,
     load_round_trip_epoch_manifest,
     prepare_round_trip_epoch_candidate,
@@ -41,11 +42,15 @@ def run_crypto_delayed_paper_round_trip_server_once(
     """Run exactly one new/pending closed-bar cycle in the isolated g3 root."""
 
     _assert_simulation_only()
-    if Path(epoch_manifest) != ROUND_TRIP_EPOCH_MANIFEST_PATH:
+    manifest_path = Path(epoch_manifest)
+    if (
+        manifest_path != ROUND_TRIP_EPOCH_MANIFEST_PATH
+        and manifest_path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+    ):
         raise RuntimeError("round_trip_epoch_manifest_path_invalid")
     if Path(token_file) != RUNTIME_TOKEN_FILE:
         raise RuntimeError("round_trip_token_file_path_invalid")
-    context = load_round_trip_epoch_manifest(epoch_manifest)
+    context = load_round_trip_epoch_manifest(manifest_path)
     prepared = prepare_round_trip_epoch_candidate(context)
     identity_before = prepared.identity_path.read_bytes()
     manifest = load_crypto_delayed_paper_runtime_manifest(runtime_manifest)

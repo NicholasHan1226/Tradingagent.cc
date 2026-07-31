@@ -10,6 +10,7 @@ import Crypto.delayed_paper_round_trip_epoch as epoch_module
 from Crypto.delayed_paper_round_trip_epoch import (
     CryptoRoundTripEpochError,
     load_round_trip_epoch_manifest,
+    prepare_versioned_round_trip_epoch_manifest,
     prepare_round_trip_epoch_candidate,
 )
 
@@ -160,3 +161,136 @@ def test_round_trip_epoch_rejects_manifest_changed_after_context_load(
         match="context_stale",
     ):
         prepare_round_trip_epoch_candidate(context)
+
+
+def _configure_versioned_migration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, Path]:
+    legacy, archived, _ = _candidate(monkeypatch, tmp_path)
+    directory_parent = tmp_path / "etc" / "tradingagent"
+    directory_parent.mkdir(parents=True, mode=0o700)
+    directory = directory_parent / "round-trip-epochs"
+    monkeypatch.setattr(
+        epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PARENT", directory_parent
+    )
+    monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory)
+    return legacy, archived, directory, tmp_path / "epochs"
+
+
+def test_versioned_migration_binds_frozen_g2_and_preserves_old_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    legacy, archived, directory, _ = _configure_versioned_migration(
+        monkeypatch, tmp_path
+    )
+    legacy_before = legacy.read_bytes()
+    archive_before = {
+        path.relative_to(archived).as_posix(): path.read_bytes()
+        for path in archived.rglob("*")
+        if path.is_file()
+    }
+    context = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-migration",
+        archived_output_root=archived,
+        migration_reason="replace_stale_preflight_manifest",
+    )
+    manifest_before = context.manifest_path.read_bytes()
+    receipt_before = context.supersession_receipt_path.read_bytes()  # type: ignore[union-attr]
+
+    replay = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id=context.epoch_id,
+        archived_output_root=archived,
+        migration_reason="replace_stale_preflight_manifest",
+    )
+
+    assert context.versioned is True
+    assert context.manifest_path.parent == directory
+    assert replay == context
+    assert legacy.read_bytes() == legacy_before
+    assert context.manifest_path.read_bytes() == manifest_before
+    assert context.supersession_receipt_path.read_bytes() == receipt_before  # type: ignore[union-attr]
+    assert {
+        path.relative_to(archived).as_posix(): path.read_bytes()
+        for path in archived.rglob("*")
+        if path.is_file()
+    } == archive_before
+
+
+def test_versioned_migration_rejects_reversion_or_second_g3_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    legacy, archived, directory, _ = _configure_versioned_migration(
+        monkeypatch, tmp_path
+    )
+    context = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-migration",
+        archived_output_root=archived,
+        migration_reason="replace_stale_preflight_manifest",
+    )
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="supersession_receipt_invalid",
+    ):
+        prepare_versioned_round_trip_epoch_manifest(
+            epoch_id="crypto-delayed-paper-round-trip-epoch-g3-other",
+            archived_output_root=archived,
+            migration_reason="replace_stale_preflight_manifest",
+        )
+    legacy.write_bytes(_canonical({"tampered": True}))
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="superseded_manifest_mismatch",
+    ):
+        load_round_trip_epoch_manifest(context.manifest_path)
+    assert context.manifest_path.parent == directory
+
+
+def test_versioned_migration_rejects_g2_head_advance_before_g3_prepare(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, archived, _, _ = _configure_versioned_migration(monkeypatch, tmp_path)
+    context = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-migration",
+        archived_output_root=archived,
+        migration_reason="replace_stale_preflight_manifest",
+    )
+
+    class _AdvancedArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 43, "d" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _AdvancedArchiveLedger)
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="archive_capital_head_mismatch",
+    ):
+        prepare_round_trip_epoch_candidate(context)
+
+
+def test_versioned_migration_conflict_never_leaves_new_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, archived, directory, _ = _configure_versioned_migration(monkeypatch, tmp_path)
+    directory.mkdir(mode=0o700)
+    conflicting = directory / "crypto-delayed-paper-round-trip-epoch-g3-migration.json"
+    conflicting.write_bytes(_canonical({"foreign": True}))
+    conflicting.chmod(0o600)
+
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="versioned_manifest_conflict",
+    ):
+        prepare_versioned_round_trip_epoch_manifest(
+            epoch_id="crypto-delayed-paper-round-trip-epoch-g3-migration",
+            archived_output_root=archived,
+            migration_reason="replace_stale_preflight_manifest",
+        )
+    assert not (directory / "generation-3.supersession.json").exists()

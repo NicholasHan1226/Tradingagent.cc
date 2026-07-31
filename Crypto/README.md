@@ -296,11 +296,14 @@ exchange-minimum/模拟流动性拒绝回执均写入独立 checksum ledger。�
 和两币中途崩溃均失败关闭或确定性恢复。退出影子仍只是
 `authority=none` 对照，不能写该资本链。
 
-`delayed_paper_round_trip_epoch.py` 定义不激活的 epoch-g3 迁移候选。仓外
-manifest 必须精确绑定新 root、capital generation 2，以及旧 generation-2
-root 的 epoch identity 文件 SHA 和 capital head checksum。prepare 只读校验
-旧 root、创建新 identity；不会写 current-epoch pointer，也没有 tracked
-service/timer。正式发布前必须另行停止并锁定旧 writer、核对旧 root 字节、
+`delayed_paper_round_trip_epoch.py` 定义不激活的 epoch-g3 迁移候选。旧固定
+manifest 是只读失败证据，不能原地改写。发布侧必须用模块 CLI 在独立版本化
+manifest 路径创建 g3 迁移：它一次性冻结唯一 epoch/root、旧 manifest digest、
+迁移原因、旧 generation-2 identity 与当时的 authority head sequence/checksum，
+并写入同样不可覆盖的 generation-3 supersession receipt。重复同一请求只读回；
+同 generation 换 root、旧 manifest/receipt 篡改、g2 head 前进或回退均失败关闭。
+prepare 只读校验旧 root、创建新 identity；不会写 current-epoch pointer，也没有
+tracked service/timer。正式发布前必须另行停止并锁定旧 writer、核对旧 root 字节、
 安装 manifest、执行 one-shot/同槽重放/相邻轮验收，获准后才能切 timer。
 
 本候选所有 order/receipt/snapshot 均保持

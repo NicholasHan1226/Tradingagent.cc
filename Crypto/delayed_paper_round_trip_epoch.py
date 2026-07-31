@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import argparse
 import hashlib
 import json
 import os
@@ -22,9 +23,20 @@ ROUND_TRIP_EPOCH_GENERATION = 3
 ROUND_TRIP_EPOCH_MANIFEST_PATH = Path(
     "/etc/tradingagent/crypto-delayed-paper-round-trip.epoch.json"
 )
+ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY = Path(
+    "/etc/tradingagent/crypto-delayed-paper-round-trip-epochs"
+)
+ROUND_TRIP_EPOCH_MANIFEST_PARENT = Path("/etc/tradingagent")
 ROUND_TRIP_EPOCH_ROOT_PARENT = Path("/var/lib/tradingagent/crypto-delayed-paper-epochs")
 _IDENTITY_FILENAME = ".round_trip_epoch_identity.json"
 _MANIFEST_MAX_BYTES = 64 * 1024
+ROUND_TRIP_EPOCH_VERSIONED_MANIFEST_CONTRACT = (
+    "tradingagent.crypto.round_trip_epoch_manifest.v2"
+)
+ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT = (
+    "tradingagent.crypto.round_trip_epoch_supersession_receipt.v1"
+)
+_SUPERSESSION_RECEIPT_FILENAME = "generation-3.supersession.json"
 _PROOF = object()
 _EXPECTED_SAFETY = {
     "real_trading_enabled": False,
@@ -123,6 +135,105 @@ def _secure_directory(path: Path, *, reason: str) -> None:
         raise CryptoRoundTripEpochError(reason)
 
 
+def _epoch_id(value: Any) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.startswith("crypto-delayed-paper-round-trip-epoch-g3-")
+        or len(value) > 96
+        or any(
+            character not in "abcdefghijklmnopqrstuvwxyz0123456789-"
+            for character in value
+        )
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_safety_invalid")
+    return value
+
+
+def _versioned_manifest_path(epoch_id: str) -> Path:
+    return ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY / f"{epoch_id}.json"
+
+
+def _supersession_receipt_path() -> Path:
+    return ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY / _SUPERSESSION_RECEIPT_FILENAME
+
+
+def _secure_manifest_directory(*, create: bool) -> None:
+    directory = ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+    if (
+        not directory.is_absolute()
+        or directory.parent != ROUND_TRIP_EPOCH_MANIFEST_PARENT
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_directory_invalid")
+    if create and not directory.exists():
+        try:
+            directory.mkdir(mode=0o700)
+        except OSError as exc:
+            raise CryptoRoundTripEpochError(
+                "round_trip_epoch_manifest_directory_create_failed"
+            ) from exc
+    _secure_directory(directory, reason="round_trip_epoch_manifest_directory_untrusted")
+
+
+def _atomic_create_or_verify(
+    path: Path, payload: Mapping[str, Any], *, reason: str
+) -> None:
+    expected = (_canonical_json(payload) + "\n").encode()
+    if path.exists() or path.is_symlink():
+        if (
+            _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES)
+            != expected
+        ):
+            raise CryptoRoundTripEpochError(reason)
+        return
+    temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb", closefd=True) as stream:
+            descriptor = None
+            stream.write(expected)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if (
+                _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES)
+                != expected
+            ):
+                raise CryptoRoundTripEpochError(reason)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except CryptoRoundTripEpochError:
+        raise
+    except OSError as exc:
+        raise CryptoRoundTripEpochError(reason) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _verify_existing_payload(
+    path: Path, payload: Mapping[str, Any], *, reason: str
+) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    expected = (_canonical_json(payload) + "\n").encode()
+    if _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES) != expected:
+        raise CryptoRoundTripEpochError(reason)
+
+
 @dataclass(frozen=True)
 class CryptoRoundTripEpochContext:
     epoch_id: str
@@ -137,6 +248,12 @@ class CryptoRoundTripEpochContext:
     manifest_sha256: str
     aggregate_with_archived_epoch: bool
     _proof: object
+    versioned: bool = False
+    supersedes_manifest_path: Path | None = None
+    supersedes_manifest_sha256: str | None = None
+    migration_reason: str | None = None
+    supersession_receipt_path: Path | None = None
+    archived_capital_head_sequence: int | None = None
 
     @property
     def identity_path(self) -> Path:
@@ -164,7 +281,12 @@ def load_round_trip_epoch_manifest(
     _assert_simulation_only()
     manifest_path = Path(path)
     if manifest_path != ROUND_TRIP_EPOCH_MANIFEST_PATH:
-        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_path_invalid")
+        if (
+            manifest_path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+            or manifest_path.name == _SUPERSESSION_RECEIPT_FILENAME
+        ):
+            raise CryptoRoundTripEpochError("round_trip_epoch_manifest_path_invalid")
+        return _load_versioned_round_trip_epoch_manifest(manifest_path)
     encoded = _secure_regular(
         manifest_path,
         reason="round_trip_epoch_manifest_untrusted",
@@ -262,6 +384,122 @@ def load_round_trip_epoch_manifest(
     )
 
 
+def _load_versioned_round_trip_epoch_manifest(
+    manifest_path: Path,
+) -> CryptoRoundTripEpochContext:
+    _secure_manifest_directory(create=False)
+    encoded = _secure_regular(
+        manifest_path,
+        reason="round_trip_epoch_manifest_untrusted",
+        max_bytes=_MANIFEST_MAX_BYTES,
+    )
+    try:
+        raw = json.loads(encoded.decode(), object_pairs_hook=_strict_object)
+    except CryptoRoundTripEpochError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CryptoRoundTripEpochError(
+            "round_trip_epoch_manifest_json_invalid"
+        ) from exc
+    expected_keys = {
+        "schema",
+        "epoch_id",
+        "epoch_generation",
+        "current_output_root",
+        "archived_output_root",
+        "archived_epoch_id",
+        "archived_epoch_identity_file_sha256",
+        "archived_capital_head_sequence",
+        "archived_capital_head_checksum",
+        "archived_epoch_policy",
+        "capital_authority_id",
+        "capital_generation",
+        "capital_baseline_usdt",
+        "aggregate_with_archived_epoch",
+        "activate_current_epoch",
+        "supersedes_manifest_path",
+        "supersedes_manifest_sha256",
+        "migration_reason",
+        "supersession_receipt_path",
+        "safety",
+    }
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != expected_keys
+        or encoded != (_canonical_json(raw) + "\n").encode()
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_schema_invalid")
+    epoch_id = _epoch_id(raw.get("epoch_id"))
+    output_root = Path(str(raw.get("current_output_root")))
+    archived_root = Path(str(raw.get("archived_output_root")))
+    supersedes_path = Path(str(raw.get("supersedes_manifest_path")))
+    receipt_path = Path(str(raw.get("supersession_receipt_path")))
+    digests = (
+        raw.get("archived_epoch_identity_file_sha256"),
+        raw.get("archived_capital_head_checksum"),
+        raw.get("supersedes_manifest_sha256"),
+    )
+    sequence = raw.get("archived_capital_head_sequence")
+    if (
+        raw.get("schema") != ROUND_TRIP_EPOCH_VERSIONED_MANIFEST_CONTRACT
+        or manifest_path != _versioned_manifest_path(epoch_id)
+        or raw.get("epoch_generation") != ROUND_TRIP_EPOCH_GENERATION
+        or raw.get("capital_generation") != ROUND_TRIP_CAPITAL_POLICY.generation
+        or raw.get("capital_authority_id") != ROUND_TRIP_CAPITAL_POLICY.authority_id
+        or raw.get("capital_baseline_usdt")
+        != format(ROUND_TRIP_CAPITAL_POLICY.initial_cash, "f")
+        or output_root != ROUND_TRIP_EPOCH_ROOT_PARENT / epoch_id
+        or not archived_root.is_absolute()
+        or archived_root.parent != ROUND_TRIP_EPOCH_ROOT_PARENT
+        or archived_root == output_root
+        or raw.get("archived_epoch_id") != archived_root.name
+        or not archived_root.name.startswith("crypto-delayed-paper-epoch-g2-")
+        or raw.get("archived_epoch_policy")
+        != "read_only_archive_no_resume_no_aggregation"
+        or raw.get("aggregate_with_archived_epoch") is not False
+        or raw.get("activate_current_epoch") is not False
+        or supersedes_path != ROUND_TRIP_EPOCH_MANIFEST_PATH
+        or receipt_path != _supersession_receipt_path()
+        or not isinstance(raw.get("migration_reason"), str)
+        or not raw["migration_reason"].strip()
+        or len(raw["migration_reason"]) > 512
+        or isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or sequence <= 0
+        or not isinstance(raw.get("safety"), dict)
+        or raw["safety"] != _EXPECTED_SAFETY
+        or any(
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            for digest in digests
+        )
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_safety_invalid")
+    context = CryptoRoundTripEpochContext(
+        epoch_id=epoch_id,
+        epoch_generation=ROUND_TRIP_EPOCH_GENERATION,
+        capital_generation=ROUND_TRIP_CAPITAL_POLICY.generation,
+        output_root=output_root,
+        archived_output_root=archived_root,
+        archived_epoch_id=str(raw["archived_epoch_id"]),
+        archived_epoch_identity_file_sha256=str(digests[0]),
+        archived_capital_head_checksum=str(digests[1]),
+        manifest_path=manifest_path,
+        manifest_sha256=_sha256(raw),
+        aggregate_with_archived_epoch=False,
+        _proof=_PROOF,
+        versioned=True,
+        supersedes_manifest_path=supersedes_path,
+        supersedes_manifest_sha256=str(digests[2]),
+        migration_reason=str(raw["migration_reason"]),
+        supersession_receipt_path=receipt_path,
+        archived_capital_head_sequence=sequence,
+    )
+    _verify_supersession_receipt(context)
+    return context
+
+
 def _verify_archive(context: CryptoRoundTripEpochContext) -> None:
     _secure_directory(
         context.archived_output_root,
@@ -282,8 +520,183 @@ def _verify_archive(context: CryptoRoundTripEpochContext) -> None:
         raise CryptoRoundTripEpochError(
             "round_trip_archive_capital_head_untrusted"
         ) from exc
-    if sequence <= 0 or checksum != context.archived_capital_head_checksum:
+    if (
+        sequence <= 0
+        or checksum != context.archived_capital_head_checksum
+        or (
+            context.archived_capital_head_sequence is not None
+            and sequence != context.archived_capital_head_sequence
+        )
+    ):
         raise CryptoRoundTripEpochError("round_trip_archive_capital_head_mismatch")
+
+
+def _supersession_receipt(context: CryptoRoundTripEpochContext) -> dict[str, Any]:
+    if (
+        not context.versioned
+        or context.supersedes_manifest_path is None
+        or context.supersedes_manifest_sha256 is None
+        or context.migration_reason is None
+        or context.supersession_receipt_path is None
+        or context.archived_capital_head_sequence is None
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_supersession_invalid")
+    return {
+        "contract": ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT,
+        "epoch_id": context.epoch_id,
+        "epoch_generation": context.epoch_generation,
+        "current_output_root": str(context.output_root),
+        "manifest_path": str(context.manifest_path),
+        "manifest_sha256": context.manifest_sha256,
+        "supersedes_manifest_path": str(context.supersedes_manifest_path),
+        "supersedes_manifest_sha256": context.supersedes_manifest_sha256,
+        "migration_reason": context.migration_reason,
+        "archived_output_root": str(context.archived_output_root),
+        "archived_epoch_id": context.archived_epoch_id,
+        "archived_epoch_identity_file_sha256": (
+            context.archived_epoch_identity_file_sha256
+        ),
+        "archived_capital_head_sequence": context.archived_capital_head_sequence,
+        "archived_capital_head_checksum": context.archived_capital_head_checksum,
+        "aggregate_with_archived_epoch": False,
+        "real_trading_enabled": False,
+        "execution_authority": False,
+        "production_eligible": False,
+        "automatic_promotion_enabled": False,
+        "automatic_risk_expansion_enabled": False,
+    }
+
+
+def _verify_supersession_receipt(context: CryptoRoundTripEpochContext) -> None:
+    receipt_path = context.supersession_receipt_path
+    if receipt_path is None:
+        return
+    encoded = _secure_regular(
+        receipt_path,
+        reason="round_trip_epoch_supersession_receipt_invalid",
+        max_bytes=_MANIFEST_MAX_BYTES,
+    )
+    if encoded != (_canonical_json(_supersession_receipt(context)) + "\n").encode():
+        raise CryptoRoundTripEpochError("round_trip_epoch_supersession_receipt_invalid")
+    legacy = _secure_regular(
+        context.supersedes_manifest_path,
+        reason="round_trip_epoch_superseded_manifest_untrusted",
+        max_bytes=_MANIFEST_MAX_BYTES,
+    )
+    if _sha256_bytes(legacy) != context.supersedes_manifest_sha256:
+        raise CryptoRoundTripEpochError("round_trip_epoch_superseded_manifest_mismatch")
+
+
+def prepare_versioned_round_trip_epoch_manifest(
+    *,
+    epoch_id: str,
+    archived_output_root: Path | str,
+    migration_reason: str,
+) -> CryptoRoundTripEpochContext:
+    """Freeze g2's current authority head into one immutable g3 migration."""
+
+    _assert_simulation_only()
+    epoch_id = _epoch_id(epoch_id)
+    archived_root = Path(archived_output_root)
+    if (
+        not archived_root.is_absolute()
+        or archived_root.parent != ROUND_TRIP_EPOCH_ROOT_PARENT
+        or not archived_root.name.startswith("crypto-delayed-paper-epoch-g2-")
+        or not isinstance(migration_reason, str)
+        or not migration_reason.strip()
+        or len(migration_reason) > 512
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_migration_request_invalid")
+    _secure_directory(
+        ROUND_TRIP_EPOCH_ROOT_PARENT,
+        reason="round_trip_epoch_parent_untrusted",
+    )
+    _secure_directory(archived_root, reason="round_trip_archive_root_untrusted")
+    legacy_encoded = _secure_regular(
+        ROUND_TRIP_EPOCH_MANIFEST_PATH,
+        reason="round_trip_epoch_superseded_manifest_untrusted",
+        max_bytes=_MANIFEST_MAX_BYTES,
+    )
+    identity = _secure_regular(
+        archived_root / ".epoch_identity.json",
+        reason="round_trip_archive_identity_untrusted",
+        max_bytes=_MANIFEST_MAX_BYTES,
+    )
+    try:
+        sequence, checksum = CryptoCapitalLedger(archived_root / "capital").head()
+    except (CryptoLedgerError, OSError, TypeError, ValueError) as exc:
+        raise CryptoRoundTripEpochError(
+            "round_trip_archive_capital_head_untrusted"
+        ) from exc
+    if sequence <= 0 or not isinstance(checksum, str) or len(checksum) != 64:
+        raise CryptoRoundTripEpochError("round_trip_archive_capital_head_untrusted")
+    _secure_manifest_directory(create=True)
+    manifest_path = _versioned_manifest_path(epoch_id)
+    receipt_path = _supersession_receipt_path()
+    payload = {
+        "schema": ROUND_TRIP_EPOCH_VERSIONED_MANIFEST_CONTRACT,
+        "epoch_id": epoch_id,
+        "epoch_generation": ROUND_TRIP_EPOCH_GENERATION,
+        "current_output_root": str(ROUND_TRIP_EPOCH_ROOT_PARENT / epoch_id),
+        "archived_output_root": str(archived_root),
+        "archived_epoch_id": archived_root.name,
+        "archived_epoch_identity_file_sha256": _sha256_bytes(identity),
+        "archived_capital_head_sequence": sequence,
+        "archived_capital_head_checksum": checksum,
+        "archived_epoch_policy": "read_only_archive_no_resume_no_aggregation",
+        "capital_authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
+        "capital_generation": ROUND_TRIP_CAPITAL_POLICY.generation,
+        "capital_baseline_usdt": format(ROUND_TRIP_CAPITAL_POLICY.initial_cash, "f"),
+        "aggregate_with_archived_epoch": False,
+        "activate_current_epoch": False,
+        "supersedes_manifest_path": str(ROUND_TRIP_EPOCH_MANIFEST_PATH),
+        "supersedes_manifest_sha256": _sha256_bytes(legacy_encoded),
+        "migration_reason": migration_reason,
+        "supersession_receipt_path": str(receipt_path),
+        "safety": dict(_EXPECTED_SAFETY),
+    }
+    context = CryptoRoundTripEpochContext(
+        epoch_id=epoch_id,
+        epoch_generation=ROUND_TRIP_EPOCH_GENERATION,
+        capital_generation=ROUND_TRIP_CAPITAL_POLICY.generation,
+        output_root=ROUND_TRIP_EPOCH_ROOT_PARENT / epoch_id,
+        archived_output_root=archived_root,
+        archived_epoch_id=archived_root.name,
+        archived_epoch_identity_file_sha256=_sha256_bytes(identity),
+        archived_capital_head_checksum=checksum,
+        manifest_path=manifest_path,
+        manifest_sha256=_sha256(payload),
+        aggregate_with_archived_epoch=False,
+        _proof=_PROOF,
+        versioned=True,
+        supersedes_manifest_path=ROUND_TRIP_EPOCH_MANIFEST_PATH,
+        supersedes_manifest_sha256=_sha256_bytes(legacy_encoded),
+        migration_reason=migration_reason,
+        supersession_receipt_path=receipt_path,
+        archived_capital_head_sequence=sequence,
+    )
+    receipt = _supersession_receipt(context)
+    _verify_existing_payload(
+        manifest_path,
+        payload,
+        reason="round_trip_epoch_versioned_manifest_conflict",
+    )
+    _verify_existing_payload(
+        receipt_path,
+        receipt,
+        reason="round_trip_epoch_supersession_receipt_invalid",
+    )
+    _atomic_create_or_verify(
+        manifest_path,
+        payload,
+        reason="round_trip_epoch_versioned_manifest_conflict",
+    )
+    _atomic_create_or_verify(
+        receipt_path,
+        receipt,
+        reason="round_trip_epoch_supersession_receipt_invalid",
+    )
+    return load_round_trip_epoch_manifest(manifest_path)
 
 
 def _identity(context: CryptoRoundTripEpochContext) -> dict[str, Any]:
@@ -318,6 +731,18 @@ def _identity(context: CryptoRoundTripEpochContext) -> dict[str, Any]:
         "automatic_risk_expansion_enabled": False,
         "manifest_sha256": context.manifest_sha256,
     }
+    if context.versioned:
+        payload.update(
+            {
+                "supersedes_manifest_path": str(context.supersedes_manifest_path),
+                "supersedes_manifest_sha256": context.supersedes_manifest_sha256,
+                "migration_reason": context.migration_reason,
+                "supersession_receipt_path": str(context.supersession_receipt_path),
+                "archived_capital_head_sequence": (
+                    context.archived_capital_head_sequence
+                ),
+            }
+        )
     payload["identity_sha256"] = _sha256(payload)
     return payload
 
@@ -381,6 +806,8 @@ def prepare_round_trip_epoch_candidate(
         raise CryptoRoundTripEpochError("round_trip_epoch_context_invalid")
     if load_round_trip_epoch_manifest(context.manifest_path) != context:
         raise CryptoRoundTripEpochError("round_trip_epoch_context_stale")
+    if context.versioned:
+        _verify_supersession_receipt(context)
     _secure_directory(
         ROUND_TRIP_EPOCH_ROOT_PARENT,
         reason="round_trip_epoch_parent_untrusted",
@@ -409,13 +836,58 @@ def prepare_round_trip_epoch_candidate(
     return PreparedCryptoRoundTripEpoch(context)
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Create or verify the one immutable g3 migration manifest and receipt."""
+
+    parser = argparse.ArgumentParser(
+        description="Prepare the isolated Crypto g3 round-trip migration"
+    )
+    parser.add_argument("--epoch-id", required=True)
+    parser.add_argument("--archived-output-root", type=Path, required=True)
+    parser.add_argument("--migration-reason", required=True)
+    args = parser.parse_args(argv)
+    try:
+        context = prepare_versioned_round_trip_epoch_manifest(
+            epoch_id=args.epoch_id,
+            archived_output_root=args.archived_output_root,
+            migration_reason=args.migration_reason,
+        )
+    except Exception:
+        print("crypto round-trip epoch migration failed closed")
+        return 2
+    print(
+        _canonical_json(
+            {
+                "status": "prepared",
+                "epoch_id": context.epoch_id,
+                "epoch_generation": context.epoch_generation,
+                "manifest_path": str(context.manifest_path),
+                "supersession_receipt_path": str(context.supersession_receipt_path),
+                "real_trading_enabled": False,
+                "execution_authority": False,
+                "production_eligible": False,
+            }
+        )
+    )
+    return 0
+
+
 __all__ = [
     "CryptoRoundTripEpochError",
     "PreparedCryptoRoundTripEpoch",
     "ROUND_TRIP_EPOCH_GENERATION",
     "ROUND_TRIP_EPOCH_MANIFEST_CONTRACT",
+    "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY",
     "ROUND_TRIP_EPOCH_MANIFEST_PATH",
+    "ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT",
+    "ROUND_TRIP_EPOCH_VERSIONED_MANIFEST_CONTRACT",
     "ROUND_TRIP_EPOCH_ROOT_PARENT",
     "load_round_trip_epoch_manifest",
+    "main",
+    "prepare_versioned_round_trip_epoch_manifest",
     "prepare_round_trip_epoch_candidate",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI wrapper
+    raise SystemExit(main())

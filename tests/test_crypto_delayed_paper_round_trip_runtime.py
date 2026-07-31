@@ -157,3 +157,37 @@ def test_round_trip_runtime_rejects_noncanonical_epoch_or_token(
             now=WINDOW_END + timedelta(seconds=55),
             transport_factory=_factory(FixtureTradingDatasTransport()),
         )
+
+
+def test_round_trip_runtime_accepts_only_prepared_versioned_migration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    legacy, archived, _, token = _configure(monkeypatch, tmp_path)
+    directory_parent = tmp_path / "etc" / "tradingagent"
+    directory_parent.mkdir(parents=True, mode=0o700)
+    directory = directory_parent / "round-trip-epochs"
+    monkeypatch.setattr(
+        epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PARENT", directory_parent
+    )
+    monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory)
+    monkeypatch.setattr(
+        runtime_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory
+    )
+    context = epoch_module.prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-migration",
+        archived_output_root=archived,
+        migration_reason="replace_stale_preflight_manifest",
+    )
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    receipt = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=context.manifest_path,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert legacy.exists()
+    assert receipt["status"] == "completed"
+    assert receipt["epoch_id"] == context.epoch_id
