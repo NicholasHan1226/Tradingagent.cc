@@ -44,6 +44,14 @@ def _dependency_version(module: Any, *, dependency: str, expected: str) -> None:
         raise ShadowBaselineError(f"{dependency}_version_mismatch")
 
 
+def _normalize_serialized_model(value: object) -> str:
+    if not isinstance(value, str):
+        raise ShadowBaselineError("serialized_model_invalid")
+    normalized = value.rstrip("\r\n")
+    _require_text(normalized, field_name="serialized_model")
+    return normalized
+
+
 @dataclass(frozen=True)
 class LightGBMShadowConfig:
     model_version: str = "lightgbm-cpu-shadow-v1"
@@ -288,8 +296,10 @@ def fit_lightgbm_shadow(
         training,
         num_boost_round=config.num_boost_round,
     )
-    serialized_model = booster.model_to_string(
-        num_iteration=config.num_boost_round,
+    serialized_model = _normalize_serialized_model(
+        booster.model_to_string(
+            num_iteration=config.num_boost_round,
+        )
     )
     semantics = {
         "binary_direction": "uncalibrated_logit_score",

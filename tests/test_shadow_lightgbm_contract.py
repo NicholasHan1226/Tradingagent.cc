@@ -11,6 +11,7 @@ from shared.models.shadow_lightgbm import (
     PINNED_LIGHTGBM_VERSION,
     PINNED_NUMPY_VERSION,
     PINNED_SCIPY_VERSION,
+    _normalize_serialized_model,
     fit_lightgbm_shadow,
 )
 
@@ -75,3 +76,10 @@ def test_lightgbm_dependency_is_lazy_and_missing_environment_fails_closed(
         match="(numpy|lightgbm)_dependency_unavailable",
     ):
         fit_lightgbm_shadow(expanded, LightGBMShadowConfig())
+
+
+def test_lightgbm_model_text_normalizes_only_terminal_newlines() -> None:
+    assert _normalize_serialized_model("tree\n") == "tree"
+    assert _normalize_serialized_model("tree\r\n") == "tree"
+    with pytest.raises(ShadowBaselineError, match="serialized_model_invalid"):
+        _normalize_serialized_model(" tree\n")
