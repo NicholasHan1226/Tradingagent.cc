@@ -54,6 +54,7 @@ def _configure(
     archived.mkdir(mode=0o700)
     identity = _canonical({"epoch_id": archived.name, "generation": 2})
     (archived / ".epoch_identity.json").write_bytes(identity)
+    (archived / ".epoch_identity.json").chmod(0o600)
     capital = archived / "capital"
     capital.mkdir(mode=0o700)
     (capital / "head.json").write_bytes(
