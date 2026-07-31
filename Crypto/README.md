@@ -352,6 +352,26 @@ one-shot，逐字节确认 g4 root 未变，再决定是否启用；health 失�
 重启、修复或停止核心 5 分钟 accumulator。g4 learning 仍未绑定/启用，不能复用
 旧 g2 learning unit。
 
+`delayed_paper_round_trip_learning.py` 与其 worker 是独立的 G4 学习路径。
+它只读取已验证的 G4 observation/completion，以及 BTCUSDT/ETHUSDT 两条
+checksum-bound decision event，再在 `g4/evolution/round_trip_learning/` 追加
+模拟样本、单 observation KPI、Challenger 建议、receipt 和 checkpoint。这些
+投影不是模型、预测、收益结论或交易 authority：所有输出固定
+`learning_authority=false`、`execution_authority=false`、
+`production_eligible=false`、`manual_review_required=true`，没有自动 Champion
+替换或风险扩张。
+
+incremental worker 最多处理一条新增 completion，且必须先有一次成功 full scrub；
+有 backlog 时只返回 `full_scrub_required`。full scrub 遍历所有
+completion→receipt→checkpoint 映射；已被较早 checkpoint 声明的 receipt/segment
+若缺失或变更，必须 fail closed，绝不重建。tracked G4 learning 与 daily scrub unit
+静态绑定当前 G4 epoch，并只能写入该 epoch 的 `evolution/`。两组 timer 默认
+disabled：先满足连续 24 小时核心门禁，再做 disabled full-scrub 与幂等重放，才可
+人工启用 incremental timer；daily scrub 继续作为独立人工门禁，本次仓库变更不会
+启用任何 learning timer。发布 preflight 必须先由受控安装步骤创建该空目录并读回
+`tradingagent:tradingagent`、0700、非 symlink；unit 与 worker 都不会借缺失目录
+创建或迁移核心 epoch。
+
 ## Outage epoch restart 候选
 
 2026-07-29 ECS 停机后，旧 delayed-paper root 的最后 completion 停在
@@ -447,6 +467,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_exit_shadow.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_health.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_health.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_learning.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_round_trip_learning_systemd.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
