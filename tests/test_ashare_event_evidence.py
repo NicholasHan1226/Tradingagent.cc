@@ -700,6 +700,93 @@ def test_time_and_symbol_scope_attacks_fail_closed(
     assert audit.records()[0].reason_code == reason
 
 
+def test_full_market_snapshot_can_be_scoped_to_frozen_mainboard_allowlist() -> None:
+    transport = _Transport(
+        rows_by_dataset={
+            "cn.dataset.anns_d": [
+                _row("mainboard", symbol="600000.SH"),
+                _row(
+                    "chinext",
+                    symbol="300001.SZ",
+                    event_time="2026-07-31T10:26:00+08:00",
+                ),
+                _row("star", symbol="688001.SH"),
+                _row("missing", symbol=""),
+            ]
+        }
+    )
+    port, profile, audit, _ = _profile_and_port(transport)
+
+    snapshot = port.load_event_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+        allowed_symbols=("600000.SH",),
+    )
+
+    assert snapshot.row_count == 1
+    assert [event.symbol for event in snapshot.events] == ["600000.SH"]
+    assert snapshot.same_observation is True
+    assert snapshot.candidate_eligible is False
+    assert snapshot.execution_eligible is False
+    assert snapshot.training_eligible is False
+    assert snapshot.real_trading_enabled is False
+    assert audit.records() == ()
+
+
+@pytest.mark.parametrize(
+    ("allowed_symbols", "reason"),
+    [
+        ((), "ashare_evidence_allowed_symbols_invalid"),
+        (
+            ("300001.SZ",),
+            "ashare_evidence_allowed_symbol_outside_mainboard_scope",
+        ),
+        (
+            ("600000.SH", "600000.SH"),
+            "ashare_evidence_allowed_symbols_duplicate",
+        ),
+    ],
+)
+def test_invalid_event_symbol_allowlist_fails_closed(
+    allowed_symbols: tuple[str, ...],
+    reason: str,
+) -> None:
+    port, profile, audit, transport = _profile_and_port()
+    calls_before = len(transport.calls)
+
+    with pytest.raises(AshareEvidenceContractError, match=reason):
+        port.load_event_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+            allowed_symbols=allowed_symbols,
+        )
+
+    assert audit.records()[0].reason_code == reason
+    assert len(transport.calls) == calls_before
+
+
+def test_allowlist_with_no_matching_events_remains_fail_closed() -> None:
+    port, profile, audit, _ = _profile_and_port()
+
+    with pytest.raises(
+        AshareEvidenceContractError,
+        match="ashare_evidence_query_returned_no_rows",
+    ):
+        port.load_event_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+            allowed_symbols=("600519.SH",),
+        )
+
+    assert audit.records()[0].reason_code == "ashare_evidence_query_returned_no_rows"
+
+
 def test_future_observed_at_and_date_only_event_do_not_fake_pit() -> None:
     future = _Transport(metadata=_metadata(observed_at="2026-07-31T10:31:00+08:00"))
     port, profile, audit, _ = _profile_and_port(future)

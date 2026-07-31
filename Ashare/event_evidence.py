@@ -200,6 +200,36 @@ def _complete_lineage(value: Mapping[str, Any] | None) -> bool:
     )
 
 
+def _mainboard_symbol_allowlist(
+    value: tuple[str, ...] | None,
+) -> frozenset[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or not value:
+        raise AshareEvidenceContractError("ashare_evidence_allowed_symbols_invalid")
+    normalized: list[str] = []
+    for item in value:
+        symbol = _text(
+            item,
+            "ashare_evidence_allowed_symbols_invalid",
+        ).upper()
+        eligibility = classify_instrument(
+            symbol,
+            instrument_type="common_stock",
+        )
+        if (
+            not eligibility.order_identity_allowed
+            or eligibility.normalized_symbol != symbol
+        ):
+            raise AshareEvidenceContractError(
+                "ashare_evidence_allowed_symbol_outside_mainboard_scope"
+            )
+        normalized.append(symbol)
+    if len(normalized) != len(set(normalized)):
+        raise AshareEvidenceContractError("ashare_evidence_allowed_symbols_duplicate")
+    return frozenset(normalized)
+
+
 def _catalog_contract(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "dataset_id": row.get("dataset_id"),
@@ -958,6 +988,7 @@ def _map_run(
     profile: EvidenceDatasetProfile,
     run: PagedQueryRun,
     decision_time: datetime,
+    allowed_symbols: frozenset[str] | None = None,
 ) -> tuple[EventEvidenceSnapshot, ...]:
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
@@ -1015,14 +1046,11 @@ def _map_run(
         }
     )
     events: list[EventEvidenceSnapshot] = []
-    for row in envelope.data:
-        event_time, precision, known_time_proven = _event_time(
-            _normalize_provider_event_time(
-                row.get(profile.event_time_field),
-                profile=profile,
-            ),
-            available_at=observed,
+    if allowed_symbols is not None and profile.symbol_field is None:
+        raise AshareEvidenceContractError(
+            "ashare_evidence_allowed_symbols_require_symbol_field"
         )
+    for row in envelope.data:
         symbol: str | None = None
         if profile.symbol_field is not None:
             raw_symbol = row.get(profile.symbol_field)
@@ -1031,6 +1059,11 @@ def _map_run(
                     raw_symbol,
                     "ashare_evidence_symbol_invalid",
                 ).upper()
+                if (
+                    allowed_symbols is not None
+                    and raw_symbol_text not in allowed_symbols
+                ):
+                    continue
                 eligibility = classify_instrument(
                     raw_symbol_text,
                     instrument_type="common_stock",
@@ -1040,6 +1073,15 @@ def _map_run(
                         "ashare_evidence_symbol_outside_mainboard_scope"
                     )
                 symbol = eligibility.normalized_symbol
+            elif allowed_symbols is not None:
+                continue
+        event_time, precision, known_time_proven = _event_time(
+            _normalize_provider_event_time(
+                row.get(profile.event_time_field),
+                profile=profile,
+            ),
+            available_at=observed,
+        )
         raw_entity = (
             row.get(profile.entity_field) if profile.entity_field is not None else None
         )
@@ -1132,6 +1174,7 @@ def snapshot_from_runs(
     replay: PagedQueryRun,
     decision_time: datetime,
     audit_ledger: AshareEvidenceAuditLedger,
+    allowed_symbols: tuple[str, ...] | None = None,
 ) -> EventEvidenceSnapshotBatch:
     rejected_payload = {
         "dataset_id": profile.dataset_id,
@@ -1140,6 +1183,7 @@ def snapshot_from_runs(
         "replay_semantic_sha256": getattr(replay, "semantic_sha256", None),
     }
     try:
+        allowlist = _mainboard_symbol_allowlist(allowed_symbols)
         if (
             first.semantic_sha256 != replay.semantic_sha256
             or first.semantic_trace_sha256 != replay.semantic_trace_sha256
@@ -1151,11 +1195,13 @@ def snapshot_from_runs(
             profile=profile,
             run=first,
             decision_time=decision_time,
+            allowed_symbols=allowlist,
         )
         replay_events = _map_run(
             profile=profile,
             run=replay,
             decision_time=decision_time,
+            allowed_symbols=allowlist,
         )
         if [event.sha256 for event in events] != [
             event.sha256 for event in replay_events
@@ -1167,7 +1213,7 @@ def snapshot_from_runs(
             profile=profile,
             events=events,
             page_count=first.page_count,
-            row_count=first.row_count,
+            row_count=len(events),
             pagination_trace_sha256=first.pagination_trace_sha256,
             first_semantic_sha256=first.semantic_sha256,
             replay_semantic_sha256=replay.semantic_sha256,
@@ -1203,6 +1249,7 @@ class AshareEventEvidencePort(Protocol):
         filters: Mapping[str, Any],
         decision_time: datetime,
         audit_ledger: AshareEvidenceAuditLedger,
+        allowed_symbols: tuple[str, ...] | None = None,
     ) -> EventEvidenceSnapshotBatch: ...
 
 
@@ -1289,6 +1336,7 @@ class TradingDatasAshareEvidencePort:
         filters: Mapping[str, Any],
         decision_time: datetime,
         audit_ledger: AshareEvidenceAuditLedger,
+        allowed_symbols: tuple[str, ...] | None = None,
     ) -> EventEvidenceSnapshotBatch:
         if not isinstance(profile, EvidenceDatasetProfile):
             raise TypeError("profile must be EvidenceDatasetProfile")
@@ -1302,6 +1350,7 @@ class TradingDatasAshareEvidencePort:
         )
         audit_count_before = len(audit_ledger.records())
         try:
+            normalized_allowed_symbols = _mainboard_symbol_allowlist(allowed_symbols)
             catalog = self._client.get_catalog()
             if catalog.catalog_version != profile.catalog_version:
                 raise AshareEvidenceContractError(
@@ -1351,6 +1400,11 @@ class TradingDatasAshareEvidencePort:
                 replay=replay,
                 decision_time=decision,
                 audit_ledger=audit_ledger,
+                allowed_symbols=(
+                    tuple(sorted(normalized_allowed_symbols))
+                    if normalized_allowed_symbols is not None
+                    else None
+                ),
             )
         except AshareEvidenceContractError as exc:
             reason = exc.reason_code
