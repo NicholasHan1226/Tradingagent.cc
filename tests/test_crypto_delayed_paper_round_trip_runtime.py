@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -171,6 +172,7 @@ def test_round_trip_runtime_accepts_only_prepared_versioned_migration(
         epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PARENT", directory_parent
     )
     monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory)
+    monkeypatch.setattr(epoch_module, "_runtime_reader_gid", os.getegid)
     monkeypatch.setattr(
         runtime_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory
     )
