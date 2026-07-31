@@ -283,6 +283,11 @@ bundle/session/hash continuity before reporting expected, observed and missing
 five-minute slots, decision outcomes, simulated costs, T+1 positions,
 reconciliation, and the four fixture shadow books. It grants no execution,
 training, promotion, durable-ledger, or real-trading authority.
+Its compact `operational_readiness` projection exposes the deterministic
+`evidence_rejections`, `reconciliation_incomplete`, and
+`session_incomplete` blockers, so daily accumulation can distinguish a clean
+fixture day from an incomplete one without treating either result as trading
+or training authority.
 
 `minute_offline_learning.py` is a separate post-close, fixture-only projection.
 It appends verified day summaries only to an A-share-local learning journal,

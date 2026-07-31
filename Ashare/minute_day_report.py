@@ -229,6 +229,13 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     learning_eligible = (
         full_session_complete and audit_rejections == 0 and reconciliation_complete
     )
+    blocker_codes: list[str] = []
+    if audit_rejections:
+        blocker_codes.append("evidence_rejections")
+    if not reconciliation_complete:
+        blocker_codes.append("reconciliation_incomplete")
+    if not full_session_complete:
+        blocker_codes.append("session_incomplete")
     return {
         "trading_date": trading_date,
         "expected_bar_slots": expected,
@@ -239,6 +246,19 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
             "learning_eligible": learning_eligible,
             "gap_count": len(gaps),
             "gaps": gaps,
+        },
+        "operational_readiness": {
+            "status": (
+                "learning_projection_ready"
+                if learning_eligible
+                else "learning_projection_blocked"
+            ),
+            "blocker_codes": blocker_codes,
+            "expected_bar_slot_count": len(expected),
+            "observed_bar_slot_count": len(observed),
+            "missing_bar_slot_count": len(missing),
+            "audit_rejection_count": audit_rejections,
+            "reconciliation_complete": reconciliation_complete,
         },
         "evidence": {
             "accepted_count": len(observed),
