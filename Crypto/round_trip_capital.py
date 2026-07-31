@@ -970,6 +970,19 @@ class RoundTripCapitalLedger:
         result["head_checksum"] = checksum
         return result
 
+    def events_read_only(self) -> list[dict[str, Any]]:
+        """Return the fully replay-validated immutable event inventory.
+
+        This is intentionally a read-side method for reports and labels.  It
+        requires the already-created core lock and never repairs a head, opens
+        a writer capability, or creates an account directory.
+        """
+
+        rows = self._read_rows(require_existing_lock=True)
+        _, checksum = self._replay(rows)
+        self._validate_head(rows, checksum)
+        return [_canonical_value(row) for row in rows]
+
     def head(self) -> tuple[int, str]:
         rows, _, checksum = self._validated_state()
         return len(rows), checksum
