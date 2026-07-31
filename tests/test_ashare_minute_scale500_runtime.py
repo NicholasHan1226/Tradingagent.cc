@@ -150,6 +150,22 @@ def _receipt(bar_end: str) -> dict[str, object]:
     }
 
 
+def _late_start_receipt(bar_end: str) -> dict[str, object]:
+    receipt = _receipt(bar_end)
+    receipt.update(
+        {
+            "late_start": True,
+            "late_start_reason": "incident_recovery_no_historical_pit",
+            "gap_recovery": True,
+            "gap_recovery_reason": "incident_recovery_no_historical_pit",
+            "skipped_session_slots": 25,
+            "full_session_complete": False,
+            "learning_eligible": False,
+        }
+    )
+    return receipt
+
+
 def _initialize(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     paths = _paths(tmp_path)
     scale_root, rollback_root, token_file, universe_source, digest = paths
@@ -182,7 +198,10 @@ def test_initializer_publishes_pending_gate_without_state_bundle(
         "execution_eligible": False,
         "expected_universe_count": 500,
         "failure_reason": None,
+        "late_start": False,
+        "late_start_bar_end": None,
         "real_trading_enabled": False,
+        "partial_session": False,
         "rollback30_state_root": str(rollback_root),
         "schema": "tradingagent.ashare.scale500-acceptance.v1",
         "selected_mode": "scale500",
@@ -240,6 +259,33 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
     ]
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == before
     assert list(rollback_root.iterdir()) == [sentinel]
+
+
+def test_legacy_pending_gate_defaults_to_non_late_start(tmp_path: Path) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    gate_path = scale_root / ".scale500-gates" / "20260731.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    for field in ("partial_session", "late_start", "late_start_bar_end"):
+        del gate[field]
+    gate_path.write_text(json.dumps(gate), encoding="utf-8")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:49:00"),
+        runner=lambda **_: _receipt("2026-07-31 09:35:00"),
+    )
+
+    assert result["validated_bar_ends"] == ["2026-07-31 09:35:00"]
+    upgraded = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert upgraded["partial_session"] is False
+    assert upgraded["late_start"] is False
+    assert upgraded["late_start_bar_end"] is None
 
 
 @pytest.mark.parametrize(
@@ -341,6 +387,200 @@ def test_first_accepted_round_must_be_opening_bar_not_late_start(
         )
 
 
+def test_late_start_requires_explicit_flag_and_never_accepts_a_prior_bar(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    runner_flags: list[bool] = []
+
+    def late_runner(*, allow_late_start: bool, **_: object) -> dict[str, object]:
+        runner_flags.append(allow_late_start)
+        return _late_start_receipt("2026-07-31 13:40:00")
+
+    with pytest.raises(
+        MinuteScale500RuntimeError,
+        match="minute_scale500_late_start_not_authorized",
+    ):
+        run_scale500_once(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T13:54:00"),
+            runner=late_runner,
+        )
+
+    assert runner_flags == [False]
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(encoding="utf-8")
+    )
+    assert gate["status"] == "fallback30_selected"
+    assert gate["failure_reason"] == "minute_scale500_late_start_not_authorized"
+
+
+def test_explicit_late_start_uses_only_current_complete_bar_and_stays_partial(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    runner_flags: list[bool] = []
+
+    def late_runner(*, allow_late_start: bool, **_: object) -> dict[str, object]:
+        runner_flags.append(allow_late_start)
+        return _late_start_receipt("2026-07-31 13:40:00")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T13:54:00"),
+        allow_late_start=True,
+        runner=late_runner,
+    )
+
+    assert runner_flags == [True]
+    assert result["bar_end"] == "2026-07-31 13:40:00"
+    assert result["scale500_acceptance_status"] == "active"
+    assert result["partial_session"] is True
+    assert result["late_start"] is True
+    assert result["learning_eligible"] is False
+    assert result["full_session_complete"] is False
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(encoding="utf-8")
+    )
+    assert gate["validated_bar_ends"] == ["2026-07-31 13:40:00"]
+    assert gate["partial_session"] is True
+    assert gate["late_start"] is True
+    assert gate["late_start_bar_end"] == "2026-07-31 13:40:00"
+
+
+def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T13:54:00"),
+        allow_late_start=True,
+        runner=lambda **_: _late_start_receipt("2026-07-31 13:40:00"),
+    )
+    replay_flags: list[bool] = []
+
+    def replay_runner(*, allow_late_start: bool, **_: object) -> dict[str, object]:
+        replay_flags.append(allow_late_start)
+        return {"status": "noop", "reason": "bar_already_processed"}
+
+    replay = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T13:54:00"),
+        runner=replay_runner,
+    )
+
+    assert replay_flags == [False]
+    assert replay["reason"] == "bar_already_processed"
+    assert replay["partial_session"] is True
+    assert replay["learning_eligible"] is False
+    assert replay["full_session_complete"] is False
+
+
+def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T13:54:00"),
+        allow_late_start=True,
+        runner=lambda **_: _late_start_receipt("2026-07-31 13:40:00"),
+    )
+
+    with pytest.raises(
+        MinuteScale500RuntimeError,
+        match="minute_scale500_late_start_gate_not_pending",
+    ):
+        run_scale500_once(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T13:59:00"),
+            allow_late_start=True,
+            runner=lambda **_: _late_start_receipt("2026-07-31 13:45:00"),
+        )
+
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(encoding="utf-8")
+    )
+    assert gate["status"] == "fallback30_selected"
+    assert gate["failure_reason"] == "minute_scale500_late_start_gate_not_pending"
+
+
+def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T13:54:00"),
+        allow_late_start=True,
+        runner=lambda **_: _late_start_receipt("2026-07-31 13:40:00"),
+    )
+    runner_flags: list[bool] = []
+
+    def reject_runner(*, allow_late_start: bool, **_: object) -> dict[str, object]:
+        runner_flags.append(allow_late_start)
+        raise ValueError("minute_snapshot_universe_incomplete")
+
+    with pytest.raises(
+        MinuteScale500RuntimeError,
+        match="minute_snapshot_universe_incomplete",
+    ):
+        run_scale500_once(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T13:59:00"),
+            allow_late_start=True,
+            runner=reject_runner,
+        )
+
+    assert runner_flags == [True]
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(encoding="utf-8")
+    )
+    assert gate["status"] == "fallback30_selected"
+    assert gate["failure_reason"] == "minute_snapshot_universe_incomplete"
+    assert gate["partial_session"] is True
+    assert gate["late_start"] is True
+
+
 def test_artifact_tamper_and_non_independent_roots_fail_before_runtime(
     tmp_path: Path,
 ) -> None:
@@ -397,6 +637,9 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     paper_timer = (
         systemd_root / "tradingagent-ashare-minute-scale500-paper.timer"
     ).read_text(encoding="utf-8")
+    late_start_service = (
+        systemd_root / "tradingagent-ashare-minute-scale500-late-start.service"
+    ).read_text(encoding="utf-8")
     rollback_service = (
         systemd_root / "tradingagent-ashare-minute-scale500-rollback.service"
     ).read_text(encoding="utf-8")
@@ -435,6 +678,17 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     assert "15:14:00" not in paper_timer
     assert "Persistent=false" in paper_timer
     assert "disable --now tradingagent-ashare-minute-scale500" in rollback_service
+    assert (
+        "ConditionPathIsDirectory=/opt/investment/releases/tradingagent/2b7b52b"
+        in rollback_service
+    )
+    assert "ConditionPathIsSymbolicLink=/opt/investment/current" in rollback_service
+    assert (
+        "/usr/bin/ln -s /opt/investment/releases/tradingagent/2b7b52b"
+        in rollback_service
+    )
+    assert "tradingagent-current-rollback-2b.$$$$" in rollback_service
+    assert "/usr/bin/mv -Tf" in rollback_service
     assert "enable --now tradingagent-ashare-minute-session.timer" in rollback_service
     assert "enable --now tradingagent-ashare-minute-paper.timer" in rollback_service
     assert "REAL_TRADING_ENABLED=false" in environment
@@ -449,7 +703,81 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     forbidden = ("TOKEN=", "BROKER", "REAL_TRADING_ENABLED=true")
     assert not any(value in environment for value in forbidden)
     assert "--allow-late-start" not in session_service + paper_service
+    assert "--allow-late-start" in late_start_service
+    assert (
+        "OnFailure=tradingagent-ashare-minute-scale500-rollback.service"
+        in late_start_service
+    )
+    assert "[Install]" not in late_start_service
+    assert "OnCalendar=" not in late_start_service
+    assert "Environment=REAL_TRADING_ENABLED=false" in late_start_service
+    assert (
+        "ReadOnlyPaths=/var/lib/tradingagent/ashare-minute-paper" in late_start_service
+    )
+    assert (
+        "ReadWritePaths=/var/lib/tradingagent/ashare-minute-paper-scale500"
+        in late_start_service
+    )
+    assert "broker" not in late_start_service.lower()
     assert "rm " not in rollback_service
+
+
+def test_cli_late_start_flag_is_run_only_and_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_runner(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"status": "noop", "reason": "outside_delayed_session_window"}
+
+    monkeypatch.setattr(
+        "Ashare.minute_scale500_runtime.run_scale500_once",
+        fake_runner,
+    )
+    code = main(
+        [
+            "run",
+            "--scale-state-root",
+            str(scale_root),
+            "--rollback30-state-root",
+            str(rollback_root),
+            "--token-file",
+            str(token_file),
+            "--universe-source",
+            str(universe_source),
+            "--expected-universe-sha256",
+            digest,
+            "--allow-late-start",
+            "--now",
+            "2026-07-31T13:54:00+08:00",
+        ]
+    )
+
+    assert code == 0
+    assert captured["allow_late_start"] is True
+
+    code = main(
+        [
+            "initialize",
+            "--scale-state-root",
+            str(scale_root),
+            "--rollback30-state-root",
+            str(rollback_root),
+            "--token-file",
+            str(token_file),
+            "--universe-source",
+            str(universe_source),
+            "--expected-universe-sha256",
+            digest,
+            "--allow-late-start",
+            "--now",
+            "2026-07-31T13:54:00+08:00",
+        ]
+    )
+    assert code == 2
 
 
 def test_final_delayed_timer_still_targets_the_1500_bar() -> None:

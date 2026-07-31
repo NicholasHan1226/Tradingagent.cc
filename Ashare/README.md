@@ -349,20 +349,31 @@ The scale state root and rollback-30 state root must be disjoint. The selector
 can write only the scale root. The rollback root is mounted read-only and is
 never used to bootstrap a 500 session. The 09:18 initializer reads fresh
 calendar and previous-session daily references through formal TradingDatas and
-publishes no state bundle. Post-close minute rows, a prior 30-symbol bundle, and
-`--allow-late-start` are forbidden as opening evidence.
+publishes no state bundle. Post-close minute rows and a prior 30-symbol bundle
+are forbidden as opening evidence.
 
-The first accepted scale observations must be the adjacent 09:35 and 09:40
-500/500 bars. Each still passes the existing exact Universe coverage,
+Normally, the first accepted scale observations must be the adjacent 09:35 and
+09:40 500/500 bars. A one-time, manual `run --allow-late-start` is the only
+exception: it can start only from the runner's exact current completed formal
+bar after an independently verified 500/500 production canary. It never
+queries or backfills earlier bars, cannot use mixed/failed observations, and is
+not accepted by `initialize` or either recurring systemd unit. The tracked
+static `tradingagent-ashare-minute-scale500-late-start.service` is the only
+release candidate that carries this flag; its `OnFailure` invokes rollback.
+The resulting isolated gate records `partial_session=true`, `late_start=true`,
+and the exact bar end; it permanently sets `learning_eligible=false` and
+`full_session_complete=false` for that trading date. Each accepted bar still
+passes the existing exact Universe coverage,
 identity, metadata, receipt/lineage, bounded pagination, and same-observation
 double-read gates. These isolated simulated observations have no capital,
 execution, training, promotion, or real-trading authority. After both pass,
-the same timer continues the 48-slot session. Any missing, partial, mixed-time,
+the normal-path timer continues the 48-slot session. Any missing, partial, mixed-time,
 degraded, identity, lineage, fanout, continuity, authority, or persistence
 failure records one exact reason in the scale gate, exits non-zero, and invokes
 the tracked rollback unit.
 
-Rollback disables the scale timers and restores the preserved 30-symbol timers
+Rollback disables the scale timers, atomically repoints TA `current` to the
+preserved immutable 30-symbol release, then restores the 30-symbol timers
 without deleting or rewriting either state root. It does not manufacture a
 same-day 30-symbol session after the 09:18 initializer has passed; that day
 remains fail-closed. The scale timer mirrors the delayed schedule but moves the
