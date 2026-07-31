@@ -270,8 +270,43 @@ bundle、当前 capital head 和已模拟买入回执，按冻结的 v1 规则�
 `counterfactual_only=true`、`authority=none`、无 outbox/capital commit。
 相同 observation 幂等重放必须逐字节相同；源 completion、bundle 或 capital
 head 冲突即失败关闭。该投影不产生模拟卖出，也不改变现金、持仓、订单或核心
-exit code；真实的模拟卖出必须在后续新 capital generation 中单独实现、迁移和
-验证。
+exit code；它也不能成为下面 round-trip 候选的触发输入。
+
+## Round-trip capital generation 候选
+
+`round_trip_capital.py` 新建独立 `crypto-round-trip-capital-v1`、capital
+generation 2 和 `crypto_sim_round_trip` 账户，不扩展或改写旧
+`crypto-capital-v1` ledger。新账户单独从 10,000 USDT simulated baseline
+开始，`aggregate_with_prior_generations=false`；旧 generation-2 epoch 的现金、
+持仓、订单、费用、PnL 和收益率不读取、不迁移、不聚合。
+
+`delayed_paper_round_trip.py` 复用现有 provider-neutral closed-5m
+snapshot 校验以及 1h/15m 决策边界。首次无持仓时仍按冻结 Champion 生成模拟
+买入；持仓存在时按以下 v1 规则独立重算退出：
+
+- `+3%` 止盈；
+- `-2%` 止损；
+- 最长持有 `24h`；
+- decision 为 `observe`，且 1h regime return、15m decision return 同时小于 0。
+
+卖出 intent 使用下一根已完成 5m bar 的 quote，bid 侧再扣 2bps 并按 tick
+向下取整；费用继续使用 0.1% taker fee。请求数量按 step 对齐，完整、部分和
+exchange-minimum/模拟流动性拒绝回执均写入独立 checksum ledger。相同 cycle
+与 fill-capacity 重放不重复订单或成交；冲突回报、篡改事件、滞后/缺失 head
+和两币中途崩溃均失败关闭或确定性恢复。退出影子仍只是
+`authority=none` 对照，不能写该资本链。
+
+`delayed_paper_round_trip_epoch.py` 定义不激活的 epoch-g3 迁移候选。仓外
+manifest 必须精确绑定新 root、capital generation 2，以及旧 generation-2
+root 的 epoch identity 文件 SHA 和 capital head checksum。prepare 只读校验
+旧 root、创建新 identity；不会写 current-epoch pointer，也没有 tracked
+service/timer。正式发布前必须另行停止并锁定旧 writer、核对旧 root 字节、
+安装 manifest、执行 one-shot/同槽重放/相邻轮验收，获准后才能切 timer。
+
+本候选所有 order/receipt/snapshot 均保持
+`REAL_TRADING_ENABLED=false`、`execution_authority=false`、
+`production_eligible=false`，无 Binance/Testnet/Live、网络模型、outbox、
+capital commit、自动 Champion 晋级或风险扩张。
 
 `delayed_paper_health.py` 是 no-write 健康读侧，分别报告核心
 observation/completion/pending、资本守恒与 head、退出影子是否追平，以及学习
@@ -386,8 +421,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - 离线学习 worker/service/timer 仍是未部署候选，核心不会创建 `evolution/`
   或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
-- 本批 Champion 只覆盖 deterministic buy/observe paper 样本；退出影子已能形成
-  扣费完整往返反事实，但它不是资本账本中的模拟卖出；
+- 现役 core Champion 仍只覆盖 deterministic buy/observe；round-trip
+  generation 与 epoch-g3 目前只是未部署候选，不代表现役 timer 已有卖出；
 - fixture 测试结果不是收益率、胜率或晋级证据。
 
 停止本地运行即可回滚本批候选行为；已经产生的 append-only 资本与复盘输出应保留作审计，不得改写为其它账户事实。
