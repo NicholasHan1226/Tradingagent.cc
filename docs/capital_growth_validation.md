@@ -69,6 +69,12 @@ LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免�
 | M3 组合优化 | 至少60–120个交易日shadow/模拟且信号费用后仍有增量 | 多周期凸优化、no-trade band、现金比较 | turnover/cost/capacity/整数约束可执行性及回撤改善 | 优化器不得改变市场专属硬规则 |
 | M4 人工晋级 | Challenger在冻结OOS与实时shadow均通过 | 人工选择新Champion generation | immutable manifest、回滚、灰度sim-only readback | 自动promotion、自动扩风险和live transition永久关闭 |
 
+当前 `shadow_baselines` 与 `shadow_lightgbm` 只关闭 M0/M1 的工程合同缺口：固定特征顺序、
+训练截止与标签可见时间、严格样本外向量、内容寻址 artifact/prediction receipt、未校准输出
+语义和零交易权限。fixture 中 `historical_pit_verified=false` 或
+`revision_history_verified=false` 时，输出必须标为不可进入 predictive validation。真实收益、
+IC、校准、费用后增量和模型晋级仍必须等待本节要求的冻结真实样本与 paired ablation。
+
 随机模型至少使用预先冻结的seed集合并报告均值、离散度与最差分位；不能只挑最好seed。
 时间序列采用purged walk-forward与embargo；横截面结果按日期/行业/市场状态聚类，不能把
 同日500只股票当作500个独立样本。评价至少同时包含：

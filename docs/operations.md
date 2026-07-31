@@ -844,6 +844,38 @@ observation = debate(
 
 `immutable_decision_id`必须由调用方已有的不可变run/decision identity确定性提供；同一次逻辑请求重试时保持不变，payload、artifact或route变化时必须生成新ID。它不是唯一幂等门：recorder还会以不依赖该ID的逻辑内容键拒绝换ID重发。所有worker还必须使用同一accepted锚点；canonical family检查能拒绝单个recorder内部错配，但当前尚无production runtime启动证明，不能由本地合同推断跨主机唯一调用。当前paper composition尚未装配这条provider路径，示例不代表scheduler、网络、服务器或production authority已启用。
 
+### 2.3 影子数值模型 one-shot（离线、零权限）
+
+依赖无关的 M0 canary 可直接在仓库根运行；它只使用确定性 fixture，不读取 TradingDatas、
+账户、密钥或网络，也不写现役状态：
+
+```bash
+REAL_TRADING_ENABLED=false python3 scripts/run_shadow_model_canary.py --backend ridge
+REAL_TRADING_ENABLED=false python3 scripts/run_shadow_model_canary.py --backend logistic
+```
+
+LightGBM 必须安装在 learning-plane 专用 venv，不能把
+`requirements-model-shadow.txt` 安装进 core/paper runtime venv：
+
+```bash
+python3 -m venv <isolated-shadow-model-venv>
+<isolated-shadow-model-venv>/bin/python -m pip install \
+  -r requirements-model-shadow.txt
+REAL_TRADING_ENABLED=false \
+  <isolated-shadow-model-venv>/bin/python \
+  scripts/run_shadow_model_canary.py --backend lightgbm
+```
+
+验收输出必须同时满足：`fixture_only=true`、`shadow_only=true`、
+`authority=none`、`execution_authority=false`、`capital_authority=false`、
+`risk_expansion_allowed=false`、`automatic_promotion_enabled=false`、
+`real_trading_enabled=false`、`model_network_used=false`。依赖版本漂移、无时区/未来特征、
+标签在训练截止后才可见、单类二分类样本、特征合同漂移、模型/数据哈希不绑定或真实交易环境
+开启时都必须失败关闭。
+
+当前没有对应 systemd service/timer，也不得复用市场 core timer。Kronos、Chronos、TimesFM
+此阶段只登记为后续 batch benchmark；不得下载权重、启常驻推理或把输出接入候选/仓位/订单。
+
 ## 3. 唯一聚焦候选检查
 
 测试清单的唯一事实源是 [`tests/ta_v1_candidate_manifest.txt`](../tests/ta_v1_candidate_manifest.txt)。在仓库根执行：

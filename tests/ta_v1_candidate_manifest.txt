@@ -73,6 +73,10 @@ tests/test_canonical_small_account_stage.py
 tests/test_frozen_champion.py
 tests/test_champion_registry.py
 tests/test_model_lifecycle.py
+tests/test_shadow_model_baselines.py
+tests/test_shadow_lightgbm_contract.py
+tests/test_shadow_lightgbm_integration.py
+tests/test_shadow_model_canary.py
 tests/test_drift_policy.py
 tests/test_drift_action_store.py
 tests/test_drift_runtime.py
