@@ -10,6 +10,7 @@ from shared.models.shadow_lightgbm import (
     LightGBMShadowConfig,
     PINNED_LIGHTGBM_VERSION,
     PINNED_NUMPY_VERSION,
+    PINNED_SCIPY_VERSION,
     fit_lightgbm_shadow,
 )
 
@@ -24,6 +25,7 @@ def test_lightgbm_profile_is_small_deterministic_and_cpu_bounded() -> None:
     assert config.minimum_training_samples == 40
     assert config.expected_lightgbm_version == PINNED_LIGHTGBM_VERSION
     assert config.expected_numpy_version == PINNED_NUMPY_VERSION
+    assert config.expected_scipy_version == PINNED_SCIPY_VERSION
 
 
 @pytest.mark.parametrize(
@@ -36,6 +38,10 @@ def test_lightgbm_profile_is_small_deterministic_and_cpu_bounded() -> None:
         (
             {"expected_lightgbm_version": "latest"},
             "lightgbm_expected_version_invalid",
+        ),
+        (
+            {"expected_scipy_version": "latest"},
+            "scipy_expected_version_invalid",
         ),
     ],
 )
