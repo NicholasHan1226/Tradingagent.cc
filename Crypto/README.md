@@ -308,6 +308,13 @@ service/timer。正式发布前必须另行停止并锁定旧 writer、核对旧
 `production_eligible=false`，无 Binance/Testnet/Live、网络模型、outbox、
 capital commit、自动 Champion 晋级或风险扩张。
 
+`delayed_paper_round_trip_runtime.py` 是 g3 的唯一 closed-5m server wrapper。
+它仅复用已冻结的 TradingDatas manifest、token-file transport 与 13-bar 门禁，
+每次先后校验 epoch identity 与旧 g2 archive，再运行一个新/待恢复 observation。
+`tradingagent-crypto-round-trip-delayed-paper.service/.timer` 是独立候选；仓库
+默认不启用，且旧 g2 root 始终为只读路径。只有发布侧完成 one-shot、同槽幂等、
+相邻两轮、资本/持仓/订单守恒与 g2 字节不变读回，才可停止旧 writer 并启用该 timer。
+
 `delayed_paper_health.py` 是 no-write 健康读侧，分别报告核心
 observation/completion/pending、资本守恒与 head、退出影子是否追平，以及学习
 checkpoint 是否追平。它只输出单市场 USDT 状态，不跨市场汇总资金，不拥有调度、
