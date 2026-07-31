@@ -28,6 +28,7 @@ from .shadow_baselines import (
 
 PINNED_LIGHTGBM_VERSION = "4.6.0"
 PINNED_NUMPY_VERSION = "2.0.2"
+PINNED_SCIPY_VERSION = "1.18.0"
 
 
 def _load_module(name: str) -> Any:
@@ -58,6 +59,7 @@ class LightGBMShadowConfig:
     seed: int = 1729
     expected_lightgbm_version: str = PINNED_LIGHTGBM_VERSION
     expected_numpy_version: str = PINNED_NUMPY_VERSION
+    expected_scipy_version: str = PINNED_SCIPY_VERSION
 
     def __post_init__(self) -> None:
         _require_text(self.model_version, field_name="model_version")
@@ -108,11 +110,14 @@ class LightGBMShadowConfig:
             raise ShadowBaselineError("lightgbm_expected_version_invalid")
         if self.expected_numpy_version != PINNED_NUMPY_VERSION:
             raise ShadowBaselineError("numpy_expected_version_invalid")
+        if self.expected_scipy_version != PINNED_SCIPY_VERSION:
+            raise ShadowBaselineError("scipy_expected_version_invalid")
 
     def canonical_payload(self) -> dict[str, object]:
         return {
             "expected_lightgbm_version": self.expected_lightgbm_version,
             "expected_numpy_version": self.expected_numpy_version,
+            "expected_scipy_version": self.expected_scipy_version,
             "lambda_l1": self.lambda_l1,
             "lambda_l2": self.lambda_l2,
             "learning_rate": self.learning_rate,
@@ -140,6 +145,7 @@ class LightGBMShadowArtifact:
     predictive_validation_input_eligible: bool
     lightgbm_version: str = PINNED_LIGHTGBM_VERSION
     numpy_version: str = PINNED_NUMPY_VERSION
+    scipy_version: str = PINNED_SCIPY_VERSION
     schema_version: str = "tradingagent.lightgbm_shadow_artifact.v1"
     shadow_only: bool = True
     artifact_sha256: str = field(init=False)
@@ -173,6 +179,7 @@ class LightGBMShadowArtifact:
         if (
             self.lightgbm_version != PINNED_LIGHTGBM_VERSION
             or self.numpy_version != PINNED_NUMPY_VERSION
+            or self.scipy_version != PINNED_SCIPY_VERSION
         ):
             raise ShadowBaselineError("artifact_dependency_version_invalid")
         if (
@@ -195,6 +202,7 @@ class LightGBMShadowArtifact:
                 self.predictive_validation_input_eligible
             ),
             "schema_version": self.schema_version,
+            "scipy_version": self.scipy_version,
             "serialized_model_sha256": hashlib.sha256(
                 self.serialized_model.encode("utf-8")
             ).hexdigest(),
@@ -205,8 +213,9 @@ class LightGBMShadowArtifact:
         }
 
 
-def _modules(config: LightGBMShadowConfig) -> tuple[Any, Any]:
+def _modules(config: LightGBMShadowConfig) -> tuple[Any, Any, Any]:
     numpy = _load_module("numpy")
+    scipy = _load_module("scipy")
     lightgbm = _load_module("lightgbm")
     _dependency_version(
         numpy,
@@ -214,11 +223,16 @@ def _modules(config: LightGBMShadowConfig) -> tuple[Any, Any]:
         expected=config.expected_numpy_version,
     )
     _dependency_version(
+        scipy,
+        dependency="scipy",
+        expected=config.expected_scipy_version,
+    )
+    _dependency_version(
         lightgbm,
         dependency="lightgbm",
         expected=config.expected_lightgbm_version,
     )
-    return numpy, lightgbm
+    return numpy, scipy, lightgbm
 
 
 def fit_lightgbm_shadow(
@@ -231,7 +245,7 @@ def fit_lightgbm_shadow(
         raise ShadowBaselineError("lightgbm_shadow_config_required")
     if len(dataset.training_examples) < config.minimum_training_samples:
         raise ShadowBaselineError("training_sample_count_insufficient")
-    numpy, lightgbm = _modules(config)
+    numpy, _scipy, lightgbm = _modules(config)
     features = numpy.asarray(
         [item.vector.feature_values for item in dataset.training_examples],
         dtype=numpy.float64,
@@ -314,7 +328,7 @@ def predict_lightgbm_shadow(
     evaluated = _aware(evaluated_at, field_name="evaluated_at")
     if any(vector.decision_time > evaluated for vector in dataset.prediction_vectors):
         raise ShadowBaselineError("prediction_evaluated_before_decision")
-    numpy, lightgbm = _modules(config)
+    numpy, _scipy, lightgbm = _modules(config)
     booster = lightgbm.Booster(model_str=artifact.serialized_model)
     features = numpy.asarray(
         [vector.feature_values for vector in dataset.prediction_vectors],
@@ -348,6 +362,7 @@ __all__ = [
     "LightGBMShadowConfig",
     "PINNED_LIGHTGBM_VERSION",
     "PINNED_NUMPY_VERSION",
+    "PINNED_SCIPY_VERSION",
     "fit_lightgbm_shadow",
     "predict_lightgbm_shadow",
 ]

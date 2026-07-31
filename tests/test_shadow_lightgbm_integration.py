@@ -9,6 +9,7 @@ from shared.models.shadow_lightgbm import (
     LightGBMShadowConfig,
     PINNED_LIGHTGBM_VERSION,
     PINNED_NUMPY_VERSION,
+    PINNED_SCIPY_VERSION,
     fit_lightgbm_shadow,
     predict_lightgbm_shadow,
 )
@@ -19,6 +20,7 @@ from test_shadow_model_baselines import BASE, _dataset
 try:
     import lightgbm
     import numpy
+    import scipy
 except (ImportError, OSError) as exc:
     pytest.skip(
         f"pinned optional LightGBM runtime unavailable: {type(exc).__name__}",
@@ -29,6 +31,7 @@ except (ImportError, OSError) as exc:
 def test_real_pinned_lightgbm_cpu_backend_is_replayable_and_authority_free() -> None:
     assert lightgbm.__version__ == PINNED_LIGHTGBM_VERSION
     assert numpy.__version__ == PINNED_NUMPY_VERSION
+    assert scipy.__version__ == PINNED_SCIPY_VERSION
     dataset = _dataset()
     repeated = tuple(dataset.training_examples[index % 12] for index in range(48))
     unique = tuple(

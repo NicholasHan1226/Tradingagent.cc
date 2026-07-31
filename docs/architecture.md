@@ -206,7 +206,8 @@ M0/M1 的首个实现固定在 `shared/models/shadow_baselines.py` 与
 receipt、`event_time <= available_at <= decision_time`、训练截止时间、标签可见时间和
 严格样本外预测向量绑定为内容哈希；没有历史 PIT 与 revision authority 的数据仍可用于
 工程 canary，但 `predictive_validation_input_eligible=false`。依赖无关的 ridge 和
-elastic-net logistic 是可解释控制组；LightGBM 仅允许固定版本、最多 2 个 CPU 线程、浅树
+elastic-net logistic 是可解释控制组；LightGBM 及 NumPy/SciPy 依赖仅允许固定版本、最多
+2 个 CPU 线程、浅树
 和未校准 raw score。三者生成的 prediction receipt 都固定
 `authority=none/shadow_only=true`，无资本、风控、执行或自动晋级权限。
 
