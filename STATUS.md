@@ -2,6 +2,29 @@
 
 > 最后更新：2026-07-31 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-07-31 10:20 A股回滚运行与事件 shadow parity：** TradingDatas 正式
+> `current` 仍为 30-symbol release
+> `5ac3925c3931a81132ea02abb16f9745033fb6dc`，TradingAgent 正式 `current`
+> 仍为 `2b7b52bfb552247478c5a78f854d365eb9fcc335`。500 live 门禁失败后没有继续
+> 冒险放行；旧 30 session/paper timers 已恢复为 `enabled/active`。09:57 会话重新初始化
+> PASS，09:58 仅通过显式 `--allow-late-start` 消费 09:45，并把 09:35/09:40 记为真实 gap；
+> 当天保持 `full_session_complete=false/learning_eligible=false`。随后正常自动轮连续处理
+> 09:50、09:55、10:00、10:05 的 30/30 快照，均有 30 个特征/候选、四个 sleeve 对账通过、
+> 零持仓，`capital_authority=false`、`execution_authority=false`、
+> `REAL_TRADING_ENABLED=false`。
+>
+> 事件适配代码已在 main `591c6a1f21f1d97701ea5b816c2ff2844f1ef5e4` 和同 SHA
+> server immutable release 中，但没有切换现役 TA current 或 timer。使用 TradingDatas
+> server immutable `7de9ed58ef17da8422a16be3a8eb1f9441471d46` 的短时只读 loopback
+> 候选 API，对一个 20260731 主板公告完成真实 `GET /v1/catalog` + `POST /v1/query`
+> 双跑：单页单行、same-observation=true、零审计拒绝。TA 只生成
+> `deterministic_shadow_score_not_probability` 与 `SHADOW_ONLY` Decision Ledger 记录，
+> `requested_notional/fill/cost=0`，`calibrated_probability=null`、
+> `historical_known_time_proven=false`、`pit_feature_eligible=false`，没有 LLM 网络调用或
+> 交易权限。全市场公告批量输入因混入创业板/科创板代码被适配器正确拒绝，证明正式接入必须
+> 先按冻结主板 Universe 收窄。临时候选端口已停止；正式 18082 因当前仍挂载 5ac，尚不能
+> 作为事件数据生产入口。
+
 > **2026-07-31 多市场运行拓扑与模型路线合同：** 仓库新增
 > `tradingagent.runtime_topology.v1`机器合同和校验器，冻结A股、CNFutures、
 > Crypto三个独立market writer/fault domain/state namespace，以及
