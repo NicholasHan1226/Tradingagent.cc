@@ -2,15 +2,27 @@
 
 > 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
-> **2026-08-01 影子数值模型候选：** M0 已新增依赖无关的 ridge 与 elastic-net
+> **2026-08-01 影子数值模型旁路验收：** M0 已新增依赖无关的 ridge 与 elastic-net
 > logistic 控制组，M1 新增固定
 > `numpy==2.0.2/scipy==1.18.0/lightgbm==4.6.0`、最多 2 CPU 线程的
 > 浅层 LightGBM 可选 backend。冻结数据合同绑定特征/receipt/时点、训练截止、标签可见时间、
 > 严格样本外预测向量和 artifact/prediction hash；无历史 PIT/revision authority 时只能作为
-> engineering fixture，不能进入 predictive validation。Ridge/logistic one-shot 已本地直接
-> 运行；相关模型、演化、漂移与 Champion 测试共 `226 passed, 1 skipped`，skip 为本机缺少
-> 可加载的可选 LightGBM runtime。当前仅是隔离候选，尚未合入 main 或完成 Linux 服务器
-> LightGBM one-shot；没有模型 timer、网络、资本、风险、订单、自动晋级或真实交易变化。
+> engineering fixture，不能进入 predictive validation。三个普通 PR
+> [#122](https://github.com/NicholasHan1226/Tradingagent.cc/pull/122)、
+> [#123](https://github.com/NicholasHan1226/Tradingagent.cc/pull/123)、
+> [#124](https://github.com/NicholasHan1226/Tradingagent.cc/pull/124) 已合入，权威 main
+> `ac4f87098ced3be9899b636a9c7d99a458507cb5`；本地全仓为
+> `4131 passed, 1 skipped`，三路 CI 的 `test/front` 均 PASS。
+>
+> 服务器以同 SHA 建立隔离候选与独立 venv，真实 Linux LightGBM 加载、训练、序列化和双跑
+> 重放已完成，精确模型测试 `25 passed`；one-shot 墙钟约 0.24 秒、最大 RSS 53,632 KiB，
+> ridge/logistic/LightGBM 全部保持 `authority=none`、`shadow_only=true`、无模型网络与真实
+> 交易。证据位于
+> `/opt/investment/release-evidence/tradingagent/20260801T-model-shadow-ac4f87098ced/`。
+> 首轮安装暴露未固定 SciPy，次轮暴露 LightGBM 结尾换行归一问题，均以独立修正 PR 关闭且
+> 原失败证据保留。服务器现役 release、crontab、18082/18083、市场 timer 均未改变；没有
+> 模型 service/timer、自动训练、自动 Champion、资本、风险或订单权限。Kronos/Chronos/TimesFM
+> 尚未安装或下载权重，只保留为下一阶段 batch benchmark。
 
 > **2026-07-31 10:20 A股回滚运行与事件 shadow parity：** TradingDatas 正式
 > `current` 仍为 30-symbol release
