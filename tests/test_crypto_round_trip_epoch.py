@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -208,6 +209,9 @@ def test_versioned_migration_binds_frozen_g2_and_preserves_old_manifest(
     assert context.versioned is True
     assert context.manifest_path.parent == directory
     assert replay == context
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o750
+    assert stat.S_IMODE(context.manifest_path.stat().st_mode) == 0o640
+    assert stat.S_IMODE(context.supersession_receipt_path.stat().st_mode) == 0o640  # type: ignore[union-attr]
     assert legacy.read_bytes() == legacy_before
     assert context.manifest_path.read_bytes() == manifest_before
     assert context.supersession_receipt_path.read_bytes() == receipt_before  # type: ignore[union-attr]
@@ -279,7 +283,7 @@ def test_versioned_migration_conflict_never_leaves_new_receipt(
     tmp_path: Path,
 ) -> None:
     _, archived, directory, _ = _configure_versioned_migration(monkeypatch, tmp_path)
-    directory.mkdir(mode=0o700)
+    directory.mkdir(mode=0o750)
     conflicting = directory / "crypto-delayed-paper-round-trip-epoch-g3-migration.json"
     conflicting.write_bytes(_canonical({"foreign": True}))
     conflicting.chmod(0o600)

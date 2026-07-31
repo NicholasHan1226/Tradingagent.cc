@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import argparse
+import grp
 import hashlib
 import json
 import os
@@ -37,6 +38,7 @@ ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT = (
     "tradingagent.crypto.round_trip_epoch_supersession_receipt.v1"
 )
 _SUPERSESSION_RECEIPT_FILENAME = "generation-3.supersession.json"
+_RUNTIME_READER_GROUP = "tradingagent"
 _PROOF = object()
 _EXPECTED_SAFETY = {
     "real_trading_enabled": False,
@@ -166,12 +168,46 @@ def _secure_manifest_directory(*, create: bool) -> None:
         raise CryptoRoundTripEpochError("round_trip_epoch_manifest_directory_invalid")
     if create and not directory.exists():
         try:
-            directory.mkdir(mode=0o700)
+            directory.mkdir(mode=0o750)
+            os.chown(directory, -1, _runtime_reader_gid())
+            os.chmod(directory, 0o750)
         except OSError as exc:
             raise CryptoRoundTripEpochError(
                 "round_trip_epoch_manifest_directory_create_failed"
             ) from exc
-    _secure_directory(directory, reason="round_trip_epoch_manifest_directory_untrusted")
+    try:
+        node = directory.lstat()
+    except OSError as exc:
+        raise CryptoRoundTripEpochError(
+            "round_trip_epoch_manifest_directory_untrusted"
+        ) from exc
+    if (
+        not stat.S_ISDIR(node.st_mode)
+        or stat.S_ISLNK(node.st_mode)
+        or node.st_uid not in {0, os.geteuid()}
+        or node.st_gid != _runtime_reader_gid()
+        or stat.S_IMODE(node.st_mode) != 0o750
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_directory_untrusted")
+
+
+def _runtime_reader_gid() -> int:
+    try:
+        return grp.getgrnam(_RUNTIME_READER_GROUP).gr_gid
+    except KeyError:
+        return os.getegid()
+
+
+def _secure_versioned_manifest(path: Path, *, reason: str) -> bytes:
+    encoded = _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES)
+    node = path.lstat()
+    if (
+        node.st_uid not in {0, os.geteuid()}
+        or node.st_gid != _runtime_reader_gid()
+        or stat.S_IMODE(node.st_mode) != 0o640
+    ):
+        raise CryptoRoundTripEpochError(reason)
+    return encoded
 
 
 def _atomic_create_or_verify(
@@ -179,10 +215,7 @@ def _atomic_create_or_verify(
 ) -> None:
     expected = (_canonical_json(payload) + "\n").encode()
     if path.exists() or path.is_symlink():
-        if (
-            _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES)
-            != expected
-        ):
+        if _secure_versioned_manifest(path, reason=reason) != expected:
             raise CryptoRoundTripEpochError(reason)
         return
     temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
@@ -193,6 +226,8 @@ def _atomic_create_or_verify(
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             0o600,
         )
+        os.fchmod(descriptor, 0o640)
+        os.fchown(descriptor, -1, _runtime_reader_gid())
         with os.fdopen(descriptor, "wb", closefd=True) as stream:
             descriptor = None
             stream.write(expected)
@@ -201,10 +236,7 @@ def _atomic_create_or_verify(
         try:
             os.link(temporary, path)
         except FileExistsError:
-            if (
-                _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES)
-                != expected
-            ):
+            if _secure_versioned_manifest(path, reason=reason) != expected:
                 raise CryptoRoundTripEpochError(reason)
         directory = os.open(path.parent, os.O_RDONLY)
         try:
@@ -230,7 +262,7 @@ def _verify_existing_payload(
     if not path.exists() and not path.is_symlink():
         return
     expected = (_canonical_json(payload) + "\n").encode()
-    if _secure_regular(path, reason=reason, max_bytes=_MANIFEST_MAX_BYTES) != expected:
+    if _secure_versioned_manifest(path, reason=reason) != expected:
         raise CryptoRoundTripEpochError(reason)
 
 
@@ -388,10 +420,9 @@ def _load_versioned_round_trip_epoch_manifest(
     manifest_path: Path,
 ) -> CryptoRoundTripEpochContext:
     _secure_manifest_directory(create=False)
-    encoded = _secure_regular(
+    encoded = _secure_versioned_manifest(
         manifest_path,
         reason="round_trip_epoch_manifest_untrusted",
-        max_bytes=_MANIFEST_MAX_BYTES,
     )
     try:
         raw = json.loads(encoded.decode(), object_pairs_hook=_strict_object)
@@ -571,10 +602,9 @@ def _verify_supersession_receipt(context: CryptoRoundTripEpochContext) -> None:
     receipt_path = context.supersession_receipt_path
     if receipt_path is None:
         return
-    encoded = _secure_regular(
+    encoded = _secure_versioned_manifest(
         receipt_path,
         reason="round_trip_epoch_supersession_receipt_invalid",
-        max_bytes=_MANIFEST_MAX_BYTES,
     )
     if encoded != (_canonical_json(_supersession_receipt(context)) + "\n").encode():
         raise CryptoRoundTripEpochError("round_trip_epoch_supersession_receipt_invalid")
