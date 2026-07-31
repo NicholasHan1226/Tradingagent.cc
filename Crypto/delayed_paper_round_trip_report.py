@@ -112,17 +112,31 @@ def _slot_summary(slots: list[datetime]) -> dict[str, Any]:
             "first_completed_market_slot": None,
             "latest_completed_market_slot": None,
             "covered_minutes": 0,
+            "latest_continuous_completion_count": 0,
+            "latest_continuous_first_market_slot": None,
+            "latest_continuous_covered_minutes": 0,
         }
     continuous = all(
         later - earlier == FIVE_MINUTES for earlier, later in zip(slots, slots[1:])
     )
     covered_minutes = int((slots[-1] - slots[0]).total_seconds() // 60) + 5
+    latest_streak = 1
+    for earlier, later in zip(reversed(slots[:-1]), reversed(slots[1:])):
+        if later - earlier != FIVE_MINUTES:
+            break
+        latest_streak += 1
+    latest_start = slots[-latest_streak]
     return {
         "completion_count": len(slots),
         "continuous": continuous,
         "first_completed_market_slot": slots[0].isoformat().replace("+00:00", "Z"),
         "latest_completed_market_slot": slots[-1].isoformat().replace("+00:00", "Z"),
         "covered_minutes": covered_minutes,
+        "latest_continuous_completion_count": latest_streak,
+        "latest_continuous_first_market_slot": latest_start.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "latest_continuous_covered_minutes": latest_streak * 5,
     }
 
 
@@ -260,10 +274,10 @@ def evaluate_crypto_delayed_paper_round_trip_acceptance(
     reasons: list[str] = []
     if reliability["completion_count"] < minimum_completion_count:
         reasons.append("insufficient_completed_5m_windows")
-    if reliability["covered_minutes"] < minimum_completion_count * 5:
-        reasons.append("insufficient_covered_minutes")
-    if reliability["continuous"] is not True:
-        reasons.append("non_continuous_5m_windows")
+    if reliability["latest_continuous_completion_count"] < minimum_completion_count:
+        reasons.append("insufficient_latest_continuous_5m_windows")
+    if reliability["latest_continuous_covered_minutes"] < minimum_completion_count * 5:
+        reasons.append("insufficient_latest_continuous_covered_minutes")
     if reliability["core_status"] != "healthy":
         reasons.append("core_health_not_healthy")
     if reliability["pending"] is not False:
