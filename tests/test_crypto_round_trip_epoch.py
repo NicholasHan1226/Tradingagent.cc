@@ -12,6 +12,7 @@ import Crypto.delayed_paper_round_trip_epoch as epoch_module
 from Crypto.delayed_paper_round_trip_epoch import (
     CryptoRoundTripEpochError,
     load_round_trip_epoch_manifest,
+    prepare_successor_round_trip_epoch_manifest,
     prepare_versioned_round_trip_epoch_manifest,
     prepare_round_trip_epoch_candidate,
 )
@@ -28,6 +29,14 @@ def _canonical(value: object) -> bytes:
         )
         + "\n"
     ).encode()
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
 
 
 def _candidate(
@@ -300,3 +309,116 @@ def test_versioned_migration_conflict_never_leaves_new_receipt(
             migration_reason="replace_stale_preflight_manifest",
         )
     assert not (directory / "generation-3.supersession.json").exists()
+
+
+def test_g4_successor_preserves_failed_g3_and_binds_current_g2_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, archived, directory, _ = _configure_versioned_migration(monkeypatch, tmp_path)
+    g3 = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-failed-evidence",
+        archived_output_root=archived,
+        migration_reason="preserve_failed_g3",
+    )
+    prepare_round_trip_epoch_candidate(g3)
+    g3_tree_before = _tree(g3.output_root)
+    g3_manifest_before = g3.manifest_path.read_bytes()
+    g3_receipt_before = g3.supersession_receipt_path.read_bytes()  # type: ignore[union-attr]
+
+    class _AdvancedArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 43, "d" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _AdvancedArchiveLedger)
+    g4 = prepare_successor_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-current-head",
+        archived_output_root=archived,
+        supersedes_manifest_path=g3.manifest_path,
+        migration_reason="g2_advanced_after_g3_failed_preflight",
+    )
+    assert g4.epoch_generation == 4
+    assert g4.archived_capital_head_sequence == 43
+    assert g4.supersedes_manifest_path == g3.manifest_path
+    assert g4.supersedes_receipt_path == g3.supersession_receipt_path
+    assert (
+        prepare_successor_round_trip_epoch_manifest(
+            epoch_id=g4.epoch_id,
+            archived_output_root=archived,
+            supersedes_manifest_path=g3.manifest_path,
+            migration_reason="g2_advanced_after_g3_failed_preflight",
+        )
+        == g4
+    )
+    assert _tree(g3.output_root) == g3_tree_before
+    assert g3.manifest_path.read_bytes() == g3_manifest_before
+    assert g3.supersession_receipt_path.read_bytes() == g3_receipt_before  # type: ignore[union-attr]
+    assert g4.manifest_path.parent == directory
+    assert prepare_round_trip_epoch_candidate(g4).output_root == g4.output_root
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="supersession_receipt_invalid",
+    ):
+        prepare_successor_round_trip_epoch_manifest(
+            epoch_id="crypto-delayed-paper-round-trip-epoch-g4-other-root",
+            archived_output_root=archived,
+            supersedes_manifest_path=g3.manifest_path,
+            migration_reason="g2_advanced_after_g3_failed_preflight",
+        )
+    assert not (
+        directory / "crypto-delayed-paper-round-trip-epoch-g4-other-root.json"
+    ).exists()
+
+
+def test_g4_successor_rejects_tampered_chain_and_later_g2_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, archived, _, _ = _configure_versioned_migration(monkeypatch, tmp_path)
+    g3 = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-failed-evidence",
+        archived_output_root=archived,
+        migration_reason="preserve_failed_g3",
+    )
+
+    class _AdvancedArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 43, "d" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _AdvancedArchiveLedger)
+    g4 = prepare_successor_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-current-head",
+        archived_output_root=archived,
+        supersedes_manifest_path=g3.manifest_path,
+        migration_reason="g2_advanced_after_g3_failed_preflight",
+    )
+    original_receipt = g3.supersession_receipt_path.read_bytes()  # type: ignore[union-attr]
+    g3.supersession_receipt_path.write_bytes(_canonical({"tampered": True}))  # type: ignore[union-attr]
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="superseded_receipt_mismatch",
+    ):
+        load_round_trip_epoch_manifest(g4.manifest_path)
+
+    # Restore the test fixture, then prove a later g2 writer invalidates g4.
+    g3.supersession_receipt_path.write_bytes(original_receipt)  # type: ignore[union-attr]
+
+    class _LaterArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 44, "e" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _LaterArchiveLedger)
+    with pytest.raises(
+        CryptoRoundTripEpochError,
+        match="archive_capital_head_mismatch",
+    ):
+        prepare_round_trip_epoch_candidate(g4)
