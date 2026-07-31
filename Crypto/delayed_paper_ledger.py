@@ -341,6 +341,35 @@ class CryptoDelayedPaperObservationStore:
             yield
 
     @contextmanager
+    def _read_only_locked(self) -> Iterator[None]:
+        """Take a shared lock without creating or modifying a lock file.
+
+        Runtime recovery may create a missing lock and rebuild the O(1) state
+        index.  A health reader must never do either: a missing lock or stale
+        state is evidence that needs an operator/runtime repair, not a reason
+        for monitoring to mutate the capital-generation root.
+        """
+
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(self.lock_path, flags)
+        except OSError as exc:
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_readonly_lock_unavailable"
+            ) from exc
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise CryptoDelayedPaperLedgerError("delayed_paper_lock_file_invalid")
+            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    @contextmanager
     def cycle(self) -> Iterator[None]:
         """Serialize one complete pending/read/accept/execute/complete cycle."""
 
@@ -550,11 +579,44 @@ class CryptoDelayedPaperObservationStore:
             return self._rebuild_observation_state()
         return self._verify_observation_state(raw)
 
+    def _observation_state_read_only(self) -> dict[str, Any]:
+        """Verify the persisted O(1) state without a repair/rebuild path."""
+
+        if not self.observation_state_path.exists():
+            raise CryptoDelayedPaperLedgerError("delayed_paper_readonly_state_missing")
+        raw = _read_json(self.observation_state_path)
+        if (
+            raw.get("observations_directory_mtime_ns")
+            != self.observations_dir.stat().st_mtime_ns
+            or raw.get("completions_directory_mtime_ns")
+            != self.completions_dir.stat().st_mtime_ns
+        ):
+            raise CryptoDelayedPaperLedgerError("delayed_paper_readonly_state_stale")
+        return self._verify_observation_state(raw)
+
     def runtime_checkpoint(self) -> dict[str, Any]:
         """Return O(1) latest/pending state after one-time legacy rebuild."""
 
         with self._locked():
             state = self._observation_state()
+            pending_id = state.get("pending_observation_id")
+            pending = (
+                _read_json(self._observation_path(str(pending_id)))
+                if pending_id is not None
+                else None
+            )
+            return {
+                "pending": pending,
+                "latest_market_slot": state.get("latest_market_slot"),
+                "observation_count": state.get("observation_count"),
+                "completion_count": state.get("completion_count"),
+            }
+
+    def runtime_checkpoint_read_only(self) -> dict[str, Any]:
+        """Return the verified checkpoint without creating or repairing state."""
+
+        with self._read_only_locked():
+            state = self._observation_state_read_only()
             pending_id = state.get("pending_observation_id")
             pending = (
                 _read_json(self._observation_path(str(pending_id)))

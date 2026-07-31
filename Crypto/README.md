@@ -336,6 +336,22 @@ observation/completion/pending、资本守恒与 head、退出影子是否追平
 checkpoint 是否追平。它只输出单市场 USDT 状态，不跨市场汇总资金，不拥有调度、
 晋级或交易 authority。
 
+`delayed_paper_round_trip_health.py` 是现役 g4 round-trip epoch 的独立只读
+健康/KPI 读侧。它只接受版本化 epoch manifest，不接受自由 output root；在读取
+前后都重验 epoch identity、旧 g2 archive 锚点、observation/completion 状态、
+Decision Ledger checksum 连续性和 round-trip capital head。缺 lock、缺 state、
+state mtime 漂移、pending、账本链/守恒异常都会失败关闭，绝不重建索引、创建 lock、
+修复 head、查询 TradingDatas 或改变订单/资金。报告的样本指标仅是已完成
+observation、验证 decision event、capital cycle 与 receipt 分布，不是收益、胜率或
+策略晋级结论。
+
+`tradingagent-crypto-round-trip-g4-health.service/.timer` 是该读侧的 tracked
+候选：每 15 分钟运行一次，默认不启用、无 token/网络权限、无 ReadWritePaths，
+只能读取已选 g4 epoch 和旧 g2 archive。发布侧必须先在 immutable release 上执行
+one-shot，逐字节确认 g4 root 未变，再决定是否启用；health 失败只能告警，不能
+重启、修复或停止核心 5 分钟 accumulator。g4 learning 仍未绑定/启用，不能复用
+旧 g2 learning unit。
+
 ## Outage epoch restart 候选
 
 2026-07-29 ECS 停机后，旧 delayed-paper root 的最后 completion 停在
@@ -430,6 +446,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_learning_systemd.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_exit_shadow.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_health.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_health.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
