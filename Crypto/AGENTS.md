@@ -122,10 +122,11 @@
   `observe` 且 1h/15m return 同时小于 0；卖出使用下一根已完成 5m bar 的因果
   quote、2bps 保守滑点和既有 0.1% taker fee。部分/拒绝回执同样进入新账本，
   但仍固定无 execution/production/live authority。
-- `delayed_paper_round_trip_epoch.py` 只创建不激活的 epoch-g3 候选；manifest
-  必须绑定旧 generation-2 epoch identity 文件 SHA 与 capital head checksum，
-  准备阶段只读双重校验旧 root，不写 `.current_epoch.json`、不切 timer。部署、
-  current pointer 与 timer 切换必须另经正式候选验收。
+- `delayed_paper_round_trip_epoch.py` 创建独立 epoch-g3，但不写旧 g2 的
+  `.current_epoch.json`，也不迁移/聚合历史账本。`delayed_paper_round_trip_runtime.py`
+  只从正式 TradingDatas closed-5m manifest 运行一个 g3 的新/pending cycle，并在
+  写入前后双重校验 g2 archive 与 g3 identity；专属 systemd unit 默认不启用，
+  发布验收的 one-shot、同槽重放与相邻轮通过前不得切换任何 timer。
 - `delayed_paper_exit_shadow.py`
   只能从已验证 completion、run bundle 与 capital head 生成止盈、止损、最长持有
   和动量转弱的完整往返反事实；它不得写资本、订单、成交或修改历史 bundle。
