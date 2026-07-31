@@ -312,7 +312,14 @@ class CryptoCapitalLedger:
         if not self.root.exists():
             return []
         self._assert_safe_paths()
-        with self.lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            lock = self.lock_path.open("r", encoding="utf-8")
+        except FileNotFoundError:
+            # A writable, brand-new ledger may not have published its lock
+            # yet. Archived ledgers must already provide one; their read-only
+            # mounts therefore never take this creation path.
+            lock = self.lock_path.open("a+", encoding="utf-8")
+        with lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
             try:
                 return self._read_events_unlocked()

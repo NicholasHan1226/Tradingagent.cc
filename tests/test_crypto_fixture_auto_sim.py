@@ -388,6 +388,22 @@ def test_capital_writer_is_not_exported_and_default_ledger_is_read_only(
     assert not root.exists()
 
 
+def test_read_only_ledger_head_uses_existing_shared_lock_without_writing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "archived-capital"
+    root.mkdir(mode=0o700)
+    lock = root / ".lock"
+    lock.write_text("", encoding="utf-8")
+    lock.chmod(0o400)
+    root.chmod(0o500)
+    try:
+        assert CryptoCapitalLedger(root).head() == (0, "")
+    finally:
+        root.chmod(0o700)
+        lock.chmod(0o600)
+
+
 def test_runtime_ledger_factory_has_one_source_caller() -> None:
     callers = []
     for path in sorted((ROOT / "Crypto").rglob("*.py")):
