@@ -277,11 +277,19 @@ class RoundTripCapitalLedger:
             rows.append(row)
         return rows
 
-    def _read_rows(self) -> list[dict[str, Any]]:
+    def _read_rows(
+        self, *, require_existing_lock: bool = False
+    ) -> list[dict[str, Any]]:
         if not self.root.exists():
             return []
         self._assert_safe_paths()
-        with self.lock_path.open("a+", encoding="utf-8") as stream:
+        try:
+            stream = self.lock_path.open("r", encoding="utf-8")
+        except FileNotFoundError:
+            if require_existing_lock:
+                raise CryptoRoundTripError("round_trip_readonly_lock_unavailable")
+            stream = self.lock_path.open("a+", encoding="utf-8")
+        with stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
             try:
                 return self._read_rows_unlocked()
@@ -946,6 +954,17 @@ class RoundTripCapitalLedger:
 
     def state(self) -> dict[str, Any]:
         rows, state, checksum = self._validated_state()
+        result = self._snapshot(state)
+        result["head_sequence"] = len(rows)
+        result["head_checksum"] = checksum
+        return result
+
+    def state_read_only(self) -> dict[str, Any]:
+        """Validate the ledger/head under a shared existing lock only."""
+
+        rows = self._read_rows(require_existing_lock=True)
+        state, checksum = self._replay(rows)
+        self._validate_head(rows, checksum)
         result = self._snapshot(state)
         result["head_sequence"] = len(rows)
         result["head_checksum"] = checksum

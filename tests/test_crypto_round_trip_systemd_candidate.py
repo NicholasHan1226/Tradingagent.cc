@@ -55,3 +55,23 @@ def test_g4_service_uses_its_own_manifest_selection_file() -> None:
     assert "binance" not in service.lower()
     assert "Unit=tradingagent-crypto-round-trip-g4-delayed-paper.service" in timer
     assert "WantedBy=timers.target" in timer
+
+
+def test_g4_health_service_is_read_only_and_timer_is_installable() -> None:
+    service = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g4-health.service"
+    ).read_text()
+    timer = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g4-health.timer"
+    ).read_text()
+    assert "REAL_TRADING_ENABLED=false" in service
+    assert "Crypto.delayed_paper_round_trip_health" in service
+    assert "${ROUND_TRIP_EPOCH_MANIFEST}" in service
+    assert "ReadWritePaths=" not in service
+    assert "IPAddressDeny=any" in service
+    assert "RestrictAddressFamilies=AF_UNIX" in service
+    assert "tradingdatas-crypto-read.token" not in service
+    assert "binance" not in service.lower()
+    assert "OnCalendar=*-*-* *:2/15:30" in timer
+    assert "WantedBy=timers.target" in timer
+    assert "enable" not in timer.lower()

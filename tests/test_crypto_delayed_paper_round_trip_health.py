@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import os
+from datetime import timedelta
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import Crypto.delayed_paper_round_trip_health as health_module
+from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
+from Crypto.delayed_paper_round_trip_health import (
+    CryptoRoundTripHealthError,
+    build_crypto_delayed_paper_round_trip_health,
+    health_exit_code,
+    run_crypto_delayed_paper_round_trip_health_once,
+)
+from Crypto.five_minute_data import TradingDatasCryptoFiveMinuteDataPort
+from Crypto.round_trip_capital import CryptoRoundTripError, RoundTripCapitalLedger
+from tests.test_crypto_5m_support import (
+    FixtureTradingDatasTransport,
+    WINDOW_END,
+    client,
+    profile,
+    window_request,
+)
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _completed_round_trip(root: Path) -> None:
+    transport = FixtureTradingDatasTransport()
+    tradingdatas_client = client(transport)
+    result = run_crypto_delayed_paper_round_trip_once(
+        port=TradingDatasCryptoFiveMinuteDataPort(tradingdatas_client),
+        profile=profile(tradingdatas_client),
+        request=window_request(),
+        output_root=root,
+    )
+    assert result["status"] == "completed"
+
+
+def test_round_trip_health_is_read_only_and_reports_sample_kpis(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    before = _tree_bytes(tmp_path)
+
+    result = build_crypto_delayed_paper_round_trip_health(
+        output_root=tmp_path,
+        now=WINDOW_END + timedelta(minutes=5),
+    )
+
+    assert _tree_bytes(tmp_path) == before
+    assert result["status"] == "healthy"
+    assert result["core"]["pending"] is False
+    assert result["sample_kpis"] == {
+        "usable_completed_observations": 1,
+        "verified_decision_events": 2,
+        "expected_decision_events": 2,
+        "capital_cycle_events": 2,
+        "symbol_decisions_per_observation": 2,
+    }
+    assert result["capital"]["balanced"] is True
+    assert result["capital"]["receipt_counts"]["buy"] == 2
+    assert result["execution_authority"] is False
+    assert result["real_trading_enabled"] is False
+    assert result["network_used"] is False
+    assert health_exit_code(result) == 0
+
+
+def test_round_trip_health_reports_stale_without_repairing_root(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    before = _tree_bytes(tmp_path)
+
+    result = build_crypto_delayed_paper_round_trip_health(
+        output_root=tmp_path,
+        now=WINDOW_END + timedelta(minutes=31),
+    )
+
+    assert _tree_bytes(tmp_path) == before
+    assert result["status"] == "stale"
+    assert result["freshness"]["state"] == "stale"
+    assert health_exit_code(result) == 2
+
+
+def test_round_trip_health_fails_closed_on_stale_observation_state_without_write(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    observations = tmp_path / "delayed_paper" / "observations"
+    before_mtime = observations.stat().st_mtime_ns
+    os.utime(observations, ns=(before_mtime + 1, before_mtime + 1))
+    before = _tree_bytes(tmp_path)
+
+    with pytest.raises(
+        CryptoRoundTripHealthError, match="round_trip_health_source_invalid"
+    ):
+        build_crypto_delayed_paper_round_trip_health(
+            output_root=tmp_path,
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_round_trip_health_never_bootstraps_an_incomplete_root(tmp_path: Path) -> None:
+    incomplete = tmp_path / "incomplete"
+    incomplete.mkdir()
+    before = _tree_bytes(incomplete)
+
+    with pytest.raises(
+        CryptoRoundTripHealthError, match="round_trip_health_root_incomplete"
+    ):
+        build_crypto_delayed_paper_round_trip_health(
+            output_root=incomplete,
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+
+    assert _tree_bytes(incomplete) == before
+
+
+def test_round_trip_health_fails_closed_on_capital_chain_tamper_without_repair(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    events = tmp_path / "round_trip_capital" / "events.jsonl"
+    events.write_bytes(events.read_bytes() + b"{}\n")
+    before = _tree_bytes(tmp_path)
+
+    with pytest.raises(
+        CryptoRoundTripHealthError, match="round_trip_health_source_invalid"
+    ):
+        build_crypto_delayed_paper_round_trip_health(
+            output_root=tmp_path,
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_round_trip_capital_read_only_state_never_creates_missing_lock(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    capital_root = tmp_path / "round_trip_capital"
+    lock_path = capital_root / ".lock"
+    lock_path.unlink()
+
+    with pytest.raises(
+        CryptoRoundTripError, match="round_trip_readonly_lock_unavailable"
+    ):
+        RoundTripCapitalLedger(capital_root).state_read_only()
+
+    assert not lock_path.exists()
+
+
+def test_round_trip_health_rejects_nonversioned_manifest_path(tmp_path: Path) -> None:
+    with pytest.raises(
+        CryptoRoundTripHealthError, match="round_trip_health_manifest_path_invalid"
+    ):
+        run_crypto_delayed_paper_round_trip_health_once(
+            epoch_manifest=tmp_path / "round-trip.epoch.json",
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+
+
+def test_round_trip_health_runner_rechecks_prepared_versioned_epoch_without_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    identity = tmp_path / ".round_trip_epoch_identity.json"
+    identity.write_text('{"epoch":"g4"}\n', encoding="utf-8")
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    manifest = manifests / "crypto-delayed-paper-round-trip-epoch-g4-test.json"
+    context = SimpleNamespace(
+        output_root=tmp_path,
+        identity_path=identity,
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-test",
+        epoch_generation=4,
+        manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=tmp_path, identity_path=identity)
+    monkeypatch.setattr(health_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifests)
+    monkeypatch.setattr(
+        health_module, "load_round_trip_epoch_manifest", lambda _: context
+    )
+    monkeypatch.setattr(
+        health_module,
+        "prepare_round_trip_epoch_candidate",
+        lambda _: prepared,
+    )
+    before = _tree_bytes(tmp_path)
+
+    result = run_crypto_delayed_paper_round_trip_health_once(
+        epoch_manifest=manifest,
+        now=WINDOW_END + timedelta(minutes=5),
+    )
+
+    assert _tree_bytes(tmp_path) == before
+    assert result["epoch_id"] == context.epoch_id
+    assert result["epoch_generation"] == 4
+    assert result["status"] == "healthy"

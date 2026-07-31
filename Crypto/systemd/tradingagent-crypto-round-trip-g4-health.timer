@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent Crypto g4 round-trip read-only health timer
+
+[Timer]
+OnCalendar=*-*-* *:2/15:30
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=true
+Unit=tradingagent-crypto-round-trip-g4-health.service
+
+[Install]
+WantedBy=timers.target
