@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -176,6 +177,7 @@ def _configure_versioned_migration(
         epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PARENT", directory_parent
     )
     monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory)
+    monkeypatch.setattr(epoch_module, "_runtime_reader_gid", os.getegid)
     return legacy, archived, directory, tmp_path / "epochs"
 
 
