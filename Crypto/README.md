@@ -296,15 +296,18 @@ exchange-minimum/模拟流动性拒绝回执均写入独立 checksum ledger。�
 和两币中途崩溃均失败关闭或确定性恢复。退出影子仍只是
 `authority=none` 对照，不能写该资本链。
 
-`delayed_paper_round_trip_epoch.py` 定义不激活的 epoch-g3 迁移候选。旧固定
-manifest 是只读失败证据，不能原地改写。发布侧必须用模块 CLI 在独立版本化
-manifest 路径创建 g3 迁移：它一次性冻结唯一 epoch/root、旧 manifest digest、
+`delayed_paper_round_trip_epoch.py` 定义不激活的 epoch-g3 迁移候选及其显式
+epoch-g4 继任路径。旧固定 manifest、g3 manifest/receipt 与 g3 root 都是只读
+失败证据，不能原地改写或复用。发布侧必须用模块 CLI 在独立版本化 manifest
+路径创建 g3 迁移：它一次性冻结唯一 epoch/root、旧 manifest digest、
 迁移原因、旧 generation-2 identity 与当时的 authority head sequence/checksum，
 并写入同样不可覆盖的 generation-3 supersession receipt。重复同一请求只读回；
 同 generation 换 root、旧 manifest/receipt 篡改、g2 head 前进或回退均失败关闭。
 prepare 只读校验旧 root、创建新 identity；不会写 current-epoch pointer，也没有
-tracked service/timer。正式发布前必须另行停止并锁定旧 writer、核对旧 root 字节、
-安装 manifest、执行 one-shot/同槽重放/相邻轮验收，获准后才能切 timer。
+tracked service/timer。若 g3 冻结后 g2 合法前进或 g3 one-shot 未完成，唯一允许的
+恢复是显式创建 g4：它绑定 g3 manifest/receipt digest，并冻结新的 g2 authority
+head；旧 g3 证据保持逐字节不变。正式发布前必须另行停止并锁定旧 writer、核对旧
+root 字节、安装对应 manifest、执行 one-shot/同槽重放/相邻轮验收，获准后才能切 timer。
 
 版本化 manifest 目录由 root 创建为 `root:tradingagent 0750`，manifest 与 receipt
 为 `root:tradingagent 0640`；它们不含 token。round-trip unit 不再读取旧固定
@@ -319,11 +322,13 @@ receipt、旧 manifest digest 与冻结 g2 head 的校验。
 `production_eligible=false`，无 Binance/Testnet/Live、网络模型、outbox、
 capital commit、自动 Champion 晋级或风险扩张。
 
-`delayed_paper_round_trip_runtime.py` 是 g3 的唯一 closed-5m server wrapper。
+`delayed_paper_round_trip_runtime.py` 是隔离 round-trip epoch 的唯一 closed-5m
+server wrapper。
 它仅复用已冻结的 TradingDatas manifest、token-file transport 与 13-bar 门禁，
 每次先后校验 epoch identity 与旧 g2 archive，再运行一个新/待恢复 observation。
-`tradingagent-crypto-round-trip-delayed-paper.service/.timer` 是独立候选；仓库
-默认不启用，且旧 g2 root 始终为只读路径。只有发布侧完成 one-shot、同槽幂等、
+`tradingagent-crypto-round-trip-delayed-paper.service/.timer` 与不会改写 G3 选择
+文件的 `tradingagent-crypto-round-trip-g4-delayed-paper.service/.timer` 都是独立候选；
+仓库默认不启用，且旧 g2 root 始终为只读路径。只有发布侧完成 one-shot、同槽幂等、
 相邻两轮、资本/持仓/订单守恒与 g2 字节不变读回，才可停止旧 writer 并启用该 timer。
 
 `delayed_paper_health.py` 是 no-write 健康读侧，分别报告核心
@@ -440,7 +445,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
   或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
 - 现役 core Champion 仍只覆盖 deterministic buy/observe；round-trip
-  generation 与 epoch-g3 目前只是未部署候选，不代表现役 timer 已有卖出；
+  generation 与 epoch-g3/g4 目前只是未部署候选，不代表现役 timer 已有卖出；
 - fixture 测试结果不是收益率、胜率或晋级证据。
 
 停止本地运行即可回滚本批候选行为；已经产生的 append-only 资本与复盘输出应保留作审计，不得改写为其它账户事实。

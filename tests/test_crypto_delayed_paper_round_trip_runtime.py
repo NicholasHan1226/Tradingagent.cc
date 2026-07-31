@@ -194,3 +194,53 @@ def test_round_trip_runtime_accepts_only_prepared_versioned_migration(
     assert legacy.exists()
     assert receipt["status"] == "completed"
     assert receipt["epoch_id"] == context.epoch_id
+
+
+def test_round_trip_runtime_accepts_explicit_g4_successor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _, archived, _, token = _configure(monkeypatch, tmp_path)
+    directory_parent = tmp_path / "etc" / "tradingagent"
+    directory_parent.mkdir(parents=True, mode=0o700)
+    directory = directory_parent / "round-trip-epochs"
+    monkeypatch.setattr(
+        epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PARENT", directory_parent
+    )
+    monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory)
+    monkeypatch.setattr(epoch_module, "_runtime_reader_gid", os.getegid)
+    monkeypatch.setattr(
+        runtime_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", directory
+    )
+    g3 = epoch_module.prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-failed-evidence",
+        archived_output_root=archived,
+        migration_reason="preserve_failed_g3",
+    )
+
+    class _AdvancedArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 42, "d" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _AdvancedArchiveLedger)
+    g4 = epoch_module.prepare_successor_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-current-head",
+        archived_output_root=archived,
+        supersedes_manifest_path=g3.manifest_path,
+        migration_reason="g2_advanced_after_g3_failed_preflight",
+    )
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    receipt = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=g4.manifest_path,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert receipt["status"] == "completed"
+    assert receipt["epoch_id"] == g4.epoch_id
+    assert receipt["epoch_generation"] == 4

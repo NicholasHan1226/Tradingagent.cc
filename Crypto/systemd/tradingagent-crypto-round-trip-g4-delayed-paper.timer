@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent Crypto g4 round-trip closed-5m simulated timer
+
+[Timer]
+OnCalendar=*-*-* *:0/5:55
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=false
+Unit=tradingagent-crypto-round-trip-g4-delayed-paper.service
+
+[Install]
+WantedBy=timers.target
