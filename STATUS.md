@@ -1,6 +1,15 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-07-31 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-01 影子数值模型候选：** M0 已新增依赖无关的 ridge 与 elastic-net
+> logistic 控制组，M1 新增固定 `numpy==2.0.2/lightgbm==4.6.0`、最多 2 CPU 线程的
+> 浅层 LightGBM 可选 backend。冻结数据合同绑定特征/receipt/时点、训练截止、标签可见时间、
+> 严格样本外预测向量和 artifact/prediction hash；无历史 PIT/revision authority 时只能作为
+> engineering fixture，不能进入 predictive validation。Ridge/logistic one-shot 已本地直接
+> 运行；相关模型、演化、漂移与 Champion 测试共 `226 passed, 1 skipped`，skip 为本机缺少
+> 可加载的可选 LightGBM runtime。当前仅是隔离候选，尚未合入 main 或完成 Linux 服务器
+> LightGBM one-shot；没有模型 timer、网络、资本、风险、订单、自动晋级或真实交易变化。
 
 > **2026-07-31 10:20 A股回滚运行与事件 shadow parity：** TradingDatas 正式
 > `current` 仍为 30-symbol release
