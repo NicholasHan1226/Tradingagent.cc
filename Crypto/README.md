@@ -372,6 +372,20 @@ disabled：先满足连续 24 小时核心门禁，再做 disabled full-scrub �
 `tradingagent:tradingagent`、0700、非 symlink；unit 与 worker 都不会借缺失目录
 创建或迁移核心 epoch。
 
+`delayed_paper_round_trip_report.py` 是 G4 的只读 KPI 与 acceptance gate。
+它将三种不能混淆的指标分开输出：核心连续性/新鲜度/守恒、已验证 decision 与完整
+模拟 round-trip/退出原因、以及仅供模拟审计的 equity/fees/realized PnL。后者固定
+标记为 `not_strategy_edge=true`，5 分钟时序 observation 也不被当成独立交易样本。
+每次成功 sell 会从已验证 capital cycle 的 before/after 中计算单笔模拟 realized PnL
+变化；未完成退出继续是 pending outcome。
+
+`tradingagent-crypto-round-trip-g4-acceptance.service/.timer` 是每日 09:05 的
+只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；只有
+连续 288 根 closed-5m completion（24 小时）、核心 fresh、无 pending、Decision
+Ledger 计数一致且 capital balanced 才输出 `eligible`。即使 eligible，下一动作仍
+固定为 disabled full-scrub + 幂等 replay；只有两项通过后才允许发布流程启用
+incremental learning。该 unit 是日常报告和告警证据，不是交易调度器。
+
 ## Outage epoch restart 候选
 
 2026-07-29 ECS 停机后，旧 delayed-paper root 的最后 completion 停在
@@ -469,6 +483,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_health.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_learning.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_round_trip_learning_systemd.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_report.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_round_trip_acceptance_systemd.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
