@@ -41,17 +41,18 @@ def _candidate(
     (archived / ".epoch_identity.json").chmod(0o600)
     capital = archived / "capital"
     capital.mkdir(mode=0o700)
-    (capital / "head.json").write_bytes(
-        _canonical(
-            {
-                "sequence": 42,
-                "checksum": "c" * 64,
-            }
-        )
-    )
-    (capital / "head.json").chmod(0o600)
+    (capital / "head.json").write_text("authority-reader-fixture\n", encoding="utf-8")
     monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PATH", manifest)
     monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_ROOT_PARENT", parent)
+
+    class _ArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == capital
+
+        def head(self) -> tuple[int, str]:
+            return 42, "c" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _ArchiveLedger)
     payload = {
         "schema": "tradingagent.crypto.round_trip_epoch_manifest.v1",
         "epoch_id": target.name,
@@ -118,8 +119,15 @@ def test_round_trip_epoch_rejects_tampered_archived_head(
 ) -> None:
     manifest, archived, _ = _candidate(monkeypatch, tmp_path)
     context = load_round_trip_epoch_manifest(manifest)
-    head = archived / "capital" / "head.json"
-    head.write_bytes(_canonical({"sequence": 42, "checksum": "d" * 64}))
+
+    class _TamperedArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 42, "d" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _TamperedArchiveLedger)
     with pytest.raises(
         CryptoRoundTripEpochError, match="archive_capital_head_mismatch"
     ):

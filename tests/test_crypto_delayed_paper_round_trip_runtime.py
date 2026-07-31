@@ -87,8 +87,17 @@ def _configure(
     }
     manifest.write_bytes(_canonical(payload))
     manifest.chmod(0o600)
+
+    class _ArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 41, "c" * 64
+
     monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_MANIFEST_PATH", manifest)
     monkeypatch.setattr(epoch_module, "ROUND_TRIP_EPOCH_ROOT_PARENT", parent)
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _ArchiveLedger)
     monkeypatch.setattr(runtime_module, "ROUND_TRIP_EPOCH_MANIFEST_PATH", manifest)
     monkeypatch.setattr(runtime_module, "RUNTIME_TOKEN_FILE", token)
     return manifest, archived, output, token

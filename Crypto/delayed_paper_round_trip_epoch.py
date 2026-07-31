@@ -12,6 +12,7 @@ from typing import Any, Mapping
 import uuid
 
 from Crypto.fixture_sim.contracts import _assert_simulation_only
+from Crypto.fixture_sim.ledger import CryptoCapitalLedger, CryptoLedgerError
 from Crypto.round_trip_capital import ROUND_TRIP_CAPITAL_POLICY
 
 
@@ -273,21 +274,15 @@ def _verify_archive(context: CryptoRoundTripEpochContext) -> None:
     )
     if _sha256_bytes(identity) != context.archived_epoch_identity_file_sha256:
         raise CryptoRoundTripEpochError("round_trip_archive_identity_mismatch")
-    encoded_head = _secure_regular(
-        context.archived_output_root / "capital" / "head.json",
-        reason="round_trip_archive_capital_head_untrusted",
-        max_bytes=_MANIFEST_MAX_BYTES,
-    )
     try:
-        head = json.loads(encoded_head.decode())
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        sequence, checksum = CryptoCapitalLedger(
+            context.archived_output_root / "capital"
+        ).head()
+    except (CryptoLedgerError, OSError, TypeError, ValueError) as exc:
         raise CryptoRoundTripEpochError(
             "round_trip_archive_capital_head_untrusted"
         ) from exc
-    if (
-        not isinstance(head, Mapping)
-        or head.get("checksum") != context.archived_capital_head_checksum
-    ):
+    if sequence <= 0 or checksum != context.archived_capital_head_checksum:
         raise CryptoRoundTripEpochError("round_trip_archive_capital_head_mismatch")
 
 
