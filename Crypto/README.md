@@ -306,6 +306,14 @@ prepare 只读校验旧 root、创建新 identity；不会写 current-epoch poin
 tracked service/timer。正式发布前必须另行停止并锁定旧 writer、核对旧 root 字节、
 安装 manifest、执行 one-shot/同槽重放/相邻轮验收，获准后才能切 timer。
 
+版本化 manifest 目录由 root 创建为 `root:tradingagent 0750`，manifest 与 receipt
+为 `root:tradingagent 0640`；它们不含 token。round-trip unit 不再读取旧固定
+manifest，而只读取 root-owned `0640`
+`/etc/tradingagent/crypto-delayed-paper-round-trip.env` 的唯一
+`ROUND_TRIP_EPOCH_MANIFEST=/etc/tradingagent/crypto-delayed-paper-round-trip-epochs/<epoch>.json`
+选择。该 env file 仅传路径，不能绕过 runtime 对版本化 manifest、supersession
+receipt、旧 manifest digest 与冻结 g2 head 的校验。
+
 本候选所有 order/receipt/snapshot 均保持
 `REAL_TRADING_ENABLED=false`、`execution_authority=false`、
 `production_eligible=false`，无 Binance/Testnet/Live、网络模型、outbox、

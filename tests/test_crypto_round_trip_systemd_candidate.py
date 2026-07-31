@@ -10,7 +10,13 @@ def test_round_trip_service_is_sim_only_and_keeps_g2_read_only() -> None:
     ).read_text()
     assert "REAL_TRADING_ENABLED=false" in service
     assert "Crypto.delayed_paper_round_trip_runtime" in service
-    assert "crypto-delayed-paper-round-trip.epoch.json" in service
+    assert "crypto-delayed-paper-round-trip.env" in service
+    assert "${ROUND_TRIP_EPOCH_MANIFEST}" in service
+    assert "crypto-delayed-paper-round-trip-epochs" in service
+    assert (
+        "--epoch-manifest /etc/tradingagent/crypto-delayed-paper-round-trip.epoch.json"
+        not in service
+    )
     assert (
         "ReadOnlyPaths=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-epoch-g2-20260729"
         in service
