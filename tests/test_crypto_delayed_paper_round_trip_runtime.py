@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -20,6 +22,20 @@ from tests.test_crypto_delayed_paper_runtime import (
     _shifted_transport,
     _write_manifest,
 )
+
+
+def test_module_invocation_reaches_round_trip_cli_parser() -> None:
+    """The systemd ``python -m`` entrypoint must not be an empty import."""
+    completed = subprocess.run(
+        [sys.executable, "-m", "Crypto.delayed_paper_round_trip_runtime", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert "Run one Crypto round-trip simulated cycle" in completed.stdout
+    assert "--epoch-manifest" in completed.stdout
 
 
 def _canonical(value: object) -> bytes:
