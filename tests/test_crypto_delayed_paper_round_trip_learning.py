@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
+from Crypto.delayed_paper_round_trip_learning import (
+    CryptoRoundTripLearningError,
+    round_trip_learning_exit_code,
+    run_crypto_delayed_paper_round_trip_learning_full_scrub,
+    run_crypto_delayed_paper_round_trip_learning_incremental,
+)
+from Crypto.delayed_paper_round_trip_learning_worker import (
+    _existing_epoch_root,
+    run_round_trip_learning_worker_once,
+)
+from Crypto.five_minute_data import TradingDatasCryptoFiveMinuteDataPort
+from tests.test_crypto_5m_support import (
+    FixtureTradingDatasTransport,
+    client,
+    profile,
+    window_request,
+)
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and "evolution/round_trip_learning" not in path.as_posix()
+    }
+
+
+def _completed_round_trip(root: Path) -> None:
+    transport = FixtureTradingDatasTransport()
+    tradingdatas_client = client(transport)
+    result = run_crypto_delayed_paper_round_trip_once(
+        port=TradingDatasCryptoFiveMinuteDataPort(tradingdatas_client),
+        profile=profile(tradingdatas_client),
+        request=window_request(),
+        output_root=root,
+    )
+    assert result["status"] == "completed"
+
+
+def test_full_scrub_projects_g4_learning_without_mutating_core(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    before = _tree_bytes(tmp_path)
+
+    result = run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=tmp_path
+    )
+
+    assert _tree_bytes(tmp_path) == before
+    assert result["status"] == "recovered"
+    assert result["completion_count"] == 1
+    assert result["learning_authority"] is False
+    assert result["execution_authority"] is False
+    assert result["promotion_authorized"] is False
+    assert round_trip_learning_exit_code(result) == 0
+    learning = tmp_path / "evolution" / "round_trip_learning"
+    assert len(list((learning / "samples").glob("*.json"))) == 1
+    assert len(list((learning / "kpis").glob("*.json"))) == 1
+    assert len(list((learning / "challengers").glob("*.json"))) == 1
+    assert len(list((learning / "receipts").glob("*.json"))) == 1
+    assert len(list((learning / "checkpoints").glob("*.json"))) == 1
+
+
+def test_incremental_requires_full_scrub_then_is_idempotent(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    required = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+    assert required["status"] == "full_scrub_required"
+
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+    before = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "evolution").rglob("*"))
+        if path.is_file()
+    }
+    current = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+    after = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "evolution").rglob("*"))
+        if path.is_file()
+    }
+    assert current["status"] == "current"
+    assert before == after
+
+
+def test_full_scrub_fails_closed_for_tampered_prior_projection(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+    receipt = next(
+        (tmp_path / "evolution" / "round_trip_learning" / "receipts").glob("*.json")
+    )
+    receipt.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_projection_invalid|round_trip_learning_projection_not_derived",
+    ):
+        run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+
+
+def test_full_scrub_fails_closed_for_missing_checkpoint_claimed_receipt(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+    receipt = next(
+        (tmp_path / "evolution" / "round_trip_learning" / "receipts").glob("*.json")
+    )
+    receipt.unlink()
+
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_claimed_projection_missing",
+    ):
+        run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+
+
+def test_worker_rejects_free_or_non_g4_manifest_paths(tmp_path: Path) -> None:
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_manifest_path_invalid",
+    ):
+        run_round_trip_learning_worker_once(
+            mode="incremental", epoch_manifest=tmp_path / "epoch.json"
+        )
+
+
+def test_worker_refuses_incomplete_epoch_before_any_prepare_write(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "incomplete-g4"
+    root.mkdir()
+    context = SimpleNamespace(output_root=root, identity_path=root / ".identity.json")
+
+    with pytest.raises(
+        CryptoRoundTripLearningError, match="round_trip_learning_root_incomplete"
+    ):
+        _existing_epoch_root(context)
+
+    assert list(root.iterdir()) == []

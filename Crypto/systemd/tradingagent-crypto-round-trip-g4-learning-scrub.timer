@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent Crypto g4 detached round-trip learning full scrub timer
+
+[Timer]
+OnCalendar=*-*-* 03:35:00
+AccuracySec=1s
+RandomizedDelaySec=30s
+Persistent=false
+Unit=tradingagent-crypto-round-trip-g4-learning-scrub.service
+
+[Install]
+WantedBy=timers.target
