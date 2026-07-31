@@ -155,6 +155,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
     assert _tree(archived) == archived_before
     assert first["status"] == replay["status"] == adjacent["status"] == "completed"
     assert replay["core_result"]["idempotent_replay"] is True
+    assert replay["market_data_access_attempt_count"] == 0
     assert first["capital_authority_id"] == "crypto-round-trip-capital-v1"
     assert first["real_trading_enabled"] is False
     assert adjacent["core_result"]["capital"]["balanced"] is True

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
 from typing import Any, Callable
 
+from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_epoch import (
     ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
@@ -60,12 +61,34 @@ def run_crypto_delayed_paper_round_trip_server_once(
         token_file=RUNTIME_TOKEN_FILE,
         transport_factory=transport_factory,
     )
-    result = run_crypto_delayed_paper_round_trip_once(
-        port=port,
-        profile=manifest.profile,
-        request=request,
-        output_root=prepared.output_root,
+    checkpoint = CryptoDelayedPaperObservationStore(
+        prepared.output_root
+    ).runtime_checkpoint()
+    requested_market_slot = (
+        (request.window_end - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
     )
+    if (
+        checkpoint.get("pending") is None
+        and checkpoint.get("latest_market_slot") == requested_market_slot
+    ):
+        # A completed slot is immutable. Do not re-query a mutable current
+        # view and risk accepting a different payload for the same slot.
+        result = {
+            "contract": "tradingagent.crypto.delayed_paper_round_trip_runner.v1",
+            "status": "completed",
+            "market": "crypto",
+            "market_slot": requested_market_slot,
+            "recovered_pending": False,
+            "idempotent_replay": True,
+            "replay_mode": "completed_slot_without_fresh_query",
+        }
+    else:
+        result = run_crypto_delayed_paper_round_trip_once(
+            port=port,
+            profile=manifest.profile,
+            request=request,
+            output_root=prepared.output_root,
+        )
     # Re-read both anchors after the write: neither a changed g3 manifest nor a
     # changed g2 archive may be hidden by a successful local capital cycle.
     prepared_after = prepare_round_trip_epoch_candidate(context)
