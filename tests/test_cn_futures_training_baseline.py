@@ -65,6 +65,7 @@ def test_m_day_session_fixture_creates_one_lot_non_authoritative_sample() -> Non
 
     assert result["mode"] == "fixture_mock_training_baseline"
     assert result["not_real_market_data_training"] is True
+    assert result["learning_evidence_eligible"] is False
     assert result["automatic_promotion"] is False
     assert result["strategy"]["name"] == "commodity_intraday_trend"
     assert result["candidate"]["execution_eligible"] is False
@@ -74,6 +75,7 @@ def test_m_day_session_fixture_creates_one_lot_non_authoritative_sample() -> Non
     assert sample["exit_reason"] == "fixture_same_session_flatten_no_overnight"
     assert sample["execution_authority"] is False
     assert sample["durable"] is False
+    assert sample["learning_evidence_eligible"] is False
     assert result["daily_reconcile"]["non_authoritative"] is True
 
 
@@ -193,6 +195,7 @@ def test_replay_is_deterministic_and_never_claims_real_training() -> None:
         assert mapping.get("real_trading_enabled") is not True
         assert mapping.get("execution_eligible") is not True
         assert mapping.get("execution_authority") is not True
+        assert mapping.get("learning_evidence_eligible") is not True
         assert mapping.get("durable") is not True
         assert mapping.get("capital_commit_id") in (None,)
         assert mapping.get("outbox_id") in (None,)
@@ -226,4 +229,27 @@ def test_invalid_ohlc_relationship_fails_closed() -> None:
     bars[-1]["high"] = float(bars[-1]["close"]) - 1.0
 
     with pytest.raises(TrainingBaselineError, match="invalid_ohlc_relationship"):
+        run_fixture_training_baseline(_fixture(bars={"rows": bars}))
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda bars: bars[-1].update(
+                {"open": 1e308, "high": 1e308, "low": 1e308, "close": 1e308}
+            ),
+            "nonfinite_pretrade_math",
+        ),
+        (lambda bars: bars[-1].update({"volume": -1}), "nonnegative_number_required"),
+    ],
+)
+def test_extreme_math_and_invalid_volume_fail_closed(
+    mutate: object, reason: str
+) -> None:
+    bars = _bars()
+    assert callable(mutate)
+    mutate(bars)
+
+    with pytest.raises(TrainingBaselineError, match=reason):
         run_fixture_training_baseline(_fixture(bars={"rows": bars}))

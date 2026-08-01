@@ -30,7 +30,20 @@ TradingDatas owner 可选择符合其 provider-neutral registry 的最终 datase
 3. 两次 query envelope 均满足 `ready`、`fresh`、`valid`、`degraded=false`，且有非空 receipt 与 lineage；任何一项失败则只保留 hold/observation。
 4. 查询该会话对应的 calendar 和规格，并证明它们在策略 decision time 前可用；不能以静态 fixture、旧 bar 或消费者缓存替代。
 5. 使用对方给出的精确 filter/sort/cursor 进行可终止分页 readback；最终 row identity、时间与 metadata 在幂等重读中一致。
-6. 将上述 readback 保存为一次 CNFutures handoff receipt。通过后才可建立 `delayed-paper` session；它不构成 SimNow、CTP、券商生产接入或实盘授权。
+6. 将上述 readback 投影为一次 CNFutures handoff fixture，并保存其 receipt/lineage。通过本消费者验收只代表 read-only parity 可复核，**不**启动 `delayed-paper`、runner、timer 或 simulated fill；它更不构成 SimNow、CTP、券商生产接入或实盘授权。
+
+## 离线 profile fixture 验收
+
+`CNFutures.tradingdatas_handoff_acceptance.evaluate_handoff_fixture` 是无网络、无数据库、无 runtime 副作用的 one-shot 消费者验收器。它只接受调用方从正式 `GET /v1/catalog` 与 `POST /v1/query` readback 提取的内存投影；不会配置 endpoint、token 或 dataset ID。
+
+投影必须声明 profile `cn-futures-m-5min-handoff-v1`，并由 TradingDatas handoff 显式注入三个 role 的最终 dataset ID 和 schema major：`contract_master`、`bars_5min`、`calendar_session`。catalog 与每个 query 都须为 V1、`ready`、`fresh`、`valid`、`degraded=false`、完整 provider-neutral `metadata.lineage`、非空 `metadata.receipt_id`，并且 `next_cursor=null`。每个 query 的 `metadata.data_through` 与 `metadata.observed_at` 必须显式带时区，且满足 `data_through <= observed_at <= decision_time`；**唯一 availability source 是 `query_envelope.metadata.observed_at`**。验收器不接受 row 的 `available_at` 作为 provider-native knowledge-time：contract/calendar 的可用时点绑定各自 query 的 observed-at，bar 则要求 `bar_time <= bars query observed_at <= decision_time`。输出只保留 receipt watermark 与 canonical lineage digest，不要求或臆造 `lineage_ref`。随后才验证一个明确的 `M####.DCE` active contract、非空有限的 multiplier/tick/price limit、同一上海 trade date/day-session 的 calendar、以及同一 session 内两根相邻、completed、PIT 有效的 5 分钟 OHLCV bar。
+
+```bash
+REAL_TRADING_ENABLED=false python3 -m pytest -q \
+  tests/test_cn_futures_tradingdatas_handoff_acceptance.py
+```
+
+通过时仅产生 `observation`；缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `execution_eligible=false`、`delayed_paper_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
 
 ## 当前只读发现（2026-07-30）
 
@@ -39,6 +52,7 @@ TradingDatas owner 可选择符合其 provider-neutral registry 的最终 datase
 ## 交接后的顺序
 
 1. TradingDatas owner 完成有界、只读 API readback，并提供最终合同与 receipt/lineage。
-2. CNFutures 在隔离 root 用 M 单策略运行 delayed-paper；首轮只做 observation、hold 与风险拒绝验证。
-3. 覆盖正常、缺数据、午休、收盘前、换月和波动状态后，才保存完整模拟回合与前向标签。
-4. RB 影子研究、SimNow/CTP 测试和券商生产外接均为后续独立门禁，不能与此交接合并。
+2. CNFutures 先执行上述离线 one-shot parity；这仍只是 fixture/mock-ready，不是 delayed-paper GO。
+3. delayed-paper 必须另获 Nicholas 的运行授权，并在隔离 root 重新验证 observation、hold 与风险拒绝；不得由 fixture 测试自动触发。
+4. 覆盖正常、缺数据、午休、收盘前、换月和波动状态后，才可考虑保存完整模拟回合与前向标签。
+5. RB 影子研究、SimNow/CTP 测试和券商生产外接均为后续独立门禁，不能与此交接合并。
