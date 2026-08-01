@@ -1,15 +1,16 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-01 23:27 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-01 23:35 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 > **2026-08-01 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release
 > `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`
 > symlink。新鲜自然周期 `success/exit0`；只读 health 为 `healthy`，模拟账户
-> `balanced=true`，现金 `9000.18697278 USDT`、权益 `9999.47084178 USDT`、累计费用
+> `balanced=true`，现金 `9000.18697278 USDT`、权益 `9999.48151578 USDT`、累计费用
 > `0.99881422 USDT`，当前只有一笔 ETH 模拟持仓，真实交易、Testnet/Live broker、
 > 模型网络、自动晋级和自动风险扩张均为 false。只读 acceptance 仍为 `not_ready`：
-> G5 只有 22 个 completed 5-minute windows，最新连续段 21 槽/105 分钟，低于 24 小时
+> 23:35 CST 只读复核时 G5 有 29 个 completed 5-minute windows，最新连续段
+> 28 槽/140 分钟，低于 24 小时
 > 288 槽门槛，且尚无 completed round trip；因此 learning timer 继续关闭，核心采集与
 > 模拟账本继续独立运行。
 >
