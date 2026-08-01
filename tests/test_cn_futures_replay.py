@@ -28,12 +28,19 @@ class FakeAdapter:
         self.reader = reader or FakeFuturesReader()
 
     def get_universe(self, date: str) -> list[str]:
-        return ["CU2607.SHF"]
+        return ["M2609.DCE"]
 
     def get_strategy_config(self) -> dict[str, object]:
         return {
             "strategies": [
-                {"name": "trend", "signal_threshold": 0.005, "products": ["cu"]}
+                {
+                    "name": "commodity_intraday_trend",
+                    "style_family": "commodity_intraday_trend",
+                    "signal_threshold": 0.0015,
+                    "moving_average_bars": 5,
+                    "max_late_chase_pct": 0.1,
+                    "products": ["m"],
+                }
             ]
         }
 
@@ -178,9 +185,16 @@ class CNFuturesReplayTest(unittest.TestCase):
             report = replay.build_replay_report(
                 date="20260709",
                 reader=FakeFuturesReader(),
-                symbols=["CU2607.SHF"],
+                symbols=["M2609.DCE"],
                 styles=[
-                    {"name": "trend", "signal_threshold": 0.005, "products": ["cu"]}
+                    {
+                        "name": "commodity_intraday_trend",
+                        "style_family": "commodity_intraday_trend",
+                        "signal_threshold": 0.0015,
+                        "moving_average_bars": 5,
+                        "max_late_chase_pct": 0.1,
+                        "products": ["m"],
+                    }
                 ],
                 output=None,
                 history=None,
@@ -190,9 +204,9 @@ class CNFuturesReplayTest(unittest.TestCase):
         self.assertTrue(report["read_only"])
         self.assertFalse(report["real_trading_enabled"])
         self.assertGreater(report["window_count"], 0)
-        self.assertIn("trend", report["style_summary"])
+        self.assertIn("commodity_intraday_trend", report["style_summary"])
         self.assertGreater(
-            report["style_summary"]["trend"]["action_counts"].get("buy", 0), 0
+            report["style_summary"]["commodity_intraday_trend"]["action_counts"].get("buy", 0), 0
         )
 
     def test_replay_filters_symbols_not_allowed_by_style_products(self) -> None:
@@ -233,13 +247,16 @@ class CNFuturesReplayTest(unittest.TestCase):
         report = replay.build_replay_report(
             date="20260709",
             reader=BoundaryReader(),
-            symbols=["IF2609.CFX"],
+            symbols=["M2609.DCE"],
             styles=[
                 {
-                    "name": "index_intraday_directional",
+                    "name": "commodity_intraday_trend",
+                    "style_family": "commodity_intraday_trend",
                     "signal_threshold": 0.001,
-                    "products": ["if"],
-                    "max_margin_usage": 0.8,
+                    "moving_average_bars": 5,
+                    "max_late_chase_pct": 0.1,
+                    "products": ["m"],
+                    "max_margin_usage": 0.1,
                 }
             ],
             output=None,
