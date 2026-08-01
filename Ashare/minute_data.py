@@ -572,7 +572,10 @@ class MinuteBarEvidence:
             if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION
             else MAX_DELAYED_PAPER_LATENCY
         )
-        if available - bar_end > maximum_latency:
+        if (
+            available - bar_end > maximum_latency
+            or decision - bar_end > maximum_latency
+        ):
             raise MinuteDataContractError("minute_evidence_latency_exceeded")
         if self.suspended is not False:
             raise MinuteDataContractError("minute_suspended_instrument")

@@ -294,14 +294,15 @@ def test_partial_shadow_rejects_missing_duplicate_replacement_or_full_cohort(
 
 
 @pytest.mark.parametrize(
-    ("observed_at", "reason"),
+    ("observed_at", "decision_time", "reason"),
     [
-        ("2026-07-31T13:40:00", "shadow_time_invalid"),
-        ("2026-07-31T13:45:31", "shadow_time_invalid"),
+        ("2026-07-31T13:40:00", "2026-07-31T13:45:00", "shadow_time_invalid"),
+        ("2026-07-31T13:45:31", "2026-07-31T13:45:31", "shadow_time_invalid"),
+        ("2026-07-31T13:45:20", "2026-07-31T13:45:31", "shadow_time_invalid"),
     ],
 )
 def test_partial_shadow_rejects_same_bar_or_overdue_observation(
-    observed_at: str, reason: str
+    observed_at: str, decision_time: str, reason: str
 ) -> None:
     with pytest.raises(MinuteScale500RuntimeError, match=reason):
         build_scale500_partial_shadow_receipt(
@@ -310,7 +311,7 @@ def test_partial_shadow_rejects_same_bar_or_overdue_observation(
             trading_date="2026-07-31",
             bar_end="2026-07-31 13:40:00",
             observed_at=_at(observed_at),
-            decision_time=_at("2026-07-31T13:46:00"),
+            decision_time=_at(decision_time),
         )
 
 
@@ -363,7 +364,7 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:49:00"),
+        now=_at("2026-07-31T09:40:30"),
         runner=lambda **_: _receipt("2026-07-31 09:35:00"),
     )
     (scale_root / "20260731" / "state-bundle.json").write_text(
@@ -376,7 +377,7 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:54:00"),
+        now=_at("2026-07-31T09:45:30"),
         runner=lambda **_: _receipt("2026-07-31 09:40:00"),
     )
 
@@ -409,7 +410,7 @@ def test_legacy_pending_gate_defaults_to_non_late_start(tmp_path: Path) -> None:
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:49:00"),
+        now=_at("2026-07-31T09:40:30"),
         runner=lambda **_: _receipt("2026-07-31 09:35:00"),
     )
 
@@ -451,7 +452,7 @@ def test_any_data_authority_failure_selects_rollback_with_exact_reason(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T09:49:00"),
+            now=_at("2026-07-31T09:40:30"),
             runner=fail,
         )
 
@@ -493,7 +494,7 @@ def test_partial_or_authoritative_receipt_fails_closed(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T09:49:00"),
+            now=_at("2026-07-31T09:40:30"),
             runner=lambda **_: receipt,
         )
 
@@ -514,7 +515,7 @@ def test_first_accepted_round_must_be_opening_bar_not_late_start(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T09:54:00"),
+            now=_at("2026-07-31T09:45:30"),
             runner=lambda **_: _receipt("2026-07-31 09:40:00"),
         )
 
@@ -541,7 +542,7 @@ def test_late_start_requires_explicit_flag_and_never_accepts_a_prior_bar(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:54:00"),
+            now=_at("2026-07-31T13:45:30"),
             runner=late_runner,
         )
 
@@ -571,7 +572,7 @@ def test_explicit_late_start_uses_only_current_complete_bar_and_stays_partial(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:54:00"),
+        now=_at("2026-07-31T13:45:30"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -615,7 +616,7 @@ def test_late_start_requires_an_exact_delayed_canary_before_runner(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:54:00"),
+            now=_at("2026-07-31T13:45:30"),
             allow_late_start=True,
             runner=lambda **_: (
                 calls.append("runner") or _late_start_receipt("2026-07-31 13:40:00")
@@ -637,7 +638,7 @@ def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:54:00"),
+        now=_at("2026-07-31T13:45:30"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -658,7 +659,7 @@ def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:54:00"),
+        now=_at("2026-07-31T13:45:30"),
         runner=replay_runner,
     )
 
@@ -679,7 +680,7 @@ def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> Non
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:54:00"),
+        now=_at("2026-07-31T13:45:30"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -699,7 +700,7 @@ def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> Non
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:59:00"),
+            now=_at("2026-07-31T13:50:30"),
             allow_late_start=True,
             canary_receipt=_canary_receipt(
                 tmp_path / "second-canary.json",
@@ -726,7 +727,7 @@ def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:54:00"),
+        now=_at("2026-07-31T13:45:30"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -751,7 +752,7 @@ def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:59:00"),
+            now=_at("2026-07-31T13:50:30"),
             allow_late_start=True,
             canary_receipt=_canary_receipt(
                 tmp_path / "second-canary.json",
@@ -979,12 +980,11 @@ def test_cli_late_start_flag_is_run_only_and_explicit(
     assert code == 2
 
 
-def test_final_delayed_timer_still_targets_the_1500_bar() -> None:
+def test_final_delayed_timer_does_not_reuse_a_stale_1500_bar() -> None:
     from Ashare.minute_auto_runner import expected_available_bar_end
 
     target = expected_available_bar_end(_at("2026-07-31T15:19:00"))
-    assert target is not None
-    assert target.strftime("%Y-%m-%d %H:%M:%S") == "2026-07-31 15:00:00"
+    assert target is None
 
 
 def test_cli_prints_exact_secret_free_reason_instead_of_silent_exit2(

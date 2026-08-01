@@ -152,6 +152,7 @@ def build_scale500_partial_shadow_receipt(
         or observed_at > decision_time
         or observed_at <= completed_bar_end
         or observed_at - completed_bar_end > MAX_DELAYED_PAPER_LATENCY
+        or decision_time - completed_bar_end > MAX_DELAYED_PAPER_LATENCY
         or completed_bar_end.date().isoformat() != trading_date
     ):
         raise MinuteScale500RuntimeError("minute_scale500_shadow_time_invalid")

@@ -457,9 +457,11 @@ same-day 30-symbol session after the 09:18 initializer has passed; that day
 remains fail-closed. The scale timer mirrors the delayed schedule but moves the
 final 15:00-bar attempt to 15:19 so TradingDatas has one bounded final
 publication interval. `DELAYED_PAPER` consumes the shared readiness limit of
-one five-minute cadence plus 30 seconds of jitter (330 seconds); the later
-timer does not make stale evidence eligible. The low-latency execution bound
-remains 30 seconds and is never granted by this observation tier.
+one five-minute cadence plus 30 seconds of jitter (330 seconds), measured both
+from bar end to source availability and from bar end to the actual decision;
+the later timer does not make stale evidence eligible. The low-latency
+execution bound remains 30 seconds and is never granted by this observation
+tier.
 
 The tracked files under `Ashare/systemd/` are release candidates only.
 Installing or enabling them requires an immutable release, the frozen artifact
