@@ -255,12 +255,15 @@ def run_minute_canary(
             bar.execution_latency_eligible for bar in snapshot.bars
         ),
         "real_trading_enabled": False,
+        "trading_date": trading_date.isoformat(),
+        "decision_time": decision_time.isoformat(),
         "dataset_id": profile.dataset_id,
         "catalog_version": profile.catalog_version,
         "catalog_contract_sha256": profile.catalog_contract_sha256,
         "row_count": snapshot.row_count,
         "page_count": snapshot.page_count,
         "same_observation": snapshot.same_observation,
+        "lineage_complete": True,
         "snapshot_sha256": snapshot.sha256,
         "bars": [
             {

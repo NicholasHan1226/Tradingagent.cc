@@ -91,10 +91,12 @@ def build_minute_offline_learning_projection(
     if not isinstance(evidence, Mapping):
         raise MinuteOfflineLearningError("minute_learning_evidence_invalid")
     rejected_count = evidence.get("rejected_count")
+    receipt_history_complete = evidence.get("receipt_history_complete")
     if (
         isinstance(rejected_count, bool)
         or not isinstance(rejected_count, int)
         or rejected_count < 0
+        or not isinstance(receipt_history_complete, bool)
     ):
         raise MinuteOfflineLearningError("minute_learning_evidence_invalid")
     reconciliation = report.get("reconciliation_status")
@@ -112,6 +114,8 @@ def build_minute_offline_learning_projection(
         blockers.append("fixture_session_incomplete")
     if rejected_count:
         blockers.append("fixture_evidence_rejected")
+    if not receipt_history_complete:
+        blockers.append("fixture_receipt_history_incomplete")
     if not reconciliation_complete:
         blockers.append("fixture_reconciliation_incomplete")
     complete = not blockers
@@ -156,6 +160,15 @@ def build_minute_offline_learning_projection(
             "calibrated_probability": None,
             "expected_return_bps": None,
             "reason": "fixture_delayed_paper_has_no_forward_label_authority",
+        },
+        "forward_label_state": {
+            "status": "blocked_missing_authoritative_daily_receipt",
+            "planned_horizons": ["m30", "m60", "close", "1d", "3d", "5d"],
+            "fixture_candidate_count": report["candidate_and_rejections"][
+                "candidate_count"
+            ],
+            "labels_appended": 0,
+            "authoritative_market_data_consumed": False,
         },
         "missed_opportunities": {
             "status": "counterfactual_only",

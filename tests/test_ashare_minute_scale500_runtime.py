@@ -166,6 +166,43 @@ def _late_start_receipt(bar_end: str) -> dict[str, object]:
     return receipt
 
 
+def _canary_receipt(path: Path, *, universe_source: Path, bar_end: str) -> Path:
+    symbols = [
+        item["symbol"]
+        for item in json.loads(universe_source.read_text(encoding="utf-8"))
+    ]
+    path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "authority_tier": "observation_only",
+                "evidence_use": "delayed_paper",
+                "execution_latency_eligible": False,
+                "real_trading_enabled": False,
+                "trading_date": "2026-07-31",
+                "decision_time": "2026-07-31T13:54:00+08:00",
+                "row_count": EXPECTED_UNIVERSE_COUNT,
+                "same_observation": True,
+                "lineage_complete": True,
+                "audit_rejections": 0,
+                "catalog_contract_sha256": "a" * 64,
+                "snapshot_sha256": "b" * 64,
+                "bars": [
+                    {
+                        "symbol": symbol,
+                        "bar_end": bar_end,
+                        "receipt_id": f"receipt-{index}",
+                        "observed_at": "2026-07-31T13:50:00+08:00",
+                    }
+                    for index, symbol in enumerate(symbols)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path.resolve()
+
+
 def _initialize(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     paths = _paths(tmp_path)
     scale_root, rollback_root, token_file, universe_source, digest = paths
@@ -441,6 +478,11 @@ def test_explicit_late_start_uses_only_current_complete_bar_and_stays_partial(
         expected_universe_sha256=digest,
         now=_at("2026-07-31T13:54:00"),
         allow_late_start=True,
+        canary_receipt=_canary_receipt(
+            tmp_path / "canary.json",
+            universe_source=universe_source,
+            bar_end="2026-07-31 13:40:00",
+        ),
         runner=late_runner,
     )
 
@@ -460,6 +502,34 @@ def test_explicit_late_start_uses_only_current_complete_bar_and_stays_partial(
     assert gate["late_start_bar_end"] == "2026-07-31 13:40:00"
 
 
+def test_late_start_requires_an_exact_delayed_canary_before_runner(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    calls: list[object] = []
+
+    with pytest.raises(
+        MinuteScale500RuntimeError,
+        match="minute_scale500_late_start_canary_missing",
+    ):
+        run_scale500_once(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T13:54:00"),
+            allow_late_start=True,
+            runner=lambda **_: (
+                calls.append("runner") or _late_start_receipt("2026-07-31 13:40:00")
+            ),
+        )
+
+    assert calls == []
+
+
 def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
     tmp_path: Path,
 ) -> None:
@@ -474,6 +544,11 @@ def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
         expected_universe_sha256=digest,
         now=_at("2026-07-31T13:54:00"),
         allow_late_start=True,
+        canary_receipt=_canary_receipt(
+            tmp_path / "canary.json",
+            universe_source=universe_source,
+            bar_end="2026-07-31 13:40:00",
+        ),
         runner=lambda **_: _late_start_receipt("2026-07-31 13:40:00"),
     )
     replay_flags: list[bool] = []
@@ -511,6 +586,11 @@ def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> Non
         expected_universe_sha256=digest,
         now=_at("2026-07-31T13:54:00"),
         allow_late_start=True,
+        canary_receipt=_canary_receipt(
+            tmp_path / "canary.json",
+            universe_source=universe_source,
+            bar_end="2026-07-31 13:40:00",
+        ),
         runner=lambda **_: _late_start_receipt("2026-07-31 13:40:00"),
     )
 
@@ -526,6 +606,11 @@ def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> Non
             expected_universe_sha256=digest,
             now=_at("2026-07-31T13:59:00"),
             allow_late_start=True,
+            canary_receipt=_canary_receipt(
+                tmp_path / "second-canary.json",
+                universe_source=universe_source,
+                bar_end="2026-07-31 13:45:00",
+            ),
             runner=lambda **_: _late_start_receipt("2026-07-31 13:45:00"),
         )
 
@@ -548,6 +633,11 @@ def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
         expected_universe_sha256=digest,
         now=_at("2026-07-31T13:54:00"),
         allow_late_start=True,
+        canary_receipt=_canary_receipt(
+            tmp_path / "canary.json",
+            universe_source=universe_source,
+            bar_end="2026-07-31 13:40:00",
+        ),
         runner=lambda **_: _late_start_receipt("2026-07-31 13:40:00"),
     )
     runner_flags: list[bool] = []
@@ -568,6 +658,11 @@ def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
             expected_universe_sha256=digest,
             now=_at("2026-07-31T13:59:00"),
             allow_late_start=True,
+            canary_receipt=_canary_receipt(
+                tmp_path / "second-canary.json",
+                universe_source=universe_source,
+                bar_end="2026-07-31 13:45:00",
+            ),
             runner=reject_runner,
         )
 
@@ -704,6 +799,15 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     assert not any(value in environment for value in forbidden)
     assert "--allow-late-start" not in session_service + paper_service
     assert "--allow-late-start" in late_start_service
+    assert (
+        "--canary-receipt ${ASHARE_MINUTE_SCALE500_CANARY_RECEIPT}"
+        in late_start_service
+    )
+    assert (
+        "ConditionPathExists=/var/lib/tradingagent/ashare-minute-paper-scale500/current-canary-receipt.json"
+        in late_start_service
+    )
+    assert "ASHARE_MINUTE_SCALE500_CANARY_RECEIPT=" in environment
     assert (
         "OnFailure=tradingagent-ashare-minute-scale500-rollback.service"
         in late_start_service

@@ -322,6 +322,29 @@ receipt、旧 manifest digest 与冻结 g2 head 的校验。
 `production_eligible=false`，无 Binance/Testnet/Live、网络模型、outbox、
 capital commit、自动 Champion 晋级或风险扩张。
 
+## Factor Research v1（只读影子）
+
+`factor_research.py` 是与核心和 learning worker 都分离的纯研究模块。它从一份
+已验证、连续的 13 根 closed-5m OHLCV 窗口构建版本化特征快照：5m/15m/1h
+收益、15m/1h 实现波动率、5m 标准化区间和 1h 成交量 z-score，并生成 BTC/ETH
+相对强弱诊断。每份快照必须
+绑定 observation、receipt、lineage、`observed_at` 与 `data_through`；缺 bar、
+非连续窗口、非 UTC 时间、未来标签或绑定不一致都会失败关闭。
+
+它只比较三项预注册的研究假设：时间序列动量、趋势内回调、量能突破。标签固定
+为未来 1h/4h/12h/24h 的保守费用后收益，均使用已观察的未来价格；没有任何一项
+结果会变成订单、仓位、Champion、风险预算或自动晋级。50 个标签只是初筛下限，
+绝不构成策略 edge 或晋级授权。后续若要接到 detached worker，必须另行冻结
+append-only 路径、full-scrub/幂等合同与 server one-shot，不能写入 core root。
+
+`delayed_paper_factor_research.py` 与其 manifest-bound worker 是未部署的
+detached projection：它只在最近连续 288 根 G4 completion 后，向
+`g4/evolution/factor_research/` 追加 snapshot、receipt、checkpoint 和随后可用的
+未来价格标签。每次 full scrub 都重验 core completion、投影与 checkpoint 链；
+篡改、缺失或不连续会 fail closed。它没有 service/timer，不能写 core、capital、
+order、Champion 或现有 `round_trip_learning/`，也不使用网络或模型。标签不足和
+50 条初筛不构成策略有效或自动晋级。
+
 `delayed_paper_round_trip_runtime.py` 是隔离 round-trip epoch 的唯一 closed-5m
 server wrapper。
 它仅复用已冻结的 TradingDatas manifest、token-file transport 与 13-bar 门禁，

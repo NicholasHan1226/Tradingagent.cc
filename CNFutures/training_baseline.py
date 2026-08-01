@@ -12,6 +12,7 @@ import json
 import math
 import re
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from shared.capital.market_policy import MarketPolicy
 
@@ -23,6 +24,7 @@ from .signal_engine import generate_style_signal
 BASELINE_MODE = "fixture_mock_training_baseline"
 STRATEGY_NAME = "commodity_intraday_trend"
 _SYMBOL = re.compile(r"^m\d{3,4}\.dce$", re.IGNORECASE)
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class TrainingBaselineError(ValueError):
@@ -36,7 +38,10 @@ def run_fixture_training_baseline(fixture: Mapping[str, Any]) -> dict[str, Any]:
     policy = _load_policy()
     style = _canonical_style()
     evidence = _project_evidence(_mapping(fixture, "data_evidence"))
+    decision_time = _timestamp(fixture.get("decision_time"), "decision_time")
     trade_date = _trade_date(fixture.get("trade_date"))
+    if decision_time.astimezone(_SHANGHAI).strftime("%Y%m%d") != trade_date:
+        raise TrainingBaselineError("decision_trade_date_mismatch")
     generation = _whole_positive(fixture.get("generation"), "generation")
     symbol, rule = _contract(fixture)
     try:
@@ -49,11 +54,26 @@ def run_fixture_training_baseline(fixture: Mapping[str, Any]) -> dict[str, Any]:
         }:
             raise
         lineage = _rejection_lineage(
-            style, trade_date, symbol, rule, evidence, fixture.get("bars"), generation
+            style,
+            trade_date,
+            symbol,
+            rule,
+            evidence,
+            fixture.get("bars"),
+            generation,
+            decision_time,
         )
         return _hold(
             _base(
-                style, policy, generation, trade_date, symbol, rule, evidence, lineage
+                style,
+                policy,
+                generation,
+                trade_date,
+                symbol,
+                rule,
+                evidence,
+                lineage,
+                decision_time,
             ),
             str(exc),
             lineage,
@@ -68,9 +88,21 @@ def run_fixture_training_baseline(fixture: Mapping[str, Any]) -> dict[str, Any]:
             "data_evidence": evidence,
             "bars": bars,
             "generation": generation,
+            "decision_time": decision_time.isoformat(),
         }
     )
-    base = _base(style, policy, generation, trade_date, symbol, rule, evidence, lineage)
+    _validate_pit_order(bars, evidence, decision_time)
+    base = _base(
+        style,
+        policy,
+        generation,
+        trade_date,
+        symbol,
+        rule,
+        evidence,
+        lineage,
+        decision_time,
+    )
     if _rollover_guard(symbol, trade_date, 5):
         return _hold(base, "rollover_guard", lineage, policy)
     reject = _pretrade_reject(bars, style, rule, policy, trade_date, symbol)
@@ -94,6 +126,7 @@ def _base(
     rule: Any,
     evidence: Mapping[str, Any],
     lineage: str,
+    decision_time: datetime,
 ) -> dict[str, Any]:
     del style
     return {
@@ -118,6 +151,7 @@ def _base(
             "account_type": "simulated",
         },
         "trade_date": trade_date,
+        "decision_time": decision_time.isoformat(),
         "contract": {
             "symbol": symbol,
             "product": "m",
@@ -221,7 +255,9 @@ def _bars(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, Any]]:
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping):
             raise TrainingBaselineError("bar_must_be_mapping")
-        timestamp = _timestamp(row.get("bar_time"), f"bars[{index}].bar_time")
+        timestamp = _timestamp(
+            row.get("bar_time"), f"bars[{index}].bar_time"
+        ).astimezone(_SHANGHAI)
         if timestamp.strftime("%Y%m%d") != trade_date:
             raise TrainingBaselineError("bar_trade_date_mismatch")
         if not _is_day_session(timestamp):
@@ -231,18 +267,37 @@ def _bars(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, Any]]:
             if gap not in {5, 90}:
                 raise TrainingBaselineError("missing_5min_bar")
         previous = timestamp
+        open_price = _positive(row.get("open"), "open")
+        high = _positive(row.get("high"), "high")
+        low = _positive(row.get("low"), "low")
+        close = _positive(row.get("close"), "close")
+        if high < max(open_price, low, close) or low > min(open_price, high, close):
+            raise TrainingBaselineError("invalid_ohlc_relationship")
         normalized.append(
             {
                 "bar_time": timestamp.isoformat(),
-                "open": _positive(row.get("open"), "open"),
-                "high": _positive(row.get("high"), "high"),
-                "low": _positive(row.get("low"), "low"),
-                "close": _positive(row.get("close"), "close"),
-                "volume": _positive(row.get("volume"), "volume"),
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": _nonnegative(row.get("volume"), "volume"),
                 "previous_close": _positive_or_none(row.get("previous_close")),
             }
         )
     return normalized
+
+
+def _validate_pit_order(
+    bars: list[dict[str, Any]],
+    evidence: Mapping[str, Any],
+    decision_time: datetime,
+) -> None:
+    latest_event = _timestamp(bars[-1]["bar_time"], "latest_bar_time")
+    available_at = _timestamp(evidence["available_at"], "available_at")
+    if latest_event > available_at:
+        raise TrainingBaselineError("bar_not_available_at_evidence_time")
+    if available_at > decision_time:
+        raise TrainingBaselineError("evidence_available_after_decision")
 
 
 def _pretrade_reject(
@@ -267,7 +322,9 @@ def _pretrade_reject(
     price = float(bars[-1]["close"])
     margin = price * rule.contract_multiplier * rule.margin_rate
     stop_loss = price * rule.contract_multiplier * float(style["stop_loss_pct"])
-    fees = _fee_per_lot(rule, price) * 2
+    fees = _fee_per_lot(rule, price, closing=False) + _fee_per_lot(
+        rule, price, closing=True
+    )
     allowed_margin = min(
         policy.margin_utilization_limit_cny,
         policy.initial_equity_cny * float(style["max_margin_usage"]),
@@ -293,8 +350,8 @@ def _one_lot_sample(
     lineage: str,
 ) -> dict[str, Any]:
     price = float(signal["price"])
-    entry_fee = _fee_per_lot(rule, price)
-    close_fee = _fee_per_lot(rule, price)
+    entry_fee = _fee_per_lot(rule, price, closing=False)
+    close_fee = _fee_per_lot(rule, price, closing=True)
     margin = price * rule.contract_multiplier * rule.margin_rate
     intent_id = f"cnf-training-intent-{lineage[:24]}"
     record = {
@@ -377,6 +434,7 @@ def _rejection_lineage(
     evidence: Mapping[str, Any],
     bars: Any,
     generation: int,
+    decision_time: datetime,
 ) -> str:
     return _sha256(
         {
@@ -387,6 +445,7 @@ def _rejection_lineage(
             "data_evidence": evidence,
             "bars": bars,
             "generation": generation,
+            "decision_time": decision_time.isoformat(),
             "baseline_rejection_projection": True,
         }
     )
@@ -414,10 +473,12 @@ def _finalize(
     }
 
 
-def _fee_per_lot(rule: Any, price: float) -> float:
-    if rule.open_fee_type == "fixed_per_lot":
-        return float(rule.open_fee_rate)
-    return price * rule.contract_multiplier * float(rule.open_fee_rate)
+def _fee_per_lot(rule: Any, price: float, *, closing: bool) -> float:
+    fee_type = rule.close_fee_type if closing else rule.open_fee_type
+    fee_rate = rule.close_fee_rate if closing else rule.open_fee_rate
+    if fee_type == "fixed_per_lot":
+        return float(fee_rate)
+    return price * rule.contract_multiplier * float(fee_rate)
 
 
 def _contract_projection(rule: Any) -> dict[str, Any]:
@@ -496,6 +557,15 @@ def _positive(value: Any, name: str) -> float:
 
 def _positive_or_none(value: Any) -> float | None:
     return None if value is None else _positive(value, "previous_close")
+
+
+def _nonnegative(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TrainingBaselineError(f"nonnegative_number_required:{name}")
+    result = float(value)
+    if not math.isfinite(result) or result < 0:
+        raise TrainingBaselineError(f"nonnegative_number_required:{name}")
+    return result
 
 
 def _whole_positive(value: Any, name: str) -> int:

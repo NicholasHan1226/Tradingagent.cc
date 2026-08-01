@@ -83,9 +83,9 @@ def _load_loop_bundle(
     path: Path,
     *,
     universe: MinuteResearchUniverse,
-) -> MinuteFixtureClosedLoop:
+) -> tuple[MinuteFixtureClosedLoop, list[dict[str, Any]]]:
     if not path.exists():
-        return MinuteFixtureClosedLoop(universe=universe)
+        return MinuteFixtureClosedLoop(universe=universe), []
     raw = dict(
         _mapping(
             _load_json(path, "minute_paper_state_invalid"),
@@ -109,7 +109,38 @@ def _load_loop_bundle(
         or loop.universe.expanded != universe.expanded
     ):
         raise MinutePaperRunnerError("minute_paper_universe_drift")
-    return loop
+    history = raw.get("receipt_history")
+    if history is None:
+        last_receipt = raw.get("last_receipt")
+        if not isinstance(last_receipt, Mapping):
+            raise MinutePaperRunnerError("minute_paper_state_invalid")
+        history = [last_receipt]
+    if not isinstance(history, list) or not history:
+        raise MinutePaperRunnerError("minute_paper_state_invalid")
+    receipts: list[dict[str, Any]] = []
+    bars: set[str] = set()
+    for item in history:
+        if not isinstance(item, Mapping):
+            raise MinutePaperRunnerError("minute_paper_state_invalid")
+        bar_end = item.get("bar_end")
+        snapshot_sha256 = item.get("snapshot_sha256")
+        audit_rejections = item.get("audit_rejections")
+        if (
+            not isinstance(bar_end, str)
+            or not bar_end
+            or bar_end in bars
+            or not isinstance(snapshot_sha256, str)
+            or len(snapshot_sha256) != 64
+            or isinstance(audit_rejections, bool)
+            or not isinstance(audit_rejections, int)
+            or audit_rejections < 0
+        ):
+            raise MinutePaperRunnerError("minute_paper_state_invalid")
+        bars.add(bar_end)
+        receipts.append(dict(item))
+    if receipts[-1] != raw.get("last_receipt"):
+        raise MinutePaperRunnerError("minute_paper_state_invalid")
+    return loop, receipts
 
 
 def _validated_gap_recovery(
@@ -208,7 +239,7 @@ def run_delayed_minute_paper_once(
         raise MinutePaperRunnerError("minute_paper_snapshot_universe_incomplete")
     state_path = Path(state_bundle)
     recovery = _validated_gap_recovery(gap_recovery)
-    loop = _load_loop_bundle(state_path, universe=universe)
+    loop, receipt_history = _load_loop_bundle(state_path, universe=universe)
     if recovery is not None:
         reason_code, skipped_slots = recovery
         loop.resume_after_gap(
@@ -272,12 +303,14 @@ def run_delayed_minute_paper_once(
                 "gap_recovery_reason": recovery[0],
             }
         )
+    receipt_history.append(receipt)
     bundle = {
         "schema": "tradingagent.ashare.delayed_minute_paper_bundle.v1",
         "authority_tier": "non_production_fixture",
         "real_trading_enabled": False,
         "loop_state": loop.export_state(),
         "last_receipt": receipt,
+        "receipt_history": receipt_history,
     }
     _atomic_write_json(state_path, bundle)
     return receipt

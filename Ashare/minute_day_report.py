@@ -123,6 +123,36 @@ def _reason_counts(records: list[Any]) -> dict[str, int]:
     return dict(sorted(values.items()))
 
 
+def _receipt_history(
+    bundle: Mapping[str, Any], receipt: Mapping[str, Any]
+) -> tuple[list[Mapping[str, Any]], bool]:
+    raw = bundle.get("receipt_history")
+    if raw is None:
+        return [receipt], False
+    if not isinstance(raw, list) or not raw:
+        raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
+    history = [
+        _mapping(item, "minute_day_report_receipt_history_invalid") for item in raw
+    ]
+    bars: set[str] = set()
+    for item in history:
+        bar_end = item.get("bar_end")
+        audit_rejections = item.get("audit_rejections")
+        if (
+            not isinstance(bar_end, str)
+            or not bar_end
+            or bar_end in bars
+            or isinstance(audit_rejections, bool)
+            or not isinstance(audit_rejections, int)
+            or audit_rejections < 0
+        ):
+            raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
+        bars.add(bar_end)
+    if history[-1] != receipt:
+        raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
+    return history, True
+
+
 def _book_summary(
     loop: MinuteFixtureClosedLoop, sleeve_id: str, marks: Mapping[str, float]
 ) -> dict[str, Any]:
@@ -192,6 +222,10 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     )
     raw_gaps = state.get("session_gaps", [])
     gaps = list(raw_gaps) if isinstance(raw_gaps, list) else []
+    receipt_history, receipt_history_complete = _receipt_history(bundle, receipt)
+    cumulative_audit_rejections = sum(
+        int(item["audit_rejections"]) for item in receipt_history
+    )
     current = loop.feature_engine.export_state().get("current")
     if not isinstance(current, Mapping):
         raise MinuteDayReportError("minute_day_report_feature_state_invalid")
@@ -218,8 +252,17 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
         }
         for sleeve_id, summary in sleeves.items()
     }
-    all_records = [
-        record for ledger in loop.ledgers.values() for record in ledger.records()
+    primary_records = list(loop.ledgers[PRIMARY_SLEEVE].records())
+    counterfactual_sleeve_ids = [
+        sleeve_id for sleeve_id in SLEEVE_IDS if sleeve_id != PRIMARY_SLEEVE
+    ]
+    counterfactual_records = [
+        record
+        for sleeve_id in counterfactual_sleeve_ids
+        for record in loop.ledgers[sleeve_id].records()
+    ]
+    counterfactual_summaries = [
+        sleeves[sleeve_id] for sleeve_id in counterfactual_sleeve_ids
     ]
     full_session_complete = len(observed) == len(expected) and not gaps
     reconciliation_complete = all(
@@ -227,8 +270,17 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
         for summary in sleeves.values()
     )
     learning_eligible = (
-        full_session_complete and audit_rejections == 0 and reconciliation_complete
+        full_session_complete
+        and cumulative_audit_rejections == 0
+        and reconciliation_complete
     )
+    blocker_codes: list[str] = []
+    if cumulative_audit_rejections:
+        blocker_codes.append("evidence_rejections")
+    if not reconciliation_complete:
+        blocker_codes.append("reconciliation_incomplete")
+    if not full_session_complete:
+        blocker_codes.append("session_incomplete")
     return {
         "trading_date": trading_date,
         "expected_bar_slots": expected,
@@ -240,23 +292,53 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
             "gap_count": len(gaps),
             "gaps": gaps,
         },
+        "operational_readiness": {
+            "status": (
+                "learning_projection_ready"
+                if learning_eligible
+                else "learning_projection_blocked"
+            ),
+            "blocker_codes": blocker_codes,
+            "expected_bar_slot_count": len(expected),
+            "observed_bar_slot_count": len(observed),
+            "missing_bar_slot_count": len(missing),
+            "audit_rejection_count": cumulative_audit_rejections,
+            "reconciliation_complete": reconciliation_complete,
+        },
         "evidence": {
             "accepted_count": len(observed),
-            "rejected_count": audit_rejections,
-            "status": "accepted_fixture_evidence",
+            "rejected_count": cumulative_audit_rejections,
+            "receipt_history_complete": receipt_history_complete,
+            "status": (
+                "accepted_fixture_evidence"
+                if cumulative_audit_rejections == 0
+                else "accepted_fixture_evidence_with_rejections"
+            ),
         },
         "candidate_and_rejections": {
-            "candidate_count": len(all_records),
-            "rejection_reason_counts": _reason_counts(all_records),
+            "scope": "baseline_primary_sleeve",
+            "candidate_count": len(primary_records),
+            "rejection_reason_counts": _reason_counts(primary_records),
         },
         "simulated_execution": {
+            "scope": "baseline_primary_sleeve",
+            "simulated_fills": baseline["simulated_fills"],
+            "simulated_not_filled": baseline["simulated_not_filled"],
+            "fees_cny": baseline["fees_cny"],
+        },
+        "counterfactual_execution": {
+            "scope": "non_comparable_shadow_aggregate",
+            "sleeve_ids": counterfactual_sleeve_ids,
+            "candidate_count": len(counterfactual_records),
             "simulated_fills": sum(
-                item["simulated_fills"] for item in sleeves.values()
+                item["simulated_fills"] for item in counterfactual_summaries
             ),
             "simulated_not_filled": sum(
-                item["simulated_not_filled"] for item in sleeves.values()
+                item["simulated_not_filled"] for item in counterfactual_summaries
             ),
-            "fees_cny": round(sum(item["fees_cny"] for item in sleeves.values()), 6),
+            "fees_cny": round(
+                sum(item["fees_cny"] for item in counterfactual_summaries), 6
+            ),
         },
         "sleeves": sleeves,
         "reconciliation_status": {
@@ -270,8 +352,9 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
                 "missing_bar_count": len(missing),
             },
             "decision": {
-                "record_count": len(all_records),
-                "reason_counts": _reason_counts(all_records),
+                "scope": "baseline_primary_sleeve",
+                "record_count": len(primary_records),
+                "reason_counts": _reason_counts(primary_records),
             },
             "execution": {"fixture_only": True, "durable": False},
         },

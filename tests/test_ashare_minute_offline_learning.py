@@ -27,6 +27,7 @@ def _bundle(
     complete: bool = False,
     mismatch: bool = False,
     audit_rejections: int | None = None,
+    receipt_history: bool = True,
 ) -> Path:
     loop = MinuteFixtureClosedLoop(universe=MinuteResearchUniverse(instruments=()))
     state = loop.export_state()
@@ -40,24 +41,34 @@ def _bundle(
     ]
     payload["session_gaps"] = []
     state = {**payload, "state_sha256": _canonical_sha256(payload)}
+    accepted_bar_ends = payload["accepted_bar_ends"]
+    processed_hashes = payload["processed_snapshot_hashes"]
+    assert len(accepted_bar_ends) == len(processed_hashes)
+    receipts = [
+        {
+            "status": "pass",
+            "authority_tier": "non_production_fixture",
+            "real_trading_enabled": False,
+            "bar_end": bar_end,
+            "snapshot_sha256": snapshot_sha256,
+            "audit_rejections": 0,
+        }
+        for bar_end, snapshot_sha256 in zip(accepted_bar_ends, processed_hashes)
+    ]
+    receipts[-1]["audit_rejections"] = (
+        (0 if complete else 2) if audit_rejections is None else audit_rejections
+    )
+    if mismatch:
+        receipts[-1]["snapshot_sha256"] = "b" * 64
     bundle = {
         "schema": "tradingagent.ashare.delayed_minute_paper_bundle.v1",
         "authority_tier": "non_production_fixture",
         "real_trading_enabled": False,
         "loop_state": state,
-        "last_receipt": {
-            "status": "pass",
-            "authority_tier": "non_production_fixture",
-            "real_trading_enabled": False,
-            "bar_end": "2026-07-28 15:00:00" if complete else "2026-07-28 09:35:00",
-            "snapshot_sha256": "b" * 64
-            if mismatch
-            else payload["processed_snapshot_hashes"][-1],
-            "audit_rejections": (0 if complete else 2)
-            if audit_rejections is None
-            else audit_rejections,
-        },
+        "last_receipt": receipts[-1],
     }
+    if receipt_history:
+        bundle["receipt_history"] = receipts
     path.write_text(json.dumps(bundle), encoding="utf-8")
     return path.resolve()
 
@@ -120,6 +131,34 @@ def test_full_coverage_with_rejected_evidence_remains_blocked(tmp_path: Path) ->
     )
     assert projection["status"] == "blocked"
     assert projection["blockers"] == ["fixture_evidence_rejected"]
+
+
+def test_complete_legacy_bundle_without_receipt_history_remains_blocked(
+    tmp_path: Path,
+) -> None:
+    projection = build_minute_offline_learning_projection(
+        state_bundle=_bundle(
+            tmp_path / "legacy.json", complete=True, receipt_history=False
+        )
+    )
+    assert projection["status"] == "blocked"
+    assert projection["blockers"] == ["fixture_receipt_history_incomplete"]
+    assert projection["sample_summary"]["training_sample_count"] == 0
+
+
+def test_projection_records_only_a_blocked_forward_label_requirement(
+    tmp_path: Path,
+) -> None:
+    projection = build_minute_offline_learning_projection(
+        state_bundle=_bundle(tmp_path / "complete.json", complete=True)
+    )
+    assert projection["forward_label_state"] == {
+        "status": "blocked_missing_authoritative_daily_receipt",
+        "planned_horizons": ["m30", "m60", "close", "1d", "3d", "5d"],
+        "fixture_candidate_count": 0,
+        "labels_appended": 0,
+        "authoritative_market_data_consumed": False,
+    }
 
 
 def test_invalid_or_conflicting_bundle_fails_closed(tmp_path: Path) -> None:

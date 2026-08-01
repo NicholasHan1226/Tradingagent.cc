@@ -136,4 +136,15 @@
   `authority=none`，只能作为 round-trip generation 的对照，不能成为 order、
   receipt、退出触发或资本事实的输入。
 - DeepSeek/LLM 只能作为 `offline_fixture`、`authority=none`、`network_used=false` 的独立 sidecar journal；改变其文本不得改变或阻塞核心 replay、Champion、decision、OrderIntent、数量、费用或资本状态。
+- `factor_research.py` 只可作为纯函数、read-only 的研究层：它消费已经验证的
+  13 根 closed-5m OHLCV 窗口和未来已观察价格，生成证据绑定的特征/标签/固定
+  Challenger 比较，不得读写 core、capital、orders、Champion 或 `evolution/`。
+  当前只有 BTC/ETH，任何横截面 factor/IC 声称均不成立；只能做时间序列特征
+  研究。历史回填不具备 PIT 证明时只能用于工程/定义检查，不得进入晋级证据。
+- `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
+  已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
+  不接受自由 output root，最近连续 288 根 completion 前不得创建投影。它必须 full
+  scrub source→record/receipt/checkpoint 与可用的未来标签；缺失、篡改或链断裂
+  必须 fail closed。没有 service/timer、核心/capital/order/Champion 或
+  `round_trip_learning` 写权限，50 标签初筛也不构成 edge 或晋级授权。
 - 旧 `/opt/investment/Crypto/tools/` 名称清单已从仓库删除；历史实现只从 Git 或独立只读归档审计，不再维护第二份 manifest。

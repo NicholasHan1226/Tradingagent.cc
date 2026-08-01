@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 import json
 from pathlib import Path
 
 import pytest
 
+import Ashare.minute_day_report as minute_day_report
+from Ashare.minute_auto_runner import session_bar_ends
 from Ashare.minute_day_report import MinuteDayReportError, build_minute_day_report
 from Ashare.minute_loop import MinuteFixtureClosedLoop, _canonical_sha256
 from Ashare.minute_research import MinuteResearchUniverse
@@ -16,14 +19,17 @@ def _bundle(
     mismatch: bool = False,
     accepted_bar_ends: list[str] | None = None,
     session_gaps: list[str] | None = None,
+    audit_rejections: int = 2,
 ) -> Path:
     loop = MinuteFixtureClosedLoop(universe=MinuteResearchUniverse(instruments=()))
     state = loop.export_state()
     payload = dict(state)
     payload.pop("state_sha256")
-    accepted = accepted_bar_ends or ["2026-07-28 09:35:00"]
+    accepted = (
+        accepted_bar_ends if accepted_bar_ends is not None else ["2026-07-28 09:35:00"]
+    )
     payload["processed_snapshot_hashes"] = [
-        chr(ord("a") + index) * 64 for index in range(len(accepted))
+        f"{index:064x}" for index in range(len(accepted))
     ]
     payload["accepted_bar_ends"] = accepted
     payload["session_gaps"] = session_gaps or []
@@ -41,7 +47,7 @@ def _bundle(
             "snapshot_sha256": (
                 "f" * 64 if mismatch else payload["processed_snapshot_hashes"][-1]
             ),
-            "audit_rejections": 2,
+            "audit_rejections": audit_rejections,
         },
     }
     path.write_text(json.dumps(bundle), encoding="utf-8")
@@ -69,6 +75,15 @@ def test_day_report_is_non_authoritative_and_covers_required_sections(
         "promotion_authority": False,
         "real_trading_enabled": False,
     }
+    assert report["operational_readiness"] == {
+        "status": "learning_projection_blocked",
+        "blocker_codes": ["evidence_rejections", "session_incomplete"],
+        "expected_bar_slot_count": 48,
+        "observed_bar_slot_count": 1,
+        "missing_bar_slot_count": 47,
+        "audit_rejection_count": 2,
+        "reconciliation_complete": True,
+    }
 
 
 def test_day_report_keeps_post_gap_observations_but_blocks_learning(
@@ -95,6 +110,137 @@ def test_day_report_keeps_post_gap_observations_but_blocks_learning(
         "learning_eligible": False,
         "gap_count": 1,
         "gaps": ["2026-07-28 09:40:00"],
+    }
+    assert report["operational_readiness"]["blocker_codes"] == [
+        "evidence_rejections",
+        "session_incomplete",
+    ]
+
+
+def test_day_report_uses_cumulative_per_bar_receipt_history(
+    tmp_path: Path,
+) -> None:
+    path = _bundle(
+        tmp_path / "state.json",
+        accepted_bar_ends=["2026-07-28 09:35:00", "2026-07-28 09:40:00"],
+        audit_rejections=0,
+    )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_history"] = [
+        {
+            **raw["last_receipt"],
+            "bar_end": "2026-07-28 09:35:00",
+            "snapshot_sha256": raw["loop_state"]["processed_snapshot_hashes"][0],
+            "audit_rejections": 1,
+        },
+        raw["last_receipt"],
+    ]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    report = build_minute_day_report(state_bundle=path)
+
+    assert report["evidence"] == {
+        "accepted_count": 2,
+        "rejected_count": 1,
+        "receipt_history_complete": True,
+        "status": "accepted_fixture_evidence_with_rejections",
+    }
+    assert report["operational_readiness"]["audit_rejection_count"] == 1
+
+
+def test_day_report_marks_complete_clean_fixture_as_learning_projection_ready(
+    tmp_path: Path,
+) -> None:
+    slots = [
+        value.strftime("%Y-%m-%d %H:%M:%S")
+        for value in session_bar_ends(date(2026, 7, 28))
+    ]
+    report = build_minute_day_report(
+        state_bundle=_bundle(
+            tmp_path / "state.json",
+            accepted_bar_ends=slots,
+            audit_rejections=0,
+        )
+    )
+
+    assert report["session_integrity"]["learning_eligible"] is True
+    assert report["operational_readiness"] == {
+        "status": "learning_projection_ready",
+        "blocker_codes": [],
+        "expected_bar_slot_count": 48,
+        "observed_bar_slot_count": 48,
+        "missing_bar_slot_count": 0,
+        "audit_rejection_count": 0,
+        "reconciliation_complete": True,
+    }
+
+
+def test_day_report_exposes_reconciliation_blocker_deterministically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = minute_day_report._book_summary
+
+    def blocked_event_book(*args: object, **kwargs: object) -> dict[str, object]:
+        result = original(*args, **kwargs)
+        if args[1] == "event":
+            return {**result, "reconciliation_status": "fixture_blocked"}
+        return result
+
+    monkeypatch.setattr(minute_day_report, "_book_summary", blocked_event_book)
+
+    report = build_minute_day_report(state_bundle=_bundle(tmp_path / "state.json"))
+
+    assert report["operational_readiness"]["blocker_codes"] == [
+        "evidence_rejections",
+        "reconciliation_incomplete",
+        "session_incomplete",
+    ]
+    assert report["operational_readiness"]["reconciliation_complete"] is False
+
+
+def test_day_report_keeps_primary_kpis_separate_from_counterfactual_totals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def summary(_: object, sleeve_id: str, __: object) -> dict[str, object]:
+        fills = {"baseline": 1, "event": 2, "flow": 3, "dynamic_position": 4}
+        records = {"baseline": 5, "event": 6, "flow": 7, "dynamic_position": 8}
+        return {
+            "cash_cny": 50_000.0,
+            "positions": 0.0,
+            "equity_cny": 50_000.0,
+            "realized_pnl_cny": 0.0,
+            "unrealized_pnl_cny": 0.0,
+            "reconciliation_status": "fixture_reconciled",
+            "candidate_count": records[sleeve_id],
+            "disposition_counts": {},
+            "rejection_reason_counts": {"fixture_rejected": records[sleeve_id]},
+            "simulated_fills": fills[sleeve_id],
+            "simulated_not_filled": records[sleeve_id] - fills[sleeve_id],
+            "fees_cny": float(fills[sleeve_id]),
+            "t_plus_1_positions": {},
+        }
+
+    monkeypatch.setattr(minute_day_report, "_book_summary", summary)
+    report = build_minute_day_report(state_bundle=_bundle(tmp_path / "state.json"))
+
+    assert report["candidate_and_rejections"] == {
+        "scope": "baseline_primary_sleeve",
+        "candidate_count": 0,
+        "rejection_reason_counts": {},
+    }
+    assert report["simulated_execution"] == {
+        "scope": "baseline_primary_sleeve",
+        "simulated_fills": 1,
+        "simulated_not_filled": 4,
+        "fees_cny": 1.0,
+    }
+    assert report["counterfactual_execution"] == {
+        "scope": "non_comparable_shadow_aggregate",
+        "sleeve_ids": ["event", "flow", "dynamic_position"],
+        "candidate_count": 0,
+        "simulated_fills": 9,
+        "simulated_not_filled": 12,
+        "fees_cny": 9.0,
     }
 
 
