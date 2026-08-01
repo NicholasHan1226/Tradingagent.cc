@@ -14,10 +14,10 @@ TradingDatas owner 可选择符合其 provider-neutral registry 的最终 datase
 
 | 语义 | 必需字段或证据 | 说明 |
 | --- | --- | --- |
-| 可交易合约主数据 | contract symbol、product=`M`、exchange、list/delist 状态 | 只允许明确合约，不能使用抽象连续代码下单。 |
+| 可交易合约主数据 | contract symbol、product=`M`、exchange、list/delist 状态 | 只允许明确合约，不能使用抽象连续代码下单。consumer fixture 将 TD 的最终 list/delist 字段投影为 `tradeability={state:tradeable,trade_date}`；这不是假定 TD 原始字段名。 |
 | 日盘 5 分钟 bars | contract symbol、bar end（含时区）、OHLC、volume、trade date | 每一查询行均须可追溯到 receipt/lineage；不消费未来可见 bar。 |
-| 交易日历与日盘会话 | trade date、calendar eligibility、session、available-at | 午休、休市、收盘前 flatten 和换月均按此门禁。 |
-| 合约交易规格 | multiplier、tick、涨跌限制及适用日期 | 缺任一规格只允许 observation/hold，不生成 simulated fill。 |
+| 交易日历与日盘会话 | trade date、calendar eligibility、session ID、带时区且有序不重叠的 `session_windows` | 午休、休市、收盘前 flatten 和换月均按此门禁；单一全天 start/end 不能替代交易段。 |
+| 合约交易规格 | multiplier、tick、涨跌限制及适用日期 | 缺任一规格只能 hold/risk-reject，不生成 simulated fill。 |
 
 保证金、手续费、生产端点、客户级限额与程序化报备不是 TradingDatas 的事实源；它们仍须分别经期货公司书面准入和未来 CTP/仿真测试确认，见 [REAL_BROKER_ADMISSION.md](REAL_BROKER_ADMISSION.md)。
 
@@ -29,21 +29,21 @@ TradingDatas owner 可选择符合其 provider-neutral registry 的最终 datase
 2. 对同一明确 M 合约读取两个相邻的、完整 5 分钟 bar；每根必须来自同一有效 trade date，且 bar end 连续、无重复、无未来可见数据。
 3. 两次 query envelope 均满足 `ready`、`fresh`、`valid`、`degraded=false`，且有非空 receipt 与 lineage；任何一项失败则只保留 hold/observation。
 4. 查询该会话对应的 calendar 和规格，并证明它们在策略 decision time 前可用；不能以静态 fixture、旧 bar 或消费者缓存替代。
-5. 使用对方给出的精确 filter/sort/cursor 进行可终止分页 readback；最终 row identity、时间与 metadata 在幂等重读中一致。
+5. 使用对方给出的精确 filter/sort/cursor 进行可终止分页 readback；consumer fixture 保留其 canonical `query_identity={filters,sort,cursor:null}`，最终 row identity、时间与 metadata 在幂等重读中一致。
 6. 将上述 readback 投影为一次 CNFutures handoff fixture，并保存其 receipt/lineage。通过本消费者验收只代表 read-only parity 可复核，**不**启动 `delayed-paper`、runner、timer 或 simulated fill；它更不构成 SimNow、CTP、券商生产接入或实盘授权。
 
 ## 离线 profile fixture 验收
 
 `CNFutures.tradingdatas_handoff_acceptance.evaluate_handoff_fixture` 是无网络、无数据库、无 runtime 副作用的 one-shot 消费者验收器。它只接受调用方从正式 `GET /v1/catalog` 与 `POST /v1/query` readback 提取的内存投影；不会配置 endpoint、token 或 dataset ID。
 
-投影必须声明 profile `cn-futures-m-5min-handoff-v1`，并由 TradingDatas handoff 显式注入三个 role 的最终 dataset ID 和 schema major：`contract_master`、`bars_5min`、`calendar_session`。catalog 与每个 query 都须为 V1、`ready`、`fresh`、`valid`、`degraded=false`、完整 provider-neutral `metadata.lineage`、非空 `metadata.receipt_id`，并且 `next_cursor=null`。每个 query 的 `metadata.data_through` 与 `metadata.observed_at` 必须显式带时区，且满足 `data_through <= observed_at <= decision_time`；**唯一 availability source 是 `query_envelope.metadata.observed_at`**。验收器不接受 row 的 `available_at` 作为 provider-native knowledge-time：contract/calendar 的可用时点绑定各自 query 的 observed-at，bar 则要求 `bar_time <= bars query observed_at <= decision_time`。输出只保留 receipt watermark 与 canonical lineage digest，不要求或臆造 `lineage_ref`。随后才验证一个明确的 `M####.DCE` active contract、非空有限的 multiplier/tick/price limit、同一上海 trade date/day-session 的 calendar、以及同一 session 内两根相邻、completed、PIT 有效的 5 分钟 OHLCV bar。
+投影必须声明 profile `cn-futures-m-5min-handoff-v1`，并由 TradingDatas handoff 显式注入三个 role 的最终 dataset ID、schema major 与 `expected_contract_fingerprint`：`contract_master`、`bars_5min`、`calendar_session`。每个 fingerprint 都由共享 `shared.governance.evidence_readiness.dataset_contract_fingerprint` 对该 role 的 catalog row 重算并精确匹配；其公开材料固定为 `dataset_id`、`schema_major`、`default_fields`、`filter_operators`、`default_order`、`limits`、`identity_fields`，不由消费者复制 hash 算法。catalog 与每个 query 都须为 V1、`ready`、`fresh`、`valid`、`degraded=false`、完整 provider-neutral `metadata.lineage`、非空 `metadata.receipt_id`，并且 `next_cursor=null`。每个 query 还须附 consumer-preserved `query_identity={filters,sort,identity_fields,cursor:null}`：filter field/operator、sort 和 identity fields 都只能使用该 role catalog 合同已声明的字段；它绑定正式 readback 的筛选与排序，但不假定 TD 的原生 payload 字段名。`metadata.data_through` 与 `metadata.observed_at` 必须显式带时区，且满足 `data_through <= observed_at <= decision_time`；**唯一 availability source 是 `query_envelope.metadata.observed_at`**。验收器不接受 row 的 `available_at` 作为 provider-native knowledge-time：contract/calendar 的可用时点绑定各自 query 的 observed-at；bar 必须满足 `bar_time <= bars query data_through <= bars query observed_at <= decision_time`。输出保留 receipt watermark、query identity 与 canonical lineage digest，不要求或臆造 `lineage_ref`。随后才验证一个明确的 `M####.DCE` contract，其由 TD list/delist 事实投影为同 trade date 的 `tradeability`；同时要求非空有限的 multiplier/tick/price limit、同一上海 trade date 的有序 session windows，以及两根位于窗口内、整 5 分钟网格、相邻 completed、PIT 有效的日盘 OHLCV bar。
 
 ```bash
 REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_tradingdatas_handoff_acceptance.py
 ```
 
-通过时仅产生 `observation`；缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `execution_eligible=false`、`delayed_paper_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
+通过时仅产生 `observation`，并只在现有共享 `tradingagent.evidence_readiness.v1` 对应六项 envelope/contract/identity/receipt/lineage/quality 证明均成立时映射 `readiness.observation_ready=true`；它不意味着历史 PIT 或模拟执行可用。缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `historical_pit_ready=false`、`delayed_paper_ready=false`、`execution_eligible=false`、`learning_evidence_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
 
 ## 当前只读发现（2026-07-30）
 

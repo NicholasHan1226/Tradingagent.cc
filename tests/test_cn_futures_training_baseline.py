@@ -121,6 +121,57 @@ def test_lunch_and_missing_bar_fixtures_are_non_eligible_auditable_samples(
     assert result["sample_records"][0]["reason"] == reason
 
 
+@pytest.mark.parametrize(
+    "times",
+    [
+        ("10:00", "10:05", "10:10", "10:15", "10:30", "10:35", "10:40"),
+        ("11:05", "11:10", "11:15", "11:20", "11:25", "11:30", "13:30"),
+    ],
+)
+def test_only_declared_dce_fixture_session_breaks_are_continuous(
+    times: tuple[str, ...],
+) -> None:
+    bars = _bars()
+    for row, clock in zip(bars, times):
+        row["bar_time"] = f"2026-07-30T{clock}:00+08:00"
+    evidence = dict(_fixture()["data_evidence"])  # type: ignore[arg-type]
+    evidence["available_at"] = f"2026-07-30T{times[-1]}:01+08:00"
+
+    result = run_fixture_training_baseline(
+        _fixture(
+            bars={"rows": bars},
+            data_evidence=evidence,
+            decision_time=f"2026-07-30T{times[-1]}:02+08:00",
+        )
+    )
+
+    assert result["candidate"]["reason"] not in {
+        "missing_5min_bar",
+        "lunch_or_offsession_bar",
+        "bar_not_on_5min_grid",
+    }
+
+
+@pytest.mark.parametrize(
+    "last_bar_time, reason",
+    [
+        ("2026-07-30T10:55:00+08:00", "missing_5min_bar"),
+        ("2026-07-30T13:00:00+08:00", "lunch_or_offsession_bar"),
+        ("2026-07-30T09:30:59+08:00", "bar_not_on_5min_grid"),
+    ],
+)
+def test_missing_or_off_grid_fixture_bars_fail_closed(
+    last_bar_time: str, reason: str
+) -> None:
+    bars = _bars()
+    bars[-1]["bar_time"] = last_bar_time
+
+    result = run_fixture_training_baseline(_fixture(bars={"rows": bars}))
+
+    assert result["candidate"]["reason"] == reason
+    assert result["candidate"]["fixture_simulation_eligible"] is False
+
+
 def test_one_lot_margin_reject_is_a_non_authoritative_hold_sample() -> None:
     bars = _bars()
     bars[-1]["close"] = 30_000.0

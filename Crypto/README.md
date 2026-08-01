@@ -130,7 +130,13 @@ python3 -m Crypto.fixture_auto_sim \
 - `catalog_version`、完整 `CryptoFiveMinuteDataProfile.to_payload()` 与
   `profile_sha256`；
 - profile 内四个 dataset 的 schema、字段、filter/order、分页预算和
-  `catalog_contract_sha256`；
+  `catalog_contract_sha256`；该 hash 直接调用 shared 的 canonical dataset
+  fingerprint，只绑定 TradingDatas 的七项公开合同字段，不受 availability、
+  queryability 或其它运行元数据影响。Crypto 自己的 selected fields、order、
+  filters、identity 与页预算另由独立 `consumer_profile_sha256` 和外层
+  `profile_sha256` 绑定；两层任一漂移都 fail closed。冻结的 catalog version
+  和 query receipt 的 observed catalog version 都保留为 evidence，但单独的无关
+  catalog version 变化不阻断四个目标 dataset；目标合同 hash、缺行或重复行仍失败关闭；
 - 全部为 false 的 real/Testnet/Live/model-network/自动晋级/自动扩风险安全项。
 
 runtime 不在本地动态发明 dataset ID，也不会根据新鲜 catalog 重新生成 profile。
@@ -340,8 +346,12 @@ append-only 路径、full-scrub/幂等合同与 server one-shot，不能写入 c
 `delayed_paper_factor_research.py` 与其 manifest-bound worker 是未部署的
 detached projection：它按 shared readiness contract 的连续 segment 独立处理，向
 `g4/evolution/factor_research/` 追加 snapshot、receipt、checkpoint 和随后可用的
-未来价格标签。gap 永远切断 segment；任何 feature/label 不能跨缺口拼接，标签不足
-只保留 observation。最近连续 288 根仍只表示 automatic runtime maturity，不阻断
+未来价格标签。其冻结 consumer profile 为
+`crypto-5m-ohlcv-13bar-forward-labels-v1`：13 根 5m OHLCV 输入，且每个样本的
+1h future label 必须在同一连续 segment 内完整、证据一致，才会计入
+`label_learning_eligible`。4h/12h/24h 是继续生成且每日 scrub 的辅助归因，当前
+研究假设不会消费它们；若未来成为必要输入，必须升级 profile 版本。gap 永远切断
+segment；任何 feature/label 不能跨缺口拼接。最近连续 288 根仍只表示 automatic runtime maturity，不阻断
 已完整 segment 的 detached offline projection，也不授权 learning timer、Champion、
 风险扩张或真实执行。routine incremental 仅验证当前 completion 与前一 projection
 receipt/checkpoint；daily full scrub 才重验完整 core completion、投影、标签和

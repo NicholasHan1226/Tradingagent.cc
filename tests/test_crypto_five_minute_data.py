@@ -16,6 +16,7 @@ from Crypto.five_minute_data import (
     TradingDatasCryptoFiveMinuteDataPort,
     _sha256,
 )
+from shared.data.sharedsignals_v1 import CatalogEnvelope
 from tests.test_crypto_5m_support import (
     BAR_DATASETS,
     BAR_FIELDS,
@@ -675,3 +676,120 @@ def test_profile_requires_explicit_queryable_catalog_binding() -> None:
         match="crypto_5m_dataset_not_active",
     ):
         profile(client(transport))
+
+
+def test_profile_separates_canonical_contract_from_runtime_and_consumer_binding() -> (
+    None
+):
+    transport = FixtureTradingDatasTransport()
+    frozen = profile(client(transport))
+    bars = frozen.binding_for("BTCUSDT").bars
+
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    runtime_changed = copy.deepcopy(rows)
+    target = next(
+        row for row in runtime_changed if row["dataset_id"] == BAR_DATASETS["BTCUSDT"]
+    )
+    target["availability"] = {
+        "entitlement_states": ["temporarily_degraded"],
+        "activation_states": ["active"],
+    }
+    target["queryability"] = {"queryable": True, "reasons": ["runtime-only"]}
+    runtime_profile = profile(
+        client(FixtureTradingDatasTransport(catalog_rows=runtime_changed))
+    )
+    runtime_bars = runtime_profile.binding_for("BTCUSDT").bars
+
+    assert runtime_bars.catalog_contract_sha256 == bars.catalog_contract_sha256
+    assert runtime_bars.consumer_profile_sha256 == bars.consumer_profile_sha256
+    assert (
+        replace(bars, page_limit=12).consumer_profile_sha256
+        != bars.consumer_profile_sha256
+    )
+
+
+@pytest.mark.parametrize(
+    "dataset_id",
+    (*BAR_DATASETS.values(), *RULE_DATASETS.values()),
+)
+def test_profile_fails_closed_when_canonical_contract_field_drifts(
+    dataset_id: str,
+) -> None:
+    transport = FixtureTradingDatasTransport()
+    frozen = profile(client(transport))
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    changed = copy.deepcopy(rows)
+    target = next(row for row in changed if row["dataset_id"] == dataset_id)
+    target["limits"]["max_lookback_days"] = 36501
+    drifting_catalog = client(
+        FixtureTradingDatasTransport(catalog_rows=changed)
+    ).get_catalog()
+
+    with pytest.raises(
+        CryptoFiveMinuteDataError,
+        match="crypto_5m_catalog_contract_drift",
+    ):
+        frozen.verify_catalog(drifting_catalog)
+
+
+@pytest.mark.parametrize("mutation", ("missing", "duplicate"))
+def test_profile_fails_closed_for_missing_or_duplicate_target_catalog_row(
+    mutation: str,
+) -> None:
+    frozen = profile(client(FixtureTradingDatasTransport()))
+    binding = frozen.binding_for("BTCUSDT").bars
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    target = next(row for row in rows if row["dataset_id"] == BAR_DATASETS["BTCUSDT"])
+    if mutation == "missing":
+        rows.remove(target)
+    else:
+        rows.append(copy.deepcopy(target))
+
+    raw_catalog = CatalogEnvelope(
+        api_version="v1",
+        catalog_version="fixture-target-row-mutation-v1",
+        request_id="fixture-target-row-mutation",
+        data=tuple(rows),
+    )
+    with pytest.raises(
+        CryptoFiveMinuteDataError,
+        match="crypto_5m_dataset_catalog_row_missing",
+    ):
+        type(binding).from_catalog(
+            raw_catalog,
+            expected_catalog_version=binding.catalog_version,
+            dataset_id=binding.dataset_id,
+            expected_schema_major=binding.schema_major,
+            selected_fields=binding.selected_fields,
+            query_order=binding.query_order,
+            identity_fields=binding.identity_fields,
+            filter_bindings=binding.filter_bindings,
+            page_limit=binding.page_limit,
+            max_pages=binding.max_pages,
+            max_rows=binding.max_rows,
+        )
+
+
+def test_profile_records_catalog_version_drift_without_blocking_unchanged_targets() -> (
+    None
+):
+    frozen = profile(client(FixtureTradingDatasTransport()))
+    observed_catalog = client(FixtureTradingDatasTransport()).get_catalog()
+    changed_version = CatalogEnvelope(
+        api_version=observed_catalog.api_version,
+        catalog_version="fixture-unrelated-dataset-addition-v2",
+        request_id=observed_catalog.request_id,
+        data=observed_catalog.data,
+    )
+
+    evidence = frozen.verify_catalog(changed_version)
+
+    assert evidence["expected_catalog_version"] == frozen.catalog_version
+    assert evidence["observed_catalog_version"] == changed_version.catalog_version
+    assert evidence["catalog_version_drift"] is True

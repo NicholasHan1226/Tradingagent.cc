@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,10 +57,44 @@ def test_factor_research_projects_a_complete_segment_before_24h(
     assert result["latest_continuous_completion_count"] == 1
     assert result["operational_maturity"] is False
     assert result["segmented_learning_policy"]["gap_crossing_allowed"] is False
+    assert (
+        result["segmented_learning_policy"]["minimum_slots_source"]
+        == "preregistered_feature_and_label_profile"
+    )
+    assert result["segmented_learning_profile"]["consumer_profile_id"] == (
+        "crypto-5m-ohlcv-13bar-forward-labels-v1"
+    )
+    assert result["segmented_learning_profile"]["required_label_horizon_minutes"] == 60
+    assert result["label_learning_eligible_sample_count"] == 0
     assert result["execution_authority"] is False
     assert factor_projection_exit_code(result) == 0
     assert _core_bytes(tmp_path) == before
     assert (tmp_path / "evolution" / "factor_research").is_dir()
+
+
+def test_segmented_learning_rejects_an_unregistered_minimum_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = research.load_evidence_readiness_contract()
+    market_policies = copy.deepcopy(contract.market_policies)
+    market_policies["crypto"]["segmented_learning"]["minimum_slots_source"] = (
+        "runtime_completion_count"
+    )
+    monkeypatch.setattr(
+        research,
+        "load_evidence_readiness_contract",
+        lambda: SimpleNamespace(
+            contract_id=contract.contract_id,
+            safety=contract.safety,
+            market_policies=market_policies,
+        ),
+    )
+
+    with pytest.raises(
+        CryptoFactorProjectionError,
+        match="factor_projection_readiness_contract_invalid",
+    ):
+        research._segmented_learning_policy()
 
 
 def test_full_scrub_is_idempotent_and_does_not_mutate_core(
@@ -246,3 +281,67 @@ def test_labels_do_not_cross_a_completion_gap(tmp_path: Path) -> None:
     assert not list(
         (tmp_path / "evolution" / "factor_research" / "labels").glob("*.json")
     )
+
+
+def test_learning_eligibility_requires_60m_same_segment_label_only(
+    tmp_path: Path,
+) -> None:
+    _complete(tmp_path)
+    _, sources = research._sources(tmp_path)
+    source = sources[0]
+    segment_id = "crypto-5m-segment-20260728T000000Z"
+    record = research._record(source, segment_id=segment_id)
+    records: dict[str, dict[str, object]] = {
+        record["snapshots"]["BTCUSDT"]["market_slot"]: {
+            "record": record,
+            "source": source,
+        }
+    }
+    future_records: dict[int, dict[str, object]] = {}
+    for horizon in (60, 240, 720, 1440):
+        future_source = _shift_source(source, horizon)
+        future_record = research._record(future_source, segment_id=segment_id)
+        future_records[horizon] = {
+            "record": future_record,
+            "source": future_source,
+        }
+        records[future_record["snapshots"]["BTCUSDT"]["market_slot"]] = future_records[
+            horizon
+        ]
+    research._ensure_root(tmp_path)
+    research._labels(tmp_path, record, records)
+
+    samples, observation_ids = research._learning_eligible_samples(
+        tmp_path,
+        records,
+        consumer_profile=research._segmented_learning_consumer_profile(),
+    )
+
+    assert len(samples) == 2
+    assert observation_ids == [record["observation_id"]]
+
+    for horizon in (240, 720, 1440):
+        for symbol in ("BTCUSDT", "ETHUSDT"):
+            (
+                tmp_path
+                / "evolution"
+                / "factor_research"
+                / "labels"
+                / f"{record['observation_id']}-{symbol.lower()}-{horizon}.json"
+            ).unlink()
+    samples, observation_ids = research._learning_eligible_samples(
+        tmp_path,
+        records,
+        consumer_profile=research._segmented_learning_consumer_profile(),
+    )
+    assert len(samples) == 2
+    assert observation_ids == [record["observation_id"]]
+
+    future_records[60]["record"]["segment_id"] = "other-segment"
+    samples, observation_ids = research._learning_eligible_samples(
+        tmp_path,
+        records,
+        consumer_profile=research._segmented_learning_consumer_profile(),
+    )
+    assert samples == []
+    assert observation_ids == []
