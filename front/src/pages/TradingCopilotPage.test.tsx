@@ -22,6 +22,10 @@ describe('TradingCopilotPage', () => {
     expect(await screen.findByText('今天先看条件，再做决定')).toBeInTheDocument()
     expect(screen.getAllByText('演示分析').length).toBeGreaterThan(0)
     expect(screen.getByText('Copilot 只记录计划，不连接券商、不自动下单。')).toBeInTheDocument()
+    expect(screen.getByText('公司资料')).toBeInTheDocument()
+    expect(screen.getByText('Copilot 证据共识')).toBeInTheDocument()
+    expect(screen.getByText('舆论与事件温度')).toBeInTheDocument()
+    expect(screen.getByText('偏积极')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /调整资金/ }))
     const capital = screen.getByLabelText('申报总资金（元）')
@@ -44,6 +48,7 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByRole('button', { name: '加入人工计划' })).toBeDisabled()
     expect(screen.getByText('行情图表暂不可用')).toBeInTheDocument()
     expect(screen.getByText('当前没有按股票代码验证通过的公告、新闻或舆情数据。')).toBeInTheDocument()
+    expect(screen.getByText('暂无舆论')).toBeInTheDocument()
   })
 
   it('switches chart ranges, forecast views, and stock-linked event content', async () => {

@@ -27,6 +27,15 @@ export type StockEvent = {
   url: string | null
 }
 
+export type StockSentimentSummary = {
+  total: number
+  positive: number
+  neutral: number
+  negative: number
+  tone: '偏积极' | '分歧' | '偏谨慎' | '暂无舆论'
+  latestPublishedAt: string | null
+}
+
 export type StockIntelligence = {
   symbol: string
   name: string
@@ -195,6 +204,26 @@ export function unavailableStockIntelligence(symbol: string, name: string): Stoc
     series: { '1D': [], '5D': [], '1M': [], '6M': [], YTD: [], '1Y': [] },
     forecast: null, events: [],
   }
+}
+
+export function summarizeStockSentiment(events: StockEvent[]): StockSentimentSummary {
+  const summary = events.reduce((current, event) => ({
+    ...current,
+    [event.sentiment]: current[event.sentiment] + 1,
+  }), { positive: 0, neutral: 0, negative: 0 })
+  const total = events.length
+  const latestPublishedAt = events
+    .map((event) => event.publishedAt)
+    .filter((value) => !Number.isNaN(Date.parse(value)))
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0] ?? null
+  const tone = total === 0
+    ? '暂无舆论'
+    : summary.positive > summary.negative && summary.positive >= Math.ceil(total / 2)
+      ? '偏积极'
+      : summary.negative > summary.positive && summary.negative >= Math.ceil(total / 2)
+        ? '偏谨慎'
+        : '分歧'
+  return { total, ...summary, tone, latestPublishedAt }
 }
 
 function buildSeries(config: DemoStockConfig, range: StockRange): StockSeriesPoint[] {

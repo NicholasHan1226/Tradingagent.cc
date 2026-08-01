@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Activity, ArrowLeftRight, Bell, BookOpenCheck, ChevronRight,
+  Activity, ArrowLeftRight, Bell, BookOpenCheck, Building2, ChevronRight,
   Eye, Gauge, LayoutDashboard, ListPlus, Pencil, Plus, Search, ShieldCheck, Sparkles,
-  WalletCards, X,
+  MessageCircleMore, WalletCards, X,
 } from 'lucide-react'
 import { copilotDemoAnalyses, createCopilotDemoState, unavailableAnalysis } from '../copilot/demo'
 import { analysisFromSignal } from '../copilot/analysis'
-import { getDemoStockIntelligence, unavailableStockIntelligence, type StockIntelligence } from '../copilot/stockIntelligence'
+import { getDemoStockIntelligence, summarizeStockSentiment, unavailableStockIntelligence, type StockIntelligence } from '../copilot/stockIntelligence'
 import { loadStockIntelligence } from '../copilot/stockIntelligenceClient'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
 import { isAshareSymbol, type CopilotAnalysis, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
@@ -21,11 +21,18 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const [persistence, setPersistence] = useState<CopilotPersistence>('local_draft')
   const [selectedSymbol, setSelectedSymbol] = useState('')
   const [editor, setEditor] = useState<Editor>(null)
+  const [watchOpen, setWatchOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [query, setQuery] = useState('')
   const [usingDemoSeed, setUsingDemoSeed] = useState(false)
   const [tradingAgentAnalyses, setTradingAgentAnalyses] = useState<Record<string, CopilotAnalysis>>({})
   const [formalStockIntelligence, setFormalStockIntelligence] = useState<Record<string, StockIntelligence>>({})
+
+  useEffect(() => {
+    const previous = document.title
+    document.title = 'TradingCopilot · A股人工决策台'
+    return () => { document.title = previous }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -138,7 +145,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
         </button>
         <nav aria-label="TradingCopilot 导航">
           <button className="active" type="button"><LayoutDashboard size={17} />决策台</button>
-          <button type="button" onClick={() => document.querySelector('.copilot-watch')?.scrollIntoView()}><Eye size={17} />关注列表</button>
+          <button type="button" onClick={() => setWatchOpen(true)}><Eye size={17} />关注列表</button>
           <button type="button" onClick={() => setEditor('holding')}><WalletCards size={17} />资金与持仓</button>
           <button type="button" onClick={() => document.querySelector('.decision-history')?.scrollIntoView()}><BookOpenCheck size={17} />决策记录</button>
         </nav>
@@ -168,8 +175,9 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
         </section>
 
         <div className="copilot-grid">
-          <aside className="copilot-watch panel">
-            <div className="panel-heading"><div><span className="eyebrow">WATCHLIST</span><h2>我的关注</h2></div><span>{state.watchlist.length}</span></div>
+          {watchOpen ? <button aria-label="关闭关注列表" className="watch-backdrop" onClick={() => setWatchOpen(false)} type="button" /> : null}
+          <aside aria-label="我的关注列表" className={`copilot-watch panel ${watchOpen ? 'open' : ''}`}>
+            <div className="panel-heading"><div><span className="eyebrow">WATCHLIST</span><h2>我的关注</h2></div><div className="watch-heading-actions"><span>{state.watchlist.length}</span><button aria-label="收起关注列表" onClick={() => setWatchOpen(false)} type="button"><X size={14} /></button></div></div>
             <div className="watch-search">
               <Search size={15} />
               <input aria-label="输入股票代码和名称" onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void addWatchItem() }} placeholder="000001.SZ 平安银行" value={query} />
@@ -179,7 +187,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
               {state.watchlist.map((item) => {
                 const itemAnalysis = tradingAgentAnalyses[item.symbol] ?? (demoPreviewEnabled ? copilotDemoAnalyses[item.symbol] : undefined) ?? unavailableAnalysis(item.symbol, item.name)
                 return (
-                  <button className={item.symbol === selected?.symbol ? 'selected' : ''} key={item.symbol} onClick={() => setSelectedSymbol(item.symbol)} type="button">
+                  <button className={item.symbol === selected?.symbol ? 'selected' : ''} key={item.symbol} onClick={() => { setSelectedSymbol(item.symbol); setWatchOpen(false) }} type="button">
                     <span><strong>{item.name}</strong><small>{item.symbol}</small></span>
                     <span className="watch-score">{itemAnalysis.score ?? '--'}<small>{shortVerdict(itemAnalysis.verdict)}</small></span>
                     <ChevronRight size={15} />
@@ -199,13 +207,19 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
           />
 
           <aside className="copilot-rail">
+            <CompanyProfileCard intelligence={intelligence} />
             <div className="panel recommendation-card">
-              <span className="eyebrow">DECISION STRENGTH</span><h2>建议强度</h2>
+              <span className="eyebrow">EVIDENCE CONSENSUS</span><h2>Copilot 证据共识</h2>
               <div className="recommendation-value"><Gauge size={19} /><strong>{analysis.score ?? '—'}</strong><small>/100</small></div>
               <div className="score-track" aria-label={`建议强度 ${analysis.score ?? '暂无'}`}><i style={{ width: `${analysis.score ?? 0}%` }} /></div>
+              <div className="evidence-consensus" aria-label={`支持 ${analysis.support.length} 条，反对 ${analysis.oppose.length} 条`}>
+                <span><i className="support" />{analysis.support.length} 支持</span>
+                <span><i className="oppose" />{analysis.oppose.length} 反对</span>
+              </div>
               <strong className="recommendation-verdict">{analysis.verdict}</strong>
-              <p>强度用于组织证据，不是胜率、收益承诺或自动下单指令。</p>
+              <p>这是可追溯证据的人工辅助评分，不是分析师共识、胜率、收益承诺或自动下单指令。</p>
             </div>
+            <SentimentPulseCard intelligence={intelligence} />
             <div className="panel holding-card">
               <div className="panel-heading"><div><span className="eyebrow">POSITION</span><h2>持仓关系</h2></div><button aria-label="编辑持仓" onClick={() => setEditor('holding')} type="button"><Pencil size={14} /></button></div>
               {holding ? <>
@@ -233,6 +247,40 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
       {notice && <div className="copilot-toast" role="status">{notice}</div>}
     </main>
   )
+}
+
+function CompanyProfileCard({ intelligence }: { intelligence: StockIntelligence }) {
+  const company = intelligence.company
+  return <section className="panel company-profile-card">
+    <div className="rail-card-title"><Building2 size={15} /><span>公司资料</span></div>
+    {company ? <>
+      <dl>
+        <div><dt>代码</dt><dd>{intelligence.symbol}</dd></div>
+        <div><dt>上市日期</dt><dd>{company.listingDate}</dd></div>
+        <div><dt>行业</dt><dd>{company.industry}</dd></div>
+        <div><dt>地区</dt><dd>{company.area}</dd></div>
+        <div><dt>交易所</dt><dd>{company.exchange === 'SH' ? '上交所' : '深交所'}</dd></div>
+      </dl>
+      <p>{company.description}</p>
+    </> : <div className="rail-empty">公司资料尚未随正式个股投影交付。</div>}
+  </section>
+}
+
+function SentimentPulseCard({ intelligence }: { intelligence: StockIntelligence }) {
+  const summary = summarizeStockSentiment(intelligence.events)
+  const denominator = summary.total || 1
+  return <section className="panel sentiment-pulse-card">
+    <div className="rail-card-title"><MessageCircleMore size={15} /><span>舆论与事件温度</span></div>
+    <div className="sentiment-tone"><strong>{summary.tone}</strong><small>{summary.total ? `${summary.total} 条已关联事件` : '暂无可验证事件'}</small></div>
+    <div className="sentiment-track" aria-label={`积极 ${summary.positive}，中性 ${summary.neutral}，谨慎 ${summary.negative}`}>
+      <i className="positive" style={{ width: `${summary.positive / denominator * 100}%` }} />
+      <i className="neutral" style={{ width: `${summary.neutral / denominator * 100}%` }} />
+      <i className="negative" style={{ width: `${summary.negative / denominator * 100}%` }} />
+    </div>
+    <div className="sentiment-counts"><span>积极 {summary.positive}</span><span>中性 {summary.neutral}</span><span>谨慎 {summary.negative}</span></div>
+    <p>仅统计按股票代码关联的公告、新闻与舆论方向；热度不能替代价格条件和风险复核。</p>
+    <small>{summary.latestPublishedAt ? `最近更新 ${formatTime(summary.latestPublishedAt)}` : '无事件时间'}</small>
+  </section>
 }
 
 function AccountEditor({ account, onClose, onSave }: { account: TradingCopilotState['account']; onClose: () => void; onSave: (account: TradingCopilotState['account']) => void }) {
