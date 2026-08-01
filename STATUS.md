@@ -1,6 +1,25 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-01 23:27 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-01 周末双市场运行复核：** Crypto G5 核心 timer 为
+> `enabled/active`，并固定到 immutable release
+> `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`
+> symlink。新鲜自然周期 `success/exit0`；只读 health 为 `healthy`，模拟账户
+> `balanced=true`，现金 `9000.18697278 USDT`、权益 `9999.47084178 USDT`、累计费用
+> `0.99881422 USDT`，当前只有一笔 ETH 模拟持仓，真实交易、Testnet/Live broker、
+> 模型网络、自动晋级和自动风险扩张均为 false。只读 acceptance 仍为 `not_ready`：
+> G5 只有 22 个 completed 5-minute windows，最新连续段 21 槽/105 分钟，低于 24 小时
+> 288 槽门槛，且尚无 completed round trip；因此 learning timer 继续关闭，核心采集与
+> 模拟账本继续独立运行。
+>
+> A股 20260731 状态包完成周末只读日结：48 个预期 5 分钟槽中实际 40 个，缺少
+> 09:35、09:40、13:05、13:10、13:15、13:20、13:35、14:25；
+> `full_session_complete=false`、`learning_eligible=false`。四个 shadow sleeve 均
+> `fixture_reconciled`，共 6 笔模拟 fill、10 笔未成交、费用 30.19992 CNY，40 条已接收
+> evidence 无新增拒绝。该报告只用于工程与决策账本复核，不进入训练、晋级或真实执行；
+> A股 30-symbol session/paper timers 保持 `enabled/active`，500-symbol 仍等待下一个真实
+> 交易时段的两根相邻 500/500 门禁。
 
 > **2026-08-01 Tradings 清理边界：** MarketGraph 作为可选增强已暂停：API service
 > disabled/inactive、8080 关闭、MG cron 清零；TradingAgent 不依赖 MG 才能生成
