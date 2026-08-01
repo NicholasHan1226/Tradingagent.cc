@@ -186,7 +186,8 @@ def _canary_receipt(path: Path, *, universe_source: Path, bar_end: str) -> Path:
                 "same_observation": True,
                 "lineage_complete": True,
                 "audit_rejections": 0,
-                "catalog_contract_sha256": "a" * 64,
+                "dataset_contract_fingerprint": "a" * 64,
+                "consumer_profile_sha256": "c" * 64,
                 "snapshot_sha256": "b" * 64,
                 "bars": [
                     {

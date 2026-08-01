@@ -39,13 +39,15 @@ def _profile() -> MinuteDatasetProfile:
         "suspended",
     )
     return MinuteDatasetProfile(
-        catalog_version="fixture-minute-catalog-v1",
+        expected_catalog_version="fixture-minute-catalog-v1",
+        observed_catalog_version="fixture-minute-catalog-v1",
         dataset_id="fixture.cn.equity.five_minute",
         schema_major=1,
         default_fields=fields,
         default_order=("ts_code:asc", "bar_time:asc"),
         filter_operators=tuple((field, ("eq",)) for field in fields),
-        catalog_contract_sha256=_sha("a"),
+        dataset_contract_fingerprint=_sha("a"),
+        consumer_profile_sha256=_sha("b"),
         identity_fields=("ts_code", "bar_time"),
         symbol_field="ts_code",
         timestamp_field="bar_time",

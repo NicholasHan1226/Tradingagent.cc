@@ -39,13 +39,15 @@ def _profile() -> MinuteDatasetProfile:
         "amount",
     )
     return MinuteDatasetProfile(
-        catalog_version="fixture-rt-min-v1",
+        expected_catalog_version="fixture-rt-min-v1",
+        observed_catalog_version="fixture-rt-min-v1",
         dataset_id="fixture.cn.dataset.rt_min",
         schema_major=2,
         default_fields=fields,
         default_order=("ts_code:asc", "time:asc"),
         filter_operators=tuple((field, ("eq",)) for field in fields),
-        catalog_contract_sha256=_sha("1"),
+        dataset_contract_fingerprint=_sha("1"),
+        consumer_profile_sha256=_sha("2"),
         identity_fields=("ts_code", "time"),
         symbol_field="ts_code",
         timestamp_field="time",
@@ -123,7 +125,7 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
         json.dumps(
             {
                 "base_url": "http://127.0.0.1:18082",
-                "catalog_version": "fixture-rt-min-v1",
+                "expected_catalog_version": "fixture-rt-min-v1",
                 "dataset_id": "fixture.cn.dataset.rt_min",
                 "access_policy_id": "fixture",
                 "transport_id": "tradingdatas-v1-bearer",

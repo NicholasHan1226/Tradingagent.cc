@@ -471,11 +471,12 @@ def initialize_minute_session(
     client = SharedSignalsV1Client(
         SharedSignalsV1Config(
             base_url=base_url,
-            expected_catalog_version=catalog_version,
+            expected_catalog_version=template_config.expected_catalog_version,
             dataset_ids=frozenset(
                 {CALENDAR_DATASET_ID, DAILY_DATASET_ID, MINUTE_DATASET_ID}
             ),
             access_policy_id=access_policy_id,
+            catalog_version_policy="evidence_only",
             timeout_seconds=timeout_seconds,
             max_limit=MAX_SESSION_QUERY_LIMIT,
             cache_ttl_seconds=0,
@@ -485,7 +486,7 @@ def initialize_minute_session(
     # Rebuild the minute profile against the just-read catalog before publishing.
     current_manifest = MinuteCanaryConfig(
         base_url=base_url,
-        catalog_version=catalog_version,
+        expected_catalog_version=template_config.expected_catalog_version,
         dataset_id=MINUTE_DATASET_ID,
         access_policy_id=access_policy_id,
         transport_id=transport_id,
@@ -493,7 +494,7 @@ def initialize_minute_session(
         filters={},
         profile=scaled_profile,
     )
-    profile = current_manifest.build_profile(client)
+    profile = current_manifest.build_profile(client, require_declared_bindings=False)
     if profile.schema_major != minute_schema:
         raise MinuteSessionInitializerError("minute_session_minute_schema_drift")
 
@@ -614,15 +615,22 @@ def initialize_minute_session(
             }
         )
 
+    bound_profile = {
+        **scaled_profile,
+        "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
+        "consumer_profile_sha256": profile.consumer_profile_sha256,
+    }
     manifest = {
         "base_url": base_url,
-        "catalog_version": catalog_version,
+        "expected_catalog_version": template_config.expected_catalog_version,
+        "observed_catalog_version": profile.observed_catalog_version,
+        "catalog_version_drift": profile.catalog_version_drift,
         "dataset_id": MINUTE_DATASET_ID,
         "access_policy_id": access_policy_id,
         "transport_id": transport_id,
         "timeout_seconds": timeout_seconds,
         "filters": {},
-        "profile": scaled_profile,
+        "profile": bound_profile,
         "universe_sha256": _sha256(universe_raw),
     }
     reused = _publish_day(
@@ -637,12 +645,16 @@ def initialize_minute_session(
         "authority_tier": "non_production_fixture",
         "trading_date": target.isoformat(),
         "previous_session": previous_session.isoformat(),
-        "catalog_version": catalog_version,
+        "expected_catalog_version": profile.expected_catalog_version,
+        "observed_catalog_version": profile.observed_catalog_version,
+        "catalog_version_drift": profile.catalog_version_drift,
         "dataset_id": MINUTE_DATASET_ID,
         "symbol_count": len(symbols),
-        "profile_max_pages": scaled_profile["max_pages"],
-        "profile_max_rows": scaled_profile["max_rows"],
-        "profile_page_limit": scaled_profile["page_limit"],
+        "profile_max_pages": bound_profile["max_pages"],
+        "profile_max_rows": bound_profile["max_rows"],
+        "profile_page_limit": bound_profile["page_limit"],
+        "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
+        "consumer_profile_sha256": profile.consumer_profile_sha256,
         "universe_sha256": _sha256(universe_raw),
         "reused": reused,
         "state_bundle_created": False,

@@ -74,7 +74,7 @@ class MinuteCanaryConfig:
     """External, secret-free runtime inputs for one bounded canary."""
 
     base_url: str
-    catalog_version: str
+    expected_catalog_version: str
     dataset_id: str
     access_policy_id: str
     transport_id: str
@@ -85,7 +85,7 @@ class MinuteCanaryConfig:
     def __post_init__(self) -> None:
         for field_name in (
             "base_url",
-            "catalog_version",
+            "expected_catalog_version",
             "dataset_id",
             "access_policy_id",
             "transport_id",
@@ -105,17 +105,30 @@ class MinuteCanaryConfig:
         return _positive_int(self.profile.get("page_limit"), "profile_page_limit")
 
     def client_config(self) -> SharedSignalsV1Config:
+        """Return the query client after catalog-bound profile validation.
+
+        ``evidence_only`` does not make a global catalog version authoritative:
+        the target row is independently fingerprinted before any query and each
+        query envelope remains bound to the catalog this client observed.
+        """
+
         return SharedSignalsV1Config(
             base_url=self.base_url,
-            expected_catalog_version=self.catalog_version,
+            expected_catalog_version=self.expected_catalog_version,
             dataset_ids=frozenset({self.dataset_id}),
             access_policy_id=self.access_policy_id,
+            catalog_version_policy="evidence_only",
             timeout_seconds=float(self.timeout_seconds),
             max_limit=self.page_limit,
             cache_ttl_seconds=0,
         )
 
-    def build_profile(self, client: SharedSignalsV1Client) -> MinuteDatasetProfile:
+    def build_profile(
+        self,
+        client: SharedSignalsV1Client,
+        *,
+        require_declared_bindings: bool = True,
+    ) -> MinuteDatasetProfile:
         values = self.profile
         try:
             timestamp_semantics = MinuteTimestampSemantics(
@@ -131,9 +144,26 @@ class MinuteCanaryConfig:
         identity_fields = values.get("identity_fields")
         if not isinstance(identity_fields, list) or not identity_fields:
             raise MinuteCanaryConfigurationError("profile_identity_fields_invalid")
-        return MinuteDatasetProfile.from_catalog(
+        expected_fingerprint = values.get("dataset_contract_fingerprint")
+        expected_consumer_sha = values.get("consumer_profile_sha256")
+        if require_declared_bindings:
+            expected_fingerprint = _text(
+                expected_fingerprint,
+                "profile_dataset_contract_fingerprint",
+            )
+            expected_consumer_sha = _text(
+                expected_consumer_sha,
+                "profile_consumer_profile_sha256",
+            )
+        elif expected_fingerprint is not None:
+            expected_fingerprint = _text(
+                expected_fingerprint,
+                "profile_dataset_contract_fingerprint",
+            )
+        profile = MinuteDatasetProfile.from_catalog(
             client.get_catalog(),
-            expected_catalog_version=self.catalog_version,
+            expected_catalog_version=self.expected_catalog_version,
+            expected_dataset_contract_fingerprint=expected_fingerprint,
             dataset_id=self.dataset_id,
             identity_fields=tuple(
                 _text(value, "profile_identity_field") for value in identity_fields
@@ -174,6 +204,12 @@ class MinuteCanaryConfig:
             max_rows=_positive_int(values.get("max_rows"), "profile_max_rows"),
             page_limit=self.page_limit,
         )
+        if (
+            expected_consumer_sha is not None
+            and profile.consumer_profile_sha256 != expected_consumer_sha
+        ):
+            raise MinuteCanaryConfigurationError("profile_consumer_profile_drift")
+        return profile
 
 
 def load_minute_canary_config(path: Path | str) -> MinuteCanaryConfig:
@@ -184,7 +220,7 @@ def load_minute_canary_config(path: Path | str) -> MinuteCanaryConfig:
     value = _mapping(raw, "minute_canary_manifest")
     return MinuteCanaryConfig(
         base_url=value.get("base_url"),
-        catalog_version=value.get("catalog_version"),
+        expected_catalog_version=value.get("expected_catalog_version"),
         dataset_id=value.get("dataset_id"),
         access_policy_id=value.get("access_policy_id"),
         transport_id=value.get("transport_id"),
@@ -258,8 +294,11 @@ def run_minute_canary(
         "trading_date": trading_date.isoformat(),
         "decision_time": decision_time.isoformat(),
         "dataset_id": profile.dataset_id,
-        "catalog_version": profile.catalog_version,
-        "catalog_contract_sha256": profile.catalog_contract_sha256,
+        "expected_catalog_version": profile.expected_catalog_version,
+        "observed_catalog_version": snapshot.observed_catalog_version,
+        "catalog_version_drift": snapshot.catalog_version_drift,
+        "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
+        "consumer_profile_sha256": profile.consumer_profile_sha256,
         "row_count": snapshot.row_count,
         "page_count": snapshot.page_count,
         "same_observation": snapshot.same_observation,

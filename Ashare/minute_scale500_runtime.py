@@ -355,8 +355,10 @@ def _validate_late_start_canary(
         or raw.get("same_observation") is not True
         or raw.get("lineage_complete") is not True
         or raw.get("audit_rejections") != 0
-        or not isinstance(raw.get("catalog_contract_sha256"), str)
-        or not _SHA256_PATTERN.fullmatch(raw["catalog_contract_sha256"])
+        or not isinstance(raw.get("dataset_contract_fingerprint"), str)
+        or not _SHA256_PATTERN.fullmatch(raw["dataset_contract_fingerprint"])
+        or not isinstance(raw.get("consumer_profile_sha256"), str)
+        or not _SHA256_PATTERN.fullmatch(raw["consumer_profile_sha256"])
         or not isinstance(raw.get("snapshot_sha256"), str)
         or not _SHA256_PATTERN.fullmatch(raw["snapshot_sha256"])
     ):

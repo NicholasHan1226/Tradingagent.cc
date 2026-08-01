@@ -244,13 +244,13 @@ def run_delayed_minute_paper_once(
         reason_code, skipped_slots = recovery
         loop.resume_after_gap(
             decision_time=decision_time,
-            manifest_sha256=profile.catalog_contract_sha256,
+            manifest_sha256=profile.consumer_profile_sha256,
             reason_code=reason_code,
             skipped_session_slots=skipped_slots,
         )
     step = loop.process_snapshot(
         snapshot=snapshot,
-        manifest_sha256=profile.catalog_contract_sha256,
+        manifest_sha256=profile.consumer_profile_sha256,
     )
     marks = {bar.symbol: bar.close_cny for bar in snapshot.bars}
     attribution = loop.attribution_snapshot(marks=marks)
@@ -263,7 +263,11 @@ def run_delayed_minute_paper_once(
         "real_trading_enabled": False,
         "evidence_use": MinuteEvidenceUse.DELAYED_PAPER.value,
         "dataset_id": profile.dataset_id,
-        "catalog_version": profile.catalog_version,
+        "expected_catalog_version": profile.expected_catalog_version,
+        "observed_catalog_version": snapshot.observed_catalog_version,
+        "catalog_version_drift": snapshot.catalog_version_drift,
+        "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
+        "consumer_profile_sha256": profile.consumer_profile_sha256,
         "bar_end": bar_end,
         "snapshot_sha256": snapshot.sha256,
         "row_count": snapshot.row_count,

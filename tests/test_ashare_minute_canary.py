@@ -15,7 +15,7 @@ from Ashare.minute_canary import (
     run_minute_canary,
 )
 from Ashare.minute_data import MinuteDataContractError, MinuteReferenceFact
-from shared.data.sharedsignals_v1 import HTTPResponse
+from shared.data.sharedsignals_v1 import HTTPResponse, SharedSignalsV1Client
 
 
 CATALOG = "fixture-rt-min-v1"
@@ -51,6 +51,7 @@ class _Transport:
                             "schema_major": 1,
                             "default_fields": fields,
                             "default_order": ["ts_code:asc", "time:asc"],
+                            "identity_fields": ["ts_code", "time"],
                             "fields": [
                                 {
                                     "name": field,
@@ -122,37 +123,56 @@ class _Transport:
 
 
 def _config() -> MinuteCanaryConfig:
-    return MinuteCanaryConfig(
+    profile: dict[str, Any] = {
+        "identity_fields": ["ts_code", "time"],
+        "symbol_field": "ts_code",
+        "timestamp_field": "time",
+        "open_field": "open",
+        "high_field": "high",
+        "low_field": "low",
+        "close_field": "close",
+        "volume_field": "vol",
+        "amount_field": "amount",
+        "previous_close_field": None,
+        "suspension_field": None,
+        "frequency_field": None,
+        "frequency_value": None,
+        "timestamp_format": "%Y-%m-%d %H:%M:%S",
+        "timestamp_semantics": "bar_end",
+        "volume_multiplier_to_shares": 1,
+        "amount_multiplier_to_cny": 1,
+        "price_adjustment": "raw_unadjusted",
+        "max_pages": 1,
+        "max_rows": 10,
+        "page_limit": 10,
+    }
+    bootstrap = MinuteCanaryConfig(
         base_url="https://tradingdatas.fixture.invalid",
-        catalog_version=CATALOG,
+        expected_catalog_version=CATALOG,
         dataset_id=DATASET,
         access_policy_id="fixture-ta-read",
         transport_id="http-json-v1",
         timeout_seconds=5,
         filters={"ts_code": {"in": ["600000.SH"]}},
-        profile={
-            "identity_fields": ["ts_code", "time"],
-            "symbol_field": "ts_code",
-            "timestamp_field": "time",
-            "open_field": "open",
-            "high_field": "high",
-            "low_field": "low",
-            "close_field": "close",
-            "volume_field": "vol",
-            "amount_field": "amount",
-            "previous_close_field": None,
-            "suspension_field": None,
-            "frequency_field": None,
-            "frequency_value": None,
-            "timestamp_format": "%Y-%m-%d %H:%M:%S",
-            "timestamp_semantics": "bar_end",
-            "volume_multiplier_to_shares": 1,
-            "amount_multiplier_to_cny": 1,
-            "price_adjustment": "raw_unadjusted",
-            "max_pages": 1,
-            "max_rows": 10,
-            "page_limit": 10,
-        },
+        profile=profile,
+    )
+    client = SharedSignalsV1Client(bootstrap.client_config(), transport=_Transport())
+    bound = bootstrap.build_profile(client, require_declared_bindings=False)
+    profile.update(
+        {
+            "dataset_contract_fingerprint": bound.dataset_contract_fingerprint,
+            "consumer_profile_sha256": bound.consumer_profile_sha256,
+        }
+    )
+    return MinuteCanaryConfig(
+        base_url=bootstrap.base_url,
+        expected_catalog_version=bootstrap.expected_catalog_version,
+        dataset_id=bootstrap.dataset_id,
+        access_policy_id=bootstrap.access_policy_id,
+        transport_id=bootstrap.transport_id,
+        timeout_seconds=bootstrap.timeout_seconds,
+        filters=bootstrap.filters,
+        profile=profile,
     )
 
 
@@ -183,6 +203,13 @@ def test_read_only_canary_uses_catalog_query_and_same_observation() -> None:
     )
 
     assert receipt["status"] == "pass"
+    assert receipt["expected_catalog_version"] == CATALOG
+    assert receipt["observed_catalog_version"] == CATALOG
+    assert receipt["catalog_version_drift"] is False
+    assert len(receipt["dataset_contract_fingerprint"]) == 64
+    assert len(receipt["consumer_profile_sha256"]) == 64
+    assert "catalog_version" not in receipt
+    assert "catalog_contract_sha256" not in receipt
     assert receipt["authority_tier"] == "observation_only"
     assert receipt["real_trading_enabled"] is False
     assert receipt["row_count"] == 1
@@ -195,6 +222,10 @@ def test_read_only_canary_uses_catalog_query_and_same_observation() -> None:
     ]
     assert all("/v1/" in call["url"] for call in transport.calls)
     assert all("/tushare" not in call["url"] for call in transport.calls)
+
+
+def test_canary_uses_explicit_evidence_only_catalog_policy() -> None:
+    assert _config().client_config().catalog_version_policy == "evidence_only"
 
 
 def test_canary_fails_closed_without_reference_fact() -> None:
@@ -217,7 +248,7 @@ def test_external_manifests_are_strict_and_secret_free(tmp_path: Path) -> None:
         json.dumps(
             {
                 "base_url": _config().base_url,
-                "catalog_version": CATALOG,
+                "expected_catalog_version": CATALOG,
                 "dataset_id": DATASET,
                 "access_policy_id": "fixture-ta-read",
                 "transport_id": "http-json-v1",
