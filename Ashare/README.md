@@ -126,6 +126,20 @@ Coverage distinguishes an exchange-specific investor-Q&A source that is not
 applicable from one that is genuinely missing: an SH symbol is not penalized
 for the SZ-only profile (and vice versa).
 
+This is an independently activatable, read-only **event/announcement shadow**
+consumer: a newly catalog-validated allow-listed profile may be used only after
+its own formal catalog/query parity, metadata, receipt, lineage and PIT gates
+pass. Its rejection is isolated to event-derived shadow evidence and cannot
+enable or suppress the core minute baseline. `flow` is intentionally different
+today: it accepts only an injected `MinuteAuxiliaryEvidence` value for the flow
+counterfactual sleeve and has no catalog-bound TradingDatas moneyflow adapter.
+A future moneyflow dataset is therefore not auto-enabled, cannot be treated as
+formal parity, and cannot affect the baseline/dynamic-position sleeves until it
+receives the same dedicated catalog/query consumer and shadow-parity proof.
+`cn.equity.daily` and `cn.dataset.rt_min` remain core inputs for their
+respective session/minute paths; failed evidence correctly blocks only the
+dependent session or minute observation rather than being silently downgraded.
+
 For optional offline LLM review, an instant-proven event can be projected into
 the existing shared `EvidenceArtifact` / `LLMEvidenceRequest` schema. This
 projection only constructs an immutable request object; it does not instantiate
