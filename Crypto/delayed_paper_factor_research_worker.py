@@ -12,6 +12,7 @@ from Crypto.delayed_paper_factor_research import (
     CryptoFactorProjectionError,
     factor_projection_exit_code,
     run_crypto_delayed_paper_factor_research_full_scrub,
+    run_crypto_delayed_paper_factor_research_incremental,
 )
 from Crypto.delayed_paper_round_trip_epoch import (
     ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
@@ -50,8 +51,10 @@ def _existing_epoch_root(context: Any) -> None:
         raise CryptoFactorProjectionError("factor_projection_root_incomplete")
 
 
-def run_factor_research_worker_once(*, epoch_manifest: Path | str) -> dict[str, Any]:
-    """Run the full detached factor scrub for exactly one existing G4 epoch."""
+def run_factor_research_worker_once(
+    *, epoch_manifest: Path | str, mode: str = "incremental"
+) -> dict[str, Any]:
+    """Run one detached factor operation for exactly one existing G4 epoch."""
 
     _assert_simulation_only()
     manifest_path = _validated_manifest_path(epoch_manifest)
@@ -64,9 +67,16 @@ def run_factor_research_worker_once(*, epoch_manifest: Path | str) -> dict[str, 
         _existing_epoch_root(context)
         prepared = prepare_round_trip_epoch_candidate(context)
         identity_before = prepared.identity_path.read_bytes()
-        result = run_crypto_delayed_paper_factor_research_full_scrub(
-            output_root=prepared.output_root
-        )
+        if mode == "incremental":
+            result = run_crypto_delayed_paper_factor_research_incremental(
+                output_root=prepared.output_root
+            )
+        elif mode == "full-scrub":
+            result = run_crypto_delayed_paper_factor_research_full_scrub(
+                output_root=prepared.output_root
+            )
+        else:
+            raise CryptoFactorProjectionError("factor_projection_mode_invalid")
         prepared_after = prepare_round_trip_epoch_candidate(context)
         if prepared_after.identity_path.read_bytes() != identity_before:
             raise CryptoFactorProjectionError(
@@ -87,12 +97,17 @@ def run_factor_research_worker_once(*, epoch_manifest: Path | str) -> dict[str, 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run one detached Crypto G4 factor-research full scrub"
+        description="Run one detached Crypto G4 factor-research operation"
     )
     parser.add_argument("--epoch-manifest", type=Path, required=True)
+    parser.add_argument(
+        "--mode", choices=("incremental", "full-scrub"), default="incremental"
+    )
     args = parser.parse_args(argv)
     try:
-        result = run_factor_research_worker_once(epoch_manifest=args.epoch_manifest)
+        result = run_factor_research_worker_once(
+            epoch_manifest=args.epoch_manifest, mode=args.mode
+        )
     except Exception:
         print("crypto factor-research worker failed closed", file=sys.stderr)
         return 2

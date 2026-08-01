@@ -57,6 +57,16 @@ dataset；fingerprint 至少覆盖 dataset/schema/fields/filter/order/limits/ide
 现有 consumer 在完成逐 dataset 指纹迁移前仍按旧 manifest fail closed，不能直接
 删除 catalog 校验。
 
+TA 侧 canonical 实现为
+`shared.governance.evidence_readiness.dataset_contract_fingerprint`。它保留
+`default_fields/default_order/identity_fields` 的业务顺序，规范化无顺序语义的
+filter operator 集合，并排除 state/degraded/runtime receipt 等运行元数据。调用方
+必须从同一真实 catalog row 重算，不能接受 producer 自报 hash；任何上述七个合同
+字段变化都形成新 fingerprint。不同仓若实现同一算法，须以跨仓 golden vectors
+证明字节一致后才替换旧 catalog pin。当前首个 golden vector 位于
+`tests/test_evidence_readiness.py`，其 SHA-256 为
+`2a64eade6402119d492ae339213af96865ad5125358ac45de576b5a71f1d9e07`。
+
 ## 上游输入
 
 ### TradingDatas
