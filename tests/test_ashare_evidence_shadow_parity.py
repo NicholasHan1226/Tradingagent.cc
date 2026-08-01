@@ -44,10 +44,10 @@ def _plan() -> parity.ShadowParityPlan:
     )
 
 
-def _client(catalog: CatalogEnvelope) -> MagicMock:
+def _client(catalog: CatalogEnvelope, dataset_ids: frozenset[str]) -> MagicMock:
     client = MagicMock()
     client.config.catalog_version_policy = "evidence_only"
-    client.config.dataset_ids = frozenset(DATASET_IDS)
+    client.config.dataset_ids = dataset_ids
     client.config.expected_catalog_version = "catalog-expected"
     client.get_catalog.return_value = catalog
     return client
@@ -121,7 +121,11 @@ def test_parity_receipt_is_zero_notional_and_non_authoritative(
 ) -> None:
     _install_success_fixtures(monkeypatch)
 
-    receipt = parity.run_shadow_parity(_client(_catalog()), plan=_plan())
+    receipt = parity.run_shadow_parity(
+        _client(_catalog(), frozenset({"cn.dataset.anns_d"})),
+        moneyflow_client=_client(_catalog(), frozenset(DATASET_IDS[1:])),
+        plan=_plan(),
+    )
 
     assert receipt["status"] == "pass"
     assert receipt["dataset_ids"] == list(DATASET_IDS)
@@ -154,7 +158,11 @@ def test_one_source_rejection_blocks_only_that_source_and_the_overall_parity(
         parity, "TradingDatasAshareMoneyflowPort", lambda _: moneyflow_port
     )
 
-    receipt = parity.run_shadow_parity(_client(_catalog()), plan=_plan())
+    receipt = parity.run_shadow_parity(
+        _client(_catalog(), frozenset({"cn.dataset.anns_d"})),
+        moneyflow_client=_client(_catalog(), frozenset(DATASET_IDS[1:])),
+        plan=_plan(),
+    )
 
     assert receipt["status"] == "blocked"
     assert receipt["sources"]["cn.dataset.moneyflow"]["status"] == "rejected"
@@ -184,10 +192,14 @@ def test_catalog_target_row_failure_happens_before_any_query(
     catalog: CatalogEnvelope,
     reason: str,
 ) -> None:
-    client = _client(catalog)
+    client = _client(catalog, frozenset({"cn.dataset.anns_d"}))
 
     with pytest.raises(parity.ShadowParityError, match=reason):
-        parity.run_shadow_parity(client, plan=_plan())
+        parity.run_shadow_parity(
+            client,
+            moneyflow_client=_client(_catalog(), frozenset(DATASET_IDS[1:])),
+            plan=_plan(),
+        )
 
     assert client.get_catalog.call_count == 1
 
@@ -201,17 +213,34 @@ def test_plan_requires_exact_targets_evidence_only_and_aware_decision() -> None:
             filters_by_dataset={"cn.dataset.anns_d": {}},
         )
 
-    client = _client(_catalog())
+    client = _client(_catalog(), frozenset({"cn.dataset.anns_d"}))
     client.config.catalog_version_policy = "strict"
     with pytest.raises(parity.ShadowParityError, match="shadow_parity_catalog_policy"):
-        parity.run_shadow_parity(client, plan=_plan())
+        parity.run_shadow_parity(
+            client,
+            moneyflow_client=_client(_catalog(), frozenset(DATASET_IDS[1:])),
+            plan=_plan(),
+        )
 
-    client = _client(_catalog())
+    client = _client(_catalog(), frozenset({"cn.dataset.anns_d"}))
     client.config.expected_catalog_version = "different-catalog"
     with pytest.raises(
         parity.ShadowParityError, match="shadow_parity_client_catalog_scope"
     ):
-        parity.run_shadow_parity(client, plan=_plan())
+        parity.run_shadow_parity(
+            client,
+            moneyflow_client=_client(_catalog(), frozenset(DATASET_IDS[1:])),
+            plan=_plan(),
+        )
+
+    with pytest.raises(
+        parity.ShadowParityError, match="shadow_parity_client_dataset_scope"
+    ):
+        parity.run_shadow_parity(
+            _client(_catalog(), frozenset(DATASET_IDS)),
+            moneyflow_client=_client(_catalog(), frozenset(DATASET_IDS[1:])),
+            plan=_plan(),
+        )
 
 
 def test_secret_free_manifest_preflight_never_needs_a_token(tmp_path: Path) -> None:
