@@ -38,6 +38,35 @@ flowchart LR
 - TradingAgent 拥有候选生成、风格预测、组合决策、资本预约、模拟成交、风险拒绝、样本、标签、复盘和只读看板。
 - `front/` 是唯一活跃前端；Quant Core 页面只读。它仅允许把用户申报状态写入 TradingCopilot 独立 append-only namespace，不写量化资金、队列或订单。
 
+### Quant Core 与 TradingCopilot 的共享边界
+
+两种产品共享计算底座，不共享可写 authority。正式市场数据、PIT 特征、事件证据、
+预测模型、样本外评估、校准、市场状态和A股规则只维护一套，由数据/研究/学习平面生成
+内容寻址或版本化证据，再投影给不同消费者。TradingCopilot 的前端确定性曲线只属于
+`demo_fixture`，不能成为第二套正式预测、回测、模型或校准实现。
+
+```mermaid
+flowchart LR
+    TD["TradingDatas\n行情/基础资料/事件"] --> RP["共享 research/learning plane\nPIT特征/基线/Kronos/OOS/校准"]
+    RP --> QP["Quant只读输入\n候选/组合/风险"]
+    RP --> CP["Copilot个股只读投影\n图表/多空证据/预测门禁"]
+    QP --> QA["Quant专属authority\n资本/订单/成交/样本/晋级"]
+    UD["Copilot专属状态\n申报资金/持仓/关注/人工意图"] --> CA["个人行动卡"]
+    CP --> CA
+    CA -. "禁止回流" .-> QA
+```
+
+| 所有权 | 内容 | 约束 |
+|---|---|---|
+| 共享只读底座 | 行情/日历/公司行动、A股规则与成本、PIT observation/features、公告新闻舆情、市场状态、基线/Kronos/OOS/校准、个股投影 | `evidence_only`；通过投影消费，无账户、仓位、订单或晋级权 |
+| Quant Core | 候选排名/Champion、组合优化/策略仓位、量化资本/预约、硬风险、outbox/Broker/fill/reconcile、SampleJournal/KPI/晋级 | Copilot 只能读取必要解释或不可访问，绝无写权限 |
+| TradingCopilot | 用户申报资金/持仓、关注列表、个人约束、人工计划、行动卡、个人纪律复盘 | 只写 `runtime/tradingcopilot/**`，不得进入量化资本、执行、SampleJournal或模型晋级 |
+
+完整机器责任表为
+`TradingCopilot/contracts/shared_capability_boundary.v1.json`。新增能力先确定 owner；
+属于共享底座时必须由 research/learning/read-model 平面实现并生成只读投影，不能为了
+Copilot 界面便利在浏览器或状态API中复制一套正式计算 authority。
+
 ### 三市场 BrokerAdapter 边界
 
 三市场只能共享机械接口，不能共享交易 API。当前机器合同见

@@ -1,0 +1,138 @@
+{
+  "contract_id": "tradingagent.trading_copilot_shared_capability_boundary.v1",
+  "market": "ashare",
+  "principle": "shared_evidence_separated_authority",
+  "shared_read_only_bottom": [
+    {
+      "id": "market_data_and_reference",
+      "owner": "tradingdatas",
+      "includes": ["quote", "ohlcv", "security_master", "trading_calendar", "corporate_actions", "fundamentals"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    },
+    {
+      "id": "market_rules_and_costs",
+      "owner": "tradingagent_ashare_domain",
+      "includes": ["t_plus_one", "board_lot", "price_limit", "fees", "slippage_policy"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    },
+    {
+      "id": "point_in_time_observations_and_features",
+      "owner": "tradingagent_research_plane",
+      "includes": ["pit_lineage", "technical_features", "cross_sectional_features", "data_freshness", "quality_receipts"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    },
+    {
+      "id": "event_news_sentiment_evidence",
+      "owner": "tradingagent_research_plane",
+      "includes": ["announcements", "news", "sentiment", "source_links", "symbol_binding", "publication_time"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    },
+    {
+      "id": "forecast_models_and_evaluation",
+      "owner": "tradingagent_learning_plane",
+      "includes": ["baselines", "kronos_challenger", "model_manifest", "oos_receipts", "calibration", "interval_coverage", "cost_adjusted_metrics"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    },
+    {
+      "id": "market_regime_and_risk_context",
+      "owner": "tradingagent_research_plane",
+      "includes": ["market_regime", "volatility_state", "liquidity_context", "sector_context", "risk_warnings"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    },
+    {
+      "id": "symbol_intelligence_projection",
+      "owner": "tradingagent_read_model",
+      "includes": ["quote_series", "forecast_evidence", "events", "bull_case", "bear_case", "readiness"],
+      "copilot_access": "read_only_projection",
+      "authority": "evidence_only"
+    }
+  ],
+  "quant_core_only": [
+    {
+      "id": "candidate_ranking_and_champion",
+      "owner": "quant_core",
+      "copilot_access": "read_only_explanation_or_none"
+    },
+    {
+      "id": "portfolio_optimizer_and_strategy_sizing",
+      "owner": "quant_core",
+      "copilot_access": "none"
+    },
+    {
+      "id": "quant_capital_ledger_and_reservations",
+      "owner": "quant_core",
+      "copilot_access": "none"
+    },
+    {
+      "id": "hard_risk_and_order_eligibility",
+      "owner": "quant_core",
+      "copilot_access": "read_only_explanation_or_none"
+    },
+    {
+      "id": "order_outbox_broker_fills_and_reconcile",
+      "owner": "quant_core",
+      "copilot_access": "none"
+    },
+    {
+      "id": "sample_journal_strategy_kpi_and_promotion",
+      "owner": "quant_core",
+      "copilot_access": "none"
+    }
+  ],
+  "copilot_only": [
+    {
+      "id": "user_declared_account",
+      "owner": "trading_copilot",
+      "write_namespace": "runtime/tradingcopilot/state-events.jsonl",
+      "excluded_from_quant_learning": true
+    },
+    {
+      "id": "user_declared_holdings",
+      "owner": "trading_copilot",
+      "write_namespace": "runtime/tradingcopilot/state-events.jsonl",
+      "excluded_from_quant_learning": true
+    },
+    {
+      "id": "watchlist",
+      "owner": "trading_copilot",
+      "write_namespace": "runtime/tradingcopilot/state-events.jsonl",
+      "excluded_from_quant_learning": true
+    },
+    {
+      "id": "human_decision_intent",
+      "owner": "trading_copilot",
+      "write_namespace": "runtime/tradingcopilot/state-events.jsonl",
+      "excluded_from_quant_learning": true
+    },
+    {
+      "id": "personal_action_card",
+      "owner": "trading_copilot",
+      "write_namespace": "runtime/tradingcopilot/state-events.jsonl",
+      "excluded_from_quant_learning": true
+    },
+    {
+      "id": "manual_trade_journal_and_discipline_review",
+      "owner": "trading_copilot",
+      "write_namespace": "runtime/tradingcopilot/state-events.jsonl",
+      "excluded_from_quant_learning": true
+    }
+  ],
+  "allowed_flows": [
+    "shared_read_only_bottom_to_quant_core",
+    "shared_read_only_bottom_to_copilot_projection",
+    "copilot_state_to_copilot_action_card"
+  ],
+  "prohibited_flows": [
+    "copilot_state_to_quant_capital_or_execution",
+    "copilot_state_to_quant_sample_or_model_promotion",
+    "quant_simulated_account_to_user_declared_account",
+    "copilot_frontend_to_provider_or_broker",
+    "frontend_generated_forecast_to_formal_predictive_evidence"
+  ]
+}

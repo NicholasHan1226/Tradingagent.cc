@@ -893,6 +893,7 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 - Quant Core 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
 - TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。它使用独立 append-only 事件文件，不得写入量化 capital/execution/sample/decision namespace。
 - 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。演示数据不得冒充实时；无正式分析时不得自动形成人工计划。
+- Quant Core 与 TradingCopilot 的能力归属以 `TradingCopilot/contracts/shared_capability_boundary.v1.json` 为机器合同：共享项只能作为 `evidence_only` 只读投影；Quant专属资本/订单/样本/晋级与Copilot专属申报账户/持仓/人工意图禁止双向写入或身份转换。正式预测、Kronos、OOS与校准由 learning/research plane 统一产生，前端计算不得成为正式预测证据。
 
 ## 版本与变更
 

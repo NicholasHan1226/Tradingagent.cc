@@ -2,7 +2,9 @@
 
 > 最后更新：2026-08-02 01:51 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
-> **2026-08-02 TradingCopilot V3 预测门禁候选：** 同仓 `TradingCopilot/` 领域和 `front/?product=copilot` 已包含申报资金/持仓、关注股、个股图表、关联事件、多空证据与人工意图。V3 新增只读 `GET /api/trading-copilot/stock-intelligence?symbol=` 正式投影入口和九项预测readiness门禁；未校准演示默认关闭预测，只显示明确的 `m30` 定性情景及宽/窄研究包络，不再发布情景百分比、50%/80%或置信度标签。研究线由最近最多20点的确定性线性基线生成并可重放，非1D周期明确停用当前m30预测。Kronos固定为同门禁Challenger，不能凭模型名显示概率。当前前端全量为 `50 files / 313 tests passed`，lint与client/API build通过；该候选不下载Kronos权重、不连接券商、不写量化资本/订单/样本。生产文件、runtime、正式个股投影数据与入口部署仍未改变。
+> **2026-08-02 TradingCopilot V3 预测门禁主线：** PR [#155](https://github.com/NicholasHan1226/Tradingagent.cc/pull/155) 已合入 `main` `d33ed92`。同仓 `TradingCopilot/` 领域和 `front/?product=copilot` 已包含申报资金/持仓、关注股、个股图表、关联事件、多空证据与人工意图。V3 新增只读 `GET /api/trading-copilot/stock-intelligence?symbol=` 正式投影入口和九项预测readiness门禁；未校准演示默认关闭预测，只显示明确的 `m30` 定性情景及宽/窄研究包络，不再发布情景百分比、50%/80%或置信度标签。研究线由最近最多20点的确定性线性基线生成并可重放，非1D周期明确停用当前m30预测。Kronos固定为同门禁Challenger，不能凭模型名显示概率。对应前端全量为 `50 files / 313 tests passed`，lint与client/API build通过；该主线代码不下载Kronos权重、不连接券商、不写量化资本/订单/样本。生产文件、runtime、正式个股投影数据与入口部署仍未改变。
+
+> **2026-08-02 TradingCopilot 共享能力边界：** 机器合同 `tradingagent.trading_copilot_shared_capability_boundary.v1` 把能力固定为共享只读底座、Quant Core 专属 authority 与 TradingCopilot 专属个人状态三组。行情/规则/PIT特征/事件/市场状态/基线与Kronos/OOS/校准/个股投影只维护一套研究证据；Quant独占候选/组合/资本/风险放行/订单/样本/晋级，Copilot独占申报资金/持仓/关注/人工意图/个人复盘。合同和负例测试禁止Copilot状态流入量化资本、执行、样本或晋级，也禁止前端生成的曲线成为正式预测证据。该边界只改变仓库架构合同与文档，不改变生产文件、runtime、timer、模型网络、broker或真实交易权限。
 
 > **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release
