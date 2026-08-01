@@ -39,6 +39,7 @@ def _fixture(**overrides: object) -> dict[str, object]:
         "real_trading_enabled": False,
         "generation": 9,
         "trade_date": "20260730",
+        "decision_time": "2026-07-30T09:30:02+08:00",
         "contract": {"symbol": "M2609.DCE"},
         "data_evidence": {
             "source_kind": "fixture_mock",
@@ -51,7 +52,7 @@ def _fixture(**overrides: object) -> dict[str, object]:
             "quality": "valid",
             "lineage_ref": "fixture-m-lineage",
             "receipt_id": "fixture-m-receipt",
-            "available_at": "2026-07-30T08:59:00+08:00",
+            "available_at": "2026-07-30T09:30:01+08:00",
         },
         "bars": {"rows": _bars()},
     }
@@ -138,7 +139,15 @@ def test_no_overnight_contract_returns_a_session_close_guard_sample() -> None:
     bars = _bars()
     for index, minute in enumerate((20, 25, 30, 35, 40, 45, 50)):
         bars[index]["bar_time"] = f"2026-07-30T14:{minute:02d}:00+08:00"
-    result = run_fixture_training_baseline(_fixture(bars={"rows": bars}))
+    evidence = dict(_fixture()["data_evidence"])  # type: ignore[arg-type]
+    evidence["available_at"] = "2026-07-30T14:50:01+08:00"
+    result = run_fixture_training_baseline(
+        _fixture(
+            bars={"rows": bars},
+            data_evidence=evidence,
+            decision_time="2026-07-30T14:50:02+08:00",
+        )
+    )
 
     assert result["candidate"]["reason"] == "session_close_guard"
     assert result["sample_records"][0]["reason"] == "session_close_guard"
@@ -187,3 +196,34 @@ def test_replay_is_deterministic_and_never_claims_real_training() -> None:
         assert mapping.get("durable") is not True
         assert mapping.get("capital_commit_id") in (None,)
         assert mapping.get("outbox_id") in (None,)
+
+
+@pytest.mark.parametrize(
+    "patch, reason",
+    [
+        (
+            {"decision_time": "2026-07-30T09:30:00+08:00"},
+            "evidence_available_after_decision",
+        ),
+        (
+            {
+                "data_evidence": {
+                    **_fixture()["data_evidence"],  # type: ignore[dict-item]
+                    "available_at": "2026-07-30T09:29:59+08:00",
+                }
+            },
+            "bar_not_available_at_evidence_time",
+        ),
+    ],
+)
+def test_pit_order_fails_closed(patch: dict[str, object], reason: str) -> None:
+    with pytest.raises(TrainingBaselineError, match=reason):
+        run_fixture_training_baseline(_fixture(**patch))
+
+
+def test_invalid_ohlc_relationship_fails_closed() -> None:
+    bars = _bars()
+    bars[-1]["high"] = float(bars[-1]["close"]) - 1.0
+
+    with pytest.raises(TrainingBaselineError, match="invalid_ohlc_relationship"):
+        run_fixture_training_baseline(_fixture(bars={"rows": bars}))
