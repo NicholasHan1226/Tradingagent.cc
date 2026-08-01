@@ -2,6 +2,15 @@
 
 > 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-08-01 分层 readiness 合同候选：** 独立分支
+> `codex/readiness-authority-v1` 新增机器合同
+> `tradingagent.evidence_readiness.v1`，把 observation、historical PIT、
+> delayed-paper 与 execution 四类权限拆开，并冻结按用途 freshness、逐 dataset
+> contract fingerprint、routine 单遍历/高风险双遍历、A股局部连续窗口/99%零名义
+> cohort shadow、Crypto 分段学习/288槽运行成熟度语义。该候选只改治理合同、校验器、
+> 测试与文档，尚未合入 main、部署或改变任何现役 timer/runtime；真实执行、自动晋级、
+> 自动风险扩张继续关闭。
+
 > **2026-08-01 影子数值模型旁路验收：** M0 已新增依赖无关的 ridge 与 elastic-net
 > logistic 控制组，M1 新增固定
 > `numpy==2.0.2/scipy==1.18.0/lightgbm==4.6.0`、最多 2 CPU 线程的

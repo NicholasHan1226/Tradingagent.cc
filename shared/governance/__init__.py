@@ -1,1 +1,1 @@
-"""Versioned architecture and retirement governance contracts."""
+"""Versioned architecture, readiness and retirement governance contracts."""
