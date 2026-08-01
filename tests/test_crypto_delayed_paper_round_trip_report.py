@@ -10,6 +10,8 @@ from Crypto.delayed_paper_round_trip_report import (
     CryptoRoundTripReportError,
     build_crypto_delayed_paper_round_trip_report,
     evaluate_crypto_delayed_paper_round_trip_acceptance,
+    main,
+    _slot_summary,
     run_crypto_delayed_paper_round_trip_acceptance_once,
 )
 from Crypto.five_minute_data import TradingDatasCryptoFiveMinuteDataPort
@@ -56,6 +58,7 @@ def test_round_trip_report_is_read_only_and_separates_kpi_layers(
     assert _tree_bytes(tmp_path) == before
     assert report["service_reliability"]["completion_count"] == 1
     assert report["service_reliability"]["continuous"] is True
+    assert report["service_reliability"]["latest_continuous_completion_count"] == 1
     assert report["audited_samples"]["verified_decision_events"] == 2
     assert report["audited_samples"]["completed_round_trip_count"] == 0
     assert report["simulated_capital_only"]["balanced"] is True
@@ -75,6 +78,24 @@ def test_acceptance_is_not_ready_before_24_hour_evidence(tmp_path: Path) -> None
     assert "insufficient_completed_5m_windows" in result["gate_reason_codes"]
     assert result["learning_timer_enable_authorized"] is False
     assert result["next_action"] == "continue_core_accumulation"
+
+
+def test_latest_continuous_streak_ignores_old_epoch_gaps() -> None:
+    slots = [
+        WINDOW_END - timedelta(minutes=25),
+        WINDOW_END - timedelta(minutes=20),
+        WINDOW_END - timedelta(minutes=5),
+        WINDOW_END,
+    ]
+
+    summary = _slot_summary(slots)
+
+    assert summary["continuous"] is False
+    assert summary["latest_continuous_completion_count"] == 2
+    assert summary["latest_continuous_covered_minutes"] == 10
+    assert summary["latest_continuous_first_market_slot"] == (
+        WINDOW_END - timedelta(minutes=5)
+    ).isoformat().replace("+00:00", "Z")
 
 
 def test_acceptance_can_be_eligible_without_using_pnl_as_a_gate(tmp_path: Path) -> None:
@@ -129,3 +150,7 @@ def test_acceptance_runner_rejects_free_manifest_path(tmp_path: Path) -> None:
         run_crypto_delayed_paper_round_trip_acceptance_once(
             epoch_manifest=tmp_path / "g4.json"
         )
+
+
+def test_module_cli_executes_the_fail_closed_acceptance_path(tmp_path: Path) -> None:
+    assert main(["--epoch-manifest", str(tmp_path / "g4.json")]) == 2

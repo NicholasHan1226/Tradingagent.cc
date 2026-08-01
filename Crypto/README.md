@@ -381,8 +381,9 @@ disabled：先满足连续 24 小时核心门禁，再做 disabled full-scrub �
 
 `tradingagent-crypto-round-trip-g4-acceptance.service/.timer` 是每日 09:05 的
 只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；只有
-连续 288 根 closed-5m completion（24 小时）、核心 fresh、无 pending、Decision
-Ledger 计数一致且 capital balanced 才输出 `eligible`。即使 eligible，下一动作仍
+最近连续 288 根 closed-5m completion（24 小时；早期停机缺口不阻断新的连续观测
+epoch）、核心 fresh、无 pending、Decision Ledger 计数一致且 capital balanced 才
+输出 `eligible`。即使 eligible，下一动作仍
 固定为 disabled full-scrub + 幂等 replay；只有两项通过后才允许发布流程启用
 incremental learning。该 unit 是日常报告和告警证据，不是交易调度器。
 

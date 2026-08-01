@@ -1,0 +1,4 @@
+# Isolated learning-plane dependencies. Do not install into the core runtime venv.
+numpy==2.0.2
+scipy==1.18.0
+lightgbm==4.6.0

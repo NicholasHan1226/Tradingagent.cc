@@ -201,6 +201,22 @@ DeepSeek adapter只接受精确的冻结离线响应fixture或上述精确HTTP t
 | M3 | 多周期凸优化 | 成本、换手、现金和仓位比较 | 仍受市场专属整数手/保证金/最小名义门禁 |
 | 暂缓 | FinRL/端到端强化学习、LLM直接交易 | 离线研究 | 不进入生产链 |
 
+M0/M1 的首个实现固定在 `shared/models/shadow_baselines.py` 与
+`shared/models/shadow_lightgbm.py`。`FrozenShadowDataset` 将数值特征、来源
+receipt、`event_time <= available_at <= decision_time`、训练截止时间、标签可见时间和
+严格样本外预测向量绑定为内容哈希；没有历史 PIT 与 revision authority 的数据仍可用于
+工程 canary，但 `predictive_validation_input_eligible=false`。依赖无关的 ridge 和
+elastic-net logistic 是可解释控制组；LightGBM 及 NumPy/SciPy 依赖仅允许固定版本、最多
+2 个 CPU 线程、浅树
+和未校准 raw score。三者生成的 prediction receipt 都固定
+`authority=none/shadow_only=true`，无资本、风控、执行或自动晋级权限。
+
+当前服务器没有 GPU，因此复杂时序模型不进入分钟核心路径。首个资源基准顺序固定为
+Kronos-mini、Chronos-Bolt-small，再决定是否需要 Kronos-small；TimesFM 2.5 和更大模型
+留在独立 research host/批处理层。权重下载、推理依赖和真实数据 benchmark 都是后续独立
+验收，不能因本表登记而自动安装或调度。任何复杂模型只有在同一冻结 OOS、成本、候选集与
+decision cluster 下稳定超过 M0/M1，才可提交人工晋级建议。
+
 模型训练、批量回测、LLM和full scrub属于learning plane；分钟证据门禁、候选、模拟成交、
 资本提交和对账属于core plane。二者通过内容寻址的feature snapshot、model manifest、
 prediction receipt和metric receipt交接，不共享可写账本。learning不可用时core继续使用
@@ -210,6 +226,9 @@ prediction receipt和metric receipt交接，不共享可写账本。learning不�
 
 - 已实现可散列`ValidationPlan`、无默认calendar verifier/detached proof、外部计划artifact门、SampleJournal/ops贯穿、同一authority派生的A股forward targets与冻结OOS标签门；但当前只有fixture verifier，CLI加载器不重新验证外部authority且尚无受信artifact registry，生产calendar/真实market-truth、purged/nested walk-forward、PBO、Deflated Sharpe、多重试验和OOS重用审计artifact均未完成；
 - 当前 rank score 无可发布概率校准器，不能用 Brier/Log Loss/ECE 装饰；
+- ridge、elastic-net logistic 与浅层 LightGBM 当前只完成冻结 fixture/合同实现；尚未绑定真实
+  market-truth 标签、purged walk-forward、校准器、费用后消融或生产调度，不能据此声称预测
+  有效、收益改善或模型已经“自动进化”；
 - 上游dataset必须保存首次可见`available_at`、release/revision ID、每次修订链与训练时可见vintage；只有`as_of`而没有历史revision/backfill证据，不能进入predictive validation；
 - 历史证券主数据必须PIT覆盖上市/退市、板块迁移、ST/风险警示、停复牌与历史指数/行业成员；CoverageReceipt证明当期denominator，不单独证明已消除幸存者偏差；
 - 行业 shadow 已绑定 PIT taxonomy/membership、评分方法/有效期、score/coverage authority proof，但当前只有 fixture verifier；产业暴露、事件 hazard、跨市场映射与多期限分布尚未进入 Champion；
