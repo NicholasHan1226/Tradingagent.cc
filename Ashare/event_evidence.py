@@ -1499,6 +1499,7 @@ class SentimentEvidenceSnapshot:
     evidence_refs: tuple[str, ...]
     covered_dataset_ids: tuple[str, ...]
     missing_dataset_ids: tuple[str, ...]
+    not_applicable_dataset_ids: tuple[str, ...]
     raw_shadow_score: float
     coverage_weight: float
     shadow_score: float
@@ -1526,6 +1527,30 @@ class SentimentEvidenceSnapshot:
             self.evidence_refs,
             "ashare_evidence_sentiment_refs_invalid",
         )
+        coverage_sets = tuple(
+            _strings(
+                value,
+                "ashare_evidence_sentiment_dataset_coverage_invalid",
+                nonempty=False,
+            )
+            for value in (
+                self.covered_dataset_ids,
+                self.missing_dataset_ids,
+                self.not_applicable_dataset_ids,
+            )
+        )
+        if (
+            any(set(values).difference(PRIMARY_DATASET_IDS) for values in coverage_sets)
+            or len(set().union(*map(set, coverage_sets))) != len(PRIMARY_DATASET_IDS)
+            or any(
+                set(left).intersection(right)
+                for index, left in enumerate(coverage_sets)
+                for right in coverage_sets[index + 1 :]
+            )
+        ):
+            raise AshareEvidenceContractError(
+                "ashare_evidence_sentiment_dataset_coverage_invalid"
+            )
         for field_name in (
             "raw_shadow_score",
             "coverage_weight",
@@ -1575,6 +1600,7 @@ class SentimentEvidenceSnapshot:
             "evidence_refs": list(self.evidence_refs),
             "covered_dataset_ids": list(self.covered_dataset_ids),
             "missing_dataset_ids": list(self.missing_dataset_ids),
+            "not_applicable_dataset_ids": list(self.not_applicable_dataset_ids),
             "raw_shadow_score": self.raw_shadow_score,
             "coverage_weight": self.coverage_weight,
             "shadow_score": self.shadow_score,
@@ -1623,16 +1649,22 @@ def build_sentiment_snapshot(
         raise AshareEvidenceContractError(
             "ashare_evidence_sentiment_duplicate_evidence"
         )
+    symbol = next(iter(symbols)) if symbols else None
+    exchange_specific = {"cn.dataset.irm_qa_sh", "cn.dataset.irm_qa_sz"}
+    applicable = set(PRIMARY_DATASET_IDS).difference(exchange_specific)
+    if symbol is not None and symbol.endswith(".SH"):
+        applicable.add("cn.dataset.irm_qa_sh")
+    elif symbol is not None and symbol.endswith(".SZ"):
+        applicable.add("cn.dataset.irm_qa_sz")
     covered = tuple(
-        sorted(
-            set(PRIMARY_DATASET_IDS).intersection(event.dataset_id for event in events)
-        )
+        sorted(applicable.intersection(event.dataset_id for event in events))
     )
     if not covered:
         raise AshareEvidenceContractError(
             "ashare_evidence_sentiment_primary_evidence_missing"
         )
-    missing = tuple(sorted(set(PRIMARY_DATASET_IDS).difference(covered)))
+    missing = tuple(sorted(applicable.difference(covered)))
+    not_applicable = tuple(sorted(set(PRIMARY_DATASET_IDS).difference(applicable)))
     event_scores: list[float] = []
     for event in events:
         text = "\n".join(
@@ -1642,9 +1674,8 @@ def build_sentiment_snapshot(
         negative = sum(text.count(term) for term in _NEGATIVE_TERMS)
         event_scores.append(max(-1.0, min(1.0, (positive - negative) / 4.0)))
     raw_score = sum(event_scores) / len(event_scores)
-    coverage_weight = len(covered) / len(PRIMARY_DATASET_IDS)
+    coverage_weight = len(covered) / len(applicable)
     shadow_score = raw_score * coverage_weight
-    symbol = next(iter(symbols)) if symbols else None
     entity = next(
         event.entity for event in events if symbol is None or event.symbol == symbol
     )
@@ -1655,6 +1686,7 @@ def build_sentiment_snapshot(
         evidence_refs=refs,
         covered_dataset_ids=covered,
         missing_dataset_ids=missing,
+        not_applicable_dataset_ids=not_applicable,
         raw_shadow_score=round(raw_score, 6),
         coverage_weight=round(coverage_weight, 6),
         shadow_score=round(shadow_score, 6),

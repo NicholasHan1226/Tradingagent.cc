@@ -865,9 +865,10 @@ def test_deterministic_sentiment_deweights_missing_evidence_and_is_not_probabili
     )
 
     assert full.coverage_weight == 1.0
-    assert partial.coverage_weight == pytest.approx(1 / len(PRIMARY_DATASET_IDS))
+    assert partial.coverage_weight == pytest.approx(1 / (len(PRIMARY_DATASET_IDS) - 1))
     assert abs(partial.shadow_score) < abs(full.shadow_score)
     assert partial.missing_dataset_ids
+    assert partial.not_applicable_dataset_ids == ("cn.dataset.irm_qa_sz",)
     assert partial.score_semantics == "deterministic_shadow_score_not_probability"
     assert partial.calibrated_probability is None
     assert partial.candidate_eligible is False
