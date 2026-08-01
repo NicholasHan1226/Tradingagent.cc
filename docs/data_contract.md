@@ -23,6 +23,40 @@
 - 任一 real/live/direct execution、真实账户或实盘签名标记递归 fail closed，不能改写成 simulated 后继续。
 - historical/legacy facts 只读保存；没有当前 authority + generation + lineage 的记录不进入当前 KPI 或成熟度。
 
+### 分层 readiness 与 authority
+
+机器合同 [`shared/governance/evidence_readiness.yaml`](../shared/governance/evidence_readiness.yaml)
+把原先容易混用的单一 `ready/learning_eligible` 拆成四个独立角色：
+
+- `observation_ready`：只允许审计、当前观察和零名义 shadow；
+- `historical_pit_ready`：另需首次可见时间、revision/immutable vintage、as-of 与标签窗口证据，才允许离线学习；
+- `delayed_paper_ready`：另需已完成市场事件、延迟策略、下一事件成交、资本 authority、幂等与对账，才允许模拟新风险；
+- `execution_ready`：当前阶段固定关闭，即使调用方把所有 proof 都置为 true 也不能取得真实执行权限。
+
+这四项不是一个递增的“总成熟度”。历史 PIT 与 delayed-paper 在
+`observation_ready` 之上分别取证；全天/24 小时连续性属于运行成熟度，不反向授予
+历史学习、模拟资金或真实执行 authority。A股 48/48 仍是全天 feature、全天 KPI
+与运行成熟度门禁，但预注册 feature/label profile 所需的局部连续窗口可形成独立
+历史学习候选，禁止跨 gap。Crypto 288 个连续 5 分钟槽仍是自动运行成熟度门禁，
+不是每个 append-only 离线样本的全局前置；每个学习样本仍必须单独证明连续窗口和
+完整标签，gap 必须切断 segment，Challenger 仍只建议且人工晋级。
+
+分钟 freshness 也按用途分层：execution-equivalent 继续固定最多 30 秒；
+delayed observation 最多允许一个 bar cadence 加 30 秒 jitter，且禁止同 bar
+成交；historical PIT 不按当前墙钟判 stale，但必须由 immutable receipt、as-of、
+首次可见与 revision/vintage 证据证明当时可知。放宽观察延迟绝不放宽真实执行。
+
+A股 500 股完整 cohort 仍是 delayed-paper 新风险的硬门禁。`>=99%` 的预注册
+cohort 只允许零名义 shadow，必须输出精确 missing identity set，禁止静默补票、
+替换或生成模拟订单。routine query 使用 receipt-bound 单次终端遍历；仅 onboarding、
+逐 dataset 合同漂移、事故恢复和每日 full scrub 执行完整 same-observation 双遍历。
+
+合同漂移的目标绑定是 `api_major=v1 + per-dataset contract fingerprint`。全局
+`catalog_version` 继续作为 evidence 保存，但只新增无关 dataset 时不应阻断已冻结
+dataset；fingerprint 至少覆盖 dataset/schema/fields/filter/order/limits/identity。
+现有 consumer 在完成逐 dataset 指纹迁移前仍按旧 manifest fail closed，不能直接
+删除 catalog 校验。
+
 ## 上游输入
 
 ### TradingDatas
