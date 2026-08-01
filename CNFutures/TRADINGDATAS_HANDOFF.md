@@ -36,14 +36,14 @@ TradingDatas owner 可选择符合其 provider-neutral registry 的最终 datase
 
 `CNFutures.tradingdatas_handoff_acceptance.evaluate_handoff_fixture` 是无网络、无数据库、无 runtime 副作用的 one-shot 消费者验收器。它只接受调用方从正式 `GET /v1/catalog` 与 `POST /v1/query` readback 提取的内存投影；不会配置 endpoint、token 或 dataset ID。
 
-投影必须声明 profile `cn-futures-m-5min-handoff-v1`，并由 TradingDatas handoff 显式注入三个 role 的最终 dataset ID 和 schema major：`contract_master`、`bars_5min`、`calendar_session`。catalog 与每个 query 都须为 V1、`ready`、`fresh`、`valid`、`degraded=false`、完整 provider-neutral lineage、非空 receipt/lineage，并且 `next_cursor=null`。验收器随后只验证：一个明确的 `M####.DCE` active contract、非空有限的 multiplier/tick/price limit、同一上海 trade date/day-session 的 calendar、以及同一 session 内两根相邻、completed、PIT 有效的 5 分钟 OHLCV bar。
+投影必须声明 profile `cn-futures-m-5min-handoff-v1`，并由 TradingDatas handoff 显式注入三个 role 的最终 dataset ID 和 schema major：`contract_master`、`bars_5min`、`calendar_session`。catalog 与每个 query 都须为 V1、`ready`、`fresh`、`valid`、`degraded=false`、完整 provider-neutral `metadata.lineage`、非空 `metadata.receipt_id`，并且 `next_cursor=null`。每个 query 的 `metadata.data_through` 与 `metadata.observed_at` 必须显式带时区，且满足 `data_through <= observed_at <= decision_time`；**唯一 availability source 是 `query_envelope.metadata.observed_at`**。验收器不接受 row 的 `available_at` 作为 provider-native knowledge-time：contract/calendar 的可用时点绑定各自 query 的 observed-at，bar 则要求 `bar_time <= bars query observed_at <= decision_time`。输出只保留 receipt watermark 与 canonical lineage digest，不要求或臆造 `lineage_ref`。随后才验证一个明确的 `M####.DCE` active contract、非空有限的 multiplier/tick/price limit、同一上海 trade date/day-session 的 calendar、以及同一 session 内两根相邻、completed、PIT 有效的 5 分钟 OHLCV bar。
 
 ```bash
 REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_tradingdatas_handoff_acceptance.py
 ```
 
-通过时仅产生 `observation`；缺 receipt/lineage、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `execution_eligible=false`、`delayed_paper_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
+通过时仅产生 `observation`；缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `execution_eligible=false`、`delayed_paper_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
 
 ## 当前只读发现（2026-07-30）
 

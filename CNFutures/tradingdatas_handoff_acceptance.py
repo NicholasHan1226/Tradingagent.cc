@@ -52,9 +52,17 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
             queries, "calendar_session", profile, catalog, decision_time
         )
         bars_query = _query(queries, "bars_5min", profile, catalog, decision_time)
-        contract = _contract(contract_query["data"], decision_time)
-        calendar = _calendar(calendar_query["data"], contract["symbol"], decision_time)
-        bars = _bars(bars_query["data"], contract["symbol"], calendar, decision_time)
+        contract = _contract(contract_query["data"], contract_query["observed_at"])
+        calendar = _calendar(
+            calendar_query["data"], contract["symbol"], calendar_query["observed_at"]
+        )
+        bars = _bars(
+            bars_query["data"],
+            contract["symbol"],
+            calendar,
+            bars_query["observed_at"],
+            decision_time,
+        )
         lineage = _sha256(
             {
                 "profile": profile,
@@ -75,12 +83,15 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "dataset_ids": {
                     role: profile["roles"][role]["dataset_id"] for role in _ROLES
                 },
-                "receipt_ids": {
-                    role: queries[role]["metadata"]["receipt_id"] for role in _ROLES
+                "query_receipt_watermarks": {
+                    role: query["receipt_watermark"]
+                    for role, query in {
+                        "contract_master": contract_query,
+                        "calendar_session": calendar_query,
+                        "bars_5min": bars_query,
+                    }.items()
                 },
-                "lineage_refs": {
-                    role: queries[role]["metadata"]["lineage_ref"] for role in _ROLES
-                },
+                "availability_source": "query_envelope.metadata.observed_at",
                 "symbol": contract["symbol"],
                 "trade_date": calendar["trade_date"],
                 "session_id": calendar["session_id"],
@@ -191,6 +202,7 @@ def _query(
     if raw.get("next_cursor") is not None:
         raise HandoffAcceptanceError(f"query_page_not_complete:{role}")
     metadata = _mapping(raw, "metadata")
+    lineage = _mapping(metadata, "lineage")
     if (
         metadata.get("state") != "ready"
         or metadata.get("degraded") is not False
@@ -198,24 +210,28 @@ def _query(
         or _mapping(metadata, "freshness").get("stale") is not False
         or _mapping(metadata, "quality").get("state") != "valid"
         or _mapping(metadata, "quality").get("valid") is not True
-        or _mapping(metadata, "lineage").get("complete") is not True
-        or _mapping(metadata, "lineage").get("provider_neutral") is not True
+        or lineage.get("complete") is not True
+        or lineage.get("provider_neutral") is not True
     ):
         raise HandoffAcceptanceError(f"query_evidence_not_eligible:{role}")
-    available_at = _timestamp(metadata.get("available_at"), f"{role}.available_at")
-    if available_at > decision_time:
-        raise HandoffAcceptanceError(f"query_available_after_decision:{role}")
+    data_through = _timestamp(metadata.get("data_through"), f"{role}.data_through")
+    observed_at = _timestamp(metadata.get("observed_at"), f"{role}.observed_at")
+    if not (data_through <= observed_at <= decision_time):
+        raise HandoffAcceptanceError(f"query_pit_order_invalid:{role}")
+    receipt_id = _text(metadata.get("receipt_id"), f"{role}.receipt_id")
     return {
         "data": data,
-        "metadata": {
-            "receipt_id": _text(metadata.get("receipt_id"), f"{role}.receipt_id"),
-            "lineage_ref": _text(metadata.get("lineage_ref"), f"{role}.lineage_ref"),
-            "available_at": available_at.isoformat(),
+        "observed_at": observed_at,
+        "receipt_watermark": {
+            "receipt_id": receipt_id,
+            "data_through": data_through.isoformat(),
+            "observed_at": observed_at.isoformat(),
+            "lineage_sha256": _sha256(lineage),
         },
     }
 
 
-def _contract(rows: list[Any], decision_time: datetime) -> dict[str, Any]:
+def _contract(rows: list[Any], observed_at: datetime) -> dict[str, Any]:
     if len(rows) != 1 or not isinstance(rows[0], Mapping):
         raise HandoffAcceptanceError("contract_master_requires_one_explicit_m_contract")
     row = rows[0]
@@ -234,19 +250,16 @@ def _contract(rows: list[Any], decision_time: datetime) -> dict[str, Any]:
         raise _RiskReject("contract_tick_size_missing_or_invalid")
     if _positive_or_none(row.get("price_limit")) is None:
         raise _RiskReject("contract_price_limit_missing_or_invalid")
-    available_at = _timestamp(row.get("available_at"), "contract.available_at")
-    if available_at > decision_time:
-        raise HandoffAcceptanceError("contract_available_after_decision")
     return {
         "symbol": symbol,
         "multiplier": _positive_or_none(row["multiplier"]),
         "tick_size": _positive_or_none(row["tick_size"]),
         "price_limit": _positive_or_none(row["price_limit"]),
-        "available_at": available_at.isoformat(),
+        "observed_at": observed_at.isoformat(),
     }
 
 
-def _calendar(rows: list[Any], symbol: str, decision_time: datetime) -> dict[str, Any]:
+def _calendar(rows: list[Any], symbol: str, observed_at: datetime) -> dict[str, Any]:
     if len(rows) != 1 or not isinstance(rows[0], Mapping):
         raise HandoffAcceptanceError("calendar_requires_one_session_row")
     row = rows[0]
@@ -257,11 +270,8 @@ def _calendar(rows: list[Any], symbol: str, decision_time: datetime) -> dict[str
         raise HandoffAcceptanceError("calendar_not_eligible")
     if _text(row.get("session_kind"), "calendar.session_kind") != "day":
         raise HandoffAcceptanceError("calendar_day_session_required")
-    available_at = _timestamp(row.get("available_at"), "calendar.available_at")
     start = _timestamp(row.get("session_start"), "calendar.session_start")
     end = _timestamp(row.get("session_end"), "calendar.session_end")
-    if available_at > decision_time:
-        raise HandoffAcceptanceError("calendar_available_after_decision")
     if start > end:
         raise HandoffAcceptanceError("calendar_session_window_invalid")
     return {
@@ -269,12 +279,16 @@ def _calendar(rows: list[Any], symbol: str, decision_time: datetime) -> dict[str
         "session_id": _text(row.get("session_id"), "calendar.session_id"),
         "session_start": start.isoformat(),
         "session_end": end.isoformat(),
-        "available_at": available_at.isoformat(),
+        "observed_at": observed_at.isoformat(),
     }
 
 
 def _bars(
-    rows: list[Any], symbol: str, calendar: Mapping[str, Any], decision_time: datetime
+    rows: list[Any],
+    symbol: str,
+    calendar: Mapping[str, Any],
+    observed_at: datetime,
+    decision_time: datetime,
 ) -> list[dict[str, Any]]:
     if len(rows) != 2:
         raise HandoffAcceptanceError("two_adjacent_5min_bars_required")
@@ -296,10 +310,7 @@ def _bars(
         if row.get("completed") is not True:
             raise HandoffAcceptanceError("completed_5min_bar_required")
         bar_time = _timestamp(row.get("bar_time"), f"bars[{index}].bar_time")
-        available_at = _timestamp(
-            row.get("available_at"), f"bars[{index}].available_at"
-        )
-        if not (bar_time <= available_at <= decision_time):
+        if not (bar_time <= observed_at <= decision_time):
             raise HandoffAcceptanceError("bar_pit_order_invalid")
         if not (start <= bar_time <= end):
             raise HandoffAcceptanceError("bar_outside_calendar_session")
@@ -315,7 +326,6 @@ def _bars(
         normalized.append(
             {
                 "bar_time": bar_time.isoformat(),
-                "available_at": available_at.isoformat(),
                 "open": open_,
                 "high": high,
                 "low": low,

@@ -10,16 +10,21 @@ from CNFutures.tradingdatas_handoff_acceptance import (
 )
 
 
-def _metadata(receipt_id: str, lineage_ref: str) -> dict[str, object]:
+def _metadata(receipt_id: str) -> dict[str, object]:
     return {
         "state": "ready",
         "degraded": False,
         "freshness": {"state": "fresh", "stale": False},
         "quality": {"state": "valid", "valid": True},
-        "lineage": {"complete": True, "provider_neutral": True},
+        "lineage": {
+            "complete": True,
+            "provider_neutral": True,
+            "provider": "fixture-provider",
+            "transport_service": "fixture-transport",
+        },
         "receipt_id": receipt_id,
-        "lineage_ref": lineage_ref,
-        "available_at": "2026-07-31T09:40:00+08:00",
+        "data_through": "2026-07-31T09:35:00+08:00",
+        "observed_at": "2026-07-31T09:40:00+08:00",
     }
 
 
@@ -63,7 +68,7 @@ def _fixture() -> dict[str, object]:
                 "schema_major": 1,
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
-                "metadata": _metadata("receipt-contract", "lineage-contract"),
+                "metadata": _metadata("receipt-contract"),
                 "data": [
                     {
                         "symbol": "M2609.DCE",
@@ -73,7 +78,6 @@ def _fixture() -> dict[str, object]:
                         "multiplier": 10,
                         "tick_size": 1,
                         "price_limit": 1000,
-                        "available_at": "2026-07-31T09:40:00+08:00",
                     }
                 ],
             },
@@ -84,7 +88,7 @@ def _fixture() -> dict[str, object]:
                 "schema_major": 1,
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
-                "metadata": _metadata("receipt-calendar", "lineage-calendar"),
+                "metadata": _metadata("receipt-calendar"),
                 "data": [
                     {
                         "symbol": "M2609.DCE",
@@ -94,7 +98,6 @@ def _fixture() -> dict[str, object]:
                         "session_id": "fixture-dce-day-session",
                         "session_start": "2026-07-31T09:00:00+08:00",
                         "session_end": "2026-07-31T11:30:00+08:00",
-                        "available_at": "2026-07-31T09:40:00+08:00",
                     }
                 ],
             },
@@ -105,7 +108,7 @@ def _fixture() -> dict[str, object]:
                 "schema_major": 1,
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
-                "metadata": _metadata("receipt-bars", "lineage-bars"),
+                "metadata": _metadata("receipt-bars"),
                 "data": [
                     {
                         "symbol": "M2609.DCE",
@@ -150,6 +153,10 @@ def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
         "2026-07-31T09:30:00+08:00",
         "2026-07-31T09:35:00+08:00",
     ]
+    watermark = result["evidence"]["query_receipt_watermarks"]["bars_5min"]
+    assert watermark["receipt_id"] == "receipt-bars"
+    assert watermark["observed_at"] == "2026-07-31T09:40:00+08:00"
+    assert len(watermark["lineage_sha256"]) == 64
 
 
 def test_missing_multiplier_is_risk_reject_not_a_fallback_spec() -> None:
@@ -187,18 +194,9 @@ def test_missing_multiplier_is_risk_reject_not_a_fallback_spec() -> None:
         ),
         (
             lambda fixture: fixture["queries"]["bars_5min"]["data"][1].update(
-                {
-                    "bar_time": "2026-07-31T09:40:00+08:00",
-                    "available_at": "2026-07-31T09:40:01+08:00",
-                }
+                {"bar_time": "2026-07-31T09:40:00+08:00"}
             ),
             "bars_not_adjacent_5min",
-        ),
-        (
-            lambda fixture: fixture["queries"]["bars_5min"]["data"][0].update(
-                {"available_at": "2026-07-31T09:29:59+08:00"}
-            ),
-            "bar_pit_order_invalid",
         ),
         (
             lambda fixture: fixture["queries"]["bars_5min"].update(
@@ -217,6 +215,72 @@ def test_incomplete_evidence_returns_a_hold(mutate: object, reason: str) -> None
 
     assert result["disposition"] == "hold"
     assert result["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda fixture: fixture["queries"]["bars_5min"]["metadata"].update(
+                {"observed_at": "2026-07-31T09:40:06+08:00"}
+            ),
+            "query_pit_order_invalid:bars_5min",
+        ),
+        (
+            lambda fixture: fixture["queries"]["bars_5min"]["metadata"].update(
+                {"data_through": "2026-07-31T09:40:01+08:00"}
+            ),
+            "query_pit_order_invalid:bars_5min",
+        ),
+    ],
+)
+def test_query_envelope_pit_order_fails_closed(mutate: object, reason: str) -> None:
+    fixture = _fixture()
+    assert callable(mutate)
+    mutate(fixture)
+
+    result = evaluate_handoff_fixture(fixture)
+
+    assert result["disposition"] == "hold"
+    assert result["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    "field, value, reason",
+    [
+        ("observed_at", None, "text_required:bars_5min.observed_at"),
+        ("data_through", None, "text_required:bars_5min.data_through"),
+        ("receipt_id", None, "text_required:bars_5min.receipt_id"),
+        ("lineage", None, "mapping_required:lineage"),
+    ],
+)
+def test_required_query_envelope_provenance_fields_fail_closed(
+    field: str, value: object, reason: str
+) -> None:
+    fixture = _fixture()
+    fixture["queries"]["bars_5min"]["metadata"][field] = value
+
+    result = evaluate_handoff_fixture(fixture)
+
+    assert result["disposition"] == "hold"
+    assert result["reason"] == reason
+
+
+def test_row_available_at_is_not_a_pit_authority_or_lineage_input() -> None:
+    baseline = evaluate_handoff_fixture(_fixture())
+    decorated = _fixture()
+    decorated["queries"]["contract_master"]["data"][0]["available_at"] = (
+        "1970-01-01T00:00:00+00:00"
+    )
+    decorated["queries"]["calendar_session"]["data"][0]["available_at"] = (
+        "1970-01-01T00:00:00+00:00"
+    )
+    for row in decorated["queries"]["bars_5min"]["data"]:
+        row["available_at"] = "1970-01-01T00:00:00+00:00"
+
+    replay = evaluate_handoff_fixture(decorated)
+
+    assert replay == baseline
 
 
 @pytest.mark.parametrize(

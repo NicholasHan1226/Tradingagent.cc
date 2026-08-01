@@ -110,7 +110,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_tradingdatas_handoff_acceptance.py
 ```
 
-该 one-shot 只输出 non-authoritative `observation`、`hold` 或 `risk_reject`，不会连接 18082、启动 delayed-paper 或形成 fill。真实市场数据的 read-only parity 通过，仍不等于 runtime 或 delayed-paper GO。
+该 one-shot 的唯一 availability source 是 query envelope 的 `metadata.observed_at`：每个 query 还须有带时区的 `metadata.data_through`，并满足 `data_through <= observed_at <= decision_time`；row `available_at` 不是 provider-native knowledge-time，不能放宽 PIT。它只输出 non-authoritative `observation`、`hold` 或 `risk_reject`，不会连接 18082、启动 delayed-paper 或形成 fill。真实市场数据的 read-only parity 通过，仍不等于 runtime 或 delayed-paper GO。
 
 以下文件名只用于识别历史服务器安装态与退役依赖，不是当前推荐运行入口：
 
