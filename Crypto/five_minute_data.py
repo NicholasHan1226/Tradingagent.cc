@@ -37,6 +37,7 @@ from shared.data.tradingdatas_pagination import (
     PaginationContractError,
     collect_query_pages,
 )
+from shared.governance.evidence_readiness import dataset_contract_fingerprint
 
 
 FIVE_MINUTES = timedelta(minutes=5)
@@ -272,6 +273,25 @@ class CryptoDatasetQueryProfile:
         if not _is_sha256(self.catalog_contract_sha256):
             raise CryptoFiveMinuteDataError("crypto_5m_catalog_contract_sha256_invalid")
 
+    @property
+    def consumer_profile_sha256(self) -> str:
+        """Bind Crypto's bounded query choices separately from TD's contract."""
+
+        return _sha256(
+            {
+                "dataset_id": self.dataset_id,
+                "selected_fields": list(self.selected_fields),
+                "query_order": list(self.query_order),
+                "identity_fields": list(self.identity_fields),
+                "filter_bindings": [
+                    _canonical_value(binding) for binding in self.filter_bindings
+                ],
+                "page_limit": self.page_limit,
+                "max_pages": self.max_pages,
+                "max_rows": self.max_rows,
+            }
+        )
+
     @classmethod
     def from_catalog(
         cls,
@@ -290,8 +310,6 @@ class CryptoDatasetQueryProfile:
     ) -> "CryptoDatasetQueryProfile":
         if not isinstance(catalog, CatalogEnvelope):
             raise CryptoFiveMinuteDataError("crypto_5m_catalog_envelope_required")
-        if catalog.catalog_version != expected_catalog_version:
-            raise CryptoFiveMinuteDataError("crypto_5m_catalog_version_drift")
         matches = [row for row in catalog.data if row.get("dataset_id") == dataset_id]
         if len(matches) != 1:
             raise CryptoFiveMinuteDataError("crypto_5m_dataset_catalog_row_missing")
@@ -336,6 +354,13 @@ class CryptoDatasetQueryProfile:
         identity = _strings(identity_fields, "crypto_5m_identity_fields_invalid")
         if not set(identity).issubset(selected):
             raise CryptoFiveMinuteDataError("crypto_5m_identity_fields_missing")
+        catalog_identity = _strings(
+            row.get("identity_fields"),
+            "crypto_5m_catalog_identity_fields_invalid",
+            allow_empty=True,
+        )
+        if identity != catalog_identity:
+            raise CryptoFiveMinuteDataError("crypto_5m_identity_fields_drift")
         raw_operators = row.get("filter_operators")
         if not isinstance(raw_operators, Mapping):
             raise CryptoFiveMinuteDataError(
@@ -362,40 +387,27 @@ class CryptoDatasetQueryProfile:
             or page_limit > max_page_size
         ):
             raise CryptoFiveMinuteDataError("crypto_5m_page_limit_exceeds_catalog")
-        material = {
-            "dataset_id": dataset_id,
-            "schema_major": expected_schema_major,
-            "default_fields": row.get("default_fields"),
-            "default_order": row.get("default_order"),
-            "fields": row.get("fields"),
-            "filter_operators": row.get("filter_operators"),
-            "limits": row.get("limits"),
-            "availability": row.get("availability"),
-            "queryability": row.get("queryability"),
-            "consumer_query": {
-                "selected_fields": list(selected),
-                "query_order": list(order),
-                "identity_fields": list(identity),
-                "filter_bindings": [
-                    _canonical_value(binding) for binding in filter_bindings
-                ],
-            },
-        }
+        try:
+            canonical_contract_sha256 = dataset_contract_fingerprint(row)
+        except ValueError as exc:
+            raise CryptoFiveMinuteDataError(
+                "crypto_5m_catalog_contract_invalid"
+            ) from exc
         return cls(
-            catalog_version=catalog.catalog_version,
+            catalog_version=expected_catalog_version,
             dataset_id=dataset_id,
             schema_major=expected_schema_major,
             selected_fields=selected,
             query_order=order,
             identity_fields=identity,
             filter_bindings=tuple(filter_bindings),
-            catalog_contract_sha256=_sha256(material),
+            catalog_contract_sha256=canonical_contract_sha256,
             page_limit=page_limit,
             max_pages=max_pages,
             max_rows=max_rows,
         )
 
-    def verify_catalog(self, catalog: CatalogEnvelope) -> None:
+    def verify_catalog(self, catalog: CatalogEnvelope) -> dict[str, Any]:
         rebuilt = type(self).from_catalog(
             catalog,
             expected_catalog_version=self.catalog_version,
@@ -411,6 +423,11 @@ class CryptoDatasetQueryProfile:
         )
         if rebuilt != self:
             raise CryptoFiveMinuteDataError("crypto_5m_catalog_contract_drift")
+        return {
+            "expected_catalog_version": self.catalog_version,
+            "observed_catalog_version": catalog.catalog_version,
+            "catalog_version_drift": catalog.catalog_version != self.catalog_version,
+        }
 
     @property
     def filter_roles(self) -> frozenset[str]:
@@ -561,12 +578,21 @@ class CryptoFiveMinuteDataProfile:
             raise CryptoFiveMinuteDataError("crypto_5m_symbol_dataset_binding_missing")
         return matches[0]
 
-    def verify_catalog(self, catalog: CatalogEnvelope) -> None:
-        if catalog.catalog_version != self.catalog_version:
-            raise CryptoFiveMinuteDataError("crypto_5m_catalog_version_drift")
+    def verify_catalog(self, catalog: CatalogEnvelope) -> dict[str, Any]:
+        dataset_evidence: list[dict[str, Any]] = []
         for binding in self.symbols:
-            binding.bars.verify_catalog(catalog)
-            binding.instrument_rules.verify_catalog(catalog)
+            dataset_evidence.extend(
+                (
+                    binding.bars.verify_catalog(catalog),
+                    binding.instrument_rules.verify_catalog(catalog),
+                )
+            )
+        return {
+            "expected_catalog_version": self.catalog_version,
+            "observed_catalog_version": catalog.catalog_version,
+            "catalog_version_drift": catalog.catalog_version != self.catalog_version,
+            "dataset_contracts": dataset_evidence,
+        }
 
     def to_payload(self) -> dict[str, Any]:
         return _canonical_value(self)
@@ -884,7 +910,6 @@ class CryptoFiveMinuteSnapshot:
                 binding.symbol,
                 dataset_kind,
                 dataset_profile.dataset_id,
-                dataset_profile.catalog_version,
             )
             for binding in profile.symbols
             for dataset_kind, dataset_profile in (
@@ -897,7 +922,6 @@ class CryptoFiveMinuteSnapshot:
                 proof.symbol,
                 proof.dataset_kind,
                 proof.dataset_id,
-                proof.catalog_version,
             )
             for proof in self.source_proofs
         )
@@ -1073,10 +1097,7 @@ def _source_proof(
 ) -> CryptoSourceProof:
     envelope = run.envelope
     metadata = envelope.metadata
-    if (
-        envelope.dataset_id != profile.dataset_id
-        or envelope.catalog_version != profile.catalog_version
-    ):
+    if envelope.dataset_id != profile.dataset_id:
         raise CryptoFiveMinuteDataError("crypto_5m_query_binding_mismatch")
     if metadata.state.strip().lower() != "ready" or metadata.degraded is not False:
         raise CryptoFiveMinuteDataError("crypto_5m_metadata_not_ready")
@@ -1110,7 +1131,7 @@ def _source_proof(
         symbol=symbol,
         dataset_kind=dataset_kind,
         dataset_id=profile.dataset_id,
-        catalog_version=profile.catalog_version,
+        catalog_version=envelope.catalog_version,
         receipt_id=receipt_id,
         data_through=data_through,
         observed_at=observed_at,
