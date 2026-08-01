@@ -249,7 +249,11 @@ _GENERIC_IDENTITY = (("event_id",),)
 _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
     {
         "cn.dataset.anns_d": _DatasetSpec(
-            identity_candidates=_GENERIC_IDENTITY + (("ann_date", "ts_code", "url"),),
+            identity_candidates=_GENERIC_IDENTITY
+            + (
+                ("ann_date", "ts_code", "url"),
+                ("ann_date", "ts_code", "title", "url"),
+            ),
             event_time_candidates=("event_time", "ann_date", "rec_time"),
             naive_datetime_timezone="Asia/Shanghai",
         ),

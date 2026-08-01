@@ -103,6 +103,10 @@ Every bounded query is replayed. Catalog drift, pagination/cursor failure,
 duplicate identity, or same-observation drift fails closed. An accepted query envelope must be
 `ready`, fresh, valid, non-degraded, and carry a complete provider-neutral
 lineage, receipt, `data_through`, and timezone-aware `observed_at`.
+The formal `cn.dataset.anns_d` profile accepts the catalog-published identity
+sequence `[ann_date, ts_code, title, url]` as strict identity material (in
+addition to its legacy catalog identities); `title` is never a
+caller-derived substitute.
 `available_at` is exactly the envelope `observed_at`; the adapter never
 backfills or guesses an earlier known time. Date-only historical event fields
 remain date-precision evidence. An instant event time records only that the
