@@ -29,15 +29,17 @@ from .minute_auto_runner import (
     run_current_delayed_minute_paper,
     session_bar_ends,
 )
-from .minute_data import SHANGHAI
+from .minute_data import MAX_DELAYED_PAPER_LATENCY, SHANGHAI
 from .minute_paper_runner import load_minute_research_universe
 from .minute_session_initializer import initialize_minute_session
+from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
 
 EXPECTED_UNIVERSE_COUNT = 500
 FORMAL_BASE_URL = "http://127.0.0.1:18082"
 MINUTE_DATASET_ID = "cn.dataset.rt_min"
 GATE_SCHEMA = "tradingagent.ashare.scale500-acceptance.v1"
+PARTIAL_SHADOW_SCHEMA = "tradingagent.ashare.scale500-partial-shadow.v1"
 GATE_DIRECTORY = ".scale500-gates"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REASON_PATTERN = re.compile(r"^[a-z0-9_.:-]+$")
@@ -48,6 +50,167 @@ Runner = Callable[..., dict[str, object]]
 
 class MinuteScale500RuntimeError(ValueError):
     """Fail-closed scale transition error with a stable reason code."""
+
+
+def _shadow_policy() -> tuple[int, int, str]:
+    """Return the catalog-independent cohort policy frozen in governance."""
+
+    try:
+        contract = load_evidence_readiness_contract()
+        policy = contract.market_policies["ashare"]["cohort_shadow"]
+    except (KeyError, ValueError) as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_readiness_contract_invalid"
+        ) from exc
+    if not isinstance(policy, Mapping):
+        raise MinuteScale500RuntimeError("minute_scale500_readiness_contract_invalid")
+    target = policy.get("target_size")
+    ratio = policy.get("minimum_coverage_ratio")
+    if (
+        isinstance(target, bool)
+        or not isinstance(target, int)
+        or target != EXPECTED_UNIVERSE_COUNT
+        or isinstance(ratio, bool)
+        or not isinstance(ratio, (int, float))
+        or ratio <= 0
+        or ratio > 1
+        or policy.get("full_cohort_required_for_delayed_paper") is not True
+        or policy.get("partial_shadow_allowed") is not True
+        or policy.get("explicit_missing_identity_set_required") is not True
+        or policy.get("silent_replacement_allowed") is not False
+        or policy.get("simulated_notional_allowed") is not False
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_readiness_contract_invalid")
+    minimum = int(target * ratio)
+    if minimum * 1.0 < target * ratio:
+        minimum += 1
+    return target, minimum, contract.contract_id
+
+
+def _strict_symbols(value: object, reason: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise MinuteScale500RuntimeError(reason)
+    symbols = tuple(value)
+    if any(
+        not isinstance(symbol, str) or not symbol.strip() or symbol != symbol.strip()
+        for symbol in symbols
+    ):
+        raise MinuteScale500RuntimeError(reason)
+    if len(symbols) != len(set(symbols)):
+        raise MinuteScale500RuntimeError(reason)
+    return symbols
+
+
+def build_scale500_partial_shadow_receipt(
+    *,
+    expected_symbols: tuple[str, ...],
+    observed_symbols: tuple[str, ...],
+    trading_date: str,
+    bar_end: str,
+    observed_at: datetime,
+    decision_time: datetime,
+) -> dict[str, object]:
+    """Build an idempotent zero-notional receipt for a 99%-only cohort.
+
+    This is deliberately not a runner and never creates candidates, capital
+    state, or a delayed-paper order.  A full 500 cohort remains the sole path
+    to ``run_scale500_once``.
+    """
+
+    if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
+        raise MinuteScale500RuntimeError("real_trading_must_remain_disabled")
+    target, minimum, contract_id = _shadow_policy()
+    expected = _strict_symbols(
+        expected_symbols, "minute_scale500_expected_identity_invalid"
+    )
+    observed = _strict_symbols(
+        observed_symbols, "minute_scale500_observed_identity_invalid"
+    )
+    if len(expected) != target:
+        raise MinuteScale500RuntimeError("minute_scale500_expected_identity_invalid")
+    if not isinstance(trading_date, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", trading_date
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_shadow_trade_date_invalid")
+    if not isinstance(bar_end, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", bar_end
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_shadow_bar_end_invalid")
+    try:
+        completed_bar_end = datetime.strptime(bar_end, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=SHANGHAI
+        )
+    except ValueError as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_shadow_bar_end_invalid"
+        ) from exc
+    if (
+        observed_at.tzinfo is None
+        or observed_at.utcoffset() is None
+        or decision_time.tzinfo is None
+        or decision_time.utcoffset() is None
+        or observed_at > decision_time
+        or observed_at <= completed_bar_end
+        or observed_at - completed_bar_end > MAX_DELAYED_PAPER_LATENCY
+        or decision_time - completed_bar_end > MAX_DELAYED_PAPER_LATENCY
+        or completed_bar_end.date().isoformat() != trading_date
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_shadow_time_invalid")
+    expected_set = frozenset(expected)
+    observed_set = frozenset(observed)
+    if not observed_set <= expected_set:
+        raise MinuteScale500RuntimeError("minute_scale500_silent_identity_replacement")
+    if len(observed) == target:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_shadow_requires_partial_cohort"
+        )
+    if len(observed) < minimum:
+        raise MinuteScale500RuntimeError("minute_scale500_shadow_coverage_insufficient")
+    missing = tuple(sorted(expected_set - observed_set))
+    receipt_id = hashlib.sha256(
+        _canonical_json(
+            {
+                "contract_id": contract_id,
+                "trading_date": trading_date,
+                "bar_end": bar_end,
+                "observed_at": observed_at.isoformat(),
+                "expected": sorted(expected),
+                "observed": sorted(observed),
+            }
+        )
+    ).hexdigest()
+    return {
+        "schema": PARTIAL_SHADOW_SCHEMA,
+        "receipt_id": receipt_id,
+        "status": "partial_cohort_shadow",
+        "readiness_contract_id": contract_id,
+        "trading_date": trading_date,
+        "bar_end": bar_end,
+        "observed_at": observed_at.isoformat(),
+        "decision_time": decision_time.isoformat(),
+        "target_cohort_size": target,
+        "observed_cohort_size": len(observed),
+        "minimum_shadow_cohort_size": minimum,
+        "missing_identity_set": list(missing),
+        "missing_identity_count": len(missing),
+        "silent_replacement_detected": False,
+        "delayed_paper_eligible": False,
+        "simulation_timing": "next_bar_only",
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "candidate_authority": False,
+        "capital_authority": False,
+        "execution_authority": False,
+        "execution_latency_eligible": False,
+        "execution_eligible": False,
+        "durable": False,
+        "capital_commit_id": None,
+        "outbox_id": None,
+        "simulated_notional_cny": 0,
+        "training_eligible": False,
+        "promotion_authorized": False,
+        "real_trading_enabled": False,
+    }
 
 
 def _canonical_json(value: object) -> bytes:
@@ -910,6 +1073,7 @@ if __name__ == "__main__":
 __all__ = [
     "EXPECTED_UNIVERSE_COUNT",
     "MinuteScale500RuntimeError",
+    "build_scale500_partial_shadow_receipt",
     "canonical_universe_sha256",
     "initialize_scale500_session",
     "main",

@@ -31,13 +31,13 @@ from shared.data.tradingdatas_pagination import (
     PaginationContractError,
     collect_query_pages,
 )
+from shared.governance.evidence_readiness import load_evidence_readiness_contract
 from shared.universe.policy import is_mainboard_tradable
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 FIVE_MINUTES = timedelta(minutes=5)
 MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
-MAX_DELAYED_PAPER_LATENCY = timedelta(minutes=12)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
 
@@ -50,6 +50,36 @@ class MinuteDataContractError(ValueError):
     def __init__(self, reason_code: str) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
+
+
+def _delayed_paper_latency_limit() -> timedelta:
+    """Read the one-cadence delayed-observation bound from governance.
+
+    A delayed observation remains a non-execution tier.  The market adapter
+    consumes the frozen shared policy rather than maintaining a second 12m
+    latency budget locally.
+    """
+
+    try:
+        policy = load_evidence_readiness_contract().freshness("delayed_observation")
+    except ValueError as exc:
+        raise MinuteDataContractError(
+            "minute_delayed_readiness_contract_invalid"
+        ) from exc
+    if (
+        policy.wall_clock_freshness_required is not True
+        or policy.maximum_lag_seconds is not None
+        or policy.maximum_bar_cadence_multiple != 1
+        or policy.maximum_jitter_seconds < 0
+        or policy.same_event_execution_allowed is not False
+    ):
+        raise MinuteDataContractError("minute_delayed_readiness_contract_invalid")
+    return FIVE_MINUTES * policy.maximum_bar_cadence_multiple + timedelta(
+        seconds=policy.maximum_jitter_seconds
+    )
+
+
+MAX_DELAYED_PAPER_LATENCY = _delayed_paper_latency_limit()
 
 
 def _canonical_json(value: object) -> str:
@@ -542,7 +572,10 @@ class MinuteBarEvidence:
             if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION
             else MAX_DELAYED_PAPER_LATENCY
         )
-        if available - bar_end > maximum_latency:
+        if (
+            available - bar_end > maximum_latency
+            or decision - bar_end > maximum_latency
+        ):
             raise MinuteDataContractError("minute_evidence_latency_exceeded")
         if self.suspended is not False:
             raise MinuteDataContractError("minute_suspended_instrument")

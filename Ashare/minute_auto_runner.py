@@ -18,12 +18,15 @@ from pathlib import Path
 import sys
 from typing import Callable, Iterator, Mapping
 
-from .minute_data import SHANGHAI
+from .minute_data import MAX_DELAYED_PAPER_LATENCY, SHANGHAI
 from .minute_paper_runner import run_delayed_minute_paper_once
 
 
 FIVE_MINUTES = timedelta(minutes=5)
-PROVIDER_AVAILABILITY_LAG = 2 * FIVE_MINUTES
+# A delayed decision may consume exactly one completed cadence plus the shared
+# jitter budget. This remains observation-only and never changes the 30-second
+# low-latency execution gate in ``minute_data``.
+PROVIDER_AVAILABILITY_LAG = MAX_DELAYED_PAPER_LATENCY
 STATE_BUNDLE_NAME = "state-bundle.json"
 MANIFEST_NAME = "minute-manifest.json"
 REFERENCE_FACTS_NAME = "reference-facts.json"
@@ -60,16 +63,20 @@ def session_bar_ends(trading_date: date) -> tuple[datetime, ...]:
 
 
 def expected_available_bar_end(now: datetime) -> datetime | None:
-    """Select the latest session bar expected behind the provider's fixed lag."""
+    """Select only the immediately eligible delayed-observation bar.
+
+    A bar may be used after one completed five-minute cadence and no later than
+    the shared 30-second jitter allowance.  Returning an older bar would make
+    the decision stale even when its original receipt was timely.
+    """
 
     local = _aware(now).astimezone(SHANGHAI)
-    boundary = local.replace(
-        minute=(local.minute // 5) * 5,
-        second=0,
-        microsecond=0,
-    )
-    cutoff = boundary - PROVIDER_AVAILABILITY_LAG
-    eligible = [value for value in session_bar_ends(local.date()) if value <= cutoff]
+    slots = session_bar_ends(local.date())
+    eligible = [
+        value
+        for value in slots
+        if FIVE_MINUTES <= local - value <= PROVIDER_AVAILABILITY_LAG
+    ]
     return max(eligible, default=None)
 
 

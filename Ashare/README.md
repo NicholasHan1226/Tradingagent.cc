@@ -353,6 +353,12 @@ with only its final receipt is blocked because earlier evidence rejections
 cannot be disproved. Its deterministic `forward_label_state` records the
 `m30/m60/close/1d/3d/5d` requirement as blocked until a future authoritative
 TradingDatas daily receipt exists; it neither queries for nor appends labels.
+For offline review only, a separate pre-registered local profile may recognise
+a contiguous segment whose minimum length is derived from its declared feature
+window plus label horizon. It never crosses `session_gaps`, and it still needs
+an explicit fixture label receipt for that exact profile. This is a local
+review eligibility signal, not `training_eligible`: shared SampleJournal,
+training, calibration and promotion authority remain false.
 
 `minute_session_initializer.py` closes that pre-open preparation gap without
 adding a provider route. At 09:20 it reads the current TradingDatas catalog,
@@ -437,15 +443,25 @@ degraded, identity, lineage, fanout, continuity, authority, or persistence
 failure records one exact reason in the scale gate, exits non-zero, and invokes
 the tracked rollback unit.
 
+The full 500/500 cohort remains mandatory before `delayed-paper` can run. A
+separate pure receipt builder may describe a 99%-or-higher partial cohort only
+when the exact missing identity set is explicit and no replacement identity is
+present. That receipt is deterministic, zero-notional and shadow-only: it has
+no candidate, capital, execution, training or promotion authority and cannot
+be routed through the runner.
+
 Rollback disables the scale timers, atomically repoints TA `current` to the
 preserved immutable 30-symbol release, then restores the 30-symbol timers
 without deleting or rewriting either state root. It does not manufacture a
 same-day 30-symbol session after the 09:18 initializer has passed; that day
 remains fail-closed. The scale timer mirrors the delayed schedule but moves the
 final 15:00-bar attempt to 15:19 so TradingDatas has one bounded final
-publication interval. It remains subject to the 720-second `DELAYED_PAPER`
-evidence latency ceiling; the later timer does not make stale evidence
-eligible.
+publication interval. `DELAYED_PAPER` consumes the shared readiness limit of
+one five-minute cadence plus 30 seconds of jitter (330 seconds), measured both
+from bar end to source availability and from bar end to the actual decision;
+the later timer does not make stale evidence eligible. The low-latency
+execution bound remains 30 seconds and is never granted by this observation
+tier.
 
 The tracked files under `Ashare/systemd/` are release candidates only.
 Installing or enabling them requires an immutable release, the frozen artifact

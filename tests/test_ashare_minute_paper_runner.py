@@ -300,10 +300,10 @@ def test_runner_rejects_mixed_bar_end_despite_complete_symbol_set(
         snapshot.bars[1],
         bar_start=mixed_end - timedelta(minutes=5),
         bar_end=mixed_end,
-        data_through=mixed_end + timedelta(minutes=10),
-        observed_at=mixed_end + timedelta(minutes=10),
-        available_at=mixed_end + timedelta(minutes=10),
-        decision_time=mixed_end + timedelta(minutes=10, seconds=1),
+        data_through=mixed_end + timedelta(minutes=5),
+        observed_at=mixed_end + timedelta(minutes=5),
+        available_at=mixed_end + timedelta(minutes=5),
+        decision_time=mixed_end + timedelta(minutes=5, seconds=1),
     )
     mixed_snapshot = replace(snapshot, bars=(snapshot.bars[0], mixed_bar))
     seen_filters: list[dict] = []
