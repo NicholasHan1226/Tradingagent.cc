@@ -1062,10 +1062,7 @@ def _cn_local_time(now: datetime | None) -> time | None:
 
 
 def _style_allows_session(style: dict[str, Any], now: datetime | None) -> bool:
-    if (
-        str(style.get("style_family") or "").strip().lower()
-        != "index_intraday_directional"
-    ):
+    if str(style.get("style_family") or "").strip().lower() != "commodity_intraday_trend":
         return True
     if not bool(style.get("no_overnight", True)):
         return True

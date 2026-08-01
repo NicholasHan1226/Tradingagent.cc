@@ -42,7 +42,7 @@
 ## 数据与成熟度
 
 - 盘中合约与 5 分钟行情只消费 TradingDatas 的 `GET /v1/catalog` 与 `POST /v1/query`；fresh handoff 前只允许显式 fixture/mock。CNFutures 当前链不得读取 TradingDatas SQLite，也不得回退到旧 `SHAREDSIGNALS_API_URL` reader、`/tushare`、`/source_status` 或 provider 专用 route；历史诊断代码不构成可恢复入口。
-- 生产 universe 至少覆盖 3 个独立底层品种；同品种跨月只算一个。覆盖不足仍保存 observation，并标明偏差，不放宽执行门禁。
+- 当前可运行模拟 universe 仅为豆粕 `M`；螺纹钢 `RB` 只能做只读影子评估，不能生成模拟成交。它不满足未来生产的多品种覆盖要求，故不得据此晋级；扩大范围须经人工审阅并更新 [STRATEGY_ARCHITECTURE.md](STRATEGY_ARCHITECTURE.md)。
 - 成熟度独立展示有效样本、完整回合、品种/波动/会话覆盖、夜盘、换月、极端风险、费用后结果、回撤和稳定性；不读取 A股模拟天数或晋级状态。
 - 自动晋级、自动风险扩张和 live transition 均关闭。
 

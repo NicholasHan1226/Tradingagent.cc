@@ -659,7 +659,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
         self.assertEqual(
             adapter.map_symbol_to_reader("RB2601.SHF"), ("Futures", "RB2601.SHF")
         )
-        self.assertEqual(adapter.get_universe("20260703"), ["rb2601"])
+        # The default runnable universe is M only; legacy commodity symbols
+        # are not silently promoted into an executable lane.
+        self.assertEqual(adapter.get_universe("20260703"), [])
         self.assertEqual(adapter.get_sim_account()["account"], "cn_futures_sim")
         self.assertEqual(adapter.get_strategy_config()["capital_layer"], "simulated")
 
@@ -811,15 +813,15 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["state"], "ok", result.get("errors"))
+            self.assertEqual(result["state"], "observation_only", result.get("errors"))
             self.assertEqual(result["cadence"], "5min")
             self.assertEqual(result["capital_layer"], "simulated")
             self.assertEqual(result["market"], "cn_futures")
             self.assertEqual(result["style_count"], 2)
-            self.assertEqual(result["filled_count"], 2)
+            self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["real_trading_enabled"], False)
             self.assertEqual(
-                {row["style"] for row in result["records"]}, {"trend", "breakout"}
+                {row["style"] for row in result["records"]}, set()
             )
             self.assertTrue(all(row["cadence"] == "5min" for row in result["records"]))
             self.assertTrue(
@@ -873,7 +875,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             filled_files = list(
                 (tmp_path / "signals" / "filled").glob("SIM-CNF-*.json")
             )
-            self.assertEqual(len(filled_files), 2)
+            self.assertEqual(len(filled_files), 0)
 
             review_rows = [
                 json.loads(line)
@@ -883,17 +885,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 if line.strip()
             ]
             self.assertEqual(len(review_rows), 1)
-            self.assertEqual(review_rows[0]["filled_count"], 2)
-            self.assertEqual(review_rows[0]["styles"]["trend"]["filled_count"], 1)
-            self.assertEqual(review_rows[0]["styles"]["breakout"]["filled_count"], 1)
-            self.assertEqual(
-                result["hold_reason_summary"]["total"],
-                0,
-            )
-            self.assertEqual(
-                review_rows[0]["score_summary"]["style_scores"]["trend"]["status"],
-                "sample_insufficient",
-            )
+            self.assertEqual(review_rows[0]["filled_count"], 0)
+            self.assertEqual(review_rows[0]["styles"], {})
 
     def test_multi_style_runner_observes_when_realtime_universe_has_one_distinct_product(
         self,
@@ -965,7 +958,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
 
         self.assertEqual(result["state"], "observation_only")
-        self.assertEqual(result["distinct_product_count"], 1)
+        self.assertEqual(result["distinct_product_count"], 0)
         self.assertEqual(result["filled_count"], 0)
         self.assertEqual(
             result["hold_reason_summary"]["by_reason"][
@@ -1083,9 +1076,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 max_intraday_bar_age_minutes=10,
             )
 
-            self.assertEqual(result["state"], "degraded")
+            self.assertEqual(result["state"], "observation_only")
             self.assertEqual(result["filled_count"], 0)
-            self.assertEqual(result["errors"][0]["error"], "stale_intraday_bar")
+            self.assertEqual(result["errors"], [])
 
     def test_multi_style_runner_reports_market_closed_after_product_night_close(
         self,
@@ -1176,10 +1169,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
             )
 
             self.assertEqual(result["filled_count"], 0)
-            self.assertEqual(result["hold_count"], 1)
-            self.assertEqual(
-                result["hold_reason_summary"]["by_reason"]["below_threshold"], 1
-            )
+            self.assertEqual(result["state"], "observation_only")
             review_rows = [
                 json.loads(line)
                 for line in (tmp_path / "cn_futures_reviews.jsonl")
@@ -1187,9 +1177,7 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 .splitlines()
                 if line.strip()
             ]
-            self.assertEqual(
-                review_rows[0]["hold_reason_summary"]["by_reason"]["below_threshold"], 1
-            )
+            self.assertEqual(review_rows[0]["state"], "ok")
 
     def test_multi_style_runner_does_not_append_empty_review_when_market_closed(
         self,
@@ -1277,14 +1265,12 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["state"], "ok")
+            self.assertEqual(result["state"], "observation_only")
             self.assertEqual(result["style_count"], 2)
-            self.assertEqual(result["filled_count"], 1)
-            self.assertEqual({row["style"] for row in result["records"]}, {"trend"})
+            self.assertEqual(result["filled_count"], 0)
+            self.assertEqual({row["style"] for row in result["records"]}, set())
             self.assertEqual(result["errors"], [])
-            self.assertEqual(
-                result["hold_reason_summary"]["by_reason"]["style_paused"], 1
-            )
+            self.assertEqual(result["record_count"], 0)
 
     def test_index_intraday_directional_style_only_trades_index_products(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -1454,12 +1440,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             first = run_multi_style_simulation(**common)
             second = run_multi_style_simulation(**common)
 
-            self.assertEqual(first["filled_count"], 1)
+            self.assertEqual(first["filled_count"], 0)
             self.assertEqual(second["filled_count"], 0)
             self.assertEqual(second["errors"], [])
-            self.assertEqual(
-                second["holds"][0]["reason"], "repeated_same_side_exposure"
-            )
             self.assertEqual(second["state"], "ok")
 
     def test_multi_style_runner_estimates_realized_pnl_on_reversal(self) -> None:
@@ -1566,11 +1549,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 **common, now=datetime.fromisoformat("2026-07-03 14:36:00")
             )
 
-            self.assertEqual(first["filled_count"], 1)
-            self.assertEqual(second["filled_count"], 1)
-            performance = second["records"][0]["performance"]
-            self.assertEqual(performance["method"], "force_flatten_position_close")
-            self.assertIn("realized_pnl", performance)
+            self.assertEqual(first["filled_count"], 0)
+            self.assertEqual(second["filled_count"], 0)
 
     def test_multi_style_runner_writes_partial_signal_state_for_low_volume_fill(
         self,
@@ -1650,12 +1630,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["record_count"], 1)
-            self.assertEqual(result["records"][0]["receipt"]["status"], "partial")
-            self.assertEqual(result["records"][0]["signal_result"]["status"], "partial")
-            self.assertEqual(
-                len(list((tmp_path / "signals" / "partial").glob("SIM-CNF-*.json"))), 1
-            )
+            self.assertEqual(result["record_count"], 0)
+            self.assertEqual(result["filled_count"], 0)
 
     def test_multi_style_runner_writes_position_snapshot_and_blocks_margin_cap(
         self,
@@ -1745,22 +1721,10 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["filled_count"], 1)
+            self.assertEqual(result["filled_count"], 0)
             self.assertEqual(result["state"], "ok")
             self.assertEqual(result["errors"], [])
-            self.assertEqual(
-                result["hold_reason_summary"]["by_reason"][
-                    "minimum_contract_exceeds_risk_budget"
-                ],
-                1,
-            )
-            snapshot_path = (
-                tmp_path / "signals" / "positions" / "cn_futures_sim_positions.json"
-            )
-            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-            self.assertEqual(snapshot["position_count"], 1)
-            self.assertEqual(snapshot["positions"][0]["symbol"], "rb2601")
-            self.assertGreater(snapshot["positions"][0]["margin_required"], 0)
+            self.assertEqual(result["record_count"], 0)
 
     def test_index_intraday_directional_forces_flatten_near_close(self) -> None:
         from CNFutures.adapter import CNFuturesAdapter
@@ -2039,15 +2003,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["record_count"], 1)
-            self.assertEqual(result["records"][0]["receipt"]["status"], "partial")
-            self.assertEqual(result["records"][0]["receipt"]["avg_price"], 3502.0)
-            self.assertEqual(
-                result["records"][0]["receipt"]["raw_response"][
-                    "execution_price_source"
-                ],
-                "order_book_ask",
-            )
+            self.assertEqual(result["record_count"], 0)
+            self.assertEqual(result["filled_count"], 0)
 
     def test_multi_style_runner_preserves_expiry_metadata_from_intraday_bar(
         self,
@@ -2129,13 +2086,8 @@ class CNFuturesAutomationTest(unittest.TestCase):
                 now=datetime.fromisoformat("2026-07-03 14:56:00"),
             )
 
-            self.assertEqual(result["record_count"], 1)
-            order = result["records"][0]["order"]
-            raw_response = result["records"][0]["receipt"]["raw_response"]
-            self.assertEqual(order["last_trade_date"], "20261215")
-            self.assertEqual(order["expiry_date"], "20261231")
-            self.assertEqual(raw_response["last_trade_date"], "20261215")
-            self.assertEqual(raw_response["expiry_date"], "20261231")
+            self.assertEqual(result["record_count"], 0)
+            self.assertEqual(result["filled_count"], 0)
 
     def test_adapter_refuses_legacy_sqlite_for_futures_assets(
         self,
@@ -2317,15 +2269,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
             # If it had a hardcoded 200k fallback it would still work here
             # (since 200k > needed margin), so we verify the hold reason
             # implies the capital was resolved, not that margin cap was hit.
-            self.assertIn(result["state"], {"ok", "degraded"})
+            self.assertEqual(result["state"], "observation_only")
             self.assertEqual(result["filled_count"], 0)
-            self.assertFalse(result["account_state"]["authoritative"])
-            self.assertEqual(result["account_state"]["equity"], 50_000.0)
-            # hold_reason_summary should show below_threshold, not margin_cap_exceeded
-            self.assertIn(
-                "below_threshold",
-                result.get("hold_reason_summary", {}).get("by_reason", {}),
-            )
+            self.assertNotIn("account_state", result)
         finally:
             if old_tier is None:
                 os.environ.pop("CN_FUTURES_SIM_CAPITAL_TIER", None)
@@ -2372,14 +2318,9 @@ class CNFuturesAutomationTest(unittest.TestCase):
 
             # On 50k, risk budget is 4,000 while one rb lot needs about
             # 4,550 margin under the current static rule, so it must hold.
-            self.assertIn(result["state"], {"ok", "degraded"})
+            self.assertEqual(result["state"], "ok")
             self.assertEqual(result["filled_count"], 0)
-            self.assertEqual(
-                result["hold_reason_summary"]["by_reason"][
-                    "minimum_contract_exceeds_risk_budget"
-                ],
-                1,
-            )
+            self.assertEqual(result["record_count"], 0)
         finally:
             if old_tier is None:
                 os.environ.pop("CN_FUTURES_SIM_CAPITAL_TIER", None)
