@@ -89,12 +89,19 @@ append-only review journal、前向标签、actual-cost execution evidence、Sam
 ```bash
 REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_fixture_closed_loop.py \
+  tests/test_cn_futures_training_baseline.py \
   tests/test_cn_futures_execution_evidence.py \
   tests/test_cn_futures_sim.py \
   tests/test_market_lane_governance.py
 ```
 
 `shared.runtime_test.cn_futures_live_check` 是旧 SharedSignals 路由的退役/法证入口，不是当前验收器；fresh TradingDatas handoff 前不得运行它，也不得把 `127.0.0.1:8082`、`/realtime_5min` 或其它 provider 专用路由恢复为默认值。
+
+### M 单策略训练前 fixture 基线
+
+`CNFutures.training_baseline.run_fixture_training_baseline` 仅为 `commodity_intraday_trend` 的离线、fixture/mock 训练前基线：限定豆粕 `M`、日盘连续 5 分钟 bar、固定一手和当日 flatten。它把资金/止损/收盘前、换月、午休及缺 bar 记录为可审计的 hold 或 risk-reject 样本；正常路径也只是费用和保证金数学上的非权威一手 round trip。
+
+它强制 `bar_time <= available_at <= decision_time`，并验证交易时区、连续性与 OHLCV 关系，避免 fixture 自身形成未来信息泄漏。它不消费真实市场数据、不输出胜率或训练质量声明、不写入 runtime fill/ledger/outbox，也不能自动晋级。所有 candidate、样本和 reconcile 都是 non-authoritative，`execution_eligible=false`。TradingDatas 尚未完成最终 dataset ID、两根相邻 5 分钟 bar readback、日历与规格交接；在 [TRADINGDATAS_HANDOFF.md](TRADINGDATAS_HANDOFF.md) 验收通过前，仍不得启动 delayed-paper、scheduler 或任何 simulated-fill runtime。
 
 以下文件名只用于识别历史服务器安装态与退役依赖，不是当前推荐运行入口：
 
