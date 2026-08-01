@@ -87,12 +87,20 @@ The first catalog-validated profiles are:
   `cn.dataset.major_news`.
 
 Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
-identity must be present in the exact active catalog row. An optional dataset
-must also be in the injected client's explicit allow-list before it becomes a
-queryable profile. Query fields and operators are restricted to the frozen
-catalog allow-list. Every bounded query is replayed. Catalog drift,
-pagination/cursor failure, duplicate identity, or same-observation drift fails
-closed. An accepted query envelope must be
+identity must be present in the exact active catalog row. Each event profile
+stores the canonical seven-field `dataset_contract_fingerprint` and a separate
+TA-owned `consumer_profile_sha256`; its initial profile is catalog-derived, not
+an external fingerprint pin. A later read must match that passed-in profile's
+dataset fingerprint exactly. Global catalog-version changes are retained as
+expected/observed/drift audit evidence only: unrelated dataset changes do not
+block this consumer, while target-row contract, identity, missing-row, or
+duplicate-row drift fails closed. The injected runtime client must explicitly
+use `catalog_version_policy="evidence_only"`, so every query remains bound to
+the immediately observed catalog version. An optional dataset must also be in
+the injected client's explicit allow-list before it becomes a queryable profile.
+Query fields and operators are restricted to the frozen catalog allow-list.
+Every bounded query is replayed. Catalog drift, pagination/cursor failure,
+duplicate identity, or same-observation drift fails closed. An accepted query envelope must be
 `ready`, fresh, valid, non-degraded, and carry a complete provider-neutral
 lineage, receipt, `data_through`, and timezone-aware `observed_at`.
 `available_at` is exactly the envelope `observed_at`; the adapter never
@@ -111,7 +119,9 @@ entity, title/content/URL/source, evidence reference, receipt, lineage hashes,
 and deterministic completeness confidence. That confidence is not a
 calibrated probability. Restricted individual ChiNext, STAR, or Beijing
 symbols fail closed. Invalid evidence produces only an
-`AshareEvidenceAuditRecord`; it cannot become a feature, candidate, trained
+`AshareEvidenceAuditRecord`. Both accepted snapshots and audit rejections retain
+expected/observed catalog-version evidence, derived drift state, and the two
+profile hashes. It cannot become a feature, candidate, trained
 sample, order, or promotion input.
 
 `SentimentEvidenceSnapshot` applies a transparent keyword baseline and an

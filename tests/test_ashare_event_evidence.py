@@ -15,6 +15,7 @@ from Ashare.event_evidence import (
     PAUSED_DATASET_IDS,
     PRIMARY_DATASET_IDS,
     AshareEvidenceAuditLedger,
+    AshareEvidenceAuditRecord,
     AshareEvidenceContractError,
     TradingDatasAshareEvidencePort,
     bind_shadow_decision,
@@ -22,6 +23,7 @@ from Ashare.event_evidence import (
     build_sentiment_snapshot,
 )
 from shared.data.sharedsignals_v1 import (
+    CatalogEnvelope,
     HTTPResponse,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
@@ -50,8 +52,10 @@ def _catalog_row(
     active: bool = True,
     fields: list[str] | None = None,
     max_page_size: int = 2,
+    identity_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     names = fields or GENERIC_FIELDS
+    identities = identity_fields or _fixture_identity_fields(dataset_id, names)
     return {
         "dataset_id": dataset_id,
         "schema_major": 1,
@@ -61,8 +65,38 @@ def _catalog_row(
             name: ["eq", "in", "gte", "lte", "between"] for name in names
         },
         "limits": {"max_page_size": max_page_size},
+        "identity_fields": identities,
         "availability": {"activation_states": ["active" if active else "paused"]},
     }
+
+
+def _fixture_identity_fields(dataset_id: str, fields: list[str]) -> list[str]:
+    if dataset_id in PAUSED_DATASET_IDS:
+        return ["event_id"]
+    candidates = {
+        "cn.dataset.anns_d": (("event_id",), ("ann_date", "ts_code", "url")),
+        "cn.dataset.cctv_news": (("event_id",), ("date", "title")),
+        "cn.dataset.irm_qa_sh": (("event_id",), ("ts_code", "pub_time", "q")),
+        "cn.dataset.irm_qa_sz": (("event_id",), ("ts_code", "pub_time", "q")),
+        "cn.dataset.research_report": (
+            ("event_id",),
+            ("trade_date", "url"),
+            ("trade_date", "ts_code", "inst_csname", "title"),
+        ),
+        "cn.dataset.disclosure_date": (
+            ("event_id",),
+            ("ts_code", "end_date", "ann_date"),
+        ),
+        "cn.dataset.report_rc": (
+            ("event_id",),
+            ("ts_code", "report_date", "report_title", "org_name"),
+        ),
+        "cn.dataset.broker_recommend": (("event_id",), ("month", "broker", "ts_code")),
+        "cn.dataset.stk_surv": (("event_id",), ("ts_code", "surv_date", "rece_org")),
+    }[dataset_id]
+    return list(
+        next(candidate for candidate in candidates if set(candidate) <= set(fields))
+    )
 
 
 def _catalog_rows(
@@ -129,6 +163,8 @@ class _Transport:
         metadata: dict[str, Any] | None = None,
         query_status: int = 200,
         replay_drift: bool = False,
+        catalog_responses: list[tuple[str, list[dict[str, Any]]]] | None = None,
+        query_catalog_versions: list[str] | None = None,
     ) -> None:
         self.catalog_rows = catalog_rows or _catalog_rows()
         self.rows_by_dataset = rows_by_dataset or {
@@ -138,19 +174,34 @@ class _Transport:
         self.metadata = metadata or _metadata()
         self.query_status = query_status
         self.replay_drift = replay_drift
+        self.catalog_responses = catalog_responses
+        self.query_catalog_versions = query_catalog_versions or []
         self.calls: list[dict[str, Any]] = []
         self._traversal_by_dataset: dict[str, int] = {}
+        self._catalog_call_count = 0
+        self._query_call_count = 0
+        self._current_catalog_version = CATALOG
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(copy.deepcopy(kwargs))
         if kwargs["method"] == "GET":
+            if self.catalog_responses:
+                index = min(
+                    self._catalog_call_count,
+                    len(self.catalog_responses) - 1,
+                )
+                catalog_version, catalog_rows = self.catalog_responses[index]
+            else:
+                catalog_version, catalog_rows = CATALOG, self.catalog_rows
+            self._catalog_call_count += 1
+            self._current_catalog_version = catalog_version
             return HTTPResponse(
                 200,
                 {
                     "api_version": "v1",
-                    "catalog_version": CATALOG,
+                    "catalog_version": catalog_version,
                     "request_id": f"catalog-{len(self.calls)}",
-                    "data": copy.deepcopy(self.catalog_rows),
+                    "data": copy.deepcopy(catalog_rows),
                 },
             )
         if self.query_status != 200:
@@ -174,11 +225,19 @@ class _Transport:
             page[0]["title"] = f"{page[0]['title']} replay-drift"
         next_index = index + len(page)
         next_cursor = f"{traversal}:{next_index}" if next_index < len(rows) else None
+        query_catalog_version = (
+            self.query_catalog_versions[
+                min(self._query_call_count, len(self.query_catalog_versions) - 1)
+            ]
+            if self.query_catalog_versions
+            else self._current_catalog_version
+        )
+        self._query_call_count += 1
         return HTTPResponse(
             200,
             {
                 "api_version": "v1",
-                "catalog_version": CATALOG,
+                "catalog_version": query_catalog_version,
                 "request_id": f"query-{len(self.calls)}",
                 "dataset_id": dataset_id,
                 "data": page,
@@ -186,6 +245,37 @@ class _Transport:
                 "metadata": copy.deepcopy(self.metadata),
             },
         )
+
+
+class _ManualCatalogClient(SharedSignalsV1Client):
+    """Fixture-only client for adapter tests below the generic catalog parser."""
+
+    def __init__(
+        self,
+        transport: _Transport,
+        catalogs: list[CatalogEnvelope],
+    ) -> None:
+        super().__init__(_client(transport).config, transport=transport)
+        self._catalogs = list(catalogs)
+
+    def get_catalog(self) -> CatalogEnvelope:
+        if not self._catalogs:
+            raise AssertionError("fixture catalog exhausted")
+        catalog = self._catalogs.pop(0)
+        self._observed_catalog_version = catalog.catalog_version
+        return catalog
+
+
+def _catalog_envelope(
+    catalog_version: str,
+    rows: list[dict[str, Any]],
+) -> CatalogEnvelope:
+    return CatalogEnvelope(
+        api_version="v1",
+        catalog_version=catalog_version,
+        request_id=f"fixture-{catalog_version}",
+        data=tuple(rows),
+    )
 
 
 def _client(
@@ -200,6 +290,7 @@ def _client(
             dataset_ids=configured_ids
             or frozenset((*PRIMARY_DATASET_IDS, *OPTIONAL_DATASET_IDS)),
             access_policy_id="ashare-event-fixture",
+            catalog_version_policy="evidence_only",
             max_limit=100,
             cache_ttl_seconds=0,
         ),
@@ -232,6 +323,43 @@ def test_profile_set_comes_only_from_catalog_and_never_uses_paused_fallbacks() -
     assert profiles.catalog_route == FIXED_CATALOG_ROUTE == "GET /v1/catalog"
     assert all(call["method"] == "GET" for call in transport.calls)
     assert audit.records() == ()
+
+
+def test_unrelated_catalog_duplicate_does_not_block_event_profile_freeze() -> None:
+    unrelated = _catalog_row(
+        "cn.dataset.unrelated",
+        fields=["id"],
+        identity_fields=["id"],
+    )
+    transport = _Transport()
+    client = _ManualCatalogClient(
+        transport,
+        [_catalog_envelope(CATALOG, [*_catalog_rows(), unrelated, unrelated])],
+    )
+
+    profiles = TradingDatasAshareEvidencePort(client).freeze_profiles(
+        audit_ledger=AshareEvidenceAuditLedger()
+    )
+
+    assert set(PRIMARY_DATASET_IDS).issubset(profiles.by_dataset)
+
+
+def test_audit_catalog_drift_is_derived_and_rejects_forged_value() -> None:
+    with pytest.raises(
+        AshareEvidenceContractError,
+        match="ashare_evidence_audit_catalog_drift_mismatch",
+    ):
+        AshareEvidenceAuditRecord(
+            reason_code="fixture_rejection",
+            dataset_id="catalog",
+            expected_catalog_version="expected-v1",
+            observed_catalog_version="observed-v2",
+            catalog_version_drift=False,
+            dataset_contract_fingerprint=None,
+            consumer_profile_sha256=None,
+            decision_time=DECISION_TIME,
+            rejected_payload_sha256="0" * 64,
+        )
 
 
 def test_missing_optional_profiles_are_explicit_degradation_not_fallback() -> None:
@@ -527,6 +655,184 @@ def test_event_snapshot_maps_provider_row_and_binds_envelope_availability() -> N
         "POST",
         "POST",
     ]
+
+
+def test_unrelated_global_catalog_drift_passes_with_target_fingerprint_binding() -> (
+    None
+):
+    initial_rows = _catalog_rows()
+    current_rows = copy.deepcopy(initial_rows)
+    current_rows.append(
+        _catalog_row(
+            "cn.dataset.unrelated",
+            fields=["id"],
+            identity_fields=["id"],
+        )
+    )
+    transport = _Transport(
+        catalog_responses=[
+            (CATALOG, initial_rows),
+            ("fixture-global-catalog-v2", current_rows),
+        ]
+    )
+    port, profile, audit, _ = _profile_and_port(transport)
+
+    snapshot = port.load_event_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+    )
+
+    assert snapshot.expected_catalog_version == CATALOG
+    assert snapshot.observed_catalog_version == "fixture-global-catalog-v2"
+    assert snapshot.catalog_version_drift is True
+    assert snapshot.dataset_contract_fingerprint == profile.dataset_contract_fingerprint
+    assert snapshot.consumer_profile_sha256 == profile.consumer_profile_sha256
+    assert audit.records() == ()
+
+
+def test_catalog_to_query_version_drift_fails_closed_with_full_audit_evidence() -> None:
+    rows = _catalog_rows()
+    transport = _Transport(
+        catalog_responses=[(CATALOG, rows), ("fixture-global-catalog-v2", rows)],
+        query_catalog_versions=["fixture-query-catalog-v3"],
+    )
+    port, profile, audit, _ = _profile_and_port(transport)
+
+    with pytest.raises(
+        AshareEvidenceContractError,
+        match="ashare_evidence_query_failed",
+    ):
+        port.load_event_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+        )
+
+    record = audit.records()[-1]
+    assert record.expected_catalog_version == CATALOG
+    assert record.observed_catalog_version == "fixture-global-catalog-v2"
+    assert record.catalog_version_drift is True
+    assert record.dataset_contract_fingerprint == profile.dataset_contract_fingerprint
+    assert record.consumer_profile_sha256 == profile.consumer_profile_sha256
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "dataset_id",
+        "schema_major",
+        "default_fields",
+        "filter_operators",
+        "default_order",
+        "limits",
+        "identity_fields",
+    ),
+)
+def test_target_catalog_contract_seven_field_drift_fails_before_query(
+    field_name: str,
+) -> None:
+    initial_rows = _catalog_rows()
+    current_rows = copy.deepcopy(initial_rows)
+    target = next(
+        row for row in current_rows if row["dataset_id"] == "cn.dataset.anns_d"
+    )
+    replacements: dict[str, Any] = {
+        "dataset_id": "cn.dataset.anns_d.drifted",
+        "schema_major": 2,
+        "default_fields": [*target["default_fields"], "contract_drift"],
+        "filter_operators": {
+            **target["filter_operators"],
+            "event_id": ["eq"],
+        },
+        "default_order": ["event_id:desc"],
+        "limits": {"max_page_size": 1},
+        "identity_fields": ["ts_code", "event_id"],
+    }
+    target[field_name] = replacements[field_name]
+    transport = _Transport(
+        catalog_responses=[
+            (CATALOG, initial_rows),
+            ("fixture-global-catalog-v2", current_rows),
+        ]
+    )
+    port, profile, audit, _ = _profile_and_port(transport)
+
+    with pytest.raises(AshareEvidenceContractError):
+        port.load_event_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+        )
+
+    assert not [call for call in transport.calls if call["method"] == "POST"]
+    assert audit.records()[-1].dataset_contract_fingerprint == (
+        profile.dataset_contract_fingerprint
+    )
+
+
+def test_catalog_identity_order_mismatch_fails_before_any_query() -> None:
+    rows = _catalog_rows()
+    target = next(row for row in rows if row["dataset_id"] == "cn.dataset.anns_d")
+    target["identity_fields"] = ["ts_code", "event_id"]
+    transport = _Transport(catalog_rows=rows)
+
+    with pytest.raises(
+        AshareEvidenceContractError,
+        match="ashare_evidence_catalog_identity_mismatch",
+    ):
+        TradingDatasAshareEvidencePort(_client(transport)).freeze_profiles(
+            audit_ledger=AshareEvidenceAuditLedger()
+        )
+
+    assert not [call for call in transport.calls if call["method"] == "POST"]
+
+
+@pytest.mark.parametrize("mode", ("missing", "duplicate"))
+def test_target_catalog_row_missing_or_duplicate_fails_before_query(mode: str) -> None:
+    initial_rows = _catalog_rows()
+    current_rows = copy.deepcopy(initial_rows)
+    if mode == "missing":
+        current_rows = [
+            row for row in current_rows if row["dataset_id"] != "cn.dataset.anns_d"
+        ]
+    else:
+        current_rows.append(
+            copy.deepcopy(
+                next(
+                    row
+                    for row in current_rows
+                    if row["dataset_id"] == "cn.dataset.anns_d"
+                )
+            )
+        )
+    transport = _Transport()
+    client = _ManualCatalogClient(
+        transport,
+        [
+            _catalog_envelope(CATALOG, initial_rows),
+            _catalog_envelope("fixture-global-catalog-v2", current_rows),
+        ],
+    )
+    port = TradingDatasAshareEvidencePort(client)
+    audit = AshareEvidenceAuditLedger()
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset["cn.dataset.anns_d"]
+
+    with pytest.raises(
+        AshareEvidenceContractError,
+        match="ashare_evidence_dataset_catalog_row_missing",
+    ):
+        port.load_event_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+        )
+
+    assert not [call for call in transport.calls if call["method"] == "POST"]
 
 
 def test_pagination_is_bounded_and_replayed_with_exact_identity() -> None:
