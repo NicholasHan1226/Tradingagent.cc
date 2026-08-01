@@ -1,4 +1,4 @@
-"""Read-only KPI and acceptance evidence for the active G4 round-trip epoch.
+"""Read-only KPI and acceptance evidence for versioned round-trip epochs.
 
 The report separates service reliability, audited simulation samples, and
 simulated capital outcomes.  It never interprets a simulated PnL as strategy
@@ -23,7 +23,9 @@ from Crypto.delayed_paper_ledger import (
     _read_json,
 )
 from Crypto.delayed_paper_round_trip_epoch import (
+    ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
     ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
+    ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
     CryptoRoundTripEpochError,
     load_round_trip_epoch_manifest,
     prepare_round_trip_epoch_candidate,
@@ -373,7 +375,12 @@ def _manifest_path(value: Path | str) -> Path:
     path = Path(value)
     if (
         path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
-        or not path.name.startswith("crypto-delayed-paper-round-trip-epoch-g4-")
+        or not path.name.startswith(
+            (
+                "crypto-delayed-paper-round-trip-epoch-g4-",
+                "crypto-delayed-paper-round-trip-epoch-g5-",
+            )
+        )
         or path.suffix != ".json"
     ):
         raise CryptoRoundTripReportError("round_trip_report_manifest_path_invalid")
@@ -383,12 +390,15 @@ def _manifest_path(value: Path | str) -> Path:
 def run_crypto_delayed_paper_round_trip_acceptance_once(
     *, epoch_manifest: Path | str, now: datetime | None = None
 ) -> dict[str, Any]:
-    """Bind one read-only acceptance evaluation to the selected G4 epoch."""
+    """Bind one read-only acceptance evaluation to a selected G4/G5 epoch."""
 
     manifest_path = _manifest_path(epoch_manifest)
     try:
         context = load_round_trip_epoch_manifest(manifest_path)
-        if context.epoch_generation != 4:
+        if context.epoch_generation not in {
+            ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
+            ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+        }:
             raise CryptoRoundTripReportError(
                 "round_trip_report_epoch_generation_invalid"
             )
@@ -416,7 +426,9 @@ def run_crypto_delayed_paper_round_trip_acceptance_once(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Read Crypto G4 acceptance KPIs")
+    parser = argparse.ArgumentParser(
+        description="Read Crypto round-trip acceptance KPIs"
+    )
     parser.add_argument("--epoch-manifest", type=Path, required=True)
     args = parser.parse_args(argv)
     try:

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import Crypto.delayed_paper_round_trip_report as report_module
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_report import (
     CryptoRoundTripReportError,
@@ -12,6 +14,7 @@ from Crypto.delayed_paper_round_trip_report import (
     evaluate_crypto_delayed_paper_round_trip_acceptance,
     main,
     _continuity_segments,
+    _manifest_path,
     _slot_summary,
     run_crypto_delayed_paper_round_trip_acceptance_once,
 )
@@ -200,6 +203,56 @@ def test_acceptance_runner_rejects_free_manifest_path(tmp_path: Path) -> None:
         run_crypto_delayed_paper_round_trip_acceptance_once(
             epoch_manifest=tmp_path / "g4.json"
         )
+
+
+def test_acceptance_manifest_allows_versioned_g5_only_after_g4(tmp_path: Path) -> None:
+    directory = report_module.ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+    g5 = directory / "crypto-delayed-paper-round-trip-epoch-g5-recovery.json"
+    assert _manifest_path(g5) == g5
+
+    with pytest.raises(
+        CryptoRoundTripReportError, match="round_trip_report_manifest_path_invalid"
+    ):
+        _manifest_path(directory / "crypto-delayed-paper-round-trip-epoch-g3-old.json")
+
+
+def test_g5_acceptance_runner_returns_not_ready_without_mutating_epoch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    directory = report_module.ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+    manifest = directory / "crypto-delayed-paper-round-trip-epoch-g5-recovery.json"
+    identity = tmp_path / ".round_trip_epoch_identity.json"
+    identity.write_bytes(b"g5-identity\n")
+    context = SimpleNamespace(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g5-recovery",
+        epoch_generation=5,
+        manifest_sha256="a" * 64,
+        output_root=tmp_path,
+    )
+    prepared = SimpleNamespace(identity_path=identity, output_root=tmp_path)
+    monkeypatch.setattr(
+        report_module, "load_round_trip_epoch_manifest", lambda _: context
+    )
+    monkeypatch.setattr(
+        report_module, "prepare_round_trip_epoch_candidate", lambda _: prepared
+    )
+    monkeypatch.setattr(report_module, "_existing_root", lambda _: None)
+    monkeypatch.setattr(
+        report_module,
+        "evaluate_crypto_delayed_paper_round_trip_acceptance",
+        lambda **_: {
+            "status": "not_ready",
+            "gate_reason_codes": ["insufficient_completed_5m_windows"],
+        },
+    )
+
+    result = run_crypto_delayed_paper_round_trip_acceptance_once(
+        epoch_manifest=manifest
+    )
+
+    assert result["status"] == "not_ready"
+    assert result["epoch_generation"] == 5
+    assert identity.read_bytes() == b"g5-identity\n"
 
 
 def test_module_cli_executes_the_fail_closed_acceptance_path(tmp_path: Path) -> None:

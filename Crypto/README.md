@@ -435,6 +435,8 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 三组 unit 各自只读取固定 G5 环境文件；core 仅能写唯一 G5 root，同时只读 G4 与
 旧 G2 根以验证 predecessor anchors。仓库默认不启用任何 G5 timer；发布侧必须在
 one-shot、同槽 replay、资本/持仓/订单/receipt 守恒与零重复 fill 验收后才可启用。
+G5 acceptance 仍只报告 `not_ready` 或 `eligible`，并沿用 288 根连续 closed-5m
+completion 的 learning maturity 门槛；它不因 epoch generation 改变而放宽门禁。
 
 ## Outage epoch restart 候选
 
