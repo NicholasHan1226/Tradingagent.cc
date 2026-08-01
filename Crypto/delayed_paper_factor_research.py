@@ -34,6 +34,7 @@ from Crypto.factor_research import (
     evaluate_factor_hypotheses,
 )
 from Crypto.fixture_sim.contracts import _assert_simulation_only
+from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
 
 FACTOR_PROJECTION_CONTRACT = "tradingagent.crypto.factor_projection.v1"
@@ -41,7 +42,7 @@ FACTOR_PROJECTION_RECEIPT_CONTRACT = "tradingagent.crypto.factor_projection_rece
 FACTOR_PROJECTION_CHECKPOINT_CONTRACT = (
     "tradingagent.crypto.factor_projection_checkpoint.v1"
 )
-MINIMUM_CONTINUOUS_COMPLETIONS = 288
+OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS = 288
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
 _HORIZONS = (60, 240, 720, 1440)
 _MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -98,6 +99,43 @@ def _result(*, status: str, **fields: Any) -> dict[str, Any]:
         "manual_review_required": True,
         **fields,
         **_non_authority_fields(),
+    }
+
+
+def _segmented_learning_policy() -> dict[str, Any]:
+    """Load only the Crypto-owned interpretation of the shared readiness rule."""
+
+    try:
+        contract = load_evidence_readiness_contract()
+        policy = contract.market_policies["crypto"]
+        maturity = policy["operational_maturity"]
+        segmented = policy["segmented_learning"]
+    except (KeyError, ValueError, TypeError) as exc:
+        raise CryptoFactorProjectionError(
+            "factor_projection_readiness_contract_invalid"
+        ) from exc
+    if (
+        contract.safety["simulation_only"] is not True
+        or contract.safety["real_trading_enabled"] is not False
+        or contract.safety["automatic_promotion_enabled"] is not False
+        or maturity.get("minimum_continuous_slots")
+        != OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS
+        or maturity.get("purpose") != "automatic_runtime_maturity"
+        or segmented.get("allowed") is not True
+        or segmented.get("gap_crossing_allowed") is not False
+        or segmented.get("automatic_promotion_allowed") is not False
+    ):
+        raise CryptoFactorProjectionError(
+            "factor_projection_readiness_contract_invalid"
+        )
+    return {
+        "contract_id": contract.contract_id,
+        "operational_maturity_minimum_continuous_slots": maturity[
+            "minimum_continuous_slots"
+        ],
+        "segmented_learning_allowed": segmented["allowed"],
+        "gap_crossing_allowed": segmented["gap_crossing_allowed"],
+        "automatic_promotion_allowed": segmented["automatic_promotion_allowed"],
     }
 
 
@@ -326,6 +364,28 @@ def _sources(
     return store, rows
 
 
+def _latest_source(
+    root: Path,
+) -> tuple[CryptoDelayedPaperObservationStore, Mapping[str, Any], dict[str, Any]]:
+    """Read only the current durable completion for routine projection work."""
+
+    try:
+        store = CryptoDelayedPaperObservationStore(root)
+        checkpoint = store.runtime_checkpoint_read_only()
+        state = store._observation_state_read_only()
+    except (CryptoDelayedPaperLedgerError, OSError, ValueError) as exc:
+        raise CryptoFactorProjectionError("factor_projection_core_invalid") from exc
+    if checkpoint.get("pending") is not None:
+        raise CryptoFactorProjectionError("factor_projection_core_pending")
+    observation_id = state.get("latest_observation_id")
+    if not isinstance(observation_id, str) or not observation_id:
+        raise CryptoFactorProjectionError("factor_projection_core_inventory_invalid")
+    completion_count = checkpoint.get("completion_count")
+    if isinstance(completion_count, bool) or not isinstance(completion_count, int):
+        raise CryptoFactorProjectionError("factor_projection_core_inventory_invalid")
+    return store, checkpoint, _source(store, observation_id)
+
+
 def _latest_continuous(rows: list[dict[str, Any]]) -> int:
     count = 0
     expected: datetime | None = None
@@ -336,6 +396,29 @@ def _latest_continuous(rows: list[dict[str, Any]]) -> int:
         count += 1
         expected = slot - timedelta(minutes=5)
     return count
+
+
+def _segment_ids(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Assign a stable identifier to every contiguous completion segment."""
+
+    result: dict[str, str] = {}
+    previous: datetime | None = None
+    segment_start: datetime | None = None
+    for source in rows:
+        observation = source["observation"]
+        observation_id = observation.get("observation_id")
+        slot = _market_slot(observation.get("market_slot"))
+        if not isinstance(observation_id, str) or not observation_id:
+            raise CryptoFactorProjectionError("factor_projection_source_invalid")
+        if previous is None or slot - previous != timedelta(minutes=5):
+            segment_start = slot
+        if segment_start is None:
+            raise CryptoFactorProjectionError("factor_projection_segment_invalid")
+        result[observation_id] = "crypto-5m-segment-" + segment_start.strftime(
+            "%Y%m%dT%H%M%SZ"
+        )
+        previous = slot
+    return result
 
 
 def _factor_input(
@@ -377,7 +460,7 @@ def _factor_input(
     return converted, evidence, close
 
 
-def _record(source: Mapping[str, Any]) -> dict[str, Any]:
+def _record(source: Mapping[str, Any], *, segment_id: str) -> dict[str, Any]:
     observation = source["observation"]
     snapshots: dict[str, dict[str, Any]] = {}
     prices: dict[str, str] = {}
@@ -390,6 +473,10 @@ def _record(source: Mapping[str, Any]) -> dict[str, Any]:
             evidence=evidence,
         )
         prices[symbol] = price
+    if not isinstance(segment_id, str) or not segment_id.startswith(
+        "crypto-5m-segment-"
+    ):
+        raise CryptoFactorProjectionError("factor_projection_segment_invalid")
     record = {
         "contract": FACTOR_PROJECTION_CONTRACT,
         "event_type": "factor_projection",
@@ -399,6 +486,7 @@ def _record(source: Mapping[str, Any]) -> dict[str, Any]:
             "observation_content_sha256"
         ),
         "market_slot": observation.get("market_slot"),
+        "segment_id": segment_id,
         "snapshots": snapshots,
         "cross_asset": build_cross_asset_features(
             snapshots=[snapshots["BTCUSDT"], snapshots["ETHUSDT"]]
@@ -461,6 +549,28 @@ def _read_checkpoints(evolution: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _latest_checkpoint(evolution: Path) -> tuple[int, dict[str, Any] | None]:
+    """Bounded routine checkpoint read; daily full scrub validates the full chain."""
+
+    paths = sorted((evolution / "checkpoints").glob("*.json"))
+    if not paths:
+        return 0, None
+    sequence = len(paths)
+    path = paths[-1]
+    row = _parse_canonical(path, reason="factor_projection_checkpoint_invalid")
+    material = dict(row)
+    claimed = material.pop("checkpoint_sha256", None)
+    if (
+        path.name != f"{sequence:012d}.json"
+        or row.get("contract") != FACTOR_PROJECTION_CHECKPOINT_CONTRACT
+        or row.get("sequence") != sequence
+        or claimed != _sha256(material)
+        or any(row.get(key) != value for key, value in _non_authority_fields().items())
+    ):
+        raise CryptoFactorProjectionError("factor_projection_checkpoint_invalid")
+    return sequence, row
+
+
 def _labels(
     root: Path,
     record: Mapping[str, Any],
@@ -489,6 +599,8 @@ def _labels(
                 raise CryptoFactorProjectionError(
                     "factor_projection_future_source_invalid"
                 )
+            if target_record.get("segment_id") != record.get("segment_id"):
+                continue
             _, evidence, exit_price = _factor_input(target_source, symbol)
             label = build_forward_label(
                 snapshot=snapshot,
@@ -508,21 +620,16 @@ def _labels(
 def run_crypto_delayed_paper_factor_research_full_scrub(
     *, output_root: Path | str
 ) -> dict[str, Any]:
-    """Append deterministic factor records only after a continuous 24-hour core run."""
+    """Full-scrub independent contiguous segments without crossing a gap."""
 
     _assert_simulation_only()
     root = Path(output_root)
+    policy = _segmented_learning_policy()
     _, sources = _sources(root)
     if not sources:
         return _result(status="deferred_core_pending")
     continuous = _latest_continuous(sources)
-    if continuous < MINIMUM_CONTINUOUS_COMPLETIONS:
-        return _result(
-            status="deferred_continuity_gate",
-            completion_count=len(sources),
-            latest_continuous_completion_count=continuous,
-            minimum_continuous_completion_count=MINIMUM_CONTINUOUS_COMPLETIONS,
-        )
+    segments = _segment_ids(sources)
     try:
         evolution = _ensure_root(root)
         with _lock(evolution):
@@ -535,7 +642,7 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
             recovered = 0
             for sequence, source in enumerate(sources, start=1):
                 observation_id = str(source["observation"]["observation_id"])
-                record = _record(source)
+                record = _record(source, segment_id=segments[observation_id])
                 receipt = _receipt(record)
                 paths = _paths(root, observation_id)
                 if sequence <= len(checkpoints) and any(
@@ -612,6 +719,125 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
         label_count=label_count,
         hypothesis_report=report,
         checkpoint_head_sha256=checkpoints[-1]["checkpoint_sha256"],
+        latest_continuous_completion_count=continuous,
+        operational_maturity=continuous
+        >= policy["operational_maturity_minimum_continuous_slots"],
+        segmented_learning_policy=policy,
+    )
+
+
+def run_crypto_delayed_paper_factor_research_incremental(
+    *, output_root: Path | str
+) -> dict[str, Any]:
+    """Append one new unlabelled observation after a verified full-scrub base.
+
+    This routine deliberately reads only the current core checkpoint, its
+    current completion, and the preceding projected record. It never queries
+    TradingDatas and never retroactively scans history for labels; daily full
+    scrub performs that complete semantic validation and label completion.
+    """
+
+    _assert_simulation_only()
+    root = Path(output_root)
+    policy = _segmented_learning_policy()
+    _, checkpoint, source = _latest_source(root)
+    core_count = checkpoint["completion_count"]
+    evolution = _root(root)
+    if not evolution.exists():
+        return _result(
+            status="full_scrub_required",
+            completion_count=core_count,
+            label_count=0,
+            reason="factor_projection_checkpoint_missing",
+            segmented_learning_policy=policy,
+        )
+    try:
+        with _lock(evolution):
+            sequence, previous_checkpoint = _latest_checkpoint(evolution)
+            observation = source["observation"]
+            observation_id = str(observation["observation_id"])
+            source_completion = source["completion_sha256"]
+            if core_count < sequence:
+                raise CryptoFactorProjectionError(
+                    "factor_projection_checkpoint_orphaned"
+                )
+            if core_count == sequence:
+                if (
+                    previous_checkpoint is None
+                    or previous_checkpoint.get("observation_id") != observation_id
+                    or previous_checkpoint.get("source_completion_sha256")
+                    != source_completion
+                ):
+                    raise CryptoFactorProjectionError(
+                        "factor_projection_incremental_source_mismatch"
+                    )
+                return _result(
+                    status="up_to_date",
+                    completion_count=core_count,
+                    label_count=0,
+                    segmented_learning_policy=policy,
+                )
+            if core_count != sequence + 1:
+                return _result(
+                    status="full_scrub_required",
+                    completion_count=core_count,
+                    checkpoint_count=sequence,
+                    label_count=0,
+                    reason="factor_projection_incremental_backlog",
+                    segmented_learning_policy=policy,
+                )
+            if previous_checkpoint is None:
+                segment_id = "crypto-5m-segment-" + _market_slot(
+                    observation["market_slot"]
+                ).strftime("%Y%m%dT%H%M%SZ")
+            else:
+                previous_record = _parse_canonical(
+                    _paths(root, str(previous_checkpoint["observation_id"]))["record"],
+                    reason="factor_projection_record_invalid",
+                )
+                previous_slot = _utc(
+                    previous_record.get("market_slot"),
+                    reason="factor_projection_record_invalid",
+                )
+                current_slot = _market_slot(observation["market_slot"])
+                existing_segment = previous_record.get("segment_id")
+                if not isinstance(existing_segment, str):
+                    raise CryptoFactorProjectionError(
+                        "factor_projection_segment_invalid"
+                    )
+                segment_id = (
+                    existing_segment
+                    if current_slot - previous_slot == timedelta(minutes=5)
+                    else "crypto-5m-segment-" + current_slot.strftime("%Y%m%dT%H%M%SZ")
+                )
+            record = _record(source, segment_id=segment_id)
+            receipt = _receipt(record)
+            paths = _paths(root, observation_id)
+            _write_immutable(paths["record"], record)
+            _write_immutable(paths["receipt"], receipt)
+            new_checkpoint = _checkpoint(
+                sequence + 1,
+                previous_checkpoint["checkpoint_sha256"]
+                if previous_checkpoint is not None
+                else None,
+                receipt,
+            )
+            _write_immutable(
+                evolution / "checkpoints" / f"{sequence + 1:012d}.json",
+                new_checkpoint,
+            )
+    except CryptoFactorProjectionError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise CryptoFactorProjectionError(
+            "factor_projection_incremental_invalid"
+        ) from exc
+    return _result(
+        status="projected_incremental",
+        completion_count=core_count,
+        label_count=0,
+        label_status="observation_only_pending_daily_scrub",
+        segmented_learning_policy=policy,
     )
 
 
@@ -619,8 +845,10 @@ def factor_projection_exit_code(result: Mapping[str, Any]) -> int:
     if not isinstance(result, Mapping) or result.get("status") not in {
         "recovered",
         "scrubbed",
+        "projected_incremental",
+        "up_to_date",
+        "full_scrub_required",
         "deferred_core_pending",
-        "deferred_continuity_gate",
     }:
         return 2
     return (
@@ -635,7 +863,8 @@ def factor_projection_exit_code(result: Mapping[str, Any]) -> int:
 __all__ = [
     "CryptoFactorProjectionError",
     "FACTOR_PROJECTION_CONTRACT",
-    "MINIMUM_CONTINUOUS_COMPLETIONS",
+    "OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS",
     "factor_projection_exit_code",
+    "run_crypto_delayed_paper_factor_research_incremental",
     "run_crypto_delayed_paper_factor_research_full_scrub",
 ]

@@ -11,6 +11,7 @@ from Crypto.delayed_paper_factor_research import (
     CryptoFactorProjectionError,
     factor_projection_exit_code,
     run_crypto_delayed_paper_factor_research_full_scrub,
+    run_crypto_delayed_paper_factor_research_incremental,
 )
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_factor_research_worker import _validated_manifest_path
@@ -43,7 +44,7 @@ def _core_bytes(root: Path) -> dict[str, bytes]:
     }
 
 
-def test_factor_research_defers_before_24h_without_creating_research_state(
+def test_factor_research_projects_a_complete_segment_before_24h(
     tmp_path: Path,
 ) -> None:
     _complete(tmp_path)
@@ -51,19 +52,20 @@ def test_factor_research_defers_before_24h_without_creating_research_state(
 
     result = run_crypto_delayed_paper_factor_research_full_scrub(output_root=tmp_path)
 
-    assert result["status"] == "deferred_continuity_gate"
+    assert result["status"] == "recovered"
     assert result["latest_continuous_completion_count"] == 1
+    assert result["operational_maturity"] is False
+    assert result["segmented_learning_policy"]["gap_crossing_allowed"] is False
     assert result["execution_authority"] is False
     assert factor_projection_exit_code(result) == 0
     assert _core_bytes(tmp_path) == before
-    assert not (tmp_path / "evolution" / "factor_research").exists()
+    assert (tmp_path / "evolution" / "factor_research").is_dir()
 
 
 def test_full_scrub_is_idempotent_and_does_not_mutate_core(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     _complete(tmp_path)
-    monkeypatch.setattr(research, "MINIMUM_CONTINUOUS_COMPLETIONS", 1)
     before = _core_bytes(tmp_path)
 
     first = run_crypto_delayed_paper_factor_research_full_scrub(output_root=tmp_path)
@@ -89,11 +91,33 @@ def test_full_scrub_is_idempotent_and_does_not_mutate_core(
     assert len(list((root / "receipts").glob("*.json"))) == 1
 
 
-def test_full_scrub_fails_closed_for_tampered_factor_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_incremental_requires_a_full_scrub_then_is_idempotently_up_to_date(
+    tmp_path: Path,
 ) -> None:
     _complete(tmp_path)
-    monkeypatch.setattr(research, "MINIMUM_CONTINUOUS_COMPLETIONS", 1)
+    before = _core_bytes(tmp_path)
+
+    deferred = run_crypto_delayed_paper_factor_research_incremental(
+        output_root=tmp_path
+    )
+    assert deferred["status"] == "full_scrub_required"
+    assert deferred["label_count"] == 0
+    assert _core_bytes(tmp_path) == before
+
+    run_crypto_delayed_paper_factor_research_full_scrub(output_root=tmp_path)
+    after_scrub = _core_bytes(tmp_path)
+    result = run_crypto_delayed_paper_factor_research_incremental(output_root=tmp_path)
+
+    assert result["status"] == "up_to_date"
+    assert result["label_count"] == 0
+    assert factor_projection_exit_code(result) == 0
+    assert _core_bytes(tmp_path) == after_scrub
+
+
+def test_full_scrub_fails_closed_for_tampered_factor_record(
+    tmp_path: Path,
+) -> None:
+    _complete(tmp_path)
     run_crypto_delayed_paper_factor_research_full_scrub(output_root=tmp_path)
     record = next(
         (tmp_path / "evolution" / "factor_research" / "records").glob("*.json")
@@ -108,10 +132,9 @@ def test_full_scrub_fails_closed_for_tampered_factor_record(
 
 
 def test_full_scrub_fails_closed_for_missing_claimed_receipt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     _complete(tmp_path)
-    monkeypatch.setattr(research, "MINIMUM_CONTINUOUS_COMPLETIONS", 1)
     run_crypto_delayed_paper_factor_research_full_scrub(output_root=tmp_path)
     receipt = next(
         (tmp_path / "evolution" / "factor_research" / "receipts").glob("*.json")
@@ -172,9 +195,11 @@ def test_labels_only_bind_to_the_exact_later_observed_window(tmp_path: Path) -> 
     _complete(tmp_path)
     _, sources = research._sources(tmp_path)
     source = sources[0]
-    record = research._record(source)
+    record = research._record(source, segment_id="crypto-5m-segment-20260728T000000Z")
     future_source = _shift_source(source, 60)
-    future_record = research._record(future_source)
+    future_record = research._record(
+        future_source, segment_id="crypto-5m-segment-20260728T000000Z"
+    )
     research._ensure_root(tmp_path)
 
     label_count = research._labels(
@@ -193,3 +218,31 @@ def test_labels_only_bind_to_the_exact_later_observed_window(tmp_path: Path) -> 
     )
     assert label_count == 2
     assert {path.name.rsplit("-", 1)[-1] for path in labels} == {"60.json"}
+
+
+def test_labels_do_not_cross_a_completion_gap(tmp_path: Path) -> None:
+    _complete(tmp_path)
+    _, sources = research._sources(tmp_path)
+    source = sources[0]
+    record = research._record(source, segment_id="crypto-5m-segment-20260728T000000Z")
+    future_source = _shift_source(source, 60)
+    future_record = research._record(
+        future_source, segment_id="crypto-5m-segment-20260728T010000Z"
+    )
+    research._ensure_root(tmp_path)
+
+    label_count = research._labels(
+        tmp_path,
+        record,
+        {
+            future_record["snapshots"]["BTCUSDT"]["market_slot"]: {
+                "record": future_record,
+                "source": future_source,
+            }
+        },
+    )
+
+    assert label_count == 0
+    assert not list(
+        (tmp_path / "evolution" / "factor_research" / "labels").glob("*.json")
+    )
