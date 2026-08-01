@@ -2,9 +2,11 @@
 
 ## Product position
 
-TradingAgent Front is a read-only observatory for an automated trading system. It explains what the system saw, how a process moved, what was written back, how the simulated portfolio changed, and where risk controls intervened. It never exposes order entry, queue mutation, capital controls, strategy editing, or account credentials.
+TradingAgent Front has two authority-separated products. Quant Core remains a read-only observatory for an automated trading system. TradingCopilot is a personal A-share decision workspace that may edit user-declared funds, holdings, watchlist and human intent only. Neither surface exposes order entry, queue mutation, quant capital controls, strategy editing, broker credentials or execution.
 
 The active desktop information architecture is `总览 / 收益 / 过程 / 持仓 / 风险 / 复盘`. The supported design-QA viewports are 1280×720 and 1440×900; mobile is intentionally deferred.
+
+TradingCopilot is selected with `?product=copilot`. Its anatomy is account declaration → watchlist → selected-stock evidence → support/opposition → final gate → human decision, with a source badge on every analysis. Desktop uses a three-column workbench and the compact mobile layout is supported at 390px.
 
 ## Design language
 
@@ -81,6 +83,7 @@ Secondary pages do not use `PageSummaryBoard`. Empty running state reveals recen
 - `src/hooks/useTerminalNavigation.ts`: URL and keyboard presentation state.
 - `src/components/workbench/`: overview workbench and result-tab selection.
 - `src/pages/ThemePage.tsx`: composition for the five secondary pages.
+- `src/pages/TradingCopilotPage.tsx`, `src/copilot/` and `src/styles/trading-copilot.css`: the human decision workspace, state contract and responsive visual system.
 - `src/App.css`: terminal tokens, canvas, grid and dense table rules.
 - `src/api/` and `src/server/`: backward-compatible read-only snapshot contract with optional sourced `marketPulses[]` and `marketPulseCoverage`; missing or degraded upstream evidence stays absent rather than becoming synthetic chart movement.
 

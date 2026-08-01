@@ -4,6 +4,15 @@ TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复�
 
 > 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。
 
+## 双产品定位
+
+本仓采用共享证据、分离 authority 的两层结构：
+
+- **TradingAgent Quant Core**：面向系统化量化，核心价值是全量一致扫描、可重复规则、多因子联合、组合级风险、执行纪律、成本控制和样本外迭代；分钟级只是可选运行频率，不是优势本身。当前仍是 simulation/shadow，不代表已证明 alpha 或已具备真实交易权限。
+- **TradingCopilot**：面向 Nicholas 的 A 股主观实盘辅助。网页允许手工维护申报资金、可用现金、持仓和关注股，并把支持买入、反对买入、最终判断、强度、触发与失效条件放在同一行动卡。最终决定永远由人作出，当前不连接券商。
+
+两者共享的是经过验证的只读研究证据，不共享账户、资本、订单、绩效或模型晋级。TradingCopilot 领域合同见 [TradingCopilot/README.md](TradingCopilot/README.md)，网页入口为 `/?product=copilot`。
+
 ## 数据接入与迁移边界
 
 - **产品 identity**：数据平台统一称为 TradingDatas（GitHub `NicholasHan1226/TradingDatas`；本地 `/Users/nicholashan/Projects/Finance/TradingDatas`）。旧 SharedSignals 名称只允许出现在 immutable wire/schema ID、兼容代码符号/文件名和明确标注的退役历史中。

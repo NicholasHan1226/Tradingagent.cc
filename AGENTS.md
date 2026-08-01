@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-- TradingAgent 负责候选、预测、组合决策、风险门禁、模拟执行、样本、复盘和只读看板。
+- TradingAgent Quant Core 负责候选、预测、组合决策、风险门禁、模拟执行、样本与复盘；长期目标是在各市场合规且逐项获授权后运行可审计的量化交易。`TradingCopilot/` 是同仓、独立 namespace 的 A 股人工决策辅助产品域，不是第二套量化系统。
 - TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。认证只允许最终HTTP transport从仓外、绝对路径、可信owner、精确`0600`且无symlink/硬链接别名的TA专用token file注入Bearer header；禁止明文token环境变量、manifest/日志/回执泄露、401/403重试和任何legacy/provider fallback。TradingDatas fresh handoff 前只允许 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID。
 - MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
 - 当前目标是验证工程闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。
@@ -26,7 +26,7 @@
 - 任一真实资金、live broker、direct execution、真实账户或签名密钥标记必须 fail closed，不能静默降级为 simulated/shadow。
 - A股首 1–2 周只跑模拟；第 5、10 个交易日是人工复核点，不是自动实盘日期。
 - 自动 champion 晋级、自动风险扩张和自动 live transition 永久关闭。即使 `promotion_evidence_ready=true`，也只表示证据检查通过，不构成授权。
-- 未来 A股只可能在 Nicholas 明确确认后进入 20%–30% 初始敞口的人工试运行。拟议“TA 信号 → 邮件 → Nicholas 在同花顺人工复核下单”仍是外部设计，未在本仓实现；不得发送邮件或连接券商。
+- 未来量化 A股实盘只能在 named strategy、数据、样本外、成本、风控、账户、券商适配和合规门禁分别通过且 Nicholas 明确确认后启用；自动晋级和自动切实盘继续永久关闭。TradingCopilot 的人工计划与个人申报账户不构成量化实盘过渡，也不得发送邮件或连接券商。
 - CNFutures 长期模拟，无实盘日期，不绑定 A股进度。
 
 ## A股样本与组合执行
@@ -72,7 +72,8 @@
 - A股 server-local 执行：由 verified current capital snapshot 的 `execution_lineage_id` 派生 `shared/logs/execution_lineages/<execution_lineage_id>/`；固定日期 lineage 与 `shared/logs/local_sim/` 仅可作历史审计。
 - `signals/` 是旧执行队列兼容路径；V1 fixture/day-loop 使用显式隔离 root，不得把它当成 current authority fallback。
 - A股样本与复盘：`shared/review/ashare/`
-- `front/` 是唯一活跃只读前端。All Markets 只可汇总非货币计数；不同市场的资本、权益、PnL、收益率和回撤绝不聚合。
+- TradingCopilot 人工状态：`runtime/tradingcopilot/state-events.jsonl`（仓外运行态、append-only）；合同位于 `TradingCopilot/`。它只能保存用户申报资金/持仓、关注股和人工意图，禁止写量化资本、订单、样本或晋级事实。
+- `front/` 是唯一活跃前端。Quant Core 仍为只读；仅 `/api/trading-copilot/state` 可写上述独立人工状态。All Markets 只可汇总非货币计数；不同市场的资本、权益、PnL、收益率和回撤绝不聚合。
 - 系统仅供 Nicholas 个人内部使用。前端与只读 API 默认只监听 localhost；`tradingagent.cc` 可作为个人远程入口，但必须由 Cloudflare Access 或等价单用户认证保护。禁止匿名公网访问或直接暴露 API，远程入口必须独立完成权限、路由和撤销验证。
 
 ## 长期多市场开发 lane

@@ -20,6 +20,7 @@ import { readTerminalPreferences, writeTerminalPreferences, type TerminalDensity
 import { readTerminalNavigation, useTerminalNavigation } from './hooks/useTerminalNavigation'
 import { HomeDashboard } from './pages/HomeDashboard'
 import { ThemePage } from './pages/ThemePage'
+import { TradingCopilotPage } from './pages/TradingCopilotPage'
 import type { DataDomain } from './types/status'
 import type { AccountMode, Market, MarketSummary, Page, PerformancePoint, PerformanceRange, PortfolioSummary } from './types/dashboard'
 import './App.css'
@@ -29,6 +30,13 @@ import './styles/page-summary.css'
 const DASHBOARD_BUILD_ID = '20260716-today-paper-run-candidate'
 
 function App() {
+  if (new URLSearchParams(window.location.search).get('product') === 'copilot') {
+    return <TradingCopilotPage demoPreviewEnabled={isDemoPreviewEnabled()} onOpenQuant={() => openProduct(null)} />
+  }
+  return <QuantApp />
+}
+
+function QuantApp() {
   const demoPreviewEnabled = isDemoPreviewEnabled()
   const [initialNavigation] = useState(readTerminalNavigation)
   const [activePage, setActivePage] = useState<Page>(initialNavigation.page)
@@ -197,6 +205,7 @@ function App() {
         heartbeat={heartbeat}
         setActivePage={setActivePage}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        onOpenCopilot={() => openProduct('copilot')}
       />
       <MarketHeader
         accountMode={accountMode}
@@ -324,4 +333,11 @@ function isDemoPreviewEnabled() {
   const configuredPreview = import.meta.env.VITE_TRADING_AGENT_DEMO_PREVIEW
   if (configuredPreview === '0') return false
   return configuredPreview === '1' || import.meta.env.DEV
+}
+
+function openProduct(product: 'copilot' | null) {
+  const url = new URL(window.location.href)
+  if (product) url.searchParams.set('product', product)
+  else url.searchParams.delete('product')
+  window.location.assign(url)
 }

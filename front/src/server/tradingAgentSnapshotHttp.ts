@@ -4,12 +4,14 @@ import { fileURLToPath } from 'node:url'
 import { TRADING_AGENT_SNAPSHOT_ROUTE, getTradingAgentSnapshotResponse } from '../api/tradingAgentIntegration.ts'
 import type { TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import { readTradingAgentSnapshot } from './tradingAgentSnapshot.ts'
+import { createTradingCopilotStateHandler } from './tradingCopilotState.ts'
 
 type SnapshotHttpServerOptions = {
   allowedOrigins?: string[]
   apiToken?: string
   readSnapshot?: () => Promise<TradingAgentReadModelSnapshot>
   workspaceRoot?: string
+  copilotStatePath?: string
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -26,9 +28,11 @@ export function createSnapshotRequestHandler({
   allowedOrigins = parseList(process.env.TRADING_AGENT_SNAPSHOT_CORS_ORIGINS),
   apiToken = process.env.TRADING_AGENT_SNAPSHOT_API_TOKEN,
   workspaceRoot = process.env.FINANCE_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
+  copilotStatePath,
   readSnapshot = () => readTradingAgentSnapshot({ workspaceRoot }),
 }: SnapshotHttpServerOptions = {}) {
   assertRestrictedCorsOrigins(allowedOrigins)
+  const handleTradingCopilotState = createTradingCopilotStateHandler({ statePath: copilotStatePath, workspaceRoot })
 
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -46,19 +50,21 @@ export function createSnapshotRequestHandler({
       return
     }
 
-    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE) {
+    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state') {
       sendJson(res, 404, { error: 'Not found' })
-      return
-    }
-
-    if (req.method !== 'GET') {
-      sendJson(res, 405, { error: 'TradingAgent snapshot API is read-only. Use GET.' })
       return
     }
 
     if (!isAuthorized(req, apiToken)) {
       res.setHeader('WWW-Authenticate', 'Bearer')
       sendJson(res, 401, { error: 'Unauthorized' })
+      return
+    }
+
+    if (await handleTradingCopilotState(req, res)) return
+
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { error: 'TradingAgent snapshot API is read-only. Use GET.' })
       return
     }
 
@@ -83,7 +89,7 @@ function applyCors({
   res: ServerResponse
 }) {
   res.setHeader('Vary', 'Origin')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
 
   if (!origin) return true

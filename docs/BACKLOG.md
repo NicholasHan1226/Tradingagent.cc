@@ -14,11 +14,11 @@
 - 在只读看板深化 champion/challenger、按风格样本、拒绝分布、校准、N_eff、逐日 MTM 回撤和 MG paired ablation。
 - 保持 SampleJournal/KPI 唯一 authority；不得恢复自动 promotion、自动风险扩张或风格独立资金。
 
-## 3. 邮件/同花顺人工实盘规格
+## 3. TradingCopilot 后续实盘辅助
 
-- 仅设计 `TA 信号 → 邮件 → Nicholas 在同花顺人工复核下单` 的权限、内容、幂等、过期、撤销、人工确认和审计规格。
-- Nicholas 审阅并明确授权前，不编码发送链、不发真实邮件、不操作同花顺、不接 broker。
-- 独立 broker automation gateway 属于更晚的单独项目。
+- V1 已建立用户申报资金/持仓、关注股、个股正反证据、建议强度、条件门和人工意图账本；下一步接入 TradingAgent 正式 A 股观察，而不是扩大演示股票。
+- 后续可评估券商只读持仓对账，但必须与手工申报来源并列并有 freshness/identity；不得静默覆盖用户状态。
+- Nicholas 明确授权前，不发真实邮件、不操作同花顺、不接 broker。独立 broker automation gateway 属于更晚的单独项目。
 
 ## 4. 长期统计方法
 

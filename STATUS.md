@@ -2,6 +2,8 @@
 
 > 最后更新：2026-08-02 01:51 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-08-02 TradingCopilot V1 本地候选：** 已在同仓新增独立 `TradingCopilot/` 领域合同和 `front/?product=copilot` 人工决策页，支持手工申报资金/可用现金/持仓、关注 A 股、查看支持/反对证据、最终条件与建议强度，并记录“计划/观察/不交易”。用户状态通过独立 append-only 事件接口保存；无正式覆盖时显示 `analysis_unavailable` 并锁住人工计划，演示分析明确标为 `demo_fixture`。它不连接券商、不写量化资本/订单/样本。当前仅为本地候选，生产文件、runtime 与入口均未部署或验证。
+
 > **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release
 > `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`

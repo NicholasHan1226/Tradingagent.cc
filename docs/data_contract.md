@@ -890,7 +890,9 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 - `marketSummaries[]` 按 market + currency + account authority 保存 capital authority ID、generation、maturity 和市场自己的资本/PnL/return/DD；缺字段显示 null/unavailable。
 - All Markets 不生成 combined monetary portfolio/performance；只可汇总非货币 counts/health。
 - `portfolio.ashareAccount` 只显示 A股账户事实；CNFutures 与 Crypto 使用各自 market summary 和原生币种。即使 A股与 CNFutures 同为 CNY，也属于不同 authority；不同 market/account 的 capital、equity、PnL、return、drawdown、utilization 禁止聚合。
-- 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
+- Quant Core 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
+- TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。它使用独立 append-only 事件文件，不得写入量化 capital/execution/sample/decision namespace。
+- 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。演示数据不得冒充实时；无正式分析时不得自动形成人工计划。
 
 ## 版本与变更
 

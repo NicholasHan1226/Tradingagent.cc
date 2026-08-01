@@ -1472,7 +1472,7 @@ entries:
     owner: TradingAgent
     canonical_path: front/
     production_verified: false
-    last_verified_at: "2026-07-16"
+    last_verified_at: "2026-08-02"
     evidence:
       - AGENTS.md
       - front/AGENTS.md
@@ -1480,14 +1480,40 @@ entries:
       - front/src/server/sharedSignalsMarketPulse.test.ts
       - front/src/server/tradingAgentSnapshotHttp.test.ts
       - front/src/server/tradingAgentSnapshot.test.ts
+      - front/src/server/tradingCopilotState.test.ts
+      - front/src/pages/TradingCopilotPage.test.tsx
       - tests/test_architecture_contract_guards.py
     allowed_uses:
       - read_only_simulation_dashboard
       - explicitly_configured_tradingdatas_v1_market_context
       - single_user_authenticated_remote_entry_target
+      - tradingcopilot_user_declared_state_and_human_intent
     prohibited_uses:
       - write_capital_or_orders
       - anonymous_public_dashboard
       - direct_public_snapshot_api
       - infer_cloudflare_access_is_configured
     successor: front/
+  - entry_id: tradingcopilot_v1
+    state: CURRENT_VERIFIED
+    layer: repository_contract
+    owner: TradingAgent
+    canonical_path: TradingCopilot/
+    production_verified: false
+    last_verified_at: "2026-08-02"
+    evidence:
+      - TradingCopilot/AGENTS.md
+      - TradingCopilot/README.md
+      - TradingCopilot/contracts/trading_copilot_state.schema.json
+      - front/src/server/tradingCopilotState.test.ts
+      - front/src/pages/TradingCopilotPage.test.tsx
+    allowed_uses:
+      - maintain_user_declared_funds_holdings_and_watchlist
+      - present_source_labeled_ashare_decision_evidence
+      - record_human_intent_only
+    prohibited_uses:
+      - claim_broker_verified_account_or_positions
+      - write_quant_capital_orders_samples_or_promotion
+      - present_demo_fixture_as_live_analysis
+      - send_orders_email_or_broker_actions
+    successor: TradingCopilot/

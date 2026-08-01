@@ -1,4 +1,4 @@
-import { Bell, Command } from 'lucide-react'
+import { Bell, Command, Sparkles } from 'lucide-react'
 import { pages } from '../data/dashboard'
 import type { Page } from '../types/dashboard'
 import type { RuntimeHeartbeat } from '../lib/runtimeHeartbeat'
@@ -8,11 +8,13 @@ export function TopNav({
   heartbeat,
   setActivePage,
   onOpenCommandPalette,
+  onOpenCopilot,
 }: {
   activePage: Page
   heartbeat: RuntimeHeartbeat
   setActivePage: (page: Page) => void
   onOpenCommandPalette?: () => void
+  onOpenCopilot?: () => void
 }) {
   return (
     <header className="top-nav">
@@ -29,6 +31,7 @@ export function TopNav({
         ))}
       </nav>
       <div className="top-actions">
+        <button className="command-trigger" onClick={onOpenCopilot} type="button"><Sparkles aria-hidden="true" size={14} /><span>Copilot</span></button>
         <span className={`top-status ${heartbeat.state}`}><i />{topStatusLabel(heartbeat.state)}</span>
         <button className="icon-button" type="button" aria-label="提醒"><Bell size={16} /></button>
         <button aria-keyshortcuts="Control+K Meta+K" className="command-trigger" onClick={onOpenCommandPalette} type="button"><Command aria-hidden="true" size={14} /><span>命令</span><kbd>⌘K</kbd></button>
