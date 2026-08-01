@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { tradingAgentSnapshotPlugin } from './src/server/viteTradingAgentSnapshotPlugin.ts'
+import { tradingCopilotPlugin } from './src/server/viteTradingCopilotPlugin.ts'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tradingAgentSnapshotPlugin()],
+  plugins: [react(), tradingCopilotPlugin(), tradingAgentSnapshotPlugin()],
   build: {
     rollupOptions: {
       output: {

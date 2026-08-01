@@ -16,5 +16,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/server/tradingAgentSnapshotHttp.ts"]
+  "include": ["src/server/tradingAgentSnapshotHttp.ts", "src/server/tradingCopilotState.ts"]
 }

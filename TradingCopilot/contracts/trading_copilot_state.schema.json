@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradingagent.trading_copilot_state.v1",
+  "title": "TradingCopilot user-declared state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ownerId", "account", "holdings", "watchlist", "decisions", "updatedAt", "source"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "ownerId": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "source": { "const": "user_declared" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declaredCapitalCny", "availableCashCny", "updatedAt"],
+      "properties": {
+        "declaredCapitalCny": { "type": "number", "minimum": 0 },
+        "availableCashCny": { "type": "number", "minimum": 0 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "holdings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["symbol", "name", "quantity", "sellableQuantity", "averageCost", "updatedAt"],
+        "properties": {
+          "symbol": { "type": "string", "pattern": "^[0-9]{6}\\.(SH|SZ)$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "quantity": { "type": "integer", "minimum": 0 },
+          "sellableQuantity": { "type": "integer", "minimum": 0 },
+          "averageCost": { "type": "number", "minimum": 0 },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "watchlist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["symbol", "name", "addedAt"],
+        "properties": {
+          "symbol": { "type": "string", "pattern": "^[0-9]{6}\\.(SH|SZ)$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+          "addedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "symbol", "action", "recordedAt", "actor", "authority"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "symbol": { "type": "string", "pattern": "^[0-9]{6}\\.(SH|SZ)$" },
+          "action": { "enum": ["planned", "observing", "skipped"] },
+          "recordedAt": { "type": "string", "format": "date-time" },
+          "actor": { "type": "string", "minLength": 1 },
+          "authority": { "const": "human_intent_only" }
+        }
+      }
+    }
+  }
+}

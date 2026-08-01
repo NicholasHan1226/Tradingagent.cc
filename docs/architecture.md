@@ -6,9 +6,11 @@
 
 TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测 → 风控 → 真实规格模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，并让 Crypto 在独立市场 lane 中推进自己的闭环；三者用真实证据分别判断策略是否存在可重复正期望。
 
+仓库同时提供 A 股 `TradingCopilot` 人工决策面。它读取 Quant Core 已验证的只读观察，结合用户申报账户形成行动卡；没有正式覆盖时必须显示 `analysis_unavailable`。它的资金、持仓、关注和人工意图属于独立状态面，不能进入量化资本、订单、SampleJournal、Champion 或收益统计。
+
 A股与 CNFutures 各有独立 50,000 CNY simulated authority；Crypto 目前只有隔离的 10,000 USDT 本地 fixture opening candidate，尚无可轮换 current/runtime/live capital authority。三者的原生币种边界不是盈利承诺，不换汇、不相加、不净额。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
 
-当前非目标：真实券商/期货下单、自动邮件、同花顺自动点击、自动 champion 晋级、自动风险扩张、跨市场资金调拨。
+当前非目标：真实券商/期货下单、自动邮件、同花顺自动点击、自动 champion 晋级、自动风险扩张、跨市场资金调拨，以及由 Copilot 自动生成或发送订单。
 
 ## 三仓边界
 
@@ -23,6 +25,10 @@ flowchart LR
     FC --> FE["one-lot simulation + margin"]
     AE --> SJ["SampleJournal / forward labels"]
     FE --> FS["session evidence / counterfactual"]
+    TA --> RO["只读研究/风险证据"]
+    RO --> TC["TradingCopilot\n人工决策辅助"]
+    US["用户申报资金/持仓"] --> TC
+    TC --> HI["human_intent_only\n计划/观察/不交易"]
     SJ --> AM["day 5 / day 10 manual review"]
     FS --> FM["long-horizon futures maturity"]
 ```
@@ -30,7 +36,7 @@ flowchart LR
 - TradingDatas 是基础行情、事件、行业、交易日历与合约输入 authority。TradingAgent 只消费 `GET /v1/catalog` 与 `POST /v1/query`，不读取兄弟仓存储，也不现场调用数据提供商；上游是否正式可用与 TA consumer 是否通过是两份独立证据。
 - MarketGraph 是可选只读增强，不是价格、账户、资本或执行 authority。缺 MG 时 `mg_off` 仍应形成基础闭环。
 - TradingAgent 拥有候选生成、风格预测、组合决策、资本预约、模拟成交、风险拒绝、样本、标签、复盘和只读看板。
-- `front/` 是唯一活跃前端；它不写资金、队列或订单。
+- `front/` 是唯一活跃前端；Quant Core 页面只读。它仅允许把用户申报状态写入 TradingCopilot 独立 append-only namespace，不写量化资金、队列或订单。
 
 ### 三市场 BrokerAdapter 边界
 
@@ -394,12 +400,12 @@ CNFutures 与 A股使用同一 EvidenceEnvelope 合同。TradingDatas HTTP clien
 
 A股第 5、10 个交易日只触发人工复核状态；SampleJournal/KPI 只能评估 evidence readiness。`automatic_promotion_enabled=false`、`automatic_risk_expansion_enabled=false`、`live_transition_authorized=false`。
 
-未来 A股人工实盘若获 Nicholas 单独批准，账户仍是完整 50,000 CNY，但初始订单敞口仅 20%–30%。拟议“TA 信号 → 邮件 → Nicholas 在同花顺人工下单”未实现；未来 broker automation gateway 也必须独立设计和验收。
+未来 A股量化实盘若获 Nicholas 单独批准，必须绑定独立真实账户、named strategy、券商适配器与完整审计门禁，不能从当前 50,000 CNY 模拟 authority 或 Copilot 申报账户直接升级。TradingCopilot 当前只形成人工计划；未来 broker automation gateway 仍须独立设计和验收。
 
 ## 前端边界
 
 - All Markets 可汇总市场数、信号数、持仓数和健康状态等非货币计数。
 - 资本、权益、PnL、收益率、回撤和资金利用率必须按市场单独显示；A股和 CNFutures 不能合成跨市场组合或互相抵消风险。
 - authority/generation/maturity 缺失时显示 unavailable/null，不在前端推断。
-- 前端只读，不创建订单、预约、标签、邮件或回调。
+- Quant Core 前端只读；TradingCopilot 只创建 `human_intent_only` 状态，不创建量化订单、预约、标签、邮件或回调。
 - 系统仅供 Nicholas 个人内部使用；前端与只读 API 只允许绑定loopback，服务启动时拒绝`0.0.0.0`等非loopback地址与`*` CORS。`tradingagent.cc`可作为远程入口，但必须先经过Cloudflare Access或等价单用户认证；API不得直接公网暴露。域名、Tunnel/Pages、认证策略、日志与撤销路径必须逐层验证。
