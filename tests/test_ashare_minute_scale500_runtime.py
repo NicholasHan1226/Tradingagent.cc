@@ -12,6 +12,7 @@ from Ashare.minute_data import SHANGHAI
 from Ashare.minute_scale500_runtime import (
     EXPECTED_UNIVERSE_COUNT,
     MinuteScale500RuntimeError,
+    build_scale500_partial_shadow_receipt,
     canonical_universe_sha256,
     initialize_scale500_session,
     main,
@@ -217,6 +218,100 @@ def _initialize(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     )
     assert result["status"] == "pass"
     return paths
+
+
+def _symbols(count: int = EXPECTED_UNIVERSE_COUNT) -> tuple[str, ...]:
+    return tuple(
+        f"{600000 + index:06d}.SH" if index % 2 else f"{index + 1:06d}.SZ"
+        for index in range(count)
+    )
+
+
+def test_99_percent_partial_cohort_is_zero_notional_shadow_only() -> None:
+    receipt = build_scale500_partial_shadow_receipt(
+        expected_symbols=_symbols(),
+        observed_symbols=_symbols()[:-5],
+        trading_date="2026-07-31",
+        bar_end="2026-07-31 13:40:00",
+        observed_at=_at("2026-07-31T13:45:20"),
+        decision_time=_at("2026-07-31T13:45:30"),
+    )
+    assert receipt["observed_cohort_size"] == 495
+    assert receipt["missing_identity_count"] == 5
+    assert receipt["simulated_notional_cny"] == 0
+    assert receipt["simulation_timing"] == "next_bar_only"
+    assert receipt["capital_layer"] == "simulated"
+    assert receipt["account_type"] == "simulated"
+    assert receipt["capital_commit_id"] is None
+    assert receipt["outbox_id"] is None
+    assert receipt["delayed_paper_eligible"] is False
+    assert all(
+        receipt[key] is False
+        for key in (
+            "candidate_authority",
+            "capital_authority",
+            "execution_authority",
+            "execution_latency_eligible",
+            "training_eligible",
+            "promotion_authorized",
+        )
+    )
+    assert (
+        build_scale500_partial_shadow_receipt(
+            expected_symbols=_symbols(),
+            observed_symbols=_symbols()[:-5],
+            trading_date="2026-07-31",
+            bar_end="2026-07-31 13:40:00",
+            observed_at=_at("2026-07-31T13:45:20"),
+            decision_time=_at("2026-07-31T13:45:30"),
+        )
+        == receipt
+    )
+    assert receipt["missing_identity_set"] == sorted(_symbols()[-5:])
+
+
+@pytest.mark.parametrize(
+    ("observed", "reason"),
+    [
+        (_symbols()[:-6], "coverage_insufficient"),
+        (_symbols()[:-5] + ("300001.SZ",), "silent_identity_replacement"),
+        (_symbols()[:-6] + (_symbols()[0],), "observed_identity_invalid"),
+        (_symbols(), "requires_partial_cohort"),
+    ],
+)
+def test_partial_shadow_rejects_missing_duplicate_replacement_or_full_cohort(
+    observed: tuple[str, ...], reason: str
+) -> None:
+    with pytest.raises(MinuteScale500RuntimeError, match=reason):
+        build_scale500_partial_shadow_receipt(
+            expected_symbols=_symbols(),
+            observed_symbols=observed,
+            trading_date="2026-07-31",
+            bar_end="2026-07-31 13:40:00",
+            observed_at=_at("2026-07-31T13:45:20"),
+            decision_time=_at("2026-07-31T13:45:30"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("observed_at", "reason"),
+    [
+        ("2026-07-31T13:40:00", "shadow_time_invalid"),
+        ("2026-07-31T13:45:31", "shadow_time_invalid"),
+    ],
+)
+def test_partial_shadow_rejects_same_bar_or_overdue_observation(
+    observed_at: str, reason: str
+) -> None:
+    with pytest.raises(MinuteScale500RuntimeError, match=reason):
+        build_scale500_partial_shadow_receipt(
+            expected_symbols=_symbols(),
+            observed_symbols=_symbols()[:-5],
+            trading_date="2026-07-31",
+            bar_end="2026-07-31 13:40:00",
+            observed_at=_at(observed_at),
+            decision_time=_at("2026-07-31T13:46:00"),
+        )
 
 
 def test_initializer_publishes_pending_gate_without_state_bundle(

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 import fcntl
 import hashlib
 import json
@@ -21,11 +22,35 @@ from typing import Any, Iterator, Mapping
 
 from .minute_data import SHANGHAI
 from .minute_day_report import MinuteDayReportError, build_minute_day_report
+from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
 
 JOURNAL_NAME = "minute_fixture_learning_journal.jsonl"
 LATEST_NAME = "minute_fixture_learning_latest.json"
 SCHEMA = "tradingagent.ashare.minute_fixture_learning.v1"
+_SHA256_HEX = frozenset("0123456789abcdef")
+
+
+@dataclass(frozen=True)
+class LocalContiguousLearningProfile:
+    """Pre-registered feature/label geometry for local offline review only."""
+
+    profile_id: str
+    feature_slots: int
+    label_horizon_slots: int
+    label_kind: str
+
+    @property
+    def minimum_slots(self) -> int:
+        return self.feature_slots + self.label_horizon_slots
+
+
+LOCAL_CONTIGUOUS_LEARNING_PROFILE = LocalContiguousLearningProfile(
+    profile_id="ashare.minute.local_contiguous.next_bar_return.v1",
+    feature_slots=2,
+    label_horizon_slots=1,
+    label_kind="next_completed_bar_return",
+)
 
 
 class MinuteOfflineLearningError(ValueError):
@@ -58,6 +83,156 @@ def _load_bundle_bytes(path: Path) -> bytes:
         raise MinuteOfflineLearningError("minute_learning_bundle_invalid") from exc
 
 
+def _load_bundle_mapping(path: Path) -> Mapping[str, Any]:
+    try:
+        raw = json.loads(_load_bundle_bytes(path))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MinuteOfflineLearningError("minute_learning_bundle_invalid") from exc
+    if not isinstance(raw, Mapping):
+        raise MinuteOfflineLearningError("minute_learning_bundle_invalid")
+    return raw
+
+
+def _readiness_policy() -> Mapping[str, Any]:
+    try:
+        policy = load_evidence_readiness_contract().market_policies["ashare"]
+        local = policy["local_contiguous_learning"]
+    except (KeyError, ValueError) as exc:
+        raise MinuteOfflineLearningError(
+            "minute_learning_readiness_contract_invalid"
+        ) from exc
+    if (
+        not isinstance(local, Mapping)
+        or local.get("allowed") is not True
+        or local.get("minimum_slots_source")
+        != "preregistered_feature_and_label_profile"
+        or local.get("gap_crossing_allowed") is not False
+        or local.get("full_session_required") is not False
+    ):
+        raise MinuteOfflineLearningError("minute_learning_readiness_contract_invalid")
+    return local
+
+
+def _contiguous_segments(
+    *, expected_slots: list[str], observed_slots: list[str]
+) -> tuple[tuple[str, ...], ...]:
+    observed = set(observed_slots)
+    segments: list[tuple[str, ...]] = []
+    current: list[str] = []
+    previous: datetime | None = None
+    for slot in expected_slots:
+        if slot in observed:
+            try:
+                stamp = datetime.strptime(slot, "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=SHANGHAI
+                )
+            except ValueError as exc:
+                raise MinuteOfflineLearningError(
+                    "minute_learning_coverage_invalid"
+                ) from exc
+            if (
+                current
+                and previous is not None
+                and stamp - previous != timedelta(minutes=5)
+            ):
+                segments.append(tuple(current))
+                current = []
+            current.append(slot)
+            previous = stamp
+        elif current:
+            segments.append(tuple(current))
+            current = []
+            previous = None
+    if current:
+        segments.append(tuple(current))
+    return tuple(segments)
+
+
+def _labelled_slots(bundle: Mapping[str, Any]) -> tuple[str, ...]:
+    """Accept only an explicit fixture label receipt; absence stays blocked."""
+
+    raw = bundle.get("local_contiguous_label_evidence")
+    if raw is None:
+        return ()
+    if not isinstance(raw, Mapping):
+        raise MinuteOfflineLearningError("minute_learning_label_evidence_invalid")
+    receipt = raw.get("receipt_sha256")
+    slots = raw.get("labelled_bar_ends")
+    if (
+        raw.get("profile_id") != LOCAL_CONTIGUOUS_LEARNING_PROFILE.profile_id
+        or raw.get("status") != "complete_fixture_label_evidence"
+        or not isinstance(receipt, str)
+        or len(receipt) != 64
+        or any(value not in _SHA256_HEX for value in receipt)
+        or not isinstance(slots, list)
+        or not slots
+        or any(not isinstance(slot, str) or not slot.strip() for slot in slots)
+        or len(slots) != len(set(slots))
+    ):
+        raise MinuteOfflineLearningError("minute_learning_label_evidence_invalid")
+    return tuple(slots)
+
+
+def _local_contiguous_learning(
+    *, bundle: Mapping[str, Any], report: Mapping[str, Any]
+) -> dict[str, Any]:
+    _readiness_policy()
+    expected = report.get("expected_bar_slots")
+    observed = report.get("observed_bar_slots")
+    if (
+        not isinstance(expected, list)
+        or not isinstance(observed, list)
+        or any(not isinstance(slot, str) for slot in (*expected, *observed))
+    ):
+        raise MinuteOfflineLearningError("minute_learning_coverage_invalid")
+    labelled = set(_labelled_slots(bundle))
+    segments = _contiguous_segments(expected_slots=expected, observed_slots=observed)
+    eligible_ends = [
+        segment[-1]
+        for segment in segments
+        if len(segment) >= LOCAL_CONTIGUOUS_LEARNING_PROFILE.minimum_slots
+        and segment[-1] in labelled
+    ]
+    blockers: list[str] = []
+    if not any(
+        len(segment) >= LOCAL_CONTIGUOUS_LEARNING_PROFILE.minimum_slots
+        for segment in segments
+    ):
+        blockers.append("local_contiguous_window_too_short")
+    if not labelled:
+        blockers.append("local_preregistered_label_evidence_missing")
+    elif not eligible_ends:
+        blockers.append("local_preregistered_label_evidence_incomplete")
+    evidence = report.get("evidence")
+    reconciliation = report.get("reconciliation_status")
+    if (
+        not isinstance(evidence, Mapping)
+        or evidence.get("rejected_count") != 0
+        or evidence.get("receipt_history_complete") is not True
+    ):
+        blockers.append("local_fixture_evidence_incomplete")
+    if not isinstance(reconciliation, Mapping) or any(
+        value != "fixture_reconciled" for value in reconciliation.values()
+    ):
+        blockers.append("local_fixture_reconciliation_incomplete")
+    return {
+        "status": "eligible_for_offline_review"
+        if eligible_ends and not blockers
+        else "blocked",
+        "local_learning_eligible": bool(eligible_ends and not blockers),
+        "profile_id": LOCAL_CONTIGUOUS_LEARNING_PROFILE.profile_id,
+        "label_kind": LOCAL_CONTIGUOUS_LEARNING_PROFILE.label_kind,
+        "feature_slots": LOCAL_CONTIGUOUS_LEARNING_PROFILE.feature_slots,
+        "label_horizon_slots": LOCAL_CONTIGUOUS_LEARNING_PROFILE.label_horizon_slots,
+        "minimum_slots": LOCAL_CONTIGUOUS_LEARNING_PROFILE.minimum_slots,
+        "gap_crossing_allowed": False,
+        "full_session_required": False,
+        "contiguous_segment_lengths": [len(segment) for segment in segments],
+        "eligible_window_end_slots": eligible_ends,
+        "blockers": blockers,
+    }
+
+
 def build_minute_offline_learning_projection(
     *, state_bundle: Path | str
 ) -> dict[str, Any]:
@@ -66,7 +241,9 @@ def build_minute_offline_learning_projection(
     if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
         raise MinuteOfflineLearningError("real_trading_must_remain_disabled")
     path = Path(state_bundle)
-    bundle_sha256 = _sha256_bytes(_load_bundle_bytes(path))
+    bundle_bytes = _load_bundle_bytes(path)
+    bundle_sha256 = _sha256_bytes(bundle_bytes)
+    bundle = _load_bundle_mapping(path)
     try:
         report = build_minute_day_report(state_bundle=path)
     except MinuteDayReportError as exc:
@@ -119,6 +296,7 @@ def build_minute_offline_learning_projection(
     if not reconciliation_complete:
         blockers.append("fixture_reconciliation_incomplete")
     complete = not blockers
+    local_learning = _local_contiguous_learning(bundle=bundle, report=report)
     return {
         "schema": SCHEMA,
         "learning_key": learning_key,
@@ -170,6 +348,7 @@ def build_minute_offline_learning_projection(
             "labels_appended": 0,
             "authoritative_market_data_consumed": False,
         },
+        "local_contiguous_learning": local_learning,
         "missed_opportunities": {
             "status": "counterfactual_only",
             "by_sleeve": {name: dict(value) for name, value in differences.items()},

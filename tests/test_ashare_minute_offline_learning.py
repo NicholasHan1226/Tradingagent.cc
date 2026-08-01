@@ -14,6 +14,7 @@ from Ashare.minute_data import SHANGHAI
 from Ashare.minute_loop import MinuteFixtureClosedLoop, _canonical_sha256
 from Ashare.minute_offline_learning import (
     JOURNAL_NAME,
+    LOCAL_CONTIGUOUS_LEARNING_PROFILE,
     MinuteOfflineLearningError,
     build_minute_offline_learning_projection,
     write_minute_offline_learning_projection,
@@ -28,18 +29,27 @@ def _bundle(
     mismatch: bool = False,
     audit_rejections: int | None = None,
     receipt_history: bool = True,
+    accepted_indexes: list[int] | None = None,
+    label_evidence: bool = False,
 ) -> Path:
     loop = MinuteFixtureClosedLoop(universe=MinuteResearchUniverse(instruments=()))
     state = loop.export_state()
     payload = dict(state)
     payload.pop("state_sha256")
     count = 48 if complete else 1
+    indexes = accepted_indexes if accepted_indexes is not None else list(range(count))
     payload["processed_snapshot_hashes"] = [f"{index:064x}" for index in range(count)]
+    payload["processed_snapshot_hashes"] = [f"{index:064x}" for index in indexes]
     payload["accepted_bar_ends"] = [
         value.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M:%S")
-        for value in session_bar_ends(date(2026, 7, 28))[:count]
+        for value in [session_bar_ends(date(2026, 7, 28))[index] for index in indexes]
     ]
-    payload["session_gaps"] = []
+    last_index = max(indexes)
+    payload["session_gaps"] = [
+        value.astimezone(SHANGHAI).strftime("%Y-%m-%d %H:%M:%S")
+        for index, value in enumerate(session_bar_ends(date(2026, 7, 28))[:last_index])
+        if index not in indexes
+    ]
     state = {**payload, "state_sha256": _canonical_sha256(payload)}
     accepted_bar_ends = payload["accepted_bar_ends"]
     processed_hashes = payload["processed_snapshot_hashes"]
@@ -69,6 +79,13 @@ def _bundle(
     }
     if receipt_history:
         bundle["receipt_history"] = receipts
+    if label_evidence:
+        bundle["local_contiguous_label_evidence"] = {
+            "profile_id": LOCAL_CONTIGUOUS_LEARNING_PROFILE.profile_id,
+            "status": "complete_fixture_label_evidence",
+            "receipt_sha256": "a" * 64,
+            "labelled_bar_ends": [accepted_bar_ends[-1]],
+        }
     path.write_text(json.dumps(bundle), encoding="utf-8")
     return path.resolve()
 
@@ -159,6 +176,74 @@ def test_projection_records_only_a_blocked_forward_label_requirement(
         "labels_appended": 0,
         "authoritative_market_data_consumed": False,
     }
+
+
+def test_local_contiguous_eligibility_uses_preregistered_profile_and_label_proof(
+    tmp_path: Path,
+) -> None:
+    projection = build_minute_offline_learning_projection(
+        state_bundle=_bundle(
+            tmp_path / "local-window.json",
+            accepted_indexes=[0, 1, 2],
+            label_evidence=True,
+            audit_rejections=0,
+        )
+    )
+    local = projection["local_contiguous_learning"]
+    assert local["local_learning_eligible"] is True
+    assert local["minimum_slots"] == (
+        local["feature_slots"] + local["label_horizon_slots"]
+    )
+    assert local["gap_crossing_allowed"] is False
+    assert projection["sample_summary"]["training_eligible"] is False
+    assert projection["authority"]["training_authority"] is False
+
+
+def test_local_contiguous_learning_never_crosses_a_session_gap(tmp_path: Path) -> None:
+    projection = build_minute_offline_learning_projection(
+        state_bundle=_bundle(
+            tmp_path / "gap.json",
+            accepted_indexes=[0, 2, 3],
+            label_evidence=True,
+            audit_rejections=0,
+        )
+    )
+    local = projection["local_contiguous_learning"]
+    assert local["local_learning_eligible"] is False
+    assert local["contiguous_segment_lengths"] == [1, 2]
+    assert "local_contiguous_window_too_short" in local["blockers"]
+
+
+def test_local_contiguous_learning_treats_lunch_as_a_hard_boundary(
+    tmp_path: Path,
+) -> None:
+    projection = build_minute_offline_learning_projection(
+        state_bundle=_bundle(
+            tmp_path / "lunch.json",
+            accepted_indexes=[22, 23, 24],
+            label_evidence=True,
+            audit_rejections=0,
+        )
+    )
+    local = projection["local_contiguous_learning"]
+    assert local["local_learning_eligible"] is False
+    assert local["contiguous_segment_lengths"] == [2, 1]
+
+
+def test_local_contiguous_learning_rejects_window_with_rejected_evidence(
+    tmp_path: Path,
+) -> None:
+    projection = build_minute_offline_learning_projection(
+        state_bundle=_bundle(
+            tmp_path / "rejected-local.json",
+            accepted_indexes=[0, 1, 2],
+            label_evidence=True,
+            audit_rejections=1,
+        )
+    )
+    local = projection["local_contiguous_learning"]
+    assert local["local_learning_eligible"] is False
+    assert "local_fixture_evidence_incomplete" in local["blockers"]
 
 
 def test_invalid_or_conflicting_bundle_fails_closed(tmp_path: Path) -> None:

@@ -165,12 +165,12 @@ def test_next_bar_open_plus_slippage_is_bounded_and_fixture_only() -> None:
 def test_delayed_paper_fill_waits_for_a_bar_open_after_data_arrival() -> None:
     decision = _bar(
         "2026-07-27T11:00:00+08:00",
-        observed_delay_seconds=600,
+        observed_delay_seconds=300,
         evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
     )
     pair = MinuteExecutionPair(
         decision,
-        _bar("2026-07-27T11:20:00+08:00"),
+        _bar("2026-07-27T11:15:00+08:00"),
     )
     snapshot = build_minute_paper_market_snapshot(
         order_id="ORDER-DELAYED",
@@ -185,7 +185,7 @@ def test_delayed_paper_fill_waits_for_a_bar_open_after_data_arrival() -> None:
     modeled_fill_time = datetime.fromisoformat(
         snapshot.market_snapshot["modeled_fill_time"]
     )
-    assert modeled_fill_time == datetime.fromisoformat("2026-07-27T11:15:00+08:00")
+    assert modeled_fill_time == datetime.fromisoformat("2026-07-27T11:10:00+08:00")
     assert modeled_fill_time > decision.available_at
     assert snapshot.market_snapshot["decision_minute_evidence_use"] == "delayed_paper"
     assert snapshot.market_snapshot["decision_execution_latency_eligible"] is False
