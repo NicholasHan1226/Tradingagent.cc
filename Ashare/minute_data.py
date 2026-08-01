@@ -31,7 +31,10 @@ from shared.data.tradingdatas_pagination import (
     PaginationContractError,
     collect_query_pages,
 )
-from shared.governance.evidence_readiness import load_evidence_readiness_contract
+from shared.governance.evidence_readiness import (
+    dataset_contract_fingerprint,
+    load_evidence_readiness_contract,
+)
 from shared.universe.policy import is_mainboard_tradable
 
 
@@ -221,13 +224,15 @@ class MinuteEvidenceUse(str, Enum):
 class MinuteDatasetProfile:
     """TA-owned interpretation of one exact active catalog contract."""
 
-    catalog_version: str
+    expected_catalog_version: str
+    observed_catalog_version: str
     dataset_id: str
     schema_major: int
     default_fields: tuple[str, ...]
     default_order: tuple[str, ...]
     filter_operators: tuple[tuple[str, tuple[str, ...]], ...]
-    catalog_contract_sha256: str
+    dataset_contract_fingerprint: str
+    consumer_profile_sha256: str
     identity_fields: tuple[str, ...]
     symbol_field: str
     timestamp_field: str
@@ -254,7 +259,8 @@ class MinuteDatasetProfile:
 
     def __post_init__(self) -> None:
         for field_name in (
-            "catalog_version",
+            "expected_catalog_version",
+            "observed_catalog_version",
             "dataset_id",
             "symbol_field",
             "timestamp_field",
@@ -301,15 +307,17 @@ class MinuteDatasetProfile:
             raise MinuteDataContractError(
                 "minute_execution_prices_must_be_raw_unadjusted"
             )
-        if (
-            not isinstance(self.catalog_contract_sha256, str)
-            or len(self.catalog_contract_sha256) != 64
-            or any(
-                character not in _SHA256_HEX
-                for character in self.catalog_contract_sha256
-            )
+        for field_name in (
+            "dataset_contract_fingerprint",
+            "consumer_profile_sha256",
         ):
-            raise MinuteDataContractError("minute_catalog_contract_sha256_invalid")
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in _SHA256_HEX for character in value)
+            ):
+                raise MinuteDataContractError(f"minute_{field_name}_invalid")
         if (self.frequency_field is None) != (self.frequency_value is None):
             raise MinuteDataContractError("minute_frequency_contract_incomplete")
         if self.frequency_field is not None:
@@ -359,12 +367,27 @@ class MinuteDatasetProfile:
             _text(field_name, "minute_filter_operators_invalid")
             _strings(operators, "minute_filter_operators_invalid")
 
+    @property
+    def catalog_version(self) -> str:
+        """Compatibility projection for envelope/audit evidence.
+
+        Global catalog version is never a dataset contract pin.  Consumers must
+        report the separately retained expected and observed values instead.
+        """
+
+        return self.observed_catalog_version
+
+    @property
+    def catalog_version_drift(self) -> bool:
+        return self.expected_catalog_version != self.observed_catalog_version
+
     @classmethod
     def from_catalog(
         cls,
         catalog: CatalogEnvelope,
         *,
         expected_catalog_version: str,
+        expected_dataset_contract_fingerprint: str | None = None,
         dataset_id: str,
         identity_fields: tuple[str, ...],
         symbol_field: str,
@@ -397,8 +420,7 @@ class MinuteDatasetProfile:
 
         if not isinstance(catalog, CatalogEnvelope):
             raise MinuteDataContractError("minute_catalog_envelope_required")
-        if catalog.catalog_version != expected_catalog_version:
-            raise MinuteDataContractError("minute_catalog_version_drift")
+        _text(expected_catalog_version, "minute_expected_catalog_version_invalid")
         matches = [row for row in catalog.data if row.get("dataset_id") == dataset_id]
         if len(matches) != 1:
             raise MinuteDataContractError("minute_dataset_catalog_row_missing")
@@ -421,6 +443,16 @@ class MinuteDatasetProfile:
             "minute_catalog_default_order_invalid",
             nonempty=False,
         )
+        declared_identity = _strings(
+            identity_fields,
+            "minute_profile_identity_fields_invalid",
+        )
+        catalog_identity = _strings(
+            row.get("identity_fields"),
+            "minute_catalog_identity_fields_invalid",
+        )
+        if declared_identity != catalog_identity:
+            raise MinuteDataContractError("minute_catalog_identity_mismatch")
         limits = row.get("limits")
         if not isinstance(limits, Mapping):
             raise MinuteDataContractError("minute_catalog_limits_invalid")
@@ -449,30 +481,62 @@ class MinuteDatasetProfile:
                     ),
                 )
             )
-        catalog_contract = {
-            "dataset_id": dataset_id,
-            "schema_major": schema_major,
-            "default_fields": list(default_fields),
-            "default_order": list(default_order),
+        try:
+            contract_fingerprint = dataset_contract_fingerprint(row)
+        except (TypeError, ValueError) as exc:
+            raise MinuteDataContractError("minute_dataset_contract_invalid") from exc
+        if expected_dataset_contract_fingerprint is not None:
+            expected_fingerprint = _text(
+                expected_dataset_contract_fingerprint,
+                "minute_dataset_contract_fingerprint_invalid",
+            )
+            if expected_fingerprint != contract_fingerprint:
+                raise MinuteDataContractError("minute_dataset_contract_drift")
+        profile_material = {
+            "dataset_contract_fingerprint": contract_fingerprint,
+            "selected_fields": list(default_fields),
             "filter_operators": {
                 field_name: list(operators)
                 for field_name, operators in filter_operators
             },
-            "limits": dict(limits),
-            "availability": row.get("availability"),
+            "default_order": list(default_order),
+            "identity_fields": list(declared_identity),
+            "field_mapping": {
+                "symbol": symbol_field,
+                "timestamp": timestamp_field,
+                "open": open_field,
+                "high": high_field,
+                "low": low_field,
+                "close": close_field,
+                "volume": volume_field,
+                "amount": amount_field,
+                "previous_close": previous_close_field,
+                "suspension": suspension_field,
+                "frequency": frequency_field,
+            },
+            "frequency_value": frequency_value,
+            "timestamp_format": timestamp_format,
+            "timestamp_semantics": timestamp_semantics.value,
+            "volume_multiplier_to_shares": volume_multiplier_to_shares,
+            "amount_multiplier_to_cny": amount_multiplier_to_cny,
+            "price_adjustment": price_adjustment,
+            "page_budgets": {
+                "max_pages": max_pages,
+                "max_rows": max_rows,
+                "page_limit": page_limit,
+            },
         }
         return cls(
-            catalog_version=catalog.catalog_version,
+            expected_catalog_version=expected_catalog_version,
+            observed_catalog_version=catalog.catalog_version,
             dataset_id=dataset_id,
             schema_major=schema_major,
             default_fields=default_fields,
             default_order=default_order,
             filter_operators=tuple(filter_operators),
-            catalog_contract_sha256=_sha256(catalog_contract),
-            identity_fields=_strings(
-                identity_fields,
-                "minute_profile_identity_fields_invalid",
-            ),
+            dataset_contract_fingerprint=contract_fingerprint,
+            consumer_profile_sha256=_sha256(profile_material),
+            identity_fields=declared_identity,
             symbol_field=symbol_field,
             timestamp_field=timestamp_field,
             open_field=open_field,
@@ -703,14 +767,16 @@ class MinuteBarSnapshot:
         if not (1 <= self.page_count <= self.profile.max_pages):
             raise MinuteDataContractError("minute_snapshot_page_count_invalid")
         identities: dict[tuple[str, datetime], str] = {}
+        observed_catalog_version: str | None = None
         for bar in self.bars:
             if not isinstance(bar, MinuteBarEvidence):
                 raise MinuteDataContractError("minute_snapshot_bar_invalid")
-            if (
-                bar.dataset_id != self.profile.dataset_id
-                or bar.catalog_version != self.profile.catalog_version
-            ):
+            if bar.dataset_id != self.profile.dataset_id:
                 raise MinuteDataContractError("minute_snapshot_binding_mismatch")
+            if observed_catalog_version is None:
+                observed_catalog_version = bar.catalog_version
+            elif bar.catalog_version != observed_catalog_version:
+                raise MinuteDataContractError("minute_query_catalog_version_drift")
             previous = identities.get(bar.identity)
             if previous is not None:
                 reason = (
@@ -742,10 +808,11 @@ class MinuteBarSnapshot:
         return _sha256(
             {
                 "profile": {
-                    "catalog_version": self.profile.catalog_version,
+                    "expected_catalog_version": self.profile.expected_catalog_version,
                     "dataset_id": self.profile.dataset_id,
                     "schema_major": self.profile.schema_major,
                 },
+                "observed_catalog_version": self.observed_catalog_version,
                 "bars": [bar.sha256 for bar in self.bars],
                 "page_count": self.page_count,
                 "row_count": self.row_count,
@@ -754,6 +821,16 @@ class MinuteBarSnapshot:
                 "same_observation": True,
             }
         )
+
+    @property
+    def observed_catalog_version(self) -> str:
+        """Actual catalog/query version for this accepted snapshot."""
+
+        return self.bars[0].catalog_version
+
+    @property
+    def catalog_version_drift(self) -> bool:
+        return self.profile.expected_catalog_version != self.observed_catalog_version
 
 
 @dataclass(frozen=True)
@@ -867,10 +944,7 @@ def _map_run(
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
     metadata = envelope.metadata
-    if (
-        envelope.dataset_id != profile.dataset_id
-        or envelope.catalog_version != profile.catalog_version
-    ):
+    if envelope.dataset_id != profile.dataset_id:
         raise MinuteDataContractError("minute_query_binding_mismatch")
     if metadata.state.strip().lower() != "ready" or metadata.degraded is not False:
         raise MinuteDataContractError("minute_metadata_not_ready")
@@ -1021,11 +1095,21 @@ def snapshot_from_runs(
 
     rejected_payload = {
         "dataset_id": profile.dataset_id,
-        "catalog_version": profile.catalog_version,
+        "expected_catalog_version": profile.expected_catalog_version,
+        "observed_catalog_version": getattr(
+            getattr(first, "envelope", None), "catalog_version", None
+        ),
         "first_semantic_sha256": getattr(first, "semantic_sha256", None),
         "replay_semantic_sha256": getattr(replay, "semantic_sha256", None),
     }
+    observed_catalog_version = "unobserved"
     try:
+        observed_catalog_version = _text(
+            first.envelope.catalog_version,
+            "minute_query_catalog_version_invalid",
+        )
+        if replay.envelope.catalog_version != observed_catalog_version:
+            raise MinuteDataContractError("minute_query_catalog_version_drift")
         if (
             first.semantic_sha256 != replay.semantic_sha256
             or first.semantic_trace_sha256 != replay.semantic_trace_sha256
@@ -1064,7 +1148,7 @@ def snapshot_from_runs(
             MinuteEvidenceAuditRecord(
                 reason_code=exc.reason_code,
                 dataset_id=profile.dataset_id,
-                catalog_version=profile.catalog_version,
+                catalog_version=observed_catalog_version,
                 decision_time=_aware(
                     decision_time, "minute_decision_time_timezone_required"
                 ),
@@ -1094,31 +1178,30 @@ class TradingDatasMinuteMarketDataPort:
         evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
+        runtime_catalog_version = "unobserved"
         try:
+            if self._client.config.catalog_version_policy != "evidence_only":
+                raise MinuteDataContractError("minute_catalog_version_policy_invalid")
             catalog = self._client.get_catalog()
-            if catalog.catalog_version != profile.catalog_version:
-                raise MinuteDataContractError("minute_catalog_version_drift")
-            row = next(
-                (
-                    item
-                    for item in catalog.data
-                    if item.get("dataset_id") == profile.dataset_id
-                ),
-                None,
-            )
-            if row is None or not _active_catalog_row(row):
+            runtime_catalog_version = catalog.catalog_version
+            matches = [
+                item
+                for item in catalog.data
+                if item.get("dataset_id") == profile.dataset_id
+            ]
+            if len(matches) != 1:
+                raise MinuteDataContractError("minute_dataset_catalog_row_missing")
+            row = matches[0]
+            if not _active_catalog_row(row):
                 raise MinuteDataContractError("minute_dataset_not_active")
-            current_catalog_contract = {
-                "dataset_id": row.get("dataset_id"),
-                "schema_major": row.get("schema_major"),
-                "default_fields": row.get("default_fields"),
-                "default_order": row.get("default_order"),
-                "filter_operators": row.get("filter_operators"),
-                "limits": row.get("limits"),
-                "availability": row.get("availability"),
-            }
-            if _sha256(current_catalog_contract) != profile.catalog_contract_sha256:
-                raise MinuteDataContractError("minute_catalog_contract_drift")
+            try:
+                current_fingerprint = dataset_contract_fingerprint(row)
+            except (TypeError, ValueError) as exc:
+                raise MinuteDataContractError(
+                    "minute_dataset_contract_invalid"
+                ) from exc
+            if current_fingerprint != profile.dataset_contract_fingerprint:
+                raise MinuteDataContractError("minute_dataset_contract_drift")
             filter_contract = dict(profile.filter_operators)
             for field_name, condition in filters.items():
                 if (
@@ -1171,7 +1254,7 @@ class TradingDatasMinuteMarketDataPort:
                     MinuteEvidenceAuditRecord(
                         reason_code=exc.reason_code,
                         dataset_id=profile.dataset_id,
-                        catalog_version=profile.catalog_version,
+                        catalog_version=runtime_catalog_version,
                         decision_time=_aware(
                             decision_time,
                             "minute_decision_time_timezone_required",
@@ -1192,7 +1275,7 @@ class TradingDatasMinuteMarketDataPort:
                 MinuteEvidenceAuditRecord(
                     reason_code=reason,
                     dataset_id=profile.dataset_id,
-                    catalog_version=profile.catalog_version,
+                    catalog_version=runtime_catalog_version,
                     decision_time=_aware(
                         decision_time, "minute_decision_time_timezone_required"
                     ),
@@ -1212,7 +1295,7 @@ class TradingDatasMinuteMarketDataPort:
                 MinuteEvidenceAuditRecord(
                     reason_code=reason,
                     dataset_id=profile.dataset_id,
-                    catalog_version=profile.catalog_version,
+                    catalog_version=runtime_catalog_version,
                     decision_time=_aware(
                         decision_time, "minute_decision_time_timezone_required"
                     ),

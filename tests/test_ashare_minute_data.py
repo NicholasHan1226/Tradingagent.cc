@@ -21,6 +21,7 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Client,
     SharedSignalsV1Config,
 )
+from shared.governance.evidence_readiness import dataset_contract_fingerprint
 
 
 CATALOG = "fixture-minute-catalog-v1"
@@ -46,6 +47,7 @@ def _catalog_row(**overrides: Any) -> dict[str, Any]:
         "schema_major": 1,
         "default_fields": list(FIELDS),
         "default_order": ["ts_code:asc", "bar_time:asc"],
+        "identity_fields": ["ts_code", "bar_time"],
         "fields": [
             {
                 "name": value,
@@ -66,20 +68,26 @@ def _catalog_row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
-def _catalog_payload(row: dict[str, Any] | None = None) -> dict[str, Any]:
+def _catalog_payload(
+    row: dict[str, Any] | None = None,
+    *,
+    catalog_version: str = CATALOG,
+    rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "api_version": "v1",
-        "catalog_version": CATALOG,
+        "catalog_version": catalog_version,
         "request_id": "catalog-request",
-        "data": [copy.deepcopy(row or _catalog_row())],
+        "data": copy.deepcopy(rows if rows is not None else [row or _catalog_row()]),
     }
 
 
-def test_profile_accepts_catalog_filter_only_field() -> None:
+def test_profile_accepts_only_canonical_default_field_filters() -> None:
     row = _catalog_row()
     row["default_fields"] = [
         field_name for field_name in row["default_fields"] if field_name != "freq"
     ]
+    row["filter_operators"].pop("freq")
     transport = _Transport(catalog_row=row)
     client = SharedSignalsV1Client(
         SharedSignalsV1Config(
@@ -119,14 +127,172 @@ def test_profile_accepts_catalog_filter_only_field() -> None:
         page_limit=2,
     )
 
-    assert dict(profile.filter_operators)["freq"] == (
-        "eq",
-        "in",
-        "gte",
-        "lte",
-        "between",
-    )
     assert "freq" not in profile.default_fields
+    assert "freq" not in dict(profile.filter_operators)
+
+
+def test_dataset_fingerprint_is_canonical_while_global_version_is_evidence() -> None:
+    row = _catalog_row()
+    transport = _Transport(
+        catalog_versions=(
+            "catalog-at-profile-build",
+            "catalog-with-unrelated-addition",
+        ),
+        query_catalog_version="catalog-with-unrelated-addition",
+        catalog_rows_by_read=(
+            [
+                row,
+                {
+                    "dataset_id": "unrelated.fixture.dataset",
+                    "schema_major": 1,
+                    "default_fields": ["id"],
+                    "default_order": ["id:asc"],
+                    "identity_fields": ["id"],
+                    "filter_operators": {"id": ["eq"]},
+                    "limits": {"max_page_size": 1},
+                    "availability": {"activation_states": ["active"]},
+                },
+            ],
+        ),
+    )
+    client = _client(transport)
+    profile = _profile(
+        client,
+        expected_catalog_version="previous-global-catalog-version",
+        expected_dataset_contract_fingerprint=dataset_contract_fingerprint(row),
+    )
+
+    assert profile.dataset_contract_fingerprint == dataset_contract_fingerprint(row)
+    assert profile.expected_catalog_version == "previous-global-catalog-version"
+    assert profile.observed_catalog_version == "catalog-at-profile-build"
+    assert profile.catalog_version_drift is True
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+    )
+    assert snapshot.row_count == 2
+    assert snapshot.observed_catalog_version == "catalog-with-unrelated-addition"
+    assert snapshot.catalog_version_drift is True
+
+
+@pytest.mark.parametrize(
+    "catalog_identity,consumer_identity,reason",
+    [
+        ([], ("ts_code", "bar_time"), "minute_catalog_identity_fields_invalid"),
+        (
+            ["bar_time", "ts_code"],
+            ("ts_code", "bar_time"),
+            "minute_catalog_identity_mismatch",
+        ),
+    ],
+)
+def test_catalog_identity_must_exactly_match_consumer_identity(
+    catalog_identity: list[str],
+    consumer_identity: tuple[str, ...],
+    reason: str,
+) -> None:
+    client = _client(
+        _Transport(catalog_row=_catalog_row(identity_fields=catalog_identity))
+    )
+    with pytest.raises(MinuteDataContractError, match=reason):
+        _profile(client, identity_fields=consumer_identity)
+
+
+@pytest.mark.parametrize(
+    "catalog_rows",
+    [
+        [],
+        [_catalog_row(), _catalog_row()],
+    ],
+)
+def test_runtime_catalog_missing_or_duplicate_target_row_fails_before_query(
+    catalog_rows: list[dict[str, Any]],
+) -> None:
+    transport = _Transport(
+        catalog_rows_by_read=([_catalog_row()], catalog_rows),
+    )
+    client = _client(transport)
+    profile = _profile(client)
+    audit = MinuteEvidenceAuditLedger()
+
+    with pytest.raises(
+        MinuteDataContractError, match="minute_tradingdatas_request_failed"
+    ):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=audit,
+        )
+    assert transport.query_count == 0
+    assert audit.records()[0].reason_code == "minute_tradingdatas_request_failed"
+
+
+def test_runtime_target_contract_or_query_catalog_mutation_fails_closed() -> None:
+    changed = _catalog_row(default_order=["bar_time:asc", "ts_code:asc"])
+    transport = _Transport(catalog_rows_by_read=([_catalog_row()], [changed]))
+    client = _client(transport)
+    profile = _profile(client)
+    audit = MinuteEvidenceAuditLedger()
+
+    with pytest.raises(MinuteDataContractError, match="minute_dataset_contract_drift"):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=audit,
+        )
+    assert transport.query_count == 0
+
+    mutation = _Transport(query_catalog_version="catalog-after-query-mutation")
+    mutation_client = _client(mutation)
+    mutation_profile = _profile(mutation_client)
+    with pytest.raises(
+        MinuteDataContractError, match="minute_tradingdatas_request_failed"
+    ):
+        TradingDatasMinuteMarketDataPort(mutation_client).load_snapshot(
+            profile=mutation_profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=MinuteEvidenceAuditLedger(),
+        )
+    assert mutation.query_count == 1
+
+
+def test_each_canonical_target_contract_field_drift_fails_before_query() -> None:
+    changed_rows = (
+        _catalog_row(dataset_id="fixture.cn.equity.other"),
+        _catalog_row(schema_major=2),
+        _catalog_row(default_fields=list(reversed(FIELDS))),
+        _catalog_row(
+            filter_operators={
+                **_catalog_row()["filter_operators"],
+                "close": ["eq"],
+            }
+        ),
+        _catalog_row(default_order=["bar_time:asc", "ts_code:asc"]),
+        _catalog_row(limits={"max_page_size": 2, "max_lookback_days": 31}),
+        _catalog_row(identity_fields=["bar_time", "ts_code"]),
+    )
+    for changed in changed_rows:
+        transport = _Transport(catalog_rows_by_read=([_catalog_row()], [changed]))
+        client = _client(transport)
+        profile = _profile(client)
+        with pytest.raises(MinuteDataContractError):
+            TradingDatasMinuteMarketDataPort(client).load_snapshot(
+                profile=profile,
+                filters={},
+                decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+                trading_dates=frozenset({date(2026, 7, 27)}),
+                audit_ledger=MinuteEvidenceAuditLedger(),
+            )
+        assert transport.query_count == 0
 
 
 def _metadata(**overrides: Any) -> dict[str, Any]:
@@ -182,10 +348,11 @@ def _query_payload(
     rows: list[dict[str, Any]],
     next_cursor: str | None,
     metadata: dict[str, Any] | None = None,
+    catalog_version: str = CATALOG,
 ) -> dict[str, Any]:
     return {
         "api_version": "v1",
-        "catalog_version": CATALOG,
+        "catalog_version": catalog_version,
         "request_id": request_id,
         "dataset_id": DATASET,
         "data": copy.deepcopy(rows),
@@ -205,6 +372,9 @@ class _Transport:
         replay_change: bool = False,
         cursor_cycle: bool = False,
         query_status: int = 200,
+        catalog_versions: tuple[str, ...] = (CATALOG,),
+        catalog_rows_by_read: tuple[list[dict[str, Any]], ...] | None = None,
+        query_catalog_version: str | None = None,
     ) -> None:
         self.first_rows = first_rows or [_row("600000.SH", "20260727 09:40:00")]
         self.second_rows = second_rows or [_row("000001.SZ", "20260727 09:40:00")]
@@ -213,13 +383,32 @@ class _Transport:
         self.replay_change = replay_change
         self.cursor_cycle = cursor_cycle
         self.query_status = query_status
+        self.catalog_versions = catalog_versions
+        self.catalog_rows_by_read = catalog_rows_by_read
+        self.query_catalog_version = query_catalog_version or CATALOG
+        self.catalog_count = 0
         self.query_count = 0
         self.calls: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(copy.deepcopy(kwargs))
         if kwargs["method"] == "GET":
-            return HTTPResponse(200, _catalog_payload(self.catalog_row))
+            read_index = self.catalog_count
+            index = min(read_index, len(self.catalog_versions) - 1)
+            self.catalog_count += 1
+            rows = (
+                self.catalog_rows_by_read[
+                    min(read_index, len(self.catalog_rows_by_read) - 1)
+                ]
+                if self.catalog_rows_by_read is not None
+                else [self.catalog_row]
+            )
+            return HTTPResponse(
+                200,
+                _catalog_payload(
+                    catalog_version=self.catalog_versions[index], rows=rows
+                ),
+            )
         body = kwargs["json_body"]
         assert body is not None
         if self.query_status != 200:
@@ -238,6 +427,7 @@ class _Transport:
                     rows=rows,
                     next_cursor="cursor-1",
                     metadata=self.metadata,
+                    catalog_version=self.query_catalog_version,
                 ),
             )
         assert cursor == "cursor-1"
@@ -248,6 +438,7 @@ class _Transport:
                 rows=self.second_rows,
                 next_cursor="cursor-1" if self.cursor_cycle else None,
                 metadata=self.metadata,
+                catalog_version=self.query_catalog_version,
             ),
         )
 
@@ -259,6 +450,7 @@ def _client(transport: _Transport) -> SharedSignalsV1Client:
             expected_catalog_version=CATALOG,
             dataset_ids=frozenset({DATASET}),
             access_policy_id="fixture-read",
+            catalog_version_policy="evidence_only",
             max_limit=2,
             cache_ttl_seconds=0,
         ),
@@ -351,7 +543,14 @@ def test_profile_is_frozen_from_active_catalog_and_query_uses_only_fixed_routes(
             "minute_dataset_not_active",
         ),
         (
-            _catalog_row(default_fields=[field for field in FIELDS if field != "vol"]),
+            _catalog_row(
+                default_fields=[field for field in FIELDS if field != "vol"],
+                filter_operators={
+                    field: ["eq", "in", "gte", "lte", "between"]
+                    for field in FIELDS
+                    if field != "vol"
+                },
+            ),
             "minute_profile_required_fields_missing",
         ),
         (
@@ -664,6 +863,7 @@ def test_provider_native_quicksync_shape_binds_daily_reference_evidence() -> Non
     catalog_row = _catalog_row(
         default_fields=fields,
         default_order=["ts_code:asc", "time:asc"],
+        identity_fields=["ts_code", "time"],
         fields=[
             {
                 "name": field,
@@ -767,6 +967,7 @@ def test_provider_native_quicksync_shape_requires_matching_reference_fact() -> N
     catalog_row = _catalog_row(
         default_fields=fields,
         default_order=["ts_code:asc", "time:asc"],
+        identity_fields=["ts_code", "time"],
         fields=[
             {
                 "name": field,

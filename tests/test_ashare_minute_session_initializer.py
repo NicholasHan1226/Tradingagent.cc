@@ -42,6 +42,7 @@ def _catalog_row(
         "schema_major": 2,
         "default_fields": list(fields),
         "default_order": [f"{fields[0]}:asc"],
+        "identity_fields": list(fields[:2]),
         "fields": [_field(name) for name in fields],
         "filter_operators": {
             name: ["eq", "in", "gte", "lte", "between"] for name in fields
@@ -252,7 +253,7 @@ def _template(root: Path) -> Path:
         json.dumps(
             {
                 "base_url": "http://127.0.0.1:18082",
-                "catalog_version": "v1-old",
+                "expected_catalog_version": "v1-old",
                 "dataset_id": "cn.dataset.rt_min",
                 "access_policy_id": "tradingagent-read-v1",
                 "transport_id": "http-json-v1",
@@ -393,7 +394,11 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
         "universe.json",
     ]
     manifest = json.loads((day / "minute-manifest.json").read_text())
-    assert manifest["catalog_version"] == CATALOG_VERSION
+    assert manifest["expected_catalog_version"] == "v1-old"
+    assert manifest["observed_catalog_version"] == CATALOG_VERSION
+    assert manifest["catalog_version_drift"] is True
+    assert len(manifest["profile"]["dataset_contract_fingerprint"]) == 64
+    assert len(manifest["profile"]["consumer_profile_sha256"]) == 64
     assert manifest["profile"]["max_pages"] == 1
     assert manifest["profile"]["max_rows"] == 2
     assert manifest["profile"]["page_limit"] == 2
