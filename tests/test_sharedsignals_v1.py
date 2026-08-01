@@ -33,12 +33,14 @@ def _config(
     *,
     access_policy_id: str = "ta-paper-read-v1",
     dataset_ids: frozenset[str] = frozenset({DATASET_ID}),
+    catalog_version_policy: str = "strict",
 ) -> SharedSignalsV1Config:
     return SharedSignalsV1Config(
         base_url="https://tradingdatas.fixture.invalid",
         expected_catalog_version=CATALOG_VERSION,
         dataset_ids=dataset_ids,
         access_policy_id=access_policy_id,
+        catalog_version_policy=catalog_version_policy,
         cache_ttl_seconds=30.0,
     )
 
@@ -142,6 +144,83 @@ def test_configuration_requires_explicit_contract_identity() -> None:
             dataset_ids=frozenset({DATASET_ID}),
             access_policy_id="",
         )
+    with pytest.raises(ValueError, match="catalog_version_policy"):
+        SharedSignalsV1Config(
+            base_url="http://fixture.invalid",
+            expected_catalog_version=CATALOG_VERSION,
+            dataset_ids=frozenset({DATASET_ID}),
+            access_policy_id="ta-paper-read-v1",
+            catalog_version_policy="relaxed",
+        )
+
+
+def test_evidence_only_catalog_version_binds_queries_to_observed_catalog() -> None:
+    observed_version = "fixture-catalog-unrelated-dataset-added"
+    transport = FakeTransport(
+        [
+            HTTPResponse(
+                200,
+                {
+                    "api_version": "v1",
+                    "catalog_version": observed_version,
+                    "request_id": "catalog-request-drift",
+                    "data": [{"dataset_id": DATASET_ID, "fields": ["ts_code"]}],
+                },
+            ),
+            HTTPResponse(
+                200,
+                _query_payload(
+                    catalog_version=observed_version,
+                    next_cursor=None,
+                ),
+            ),
+        ]
+    )
+    client = SharedSignalsV1Client(
+        _config(catalog_version_policy="evidence_only"), transport=transport
+    )
+
+    catalog = client.get_catalog()
+    envelope = client.query(
+        QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
+    )
+
+    assert catalog.catalog_version == observed_version
+    assert envelope.catalog_version == observed_version
+
+
+def test_evidence_only_catalog_version_requires_catalog_and_same_version_query() -> (
+    None
+):
+    request = QueryRequest(dataset_id=DATASET_ID, schema_major=SCHEMA_MAJOR)
+    without_catalog = SharedSignalsV1Client(
+        _config(catalog_version_policy="evidence_only"),
+        transport=FakeTransport([]),
+    )
+    with pytest.raises(ContractViolation, match="catalog must be observed"):
+        without_catalog.query(request)
+
+    observed_version = "fixture-catalog-observed"
+    transport = FakeTransport(
+        [
+            HTTPResponse(
+                200,
+                {
+                    "api_version": "v1",
+                    "catalog_version": observed_version,
+                    "request_id": "catalog-request-observed",
+                    "data": [{"dataset_id": DATASET_ID, "fields": ["ts_code"]}],
+                },
+            ),
+            HTTPResponse(200, _query_payload(catalog_version="later-version")),
+        ]
+    )
+    client = SharedSignalsV1Client(
+        _config(catalog_version_policy="evidence_only"), transport=transport
+    )
+    client.get_catalog()
+    with pytest.raises(ContractViolation, match="catalog observed"):
+        client.query(request)
 
 
 def test_client_has_no_default_network_transport() -> None:

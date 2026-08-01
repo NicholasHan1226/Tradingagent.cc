@@ -146,6 +146,12 @@ class SharedSignalsV1Config:
     # runtime transport owns bearer authentication without exposing the token
     # to this provider-neutral request/response contract.
     access_policy_id: str
+    # ``strict`` preserves the legacy global catalog pin. ``evidence_only``
+    # requires a successful catalog read before any query and then binds every
+    # query envelope to that observed version. Dataset-level callers remain
+    # responsible for validating the configured rows with canonical contract
+    # fingerprints before querying.
+    catalog_version_policy: str = "strict"
     timeout_seconds: float = 10.0
     max_limit: int = 10_000
     cache_ttl_seconds: float = 30.0
@@ -169,6 +175,9 @@ class SharedSignalsV1Config:
             raise ValueError(
                 "expected_catalog_version must not contain outer whitespace"
             )
+
+        if self.catalog_version_policy not in {"strict", "evidence_only"}:
+            raise ValueError("catalog_version_policy must be strict or evidence_only")
 
         try:
             normalized_dataset_ids = frozenset(
@@ -653,6 +662,7 @@ class SharedSignalsV1Client:
         self._clock = clock
         self._cache: dict[CacheKey, tuple[float, QueryEnvelope]] = {}
         self._query_cache_index: dict[tuple[str, str, str, str], CacheKey] = {}
+        self._observed_catalog_version: str | None = None
 
     @property
     def cache_keys(self) -> tuple[CacheKey, ...]:
@@ -697,7 +707,10 @@ class SharedSignalsV1Client:
     def get_catalog(self) -> CatalogEnvelope:
         payload = self._send(method="GET", path=CATALOG_PATH, json_body=None)
         catalog = parse_catalog_envelope(payload)
-        if catalog.catalog_version != self.config.expected_catalog_version:
+        if (
+            self.config.catalog_version_policy == "strict"
+            and catalog.catalog_version != self.config.expected_catalog_version
+        ):
             raise CatalogContractError(
                 "catalog_version does not match explicit TradingAgent config"
             )
@@ -707,12 +720,26 @@ class SharedSignalsV1Client:
                 "catalog is missing configured dataset IDs: "
                 + ", ".join(sorted(missing))
             )
+        if self._observed_catalog_version != catalog.catalog_version:
+            self._cache.clear()
+            self._query_cache_index.clear()
+        self._observed_catalog_version = catalog.catalog_version
         return catalog
+
+    def _query_catalog_version(self) -> str:
+        if self.config.catalog_version_policy == "strict":
+            return self.config.expected_catalog_version
+        if self._observed_catalog_version is None:
+            raise ContractViolation(
+                "catalog must be observed before query when catalog_version_policy "
+                "is evidence_only"
+            )
+        return self._observed_catalog_version
 
     def _lookup_key(self, request: QueryRequest) -> tuple[str, str, str, str]:
         return (
             request.sha256,
-            self.config.expected_catalog_version,
+            self._query_catalog_version(),
             QUERY_RESPONSE_SCHEMA_ID,
             self.config.access_policy_id,
         )
@@ -796,9 +823,9 @@ class SharedSignalsV1Client:
             json_body=request.to_payload(),
         )
         envelope = parse_query_envelope(payload)
-        if envelope.catalog_version != self.config.expected_catalog_version:
+        if envelope.catalog_version != self._query_catalog_version():
             raise ContractViolation(
-                "catalog_version does not match explicit TradingAgent config"
+                "catalog_version does not match the catalog observed for this client"
             )
         if envelope.dataset_id != request.dataset_id:
             raise ContractViolation("dataset_id does not match the query request")
