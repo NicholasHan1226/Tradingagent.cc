@@ -31,6 +31,7 @@ def _catalog_row(
     *,
     active: bool = True,
     fields: list[str] | None = None,
+    default_order: list[str] | None = None,
     max_page_size: int = 2,
 ) -> dict[str, Any]:
     names = fields or FIELDS
@@ -38,7 +39,9 @@ def _catalog_row(
         "dataset_id": dataset_id,
         "schema_major": 1,
         "default_fields": list(names),
-        "default_order": [f"{names[0]}:asc"],
+        "default_order": default_order
+        if default_order is not None
+        else ["ts_code:asc", "trade_date:asc"],
         "filter_operators": {
             name: ["eq", "in", "gte", "lte", "between"] for name in names
         },
@@ -197,6 +200,10 @@ def test_single_source_profile_and_snapshot_are_catalog_bound_shadow_only() -> N
     )
 
     assert tuple(profiles.by_dataset) == ("cn.dataset.moneyflow",)
+    assert profiles.by_dataset["cn.dataset.moneyflow"].identity_fields == (
+        "ts_code",
+        "trade_date",
+    )
     assert snapshot.query_route == FIXED_QUERY_ROUTE == "POST /v1/query"
     assert snapshot.catalog_route == FIXED_CATALOG_ROUTE == "GET /v1/catalog"
     assert snapshot.same_observation is True
@@ -448,4 +455,38 @@ def test_duplicate_catalog_source_variant_fails_closed_without_query() -> None:
 
     assert audit.records()[-1].dataset_id == "catalog"
     assert audit.records()[-1].reason_code == "ashare_moneyflow_catalog_failed"
+    assert not [call for call in transport.calls if call["method"] == "POST"]
+
+
+@pytest.mark.parametrize(
+    ("default_order", "reason"),
+    [
+        ([], "catalog_default_order_missing"),
+        (["ts_code:ascending", "trade_date:asc"], "catalog_default_order_invalid"),
+        (["unknown:asc", "trade_date:asc"], "catalog_default_order_invalid"),
+        (
+            ["ts_code:asc", "ts_code:desc", "trade_date:asc"],
+            "catalog_default_order_invalid",
+        ),
+        (
+            ["ts_code:asc", "net_mf_amount:asc"],
+            "catalog_default_order_identity_incomplete",
+        ),
+    ],
+)
+def test_catalog_default_order_is_the_only_pagination_identity(
+    default_order: list[str], reason: str
+) -> None:
+    transport = _Transport(
+        catalog_rows=[_catalog_row("cn.dataset.moneyflow", default_order=default_order)]
+    )
+    port = TradingDatasAshareMoneyflowPort(
+        _client(transport, dataset_ids=frozenset({"cn.dataset.moneyflow"}))
+    )
+    audit = AshareMoneyflowAuditLedger()
+
+    with pytest.raises(AshareMoneyflowEvidenceError, match=reason):
+        port.freeze_profiles(audit_ledger=audit)
+
+    assert audit.records()[-1].dataset_id == "catalog"
     assert not [call for call in transport.calls if call["method"] == "POST"]

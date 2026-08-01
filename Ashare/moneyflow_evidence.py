@@ -45,12 +45,6 @@ _NET_FLOW_FIELDS = (
     "net_amount",
     "net_inflow_amount",
 )
-_IDENTITY_CANDIDATES = (
-    ("flow_id",),
-    ("id",),
-    ("ts_code", "trade_date"),
-    ("symbol", "trade_date"),
-)
 
 
 class AshareMoneyflowEvidenceError(ValueError):
@@ -161,11 +155,41 @@ def _first_field(fields: frozenset[str], candidates: tuple[str, ...]) -> str | N
     return next((candidate for candidate in candidates if candidate in fields), None)
 
 
-def _identity_fields(fields: frozenset[str]) -> tuple[str, ...] | None:
-    return next(
-        (candidate for candidate in _IDENTITY_CANDIDATES if set(candidate) <= fields),
-        None,
-    )
+def _identity_fields(
+    default_order: tuple[str, ...],
+    fields: frozenset[str],
+    *,
+    symbol_field: str,
+    source_time_field: str,
+) -> tuple[str, ...]:
+    """Derive pagination identity only from the catalog primary-key projection."""
+
+    if not default_order:
+        raise AshareMoneyflowEvidenceError(
+            "ashare_moneyflow_catalog_default_order_missing"
+        )
+    identity: list[str] = []
+    for term in default_order:
+        if term.count(":") != 1:
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_catalog_default_order_invalid"
+            )
+        field_name, direction = term.split(":", 1)
+        if (
+            not field_name
+            or field_name not in fields
+            or direction not in {"asc", "desc"}
+            or field_name in identity
+        ):
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_catalog_default_order_invalid"
+            )
+        identity.append(field_name)
+    if symbol_field not in identity or source_time_field not in identity:
+        raise AshareMoneyflowEvidenceError(
+            "ashare_moneyflow_catalog_default_order_identity_incomplete"
+        )
+    return tuple(identity)
 
 
 def _mainboard_allowlist(value: tuple[str, ...] | None) -> frozenset[str] | None:
@@ -291,9 +315,15 @@ class MoneyflowDatasetProfile:
             "ashare_moneyflow_profile_contract_sha_invalid",
         )
         fields = frozenset(self.default_fields)
+        expected_identity = _identity_fields(
+            self.default_order,
+            fields,
+            symbol_field=self.symbol_field,
+            source_time_field=self.source_time_field,
+        )
         if (
             not fields
-            or not set(self.identity_fields) <= fields
+            or self.identity_fields != expected_identity
             or any(
                 field not in fields
                 for field in (
@@ -353,19 +383,23 @@ class MoneyflowDatasetProfile:
             nonempty=False,
         )
         fields = frozenset(default_fields)
-        identity_fields = _identity_fields(fields)
         symbol_field = _first_field(fields, _SYMBOL_FIELDS)
         source_time_field = _first_field(fields, _TIME_FIELDS)
         net_flow_amount_field = _first_field(fields, _NET_FLOW_FIELDS)
         if (
-            identity_fields is None
-            or symbol_field is None
+            symbol_field is None
             or source_time_field is None
             or net_flow_amount_field is None
         ):
             raise AshareMoneyflowEvidenceError(
                 "ashare_moneyflow_catalog_semantic_fields_missing"
             )
+        identity_fields = _identity_fields(
+            default_order,
+            fields,
+            symbol_field=symbol_field,
+            source_time_field=source_time_field,
+        )
         raw_operators = row.get("filter_operators")
         if not isinstance(raw_operators, Mapping):
             raise AshareMoneyflowEvidenceError(

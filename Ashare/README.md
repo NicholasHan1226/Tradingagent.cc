@@ -150,6 +150,11 @@ provider-neutral receipt/lineage, freshness/quality, and PIT gates as the
 event adapter. A profile is derived from the exact supplied catalog row;
 current production availability, schema, selectable fields, order, filters,
 and page limit are never baked into TA.
+Its pagination identity has `identity_source=catalog.default_order`: every
+non-empty order term must be exactly `field:asc` or `field:desc`, name a unique
+catalog field, and collectively include the catalog-selected symbol and
+source-time fields. TA never synthesizes an identity from merely present row
+fields; an incomplete or malformed order rejects the source before any query.
 
 Each source is queried and audited independently. A stale, degraded, empty,
 failed, receipt/lineage-incomplete, drifted, or PIT-late source produces no
