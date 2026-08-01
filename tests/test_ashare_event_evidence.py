@@ -510,6 +510,32 @@ def test_primary_profiles_match_real_tradingdatas_dataset_ids_and_fields() -> No
     )
 
 
+def test_anns_d_formal_identity_including_title_is_catalog_bound() -> None:
+    rows = _catalog_rows()
+    target_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row["dataset_id"] == "cn.dataset.anns_d"
+    )
+    rows[target_index] = _catalog_row(
+        "cn.dataset.anns_d",
+        fields=["ann_date", "ts_code", "name", "title", "url"],
+        identity_fields=["ann_date", "ts_code", "title", "url"],
+    )
+    transport = _Transport(catalog_rows=rows)
+
+    profiles = TradingDatasAshareEvidencePort(
+        _client(transport, configured_ids=frozenset(PRIMARY_DATASET_IDS))
+    ).freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
+
+    assert profiles.by_dataset["cn.dataset.anns_d"].identity_fields == (
+        "ann_date",
+        "ts_code",
+        "title",
+        "url",
+    )
+
+
 @pytest.mark.parametrize(
     ("dataset_id", "fields", "row", "expected_event_time", "expected_source"),
     [
