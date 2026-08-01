@@ -429,6 +429,13 @@ epoch）、核心 fresh、无 pending、Decision Ledger 计数一致且 capital 
 固定为 disabled full-scrub + 幂等 replay；只有两项通过后才允许发布流程启用
 incremental learning。该 unit 是日常报告和告警证据，不是交易调度器。
 
+G5 是从只读 G4 通过版本化 recovery manifest 与 append-only supersession
+receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile 或账本原地
+改写后继续运行。`tradingagent-crypto-round-trip-g5-{delayed-paper,health,acceptance}`
+三组 unit 各自只读取固定 G5 环境文件；core 仅能写唯一 G5 root，同时只读 G4 与
+旧 G2 根以验证 predecessor anchors。仓库默认不启用任何 G5 timer；发布侧必须在
+one-shot、同槽 replay、资本/持仓/订单/receipt 守恒与零重复 fill 验收后才可启用。
+
 ## Outage epoch restart 候选
 
 2026-07-29 ECS 停机后，旧 delayed-paper root 的最后 completion 停在
