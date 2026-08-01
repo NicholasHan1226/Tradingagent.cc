@@ -306,6 +306,11 @@ Challenger fields remain review-only: calibration has no forward-label
 authority, and automatic model change, promotion, risk expansion and real
 trading are all false. The tracked `Ashare/systemd/` service/timer are merely
 disabled-by-default installation candidates and are not deployed runtime units.
+The projection requires receipt history for every accepted bar: a legacy bundle
+with only its final receipt is blocked because earlier evidence rejections
+cannot be disproved. Its deterministic `forward_label_state` records the
+`m30/m60/close/1d/3d/5d` requirement as blocked until a future authoritative
+TradingDatas daily receipt exists; it neither queries for nor appends labels.
 
 `minute_session_initializer.py` closes that pre-open preparation gap without
 adding a provider route. At 09:20 it reads the current TradingDatas catalog,
