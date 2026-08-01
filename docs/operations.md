@@ -1037,7 +1037,33 @@ preopen
 
 旧链失败或新链未冻结时停止新增风险，不恢复兼容路径。历史细节从 Git 与冻结证据审计，不在现役操作文档复制旧命令。
 
-## 8. 发布前的外部阻塞
+## 8. 有效运行版本只读核验
+
+仓库 `HEAD`、远端 `main`、immutable release、`current` symlink、systemd 的
+effective configuration 和正在运行的进程是六项独立事实。发布或验收时不得只读
+其中一项就声称 runtime 已同步。只读解析器：
+
+```bash
+python3 tools/effective_runtime_release.py \
+  --unit tradingagent-ashare-minute-paper.service
+```
+
+解析器只向 `systemctl show` 请求 unit/load/active/PID/ExecStart/WorkingDirectory
+等非 secret 字段，再从 `/proc/<pid>` 读取 cwd/exe/cmdline 的 release path；不读取
+Environment、token file、状态账本或服务日志。输出分别保留：
+
+- `current_release`：当前 symlink 的 immutable target；
+- `unit_release_refs`：systemd effective ExecStart/Pre/WorkingDirectory 引用；
+- `process_release_refs`：运行进程实际引用；
+- `effective_release/effective_source` 与 `current_matches_effective`；
+- `runtime_verified` 和精确 blockers。
+
+active unit 缺 PID、进程无法绑定 release、unit/process 引用不同 release、一个层级
+引用多个 release、`current` 无法安全解析时统一退出 2。inactive unit 即使能解析
+声明 release 也固定 `runtime_verified=false`。该工具只消除版本误报，不执行切换、
+重启、daemon-reload、timer 或回滚。
+
+## 9. 发布前的外部阻塞
 
 即使本地全部通过，以下证据缺一不可：
 
