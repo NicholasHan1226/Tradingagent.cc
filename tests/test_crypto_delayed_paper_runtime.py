@@ -29,8 +29,17 @@ from Crypto.delayed_paper_runtime import (
     load_crypto_delayed_paper_runtime_manifest,
     run_crypto_delayed_paper_server_once as _core_run_crypto_delayed_paper_server_once,
 )
-from Crypto.five_minute_data import _sha256 as crypto_profile_sha256
-from shared.data.sharedsignals_v1 import HTTPResponse
+from Crypto.five_minute_data import (
+    CryptoFiveMinuteDataError,
+    _sha256 as crypto_profile_sha256,
+)
+from shared.data.sharedsignals_v1 import (
+    ContractViolation,
+    HTTPResponse,
+    QueryRequest,
+    SharedSignalsV1Client,
+    SharedSignalsV1Config,
+)
 from shared.data.tradingdatas_transport import RuntimeGateConfigurationError
 from tests.test_crypto_5m_support import (
     BAR_DATASETS,
@@ -39,6 +48,7 @@ from tests.test_crypto_5m_support import (
     WINDOW_END,
     FixtureTradingDatasTransport,
     bar_rows,
+    catalog_payload,
     client,
     metadata,
     profile,
@@ -184,6 +194,63 @@ def _factory(
         return transport
 
     return build
+
+
+class _CatalogVersionTransport:
+    """Keep fixture facts intact while exercising the typed catalog policy."""
+
+    def __init__(
+        self,
+        *,
+        catalog_version: str,
+        query_catalog_version: str,
+        catalog_rows: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._fixture = FixtureTradingDatasTransport(catalog_rows=catalog_rows)
+        self._catalog_version = catalog_version
+        self._query_catalog_version = query_catalog_version
+
+    def __call__(self, **kwargs: Any) -> HTTPResponse:
+        response = self._fixture(**kwargs)
+        payload = copy.deepcopy(response.json_body)
+        if str(kwargs["url"]).endswith("/v1/catalog"):
+            payload["catalog_version"] = self._catalog_version
+        elif str(kwargs["url"]).endswith("/v1/query"):
+            payload["catalog_version"] = self._query_catalog_version
+        return HTTPResponse(response.status_code, payload)
+
+
+def _evidence_only_client(
+    transport: Callable[..., HTTPResponse],
+) -> SharedSignalsV1Client:
+    return SharedSignalsV1Client(
+        SharedSignalsV1Config(
+            base_url="http://127.0.0.1:18083",
+            expected_catalog_version=CATALOG_VERSION,
+            dataset_ids=frozenset((*BAR_DATASETS.values(), *RULE_DATASETS.values())),
+            access_policy_id="runtime-evidence-only-test",
+            catalog_version_policy="evidence_only",
+            max_limit=13,
+            cache_ttl_seconds=0,
+        ),
+        transport=transport,
+    )
+
+
+def _lazy_runtime_port(
+    tmp_path: Path,
+    transport: Callable[..., HTTPResponse],
+) -> tuple[runtime_module._LazyCryptoFiveMinutePort, Any]:
+    manifest_path = _write_manifest(tmp_path)
+    manifest = load_crypto_delayed_paper_runtime_manifest(manifest_path)
+    return (
+        runtime_module._LazyCryptoFiveMinutePort(
+            manifest=manifest,
+            token_file=tmp_path / "token",
+            transport_factory=_factory(transport),
+        ),
+        manifest,
+    )
 
 
 def _capital_bytes(root: Path) -> dict[str, bytes]:
@@ -408,6 +475,95 @@ def test_complete_window_runs_loopback_only_core_without_learning(
     assert (output_root / "capital" / "events.jsonl").is_file()
 
 
+def test_evidence_only_client_rejects_query_before_catalog_observation() -> None:
+    client = _evidence_only_client(FixtureTradingDatasTransport())
+
+    with pytest.raises(
+        ContractViolation,
+        match="catalog must be observed before query",
+    ):
+        client.query(
+            QueryRequest(
+                dataset_id=BAR_DATASETS["BTCUSDT"],
+                schema_major=1,
+                limit=1,
+            )
+        )
+
+
+def test_runtime_accepts_unrelated_catalog_version_drift_after_catalog(
+    tmp_path: Path,
+) -> None:
+    transport = _CatalogVersionTransport(
+        catalog_version="fixture-unrelated-catalog-v2",
+        query_catalog_version="fixture-unrelated-catalog-v2",
+    )
+    port, manifest = _lazy_runtime_port(tmp_path, transport)
+
+    snapshot = port.load_snapshot(
+        profile=manifest.profile,
+        request=runtime_module.crypto_runtime_window_request(
+            WINDOW_END + timedelta(seconds=55)
+        ),
+    )
+
+    assert {proof.catalog_version for proof in snapshot.source_proofs} == {
+        "fixture-unrelated-catalog-v2"
+    }
+    assert manifest.profile.catalog_version == CATALOG_VERSION
+
+
+def test_runtime_rejects_query_catalog_version_change_after_observation(
+    tmp_path: Path,
+) -> None:
+    transport = _CatalogVersionTransport(
+        catalog_version="fixture-observed-catalog-v2",
+        query_catalog_version="fixture-query-catalog-v3",
+    )
+    port, manifest = _lazy_runtime_port(tmp_path, transport)
+
+    with pytest.raises(
+        CryptoFiveMinuteDataError,
+        match="catalog_version does not match the catalog observed",
+    ):
+        port.load_snapshot(
+            profile=manifest.profile,
+            request=runtime_module.crypto_runtime_window_request(
+                WINDOW_END + timedelta(seconds=55)
+            ),
+        )
+
+
+def test_runtime_rejects_target_dataset_contract_drift_in_evidence_only_mode(
+    tmp_path: Path,
+) -> None:
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    changed = copy.deepcopy(rows)
+    target = next(
+        row for row in changed if row["dataset_id"] == BAR_DATASETS["BTCUSDT"]
+    )
+    target["limits"]["max_lookback_days"] = 36501
+    transport = _CatalogVersionTransport(
+        catalog_version="fixture-target-contract-v2",
+        query_catalog_version="fixture-target-contract-v2",
+        catalog_rows=changed,
+    )
+    port, manifest = _lazy_runtime_port(tmp_path, transport)
+
+    with pytest.raises(
+        CryptoFiveMinuteDataError,
+        match="crypto_5m_catalog_contract_drift",
+    ):
+        port.load_snapshot(
+            profile=manifest.profile,
+            request=runtime_module.crypto_runtime_window_request(
+                WINDOW_END + timedelta(seconds=55)
+            ),
+        )
+
+
 def test_manifest_rejects_duplicate_keys_symlink_and_hardlink(
     tmp_path: Path,
 ) -> None:
@@ -600,7 +756,7 @@ def test_401_is_not_retried_and_has_no_fallback(
     assert not (output_root / "capital").exists()
 
 
-def test_degraded_metadata_and_catalog_drift_reject_without_capital(
+def test_degraded_metadata_rejects_without_capital(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -626,25 +782,6 @@ def test_degraded_metadata_and_catalog_drift_reject_without_capital(
     assert degraded_receipt["status"] == "data_reject"
     assert runtime_module.crypto_runtime_receipt_exit_code(degraded_receipt) == 2
     assert not (output_root / "capital").exists()
-
-    drift_token, drift_root = _runtime_paths(
-        monkeypatch,
-        tmp_path / "drift-runtime",
-    )
-    drift_manifest = _write_manifest(
-        tmp_path / "drift",
-        payload=_manifest_payload(catalog_version="formal-catalog-drift-v2"),
-    )
-    drift_receipt = run_crypto_delayed_paper_server_once(
-        runtime_manifest=drift_manifest,
-        token_file=drift_token,
-        output_root=drift_root,
-        now=WINDOW_END + timedelta(seconds=55),
-        transport_factory=_factory(FixtureTradingDatasTransport()),
-    )
-    assert drift_receipt["status"] == "data_reject"
-    assert runtime_module.crypto_runtime_receipt_exit_code(drift_receipt) == 2
-    assert not (drift_root / "capital").exists()
 
 
 def test_missing_token_writes_one_reject_without_network_or_capital(

@@ -668,6 +668,7 @@ class _LazyCryptoFiveMinutePort:
                     expected_catalog_version=(self._manifest.catalog_version),
                     dataset_ids=self._manifest.dataset_ids,
                     access_policy_id=self._manifest.access_policy_id,
+                    catalog_version_policy="evidence_only",
                     timeout_seconds=RUNTIME_TIMEOUT_SECONDS,
                     max_limit=max(
                         dataset.page_limit
