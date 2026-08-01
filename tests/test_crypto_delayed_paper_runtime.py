@@ -618,12 +618,12 @@ def test_loopback_timeout_budget_stays_below_systemd_stop_line() -> None:
         / "tradingagent-crypto-delayed-paper.service"
     ).read_text(encoding="utf-8")
 
-    assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 5.0
+    assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 6.0
     assert (
         runtime_module.MAX_CYCLES_PER_INVOCATION
         * (runtime_module.MAX_PROFILE_PAGE_BUDGET + 1)
         * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        == 110.0
+        == 132.0
     )
     assert (
         runtime_module.MAX_CYCLES_PER_INVOCATION
@@ -661,7 +661,7 @@ def test_transport_timeout_is_not_retried_and_has_no_fallback(
     assert len(calls) == 1
     assert calls[0]["method"] == "GET"
     assert calls[0]["url"].endswith("/v1/catalog")
-    assert calls[0]["timeout_seconds"] == 5.0
+    assert calls[0]["timeout_seconds"] == 6.0
     assert all(
         forbidden not in str(calls).lower()
         for forbidden in (
