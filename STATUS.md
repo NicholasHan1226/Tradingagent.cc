@@ -1,17 +1,20 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 00:29 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 01:51 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
 > **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release
 > `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`
 > symlink。只读 health 与 acceptance timers 已在比对安装字节和回滚命令后启用；首个
-> health 自动轮与随后核心自动轮均为 `success/exit0`。00:00 前的权威 health 读回为
-> `healthy/balanced=true`，G5 已有 32 个 completed 5-minute windows，并完成首个
-> BTC/ETH 规则约束下的模拟买入与卖出闭环；账户已平仓，现金/权益均为
-> `9997.92239662 USDT`，累计费用 `1.99754838 USDT`，已实现损益
-> `-2.07760338 USDT`，订单 2 笔、买卖各 1 笔、零重复 fill。该亏损只是早期工程样本，
-> 不代表策略胜率。24 小时 288 槽 acceptance 尚未完成，learning timer 继续关闭；
+> health 自动轮与随后核心自动轮均为 `success/exit0`。01:51 的 fresh 只读 health 与
+> acceptance 读回为 `healthy/balanced=true`，G5 已有 56 个 completed 5-minute
+> windows；最新连续段为 55 根/275 分钟，早期仍保留一个 10 分钟缺口。当前已完成两次
+> BTC/ETH 规则约束下的模拟买入与卖出闭环，均为 ETHUSDT 的
+> `momentum_reversal_observed` 退出；账户已平仓，现金/权益均为
+> `9994.46946191 USDT`，累计费用 `3.99402809 USDT`，已实现损益
+> `-5.53053809 USDT`，订单 4 笔、买卖各 2 笔、零重复 fill。该亏损只是早期工程样本，
+> 不代表策略胜率。24 小时 288 槽 acceptance 尚未完成，状态为 `not_ready`，
+> `next_action=continue_core_accumulation`，learning timer 继续关闭；
 > 真实交易、Testnet/Live broker、模型网络、自动晋级和自动风险扩张均为 false。只读
 > monitor 证据根为
 > `/opt/investment/release-evidence/tradingagent/20260801T234300Z-crypto-g5-readonly-monitor/`。
