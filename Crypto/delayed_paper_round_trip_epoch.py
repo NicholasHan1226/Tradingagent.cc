@@ -15,13 +15,18 @@ import uuid
 
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.fixture_sim.ledger import CryptoCapitalLedger, CryptoLedgerError
-from Crypto.round_trip_capital import ROUND_TRIP_CAPITAL_POLICY
+from Crypto.round_trip_capital import (
+    ROUND_TRIP_CAPITAL_POLICY,
+    CryptoRoundTripError,
+    RoundTripCapitalLedger,
+)
 
 
 ROUND_TRIP_EPOCH_MANIFEST_CONTRACT = "tradingagent.crypto.round_trip_epoch_manifest.v1"
 ROUND_TRIP_EPOCH_IDENTITY_CONTRACT = "tradingagent.crypto.round_trip_epoch_identity.v1"
 ROUND_TRIP_EPOCH_GENERATION = 3
 ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION = 4
+ROUND_TRIP_EPOCH_RECOVERY_GENERATION = 5
 ROUND_TRIP_EPOCH_MANIFEST_PATH = Path(
     "/etc/tradingagent/crypto-delayed-paper-round-trip.epoch.json"
 )
@@ -38,11 +43,17 @@ ROUND_TRIP_EPOCH_VERSIONED_MANIFEST_CONTRACT = (
 ROUND_TRIP_EPOCH_SUCCESSOR_MANIFEST_CONTRACT = (
     "tradingagent.crypto.round_trip_epoch_manifest.v3"
 )
+ROUND_TRIP_EPOCH_RECOVERY_MANIFEST_CONTRACT = (
+    "tradingagent.crypto.round_trip_epoch_manifest.v4"
+)
 ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT = (
     "tradingagent.crypto.round_trip_epoch_supersession_receipt.v1"
 )
 ROUND_TRIP_EPOCH_SUCCESSOR_RECEIPT_CONTRACT = (
     "tradingagent.crypto.round_trip_epoch_supersession_receipt.v2"
+)
+ROUND_TRIP_EPOCH_RECOVERY_RECEIPT_CONTRACT = (
+    "tradingagent.crypto.round_trip_epoch_supersession_receipt.v3"
 )
 _RUNTIME_READER_GROUP = "tradingagent"
 _PROOF = object()
@@ -297,6 +308,9 @@ class CryptoRoundTripEpochContext:
     archived_capital_head_sequence: int | None = None
     supersedes_receipt_path: Path | None = None
     supersedes_receipt_sha256: str | None = None
+    supersedes_output_root: Path | None = None
+    supersedes_capital_head_sequence: int | None = None
+    supersedes_capital_head_checksum: str | None = None
 
     @property
     def identity_path(self) -> Path:
@@ -448,6 +462,11 @@ def _load_versioned_round_trip_epoch_manifest(
         and raw.get("schema") == ROUND_TRIP_EPOCH_SUCCESSOR_MANIFEST_CONTRACT
     ):
         return _load_successor_round_trip_epoch_manifest(manifest_path, raw, encoded)
+    if (
+        isinstance(raw, dict)
+        and raw.get("schema") == ROUND_TRIP_EPOCH_RECOVERY_MANIFEST_CONTRACT
+    ):
+        return _load_recovery_round_trip_epoch_manifest(manifest_path, raw, encoded)
     expected_keys = {
         "schema",
         "epoch_id",
@@ -660,6 +679,134 @@ def _load_successor_round_trip_epoch_manifest(
     return context
 
 
+def _load_recovery_round_trip_epoch_manifest(
+    manifest_path: Path,
+    raw: Mapping[str, Any],
+    encoded: bytes,
+) -> CryptoRoundTripEpochContext:
+    """Load the one append-only G5 successor of a frozen G4 epoch."""
+
+    expected_keys = {
+        "schema",
+        "epoch_id",
+        "epoch_generation",
+        "current_output_root",
+        "archived_output_root",
+        "archived_epoch_id",
+        "archived_epoch_identity_file_sha256",
+        "archived_capital_head_sequence",
+        "archived_capital_head_checksum",
+        "archived_epoch_policy",
+        "capital_authority_id",
+        "capital_generation",
+        "capital_baseline_usdt",
+        "aggregate_with_archived_epoch",
+        "activate_current_epoch",
+        "supersedes_manifest_path",
+        "supersedes_manifest_sha256",
+        "supersedes_receipt_path",
+        "supersedes_receipt_sha256",
+        "supersedes_output_root",
+        "supersedes_capital_head_sequence",
+        "supersedes_capital_head_checksum",
+        "migration_reason",
+        "supersession_receipt_path",
+        "safety",
+    }
+    if set(raw) != expected_keys or encoded != (_canonical_json(raw) + "\n").encode():
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_schema_invalid")
+    epoch_id = _epoch_id(
+        raw.get("epoch_id"), generation=ROUND_TRIP_EPOCH_RECOVERY_GENERATION
+    )
+    output_root = Path(str(raw.get("current_output_root")))
+    archived_root = Path(str(raw.get("archived_output_root")))
+    predecessor_path = Path(str(raw.get("supersedes_manifest_path")))
+    prior_receipt_path = Path(str(raw.get("supersedes_receipt_path")))
+    receipt_path = Path(str(raw.get("supersession_receipt_path")))
+    predecessor_root = Path(str(raw.get("supersedes_output_root")))
+    sequence = raw.get("archived_capital_head_sequence")
+    predecessor_sequence = raw.get("supersedes_capital_head_sequence")
+    digests = tuple(
+        raw.get(key)
+        for key in (
+            "archived_epoch_identity_file_sha256",
+            "archived_capital_head_checksum",
+            "supersedes_manifest_sha256",
+            "supersedes_receipt_sha256",
+            "supersedes_capital_head_checksum",
+        )
+    )
+    if (
+        raw.get("schema") != ROUND_TRIP_EPOCH_RECOVERY_MANIFEST_CONTRACT
+        or manifest_path != _versioned_manifest_path(epoch_id)
+        or raw.get("epoch_generation") != ROUND_TRIP_EPOCH_RECOVERY_GENERATION
+        or raw.get("capital_generation") != ROUND_TRIP_CAPITAL_POLICY.generation
+        or raw.get("capital_authority_id") != ROUND_TRIP_CAPITAL_POLICY.authority_id
+        or raw.get("capital_baseline_usdt")
+        != format(ROUND_TRIP_CAPITAL_POLICY.initial_cash, "f")
+        or output_root != ROUND_TRIP_EPOCH_ROOT_PARENT / epoch_id
+        or archived_root.parent != ROUND_TRIP_EPOCH_ROOT_PARENT
+        or raw.get("archived_epoch_id") != archived_root.name
+        or raw.get("archived_epoch_policy")
+        != "read_only_archive_no_resume_no_aggregation"
+        or raw.get("aggregate_with_archived_epoch") is not False
+        or raw.get("activate_current_epoch") is not False
+        or predecessor_path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+        or prior_receipt_path
+        != _supersession_receipt_path(ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION)
+        or receipt_path
+        != _supersession_receipt_path(ROUND_TRIP_EPOCH_RECOVERY_GENERATION)
+        or predecessor_root.parent != ROUND_TRIP_EPOCH_ROOT_PARENT
+        or not predecessor_root.name.startswith(
+            "crypto-delayed-paper-round-trip-epoch-g4-"
+        )
+        or isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or sequence <= 0
+        or isinstance(predecessor_sequence, bool)
+        or not isinstance(predecessor_sequence, int)
+        or predecessor_sequence <= 0
+        or not isinstance(raw.get("migration_reason"), str)
+        or not raw["migration_reason"].strip()
+        or len(raw["migration_reason"]) > 512
+        or raw.get("safety") != _EXPECTED_SAFETY
+        or any(
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)
+            for digest in digests
+        )
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_manifest_safety_invalid")
+    context = CryptoRoundTripEpochContext(
+        epoch_id=epoch_id,
+        epoch_generation=ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+        capital_generation=ROUND_TRIP_CAPITAL_POLICY.generation,
+        output_root=output_root,
+        archived_output_root=archived_root,
+        archived_epoch_id=str(raw["archived_epoch_id"]),
+        archived_epoch_identity_file_sha256=str(digests[0]),
+        archived_capital_head_checksum=str(digests[1]),
+        manifest_path=manifest_path,
+        manifest_sha256=_sha256(raw),
+        aggregate_with_archived_epoch=False,
+        _proof=_PROOF,
+        versioned=True,
+        supersedes_manifest_path=predecessor_path,
+        supersedes_manifest_sha256=str(digests[2]),
+        migration_reason=str(raw["migration_reason"]),
+        supersession_receipt_path=receipt_path,
+        archived_capital_head_sequence=sequence,
+        supersedes_receipt_path=prior_receipt_path,
+        supersedes_receipt_sha256=str(digests[3]),
+        supersedes_output_root=predecessor_root,
+        supersedes_capital_head_sequence=predecessor_sequence,
+        supersedes_capital_head_checksum=str(digests[4]),
+    )
+    _verify_supersession_receipt(context)
+    return context
+
+
 def _verify_archive(context: CryptoRoundTripEpochContext) -> None:
     _secure_directory(
         context.archived_output_root,
@@ -703,9 +850,13 @@ def _supersession_receipt(context: CryptoRoundTripEpochContext) -> dict[str, Any
         raise CryptoRoundTripEpochError("round_trip_epoch_supersession_invalid")
     receipt: dict[str, Any] = {
         "contract": (
-            ROUND_TRIP_EPOCH_SUCCESSOR_RECEIPT_CONTRACT
-            if context.epoch_generation == ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION
-            else ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT
+            ROUND_TRIP_EPOCH_RECOVERY_RECEIPT_CONTRACT
+            if context.epoch_generation == ROUND_TRIP_EPOCH_RECOVERY_GENERATION
+            else (
+                ROUND_TRIP_EPOCH_SUCCESSOR_RECEIPT_CONTRACT
+                if context.epoch_generation == ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION
+                else ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT
+            )
         ),
         "epoch_id": context.epoch_id,
         "epoch_generation": context.epoch_generation,
@@ -729,7 +880,10 @@ def _supersession_receipt(context: CryptoRoundTripEpochContext) -> dict[str, Any
         "automatic_promotion_enabled": False,
         "automatic_risk_expansion_enabled": False,
     }
-    if context.epoch_generation == ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION:
+    if context.epoch_generation in {
+        ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
+        ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+    }:
         if (
             context.supersedes_receipt_path is None
             or context.supersedes_receipt_sha256 is None
@@ -739,6 +893,20 @@ def _supersession_receipt(context: CryptoRoundTripEpochContext) -> dict[str, Any
             {
                 "supersedes_receipt_path": str(context.supersedes_receipt_path),
                 "supersedes_receipt_sha256": context.supersedes_receipt_sha256,
+            }
+        )
+    if context.epoch_generation == ROUND_TRIP_EPOCH_RECOVERY_GENERATION:
+        if (
+            context.supersedes_output_root is None
+            or context.supersedes_capital_head_sequence is None
+            or context.supersedes_capital_head_checksum is None
+        ):
+            raise CryptoRoundTripEpochError("round_trip_epoch_supersession_invalid")
+        receipt.update(
+            {
+                "supersedes_output_root": str(context.supersedes_output_root),
+                "supersedes_capital_head_sequence": context.supersedes_capital_head_sequence,
+                "supersedes_capital_head_checksum": context.supersedes_capital_head_checksum,
             }
         )
     return receipt
@@ -754,7 +922,10 @@ def _verify_supersession_receipt(context: CryptoRoundTripEpochContext) -> None:
     )
     if encoded != (_canonical_json(_supersession_receipt(context)) + "\n").encode():
         raise CryptoRoundTripEpochError("round_trip_epoch_supersession_receipt_invalid")
-    if context.epoch_generation == ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION:
+    if context.epoch_generation in {
+        ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
+        ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+    }:
         superseded = _secure_versioned_manifest(
             context.supersedes_manifest_path,
             reason="round_trip_epoch_superseded_manifest_untrusted",
@@ -767,7 +938,10 @@ def _verify_supersession_receipt(context: CryptoRoundTripEpochContext) -> None:
         )
     if _sha256_bytes(superseded) != context.supersedes_manifest_sha256:
         raise CryptoRoundTripEpochError("round_trip_epoch_superseded_manifest_mismatch")
-    if context.epoch_generation == ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION:
+    if context.epoch_generation in {
+        ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
+        ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+    }:
         assert context.supersedes_receipt_path is not None
         assert context.supersedes_receipt_sha256 is not None
         prior_receipt = _secure_versioned_manifest(
@@ -780,12 +954,34 @@ def _verify_supersession_receipt(context: CryptoRoundTripEpochContext) -> None:
             )
         predecessor = load_round_trip_epoch_manifest(context.supersedes_manifest_path)
         if (
-            predecessor.epoch_generation != ROUND_TRIP_EPOCH_GENERATION
+            predecessor.epoch_generation
+            != (
+                ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION
+                if context.epoch_generation == ROUND_TRIP_EPOCH_RECOVERY_GENERATION
+                else ROUND_TRIP_EPOCH_GENERATION
+            )
             or predecessor.supersession_receipt_path != context.supersedes_receipt_path
             or predecessor.output_root == context.output_root
             or predecessor.archived_output_root != context.archived_output_root
         ):
             raise CryptoRoundTripEpochError("round_trip_epoch_successor_chain_invalid")
+    if context.epoch_generation == ROUND_TRIP_EPOCH_RECOVERY_GENERATION:
+        assert context.supersedes_output_root is not None
+        assert context.supersedes_capital_head_sequence is not None
+        assert context.supersedes_capital_head_checksum is not None
+        try:
+            sequence, checksum = RoundTripCapitalLedger(
+                context.supersedes_output_root / "round_trip_capital"
+            ).head()
+        except (CryptoRoundTripError, OSError, TypeError, ValueError) as exc:
+            raise CryptoRoundTripEpochError(
+                "round_trip_epoch_superseded_head_untrusted"
+            ) from exc
+        if (
+            sequence != context.supersedes_capital_head_sequence
+            or checksum != context.supersedes_capital_head_checksum
+        ):
+            raise CryptoRoundTripEpochError("round_trip_epoch_superseded_head_mismatch")
 
 
 def prepare_versioned_round_trip_epoch_manifest(
@@ -1033,6 +1229,133 @@ def prepare_successor_round_trip_epoch_manifest(
     return load_round_trip_epoch_manifest(manifest_path)
 
 
+def prepare_recovery_successor_round_trip_epoch_manifest(
+    *,
+    epoch_id: str,
+    supersedes_manifest_path: Path | str,
+    migration_reason: str,
+) -> CryptoRoundTripEpochContext:
+    """Freeze G4 and create one isolated, non-aggregating G5 successor."""
+
+    _assert_simulation_only()
+    epoch_id = _epoch_id(epoch_id, generation=ROUND_TRIP_EPOCH_RECOVERY_GENERATION)
+    predecessor_path = Path(supersedes_manifest_path)
+    if (
+        predecessor_path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+        or not isinstance(migration_reason, str)
+        or not migration_reason.strip()
+        or len(migration_reason) > 512
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_migration_request_invalid")
+    predecessor = load_round_trip_epoch_manifest(predecessor_path)
+    if (
+        predecessor.epoch_generation != ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION
+        or predecessor.supersession_receipt_path is None
+        or predecessor.output_root.name.startswith(
+            "crypto-delayed-paper-round-trip-epoch-g4-"
+        )
+        is False
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_successor_chain_invalid")
+    _secure_directory(
+        ROUND_TRIP_EPOCH_ROOT_PARENT, reason="round_trip_epoch_parent_untrusted"
+    )
+    _secure_directory(
+        predecessor.output_root, reason="round_trip_epoch_superseded_root_untrusted"
+    )
+    try:
+        predecessor_sequence, predecessor_checksum = RoundTripCapitalLedger(
+            predecessor.output_root / "round_trip_capital"
+        ).head()
+    except (CryptoRoundTripError, OSError, TypeError, ValueError) as exc:
+        raise CryptoRoundTripEpochError(
+            "round_trip_epoch_superseded_head_untrusted"
+        ) from exc
+    if (
+        predecessor_sequence <= 0
+        or not isinstance(predecessor_checksum, str)
+        or len(predecessor_checksum) != 64
+    ):
+        raise CryptoRoundTripEpochError("round_trip_epoch_superseded_head_untrusted")
+    predecessor_encoded = _secure_versioned_manifest(
+        predecessor.manifest_path,
+        reason="round_trip_epoch_superseded_manifest_untrusted",
+    )
+    predecessor_receipt = _secure_versioned_manifest(
+        predecessor.supersession_receipt_path,
+        reason="round_trip_epoch_superseded_receipt_untrusted",
+    )
+    _secure_manifest_directory(create=True)
+    manifest_path = _versioned_manifest_path(epoch_id)
+    receipt_path = _supersession_receipt_path(ROUND_TRIP_EPOCH_RECOVERY_GENERATION)
+    payload = {
+        "schema": ROUND_TRIP_EPOCH_RECOVERY_MANIFEST_CONTRACT,
+        "epoch_id": epoch_id,
+        "epoch_generation": ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+        "current_output_root": str(ROUND_TRIP_EPOCH_ROOT_PARENT / epoch_id),
+        "archived_output_root": str(predecessor.archived_output_root),
+        "archived_epoch_id": predecessor.archived_epoch_id,
+        "archived_epoch_identity_file_sha256": predecessor.archived_epoch_identity_file_sha256,
+        "archived_capital_head_sequence": predecessor.archived_capital_head_sequence,
+        "archived_capital_head_checksum": predecessor.archived_capital_head_checksum,
+        "archived_epoch_policy": "read_only_archive_no_resume_no_aggregation",
+        "capital_authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
+        "capital_generation": ROUND_TRIP_CAPITAL_POLICY.generation,
+        "capital_baseline_usdt": format(ROUND_TRIP_CAPITAL_POLICY.initial_cash, "f"),
+        "aggregate_with_archived_epoch": False,
+        "activate_current_epoch": False,
+        "supersedes_manifest_path": str(predecessor.manifest_path),
+        "supersedes_manifest_sha256": _sha256_bytes(predecessor_encoded),
+        "supersedes_receipt_path": str(predecessor.supersession_receipt_path),
+        "supersedes_receipt_sha256": _sha256_bytes(predecessor_receipt),
+        "supersedes_output_root": str(predecessor.output_root),
+        "supersedes_capital_head_sequence": predecessor_sequence,
+        "supersedes_capital_head_checksum": predecessor_checksum,
+        "migration_reason": migration_reason,
+        "supersession_receipt_path": str(receipt_path),
+        "safety": dict(_EXPECTED_SAFETY),
+    }
+    context = CryptoRoundTripEpochContext(
+        epoch_id=epoch_id,
+        epoch_generation=ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+        capital_generation=ROUND_TRIP_CAPITAL_POLICY.generation,
+        output_root=ROUND_TRIP_EPOCH_ROOT_PARENT / epoch_id,
+        archived_output_root=predecessor.archived_output_root,
+        archived_epoch_id=predecessor.archived_epoch_id,
+        archived_epoch_identity_file_sha256=predecessor.archived_epoch_identity_file_sha256,
+        archived_capital_head_checksum=predecessor.archived_capital_head_checksum,
+        manifest_path=manifest_path,
+        manifest_sha256=_sha256(payload),
+        aggregate_with_archived_epoch=False,
+        _proof=_PROOF,
+        versioned=True,
+        supersedes_manifest_path=predecessor.manifest_path,
+        supersedes_manifest_sha256=_sha256_bytes(predecessor_encoded),
+        migration_reason=migration_reason,
+        supersession_receipt_path=receipt_path,
+        archived_capital_head_sequence=predecessor.archived_capital_head_sequence,
+        supersedes_receipt_path=predecessor.supersession_receipt_path,
+        supersedes_receipt_sha256=_sha256_bytes(predecessor_receipt),
+        supersedes_output_root=predecessor.output_root,
+        supersedes_capital_head_sequence=predecessor_sequence,
+        supersedes_capital_head_checksum=predecessor_checksum,
+    )
+    receipt = _supersession_receipt(context)
+    _verify_existing_payload(
+        manifest_path, payload, reason="round_trip_epoch_versioned_manifest_conflict"
+    )
+    _verify_existing_payload(
+        receipt_path, receipt, reason="round_trip_epoch_supersession_receipt_invalid"
+    )
+    _atomic_create_or_verify(
+        manifest_path, payload, reason="round_trip_epoch_versioned_manifest_conflict"
+    )
+    _atomic_create_or_verify(
+        receipt_path, receipt, reason="round_trip_epoch_supersession_receipt_invalid"
+    )
+    return load_round_trip_epoch_manifest(manifest_path)
+
+
 def _identity(context: CryptoRoundTripEpochContext) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "contract": ROUND_TRIP_EPOCH_IDENTITY_CONTRACT,
@@ -1077,11 +1400,22 @@ def _identity(context: CryptoRoundTripEpochContext) -> dict[str, Any]:
                 ),
             }
         )
-        if context.epoch_generation == ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION:
+        if context.epoch_generation in {
+            ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
+            ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+        }:
             payload.update(
                 {
                     "supersedes_receipt_path": str(context.supersedes_receipt_path),
                     "supersedes_receipt_sha256": context.supersedes_receipt_sha256,
+                }
+            )
+        if context.epoch_generation == ROUND_TRIP_EPOCH_RECOVERY_GENERATION:
+            payload.update(
+                {
+                    "supersedes_output_root": str(context.supersedes_output_root),
+                    "supersedes_capital_head_sequence": context.supersedes_capital_head_sequence,
+                    "supersedes_capital_head_checksum": context.supersedes_capital_head_checksum,
                 }
             )
     payload["identity_sha256"] = _sha256(payload)
@@ -1141,7 +1475,11 @@ def prepare_round_trip_epoch_candidate(
         type(context) is not CryptoRoundTripEpochContext
         or context._proof is not _PROOF
         or context.epoch_generation
-        not in {ROUND_TRIP_EPOCH_GENERATION, ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION}
+        not in {
+            ROUND_TRIP_EPOCH_GENERATION,
+            ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
+            ROUND_TRIP_EPOCH_RECOVERY_GENERATION,
+        }
         or context.capital_generation != ROUND_TRIP_CAPITAL_POLICY.generation
         or context.aggregate_with_archived_epoch is not False
     ):
@@ -1196,6 +1534,12 @@ def main(argv: list[str] | None = None) -> int:
                 archived_output_root=args.archived_output_root,
                 migration_reason=args.migration_reason,
             )
+        elif args.epoch_id.startswith("crypto-delayed-paper-round-trip-epoch-g5-"):
+            context = prepare_recovery_successor_round_trip_epoch_manifest(
+                epoch_id=args.epoch_id,
+                supersedes_manifest_path=args.supersedes_manifest,
+                migration_reason=args.migration_reason,
+            )
         else:
             context = prepare_successor_round_trip_epoch_manifest(
                 epoch_id=args.epoch_id,
@@ -1228,18 +1572,22 @@ __all__ = [
     "PreparedCryptoRoundTripEpoch",
     "ROUND_TRIP_EPOCH_GENERATION",
     "ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION",
+    "ROUND_TRIP_EPOCH_RECOVERY_GENERATION",
     "ROUND_TRIP_EPOCH_MANIFEST_CONTRACT",
     "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY",
     "ROUND_TRIP_EPOCH_MANIFEST_PATH",
     "ROUND_TRIP_EPOCH_SUPERSESSION_RECEIPT_CONTRACT",
     "ROUND_TRIP_EPOCH_SUCCESSOR_RECEIPT_CONTRACT",
+    "ROUND_TRIP_EPOCH_RECOVERY_RECEIPT_CONTRACT",
     "ROUND_TRIP_EPOCH_SUCCESSOR_MANIFEST_CONTRACT",
+    "ROUND_TRIP_EPOCH_RECOVERY_MANIFEST_CONTRACT",
     "ROUND_TRIP_EPOCH_VERSIONED_MANIFEST_CONTRACT",
     "ROUND_TRIP_EPOCH_ROOT_PARENT",
     "load_round_trip_epoch_manifest",
     "main",
     "prepare_versioned_round_trip_epoch_manifest",
     "prepare_successor_round_trip_epoch_manifest",
+    "prepare_recovery_successor_round_trip_epoch_manifest",
     "prepare_round_trip_epoch_candidate",
 ]
 

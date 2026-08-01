@@ -422,3 +422,68 @@ def test_g4_successor_rejects_tampered_chain_and_later_g2_head(
         match="archive_capital_head_mismatch",
     ):
         prepare_round_trip_epoch_candidate(g4)
+
+
+def test_g5_recovery_successor_freezes_g4_head_without_rewriting_g4(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, archived, _, _ = _configure_versioned_migration(monkeypatch, tmp_path)
+    g3 = prepare_versioned_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g3-failed-evidence",
+        archived_output_root=archived,
+        migration_reason="preserve_failed_g3",
+    )
+
+    class _AdvancedArchiveLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == archived / "capital"
+
+        def head(self) -> tuple[int, str]:
+            return 43, "d" * 64
+
+    monkeypatch.setattr(epoch_module, "CryptoCapitalLedger", _AdvancedArchiveLedger)
+    g4 = prepare_successor_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-frozen-evidence",
+        archived_output_root=archived,
+        supersedes_manifest_path=g3.manifest_path,
+        migration_reason="g2_advanced_after_g3_failed_preflight",
+    )
+    prepare_round_trip_epoch_candidate(g4)
+    g4_tree_before = _tree(g4.output_root)
+    g4_manifest_before = g4.manifest_path.read_bytes()
+
+    class _RoundTripLedger:
+        def __init__(self, root: Path) -> None:
+            assert root == g4.output_root / "round_trip_capital"
+
+        def head(self) -> tuple[int, str]:
+            return 409, "e" * 64
+
+    monkeypatch.setattr(epoch_module, "RoundTripCapitalLedger", _RoundTripLedger)
+    g5 = epoch_module.prepare_recovery_successor_round_trip_epoch_manifest(
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g5-recovery",
+        supersedes_manifest_path=g4.manifest_path,
+        migration_reason="g4_runtime_manifest_contract_superseded",
+    )
+
+    assert g5.epoch_generation == 5
+    assert g5.supersedes_output_root == g4.output_root
+    assert g5.supersedes_capital_head_sequence == 409
+    assert prepare_round_trip_epoch_candidate(g5).output_root == g5.output_root
+    assert _tree(g4.output_root) == g4_tree_before
+    assert g4.manifest_path.read_bytes() == g4_manifest_before
+    assert (
+        epoch_module.prepare_recovery_successor_round_trip_epoch_manifest(
+            epoch_id=g5.epoch_id,
+            supersedes_manifest_path=g4.manifest_path,
+            migration_reason="g4_runtime_manifest_contract_superseded",
+        )
+        == g5
+    )
+    with pytest.raises(CryptoRoundTripEpochError, match="supersession_receipt_invalid"):
+        epoch_module.prepare_recovery_successor_round_trip_epoch_manifest(
+            epoch_id="crypto-delayed-paper-round-trip-epoch-g5-other-root",
+            supersedes_manifest_path=g4.manifest_path,
+            migration_reason="g4_runtime_manifest_contract_superseded",
+        )
