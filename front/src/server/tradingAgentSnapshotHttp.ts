@@ -5,6 +5,7 @@ import { TRADING_AGENT_SNAPSHOT_ROUTE, getTradingAgentSnapshotResponse } from '.
 import type { TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel.ts'
 import { readTradingAgentSnapshot } from './tradingAgentSnapshot.ts'
 import { createTradingCopilotStateHandler } from './tradingCopilotState.ts'
+import { createTradingCopilotStockIntelligenceHandler } from './tradingCopilotStockIntelligence.ts'
 
 type SnapshotHttpServerOptions = {
   allowedOrigins?: string[]
@@ -33,6 +34,7 @@ export function createSnapshotRequestHandler({
 }: SnapshotHttpServerOptions = {}) {
   assertRestrictedCorsOrigins(allowedOrigins)
   const handleTradingCopilotState = createTradingCopilotStateHandler({ statePath: copilotStatePath, workspaceRoot })
+  const handleStockIntelligence = createTradingCopilotStockIntelligenceHandler({ workspaceRoot })
 
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -50,7 +52,7 @@ export function createSnapshotRequestHandler({
       return
     }
 
-    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state') {
+    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state' && url.pathname !== '/api/trading-copilot/stock-intelligence') {
       sendJson(res, 404, { error: 'Not found' })
       return
     }
@@ -62,6 +64,7 @@ export function createSnapshotRequestHandler({
     }
 
     if (await handleTradingCopilotState(req, res)) return
+    if (await handleStockIntelligence(req, res)) return
 
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'TradingAgent snapshot API is read-only. Use GET.' })

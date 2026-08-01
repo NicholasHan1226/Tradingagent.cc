@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-02 01:51 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
-> **2026-08-02 TradingCopilot V1 本地候选：** 已在同仓新增独立 `TradingCopilot/` 领域合同和 `front/?product=copilot` 人工决策页，支持手工申报资金/可用现金/持仓、关注 A 股、查看支持/反对证据、最终条件与建议强度，并记录“计划/观察/不交易”。用户状态通过独立 append-only 事件接口保存；无正式覆盖时显示 `analysis_unavailable` 并锁住人工计划，演示分析明确标为 `demo_fixture`。它不连接券商、不写量化资本/订单/样本。当前仅为本地候选，生产文件、runtime 与入口均未部署或验证。
+> **2026-08-02 TradingCopilot V3 预测门禁候选：** 同仓 `TradingCopilot/` 领域和 `front/?product=copilot` 已包含申报资金/持仓、关注股、个股图表、关联事件、多空证据与人工意图。V3 新增只读 `GET /api/trading-copilot/stock-intelligence?symbol=` 正式投影入口和九项预测readiness门禁；未校准演示默认关闭预测，只显示明确的 `m30` 定性情景及宽/窄研究包络，不再发布情景百分比、50%/80%或置信度标签。研究线由最近最多20点的确定性线性基线生成并可重放，非1D周期明确停用当前m30预测。Kronos固定为同门禁Challenger，不能凭模型名显示概率。当前前端全量为 `50 files / 313 tests passed`，lint与client/API build通过；该候选不下载Kronos权重、不连接券商、不写量化资本/订单/样本。生产文件、runtime、正式个股投影数据与入口部署仍未改变。
 
 > **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release

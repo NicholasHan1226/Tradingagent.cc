@@ -1,4 +1,6 @@
-import type { CopilotAnalysisMode } from './types'
+import type { CopilotAnalysisMode } from './types.ts'
+import { assessForecastReadiness, type ForecastEvidence, type ForecastHorizon, type ForecastModelId, type ForecastReadiness } from './forecastReadiness.ts'
+import { buildLinearBaseline } from './forecastBaseline.ts'
 
 export type StockRange = '1D' | '5D' | '1M' | '6M' | 'YTD' | '1Y'
 export type StockDetailTab = 'overview' | 'financials' | 'earnings' | 'holders' | 'forecast' | 'history' | 'analysis'
@@ -9,9 +11,8 @@ export type StockSeriesPoint = {
   price: number | null
   volume: number | null
   forecastMedian: number | null
-  forecastBand50: [number, number] | null
-  forecastBand80: [number, number] | null
-  upScenarioWeight: number | null
+  forecastNarrowEnvelope: [number, number] | null
+  forecastWideEnvelope: [number, number] | null
 }
 
 export type StockEvent = {
@@ -53,9 +54,13 @@ export type StockIntelligence = {
   } | null
   series: Record<StockRange, StockSeriesPoint[]>
   forecast: {
-    mode: 'shadow_uncalibrated'
+    mode: 'shadow_uncalibrated' | 'calibrated_research'
+    horizon: ForecastHorizon
     horizonLabel: string
-    scenarioWeights: { up: number; neutral: number; down: number }
+    directionalView: '偏强' | '均衡' | '偏弱'
+    modelId: ForecastModelId
+    evidence: ForecastEvidence
+    readiness: ForecastReadiness
     takeaway: string
     drivers: string[]
     caveat: string
@@ -87,7 +92,8 @@ const demoConfigs: Record<string, DemoStockConfig> = {
     industry: '电网设备', area: '河南', listingDate: '1997-04-18',
     description: '演示资料：聚焦电力装备与电网自动化业务。公司资料仅用于界面验收，不代表正式基本面结论。',
     forecast: {
-      mode: 'shadow_uncalibrated', horizonLabel: '下一交易时段 / 未来 5 日', scenarioWeights: { up: 54, neutral: 28, down: 18 },
+      mode: 'shadow_uncalibrated', horizon: 'm30', horizonLabel: '未来 30 分钟', directionalView: '偏强', modelId: 'linear_ridge_baseline',
+      ...illustrativeForecastGate('m30', 'linear_ridge_baseline'),
       takeaway: '演示情景偏强，但价格接近观察压力区；更适合等待量价确认，而不是追价。',
       drivers: ['价格结构与短期动量', '成交量相对变化', '演示行业强弱线索', '公告事件的方向标签'],
       caveat: '这是未做样本外校准的研究情景权重，不是上涨概率、目标价或收益承诺。',
@@ -103,7 +109,8 @@ const demoConfigs: Record<string, DemoStockConfig> = {
     industry: '乘用车', area: '广东', listingDate: '2011-06-30',
     description: '演示资料：新能源汽车与相关产业链公司。页面不把产业地位直接转换为交易结论。',
     forecast: {
-      mode: 'shadow_uncalibrated', horizonLabel: '下一交易时段 / 未来 5 日', scenarioWeights: { up: 35, neutral: 39, down: 26 },
+      mode: 'shadow_uncalibrated', horizon: 'm30', horizonLabel: '未来 30 分钟', directionalView: '均衡', modelId: 'linear_ridge_baseline',
+      ...illustrativeForecastGate('m30', 'linear_ridge_baseline'),
       takeaway: '演示情景偏震荡，方向优势不足；等待结构重新确认比提前押注更合适。',
       drivers: ['波动率状态', '价格与均线距离', '板块相对强弱', '事件情绪分歧'],
       caveat: '情景权重未校准，不能解释为真实胜率。',
@@ -118,7 +125,8 @@ const demoConfigs: Record<string, DemoStockConfig> = {
     industry: '工业金属', area: '福建', listingDate: '2008-04-25',
     description: '演示资料：全球矿产资源开发企业，价格与商品周期具有较强关联。',
     forecast: {
-      mode: 'shadow_uncalibrated', horizonLabel: '下一交易时段 / 未来 5 日', scenarioWeights: { up: 49, neutral: 31, down: 20 },
+      mode: 'shadow_uncalibrated', horizon: 'm30', horizonLabel: '未来 30 分钟', directionalView: '偏强', modelId: 'linear_ridge_baseline',
+      ...illustrativeForecastGate('m30', 'linear_ridge_baseline'),
       takeaway: '演示情景温和偏强，仍需商品价格和股价方向共同确认。',
       drivers: ['商品价格代理', '周期股相对强度', '量价结构', '宏观风险标签'],
       caveat: '情景权重没有经过真实资金样本外校准，仅用于研究界面。',
@@ -133,7 +141,8 @@ const demoConfigs: Record<string, DemoStockConfig> = {
     industry: '白酒', area: '贵州', listingDate: '2001-08-27',
     description: '演示资料：白酒行业公司。长期质量线索与当前交易条件在 Copilot 中分开呈现。',
     forecast: {
-      mode: 'shadow_uncalibrated', horizonLabel: '下一交易时段 / 未来 5 日', scenarioWeights: { up: 29, neutral: 42, down: 29 },
+      mode: 'shadow_uncalibrated', horizon: 'm30', horizonLabel: '未来 30 分钟', directionalView: '均衡', modelId: 'linear_ridge_baseline',
+      ...illustrativeForecastGate('m30', 'linear_ridge_baseline'),
       takeaway: '演示情景缺少方向优势；以等待估值与趋势共同改善为主。',
       drivers: ['趋势斜率', '波动收敛程度', '消费板块相对强弱', '事件情绪'],
       caveat: '中性权重较高只表示演示模型分歧，不能理解为价格不会波动。',
@@ -148,6 +157,10 @@ export function getDemoStockIntelligence(symbol: string): StockIntelligence | nu
   const config = demoConfigs[symbol]
   if (!config) return null
   const change = config.price - config.previousClose
+  const series = Object.fromEntries((['1D', '5D', '1M', '6M', 'YTD', '1Y'] as StockRange[])
+    .map((range) => [range, buildSeries(config, range)])) as Record<StockRange, StockSeriesPoint[]>
+  const terminalForecast = series['1D'].findLast((point) => point.forecastMedian !== null)?.forecastMedian ?? config.price
+  const directionalView = terminalForecast > config.price * 1.003 ? '偏强' : terminalForecast < config.price * 0.997 ? '偏弱' : '均衡'
   return {
     symbol: config.symbol,
     name: config.name,
@@ -170,9 +183,8 @@ export function getDemoStockIntelligence(symbol: string): StockIntelligence | nu
       exchange: config.symbol.endsWith('.SH') ? 'SH' : 'SZ', industry: config.industry, area: config.area,
       listingDate: config.listingDate, description: config.description,
     },
-    series: Object.fromEntries((['1D', '5D', '1M', '6M', 'YTD', '1Y'] as StockRange[])
-      .map((range) => [range, buildSeries(config, range)])) as Record<StockRange, StockSeriesPoint[]>,
-    forecast: config.forecast,
+    series,
+    forecast: config.forecast ? { ...config.forecast, directionalView, takeaway: demoTakeaway(directionalView) } : null,
     events: config.events,
   }
 }
@@ -204,32 +216,28 @@ function buildSeries(config: DemoStockConfig, range: StockRange): StockSeriesPoi
     price,
     volume: Math.max(1, Math.round((7 + Math.abs(Math.sin(index + config.seed)) * 21 + (index % 9 === 0 ? 8 : 0)) * 100_000)),
     forecastMedian: null,
-    forecastBand50: null,
-    forecastBand80: null,
-    upScenarioWeight: null,
+    forecastNarrowEnvelope: null,
+    forecastWideEnvelope: null,
   }))
 
   const horizon = range === '1D' ? 8 : range === '5D' ? 5 : 6
+  const baseline = buildLinearBaseline(normalized, horizon)
   const firstForecast: StockSeriesPoint = {
     ...points.at(-1)!, key: `f-${range}-0`, price: config.price, volume: null, forecastMedian: config.price,
-    forecastBand50: [config.price, config.price], forecastBand80: [config.price, config.price],
-    upScenarioWeight: config.forecast?.scenarioWeights.up ?? null,
+    forecastNarrowEnvelope: [config.price, config.price], forecastWideEnvelope: [config.price, config.price],
   }
   const future = Array.from({ length: horizon }, (_, index) => {
     const step = index + 1
-    const direction = ((config.forecast?.scenarioWeights.up ?? 33) - (config.forecast?.scenarioWeights.down ?? 33)) / 100
-    const median = config.price * (1 + direction * step * (range === '1D' ? 0.0022 : 0.006))
-    const uncertainty = config.price * config.volatility * Math.sqrt(step) * (range === '1D' ? 0.55 : 1.2)
-    const weight = Math.max(5, Math.min(90, (config.forecast?.scenarioWeights.up ?? 33) + Math.sin(step + config.seed) * 4))
+    const estimate = baseline?.points[index]
+    const median = estimate?.median ?? config.price
     return {
       key: `f-${range}-${step}`,
       label: definition.forecastLabel(step),
       price: null,
       volume: null,
       forecastMedian: round(median),
-      forecastBand50: [round(median - uncertainty * 0.55), round(median + uncertainty * 0.55)] as [number, number],
-      forecastBand80: [round(median - uncertainty), round(median + uncertainty)] as [number, number],
-      upScenarioWeight: round(weight),
+      forecastNarrowEnvelope: estimate?.narrowEnvelope ?? [config.price, config.price],
+      forecastWideEnvelope: estimate?.wideEnvelope ?? [config.price, config.price],
     }
   })
   return [...points, firstForecast, ...future]
@@ -259,3 +267,19 @@ function demoEvent(id: string, kind: StockEvent['kind'], title: string, summary:
 }
 
 function round(value: number) { return Math.round(value * 100) / 100 }
+
+function demoTakeaway(view: '偏强' | '均衡' | '偏弱') {
+  if (view === '偏强') return '线性基线的短期斜率偏强；仍需量价和正式事件证据确认，不能追价。'
+  if (view === '偏弱') return '线性基线的短期斜率偏弱；优先观察失效条件，不提前猜测反转。'
+  return '线性基线没有形成清晰方向优势；等待结构重新确认比提前押注更合适。'
+}
+
+function illustrativeForecastGate(horizon: ForecastHorizon, modelId: ForecastModelId) {
+  const evidence: ForecastEvidence = {
+    sourceMode: 'demo_fixture', horizon, modelId,
+    modelManifestBound: true, pointInTimeVerified: false, frozenOosReceiptBound: false,
+    calibrationProofAccepted: false, effectiveIndependentSamples: 0,
+    intervalCoverageVerified: false, costPolicyBound: false,
+  }
+  return { evidence, readiness: assessForecastReadiness(evidence) }
+}

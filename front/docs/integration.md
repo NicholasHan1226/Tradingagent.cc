@@ -10,6 +10,23 @@ This endpoint is the server boundary between TradingAgent and the browser UI.
 It is designed for simulated-account display first. Live account status remains
 gated and must not trigger execution from the front layer.
 
+TradingCopilot additionally exposes one symbol-scoped read-only projection:
+
+`GET /api/trading-copilot/stock-intelligence?symbol=000400.SZ`
+
+The API reads `runtime/tradingcopilot/stock-intelligence/<symbol>.json` by
+default. It rejects invalid A-share symbols, non-GET methods, demo payloads,
+symbol mismatch, events not explicitly bound to the symbol, malformed series,
+and forecast readiness contradictions. It performs no provider request and has
+no fallback. A missing or rejected projection returns 404, after which the UI
+shows unavailable or an explicitly enabled demo preview.
+
+Forecast readiness is recomputed from explicit gates in the projection. An
+uncalibrated forecast cannot expose probability or coverage labels. Kronos is
+represented only as `kronos_challenger` and is subject to the same PIT, frozen
+OOS, calibration, sample-count, interval-coverage and cost-policy gates as the
+linear baseline.
+
 ## Current TradingAgent Surfaces
 
 | Front result | Preferred source | Fallback / supporting source | Status |
