@@ -400,7 +400,12 @@ disabled：先满足连续 24 小时核心门禁，再做 disabled full-scrub �
 模拟 round-trip/退出原因、以及仅供模拟审计的 equity/fees/realized PnL。后者固定
 标记为 `not_strategy_edge=true`，5 分钟时序 observation 也不被当成独立交易样本。
 每次成功 sell 会从已验证 capital cycle 的 before/after 中计算单笔模拟 realized PnL
-变化；未完成退出继续是 pending outcome。
+变化；未完成退出继续是 pending outcome。报告还列出连续 completion 段及其间的
+未归因缺口；它绝不把缺口自动归因于 TradingDatas、transport、systemd 或账本，也
+不允许研究标签跨缺口拼接。1h/4h/12h/24h 的未来收益标签仍只由
+factor-research 的精确后续 observation 绑定；MFE/MAE 或替代退出规则在没有逐根、
+完整且可审计的路径合同前只能保持研究 backlog，不能从单一 13-bar snapshot 猜测并
+改变资本事实。
 
 `tradingagent-crypto-round-trip-g4-acceptance.service/.timer` 是每日 09:05 的
 只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；只有

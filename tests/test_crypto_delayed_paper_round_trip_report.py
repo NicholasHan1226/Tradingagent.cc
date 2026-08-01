@@ -11,6 +11,7 @@ from Crypto.delayed_paper_round_trip_report import (
     build_crypto_delayed_paper_round_trip_report,
     evaluate_crypto_delayed_paper_round_trip_acceptance,
     main,
+    _continuity_segments,
     _slot_summary,
     run_crypto_delayed_paper_round_trip_acceptance_once,
 )
@@ -96,6 +97,55 @@ def test_latest_continuous_streak_ignores_old_epoch_gaps() -> None:
     assert summary["latest_continuous_first_market_slot"] == (
         WINDOW_END - timedelta(minutes=5)
     ).isoformat().replace("+00:00", "Z")
+
+
+def test_continuity_segments_expose_gaps_without_attributing_external_cause() -> None:
+    slots = [
+        WINDOW_END - timedelta(minutes=25),
+        WINDOW_END - timedelta(minutes=20),
+        WINDOW_END - timedelta(minutes=5),
+        WINDOW_END,
+    ]
+
+    result = _continuity_segments(slots)
+
+    assert result["continuous_segment_count"] == 2
+    assert result["longest_continuous_completion_count"] == 2
+    assert result["segments"] == [
+        {
+            "first_completed_market_slot": (WINDOW_END - timedelta(minutes=25))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "latest_completed_market_slot": (WINDOW_END - timedelta(minutes=20))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "completion_count": 2,
+            "covered_minutes": 10,
+        },
+        {
+            "first_completed_market_slot": (WINDOW_END - timedelta(minutes=5))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "latest_completed_market_slot": WINDOW_END.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "completion_count": 2,
+            "covered_minutes": 10,
+        },
+    ]
+    assert result["gaps"] == [
+        {
+            "previous_completed_market_slot": (WINDOW_END - timedelta(minutes=20))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "next_completed_market_slot": (WINDOW_END - timedelta(minutes=5))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "missing_completion_count": 2,
+            "gap_minutes": 10,
+            "cause": "unclassified_completion_gap",
+        }
+    ]
 
 
 def test_acceptance_can_be_eligible_without_using_pnl_as_a_gate(tmp_path: Path) -> None:
