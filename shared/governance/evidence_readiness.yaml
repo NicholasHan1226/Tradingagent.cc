@@ -1,0 +1,156 @@
+version: 1
+contract_id: tradingagent.evidence_readiness.v1
+
+# These roles are independent grants, not one global ready flag.  A higher-risk
+# consumer must prove its own role instead of inheriting readiness by name.
+roles:
+  observation_ready:
+    depends_on: []
+    enabled_in_current_phase: true
+    requires:
+      - api_envelope_bound
+      - dataset_contract_bound
+      - identity_valid
+      - receipt_bound
+      - lineage_complete
+      - quality_valid
+    permits:
+      - audit
+      - current_observation
+      - zero_notional_shadow
+    prohibits:
+      - historical_learning
+      - simulated_new_risk
+      - real_execution
+  historical_pit_ready:
+    depends_on: [observation_ready]
+    enabled_in_current_phase: true
+    requires:
+      - as_of_bounded
+      - first_available_time_proven
+      - revision_or_immutable_vintage_proven
+      - no_future_information
+      - label_window_complete
+    permits:
+      - offline_learning
+      - point_in_time_validation
+    prohibits:
+      - simulated_new_risk
+      - real_execution
+  delayed_paper_ready:
+    depends_on: [observation_ready]
+    enabled_in_current_phase: true
+    requires:
+      - completed_market_event
+      - delayed_freshness_policy_satisfied
+      - next_event_execution_only
+      - capital_authority_bound
+      - idempotency_and_reconcile_valid
+    permits:
+      - delayed_simulated_order
+      - simulated_capital_accounting
+    prohibits:
+      - same_event_fill
+      - real_execution
+  execution_ready:
+    depends_on: [delayed_paper_ready]
+    enabled_in_current_phase: false
+    requires:
+      - execution_freshness_policy_satisfied
+      - broker_authority_bound
+      - live_account_reconcile_valid
+      - explicit_real_trading_authorization
+    permits: []
+    prohibits:
+      - real_execution
+
+freshness_policies:
+  execution_equivalent:
+    wall_clock_freshness_required: true
+    maximum_lag_seconds: 30
+    maximum_bar_cadence_multiple: null
+    maximum_jitter_seconds: 0
+    same_event_execution_allowed: false
+  delayed_observation:
+    wall_clock_freshness_required: true
+    maximum_lag_seconds: null
+    maximum_bar_cadence_multiple: 1
+    maximum_jitter_seconds: 30
+    same_event_execution_allowed: false
+  historical_pit:
+    wall_clock_freshness_required: false
+    maximum_lag_seconds: null
+    maximum_bar_cadence_multiple: null
+    maximum_jitter_seconds: 0
+    same_event_execution_allowed: false
+
+contract_binding:
+  api_major: v1
+  global_catalog_version_is_evidence: true
+  unrelated_catalog_change_blocks_consumption: false
+  per_dataset_contract_fingerprint_required: true
+  fingerprint_fields:
+    - dataset_id
+    - schema_major
+    - default_fields
+    - filter_operators
+    - default_order
+    - limits
+    - identity_fields
+
+replay_policy:
+  routine_cycle: receipt_bound_single_traversal
+  full_semantic_double_traversal_triggers:
+    - onboarding
+    - dataset_contract_drift
+    - incident_recovery
+    - daily_full_scrub
+  retry_on_auth_failure: false
+  retry_on_cursor_anomaly: false
+
+market_policies:
+  ashare:
+    operational_maturity:
+      expected_session_slots: 48
+      full_session_required_for:
+        - full_day_features
+        - full_day_kpi
+        - operational_maturity
+    local_contiguous_learning:
+      allowed: true
+      minimum_slots_source: preregistered_feature_and_label_profile
+      gap_crossing_allowed: false
+      full_session_required: false
+    cohort_shadow:
+      target_size: 500
+      full_cohort_required_for_delayed_paper: true
+      partial_shadow_allowed: true
+      minimum_coverage_ratio: 0.99
+      explicit_missing_identity_set_required: true
+      silent_replacement_allowed: false
+      simulated_notional_allowed: false
+  crypto:
+    operational_maturity:
+      minimum_continuous_slots: 288
+      purpose: automatic_runtime_maturity
+    segmented_learning:
+      allowed: true
+      minimum_slots_source: preregistered_feature_and_label_profile
+      gap_crossing_allowed: false
+      automatic_promotion_allowed: false
+  cn_futures:
+    operational_maturity:
+      minimum_continuous_slots: 2
+      purpose: observation_handoff_only
+    segmented_learning:
+      allowed: false
+      minimum_slots_source: formal_tradingdatas_handoff_required
+      gap_crossing_allowed: false
+      automatic_promotion_allowed: false
+
+safety:
+  simulation_only: true
+  real_trading_enabled: false
+  external_execution_enabled: false
+  automatic_promotion_enabled: false
+  automatic_risk_expansion_enabled: false

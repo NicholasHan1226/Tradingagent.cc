@@ -65,6 +65,13 @@ A股不设固定保护现金：全部资金可服务合格机会，但弱市、�
 
 SampleJournal/KPI 仍是正式演化 authority。Decision Ledger、fixture、paper、shadow 和 LLM evidence 都不能自行晋级、扩风险或切实盘。
 
+跨市场数据使用不再压缩成一个 `ready`：仓库以
+[`tradingagent.evidence_readiness.v1`](shared/governance/evidence_readiness.yaml)
+分别表达当前观察、历史 PIT 学习、delayed-paper 与真实执行。A股 48 槽和 Crypto
+288 槽保留为运行成熟度门禁；局部连续、标签完整且不跨 gap 的样本可以独立进入
+离线学习候选，但不能因此启动 timer、晋级 Champion、扩风险或获得执行权限。
+真实执行角色在当前合同中固定关闭。
+
 ## 初始行业研究池与小资金适配
 
 第一阶段不把“今年活跃行业”硬编码成长期股票池。行业篮子只能由带有效期、score/coverage receipts 和独立 verifier 的 `IndustryActivityScore` 动态选出；真实 authority 尚未接入时就不发布当期深研行业。为建设 ontology、数据字段和事件模板，可先用以下**研究假设标签**做 fixture/覆盖设计，它们不是当期排名或买入清单：

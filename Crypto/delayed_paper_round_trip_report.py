@@ -140,6 +140,67 @@ def _slot_summary(slots: list[datetime]) -> dict[str, Any]:
     }
 
 
+def _continuity_segments(slots: list[datetime]) -> dict[str, Any]:
+    """Describe observed gaps without inventing their external cause.
+
+    A completion gap is an audit fact. This report deliberately cannot label it
+    a TradingDatas, transport, systemd, or ledger fault: that needs separate
+    operational evidence. Research consumers may select a whole segment, but
+    must never bridge one of the reported gaps.
+    """
+
+    if not slots:
+        return {
+            "continuous_segment_count": 0,
+            "longest_continuous_completion_count": 0,
+            "segments": [],
+            "gaps": [],
+        }
+    segments: list[list[datetime]] = [[slots[0]]]
+    gaps: list[dict[str, Any]] = []
+    for previous, current in zip(slots, slots[1:]):
+        if current - previous == FIVE_MINUTES:
+            segments[-1].append(current)
+            continue
+        missing = int((current - previous).total_seconds() // 300) - 1
+        if missing <= 0:
+            raise CryptoRoundTripReportError("round_trip_report_gap_invalid")
+        gaps.append(
+            {
+                "previous_completed_market_slot": previous.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "next_completed_market_slot": current.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+                "missing_completion_count": missing,
+                "gap_minutes": missing * 5,
+                "cause": "unclassified_completion_gap",
+            }
+        )
+        segments.append([current])
+    return {
+        "continuous_segment_count": len(segments),
+        "longest_continuous_completion_count": max(
+            len(segment) for segment in segments
+        ),
+        "segments": [
+            {
+                "first_completed_market_slot": segment[0]
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "latest_completed_market_slot": segment[-1]
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "completion_count": len(segment),
+                "covered_minutes": len(segment) * 5,
+            }
+            for segment in segments
+        ],
+        "gaps": gaps,
+    }
+
+
 def _decimal_delta(after: Any, before: Any) -> str:
     try:
         return format(Decimal(str(after)) - Decimal(str(before)), "f")
@@ -188,10 +249,17 @@ def _outcomes(events: list[Mapping[str, Any]]) -> dict[str, Any]:
             }
         )
     reasons = Counter(str(row["exit_reason"]) for row in exits)
+    symbols = Counter(str(row["symbol"]) for row in exits)
+    total_realized_pnl = sum(
+        (Decimal(str(row["realized_pnl_delta"])) for row in exits),
+        Decimal("0"),
+    )
     return {
         "completed_round_trip_count": len(exits),
         "rejected_exit_count": rejected,
         "exit_reason_counts": dict(sorted(reasons.items())),
+        "completed_round_trip_count_by_symbol": dict(sorted(symbols.items())),
+        "completed_round_trip_realized_pnl_total": format(total_realized_pnl, "f"),
         "completed_round_trips": exits,
     }
 
@@ -228,6 +296,7 @@ def build_crypto_delayed_paper_round_trip_report(
             "pending": health["core"]["pending"],
             "completion_freshness": health["freshness"],
             **slot_summary,
+            "continuity_segments": _continuity_segments(slots),
         },
         "audited_samples": {
             "verified_decision_events": health["sample_kpis"][
