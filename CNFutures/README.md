@@ -101,7 +101,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 `CNFutures.training_baseline.run_fixture_training_baseline` 仅为 `commodity_intraday_trend` 的离线、fixture/mock 训练前基线：限定豆粕 `M`、日盘连续 5 分钟 bar、固定一手和当日 flatten。它把资金/止损/收盘前、换月、午休及缺 bar 记录为可审计的 hold 或 risk-reject 样本；正常路径也只是费用和保证金数学上的非权威一手 round trip。
 
-它强制 `bar_time <= available_at <= decision_time`，并验证交易时区、连续性与 OHLCV 关系，避免 fixture 自身形成未来信息泄漏。它不消费真实市场数据、不输出胜率或训练质量声明、不写入 runtime fill/ledger/outbox，也不能自动晋级。所有 candidate、样本和 reconcile 都是 non-authoritative，`execution_eligible=false`、`learning_evidence_eligible=false`；fixture 不得进入学习、调参或晋级证据。TradingDatas 尚未完成最终 dataset ID、两根相邻 5 分钟 bar readback、日历与规格交接；在 [TRADINGDATAS_HANDOFF.md](TRADINGDATAS_HANDOFF.md) 验收通过前，仍不得启动 delayed-paper、scheduler 或任何 simulated-fill runtime。
+它强制 `bar_time <= available_at <= decision_time`，并验证交易时区、OHLCV 关系、整 5 分钟网格与严格连续性。M 的**静态 fixture bootstrap** 只允许 `09:00–10:15`、`10:30–11:30`、`13:30–15:00` 三段及精确的段间间隔（参照[大商所豆粕交易时段说明](https://www.dce.com.cn/dalianshangpin/resource/cms/2017/04/%E6%9C%9F%E8%B4%A7%E5%85%AC%E5%8F%B8%E8%B1%86%E7%B2%95%E6%9C%9F%E6%9D%83%E4%B8%9A%E5%8A%A1%E6%8C%87%E5%8D%97%281%29.pdf)）；这只是离线 mock 校验，不是 TradingDatas 或交易所的实时 calendar authority。它不消费真实市场数据、不输出胜率或训练质量声明、不写入 runtime fill/ledger/outbox，也不能自动晋级。所有 candidate、样本和 reconcile 都是 non-authoritative，`execution_eligible=false`、`learning_evidence_eligible=false`；fixture 不得进入学习、调参或晋级证据。TradingDatas 尚未完成最终 dataset ID、两根相邻 5 分钟 bar readback、日历与规格交接；在 [TRADINGDATAS_HANDOFF.md](TRADINGDATAS_HANDOFF.md) 验收通过前，仍不得启动 delayed-paper、scheduler 或任何 simulated-fill runtime。
 
 正式 TradingDatas handoff 到达后，先将其 catalog/query readback 注入 `CNFutures.tradingdatas_handoff_acceptance.evaluate_handoff_fixture` 的 profile fixture，并运行：
 
@@ -110,7 +110,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_tradingdatas_handoff_acceptance.py
 ```
 
-该 one-shot 的唯一 availability source 是 query envelope 的 `metadata.observed_at`：每个 query 还须有带时区的 `metadata.data_through`，并满足 `data_through <= observed_at <= decision_time`；row `available_at` 不是 provider-native knowledge-time，不能放宽 PIT。它只输出 non-authoritative `observation`、`hold` 或 `risk_reject`，不会连接 18082、启动 delayed-paper 或形成 fill。真实市场数据的 read-only parity 通过，仍不等于 runtime 或 delayed-paper GO。
+该 one-shot 的唯一 availability source 是 query envelope 的 `metadata.observed_at`：每个 query 还须有带时区的 `metadata.data_through`，并满足 `data_through <= observed_at <= decision_time`；bars 进一步要求 `bar_time <= data_through`、整 5 分钟网格且位于 TD 交接的显式 session windows。row `available_at` 不是 provider-native knowledge-time，不能放宽 PIT。readback fixture 保留 canonical filter/sort/cursor identity，并将 TD list/delist 事实投影为按 trade date 的 tradeability；它不假定 TD 原始字段名。它只输出 non-authoritative `observation`、`hold` 或 `risk_reject`，且固定 `learning_evidence_eligible=false`，不会连接 18082、启动 delayed-paper 或形成 fill。真实市场数据的 read-only parity 通过，仍不等于 runtime 或 delayed-paper GO。
 
 以下文件名只用于识别历史服务器安装态与退役依赖，不是当前推荐运行入口：
 

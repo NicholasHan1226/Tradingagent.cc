@@ -28,6 +28,14 @@ def _metadata(receipt_id: str) -> dict[str, object]:
     }
 
 
+def _query_identity(*, symbol: str, sort_field: str) -> dict[str, object]:
+    return {
+        "filters": {"symbol": symbol},
+        "sort": [{"field": sort_field, "direction": "asc"}],
+        "cursor": None,
+    }
+
+
 def _fixture() -> dict[str, object]:
     dataset_ids = {
         "contract_master": "fixture.td.m.contract-master",
@@ -68,13 +76,19 @@ def _fixture() -> dict[str, object]:
                 "schema_major": 1,
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
+                "query_identity": _query_identity(
+                    symbol="M2609.DCE", sort_field="symbol"
+                ),
                 "metadata": _metadata("receipt-contract"),
                 "data": [
                     {
                         "symbol": "M2609.DCE",
                         "product": "M",
                         "exchange": "DCE",
-                        "active": True,
+                        "tradeability": {
+                            "state": "tradeable",
+                            "trade_date": "20260731",
+                        },
                         "multiplier": 10,
                         "tick_size": 1,
                         "price_limit": 1000,
@@ -88,6 +102,9 @@ def _fixture() -> dict[str, object]:
                 "schema_major": 1,
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
+                "query_identity": _query_identity(
+                    symbol="M2609.DCE", sort_field="trade_date"
+                ),
                 "metadata": _metadata("receipt-calendar"),
                 "data": [
                     {
@@ -96,8 +113,20 @@ def _fixture() -> dict[str, object]:
                         "calendar_eligible": True,
                         "session_kind": "day",
                         "session_id": "fixture-dce-day-session",
-                        "session_start": "2026-07-31T09:00:00+08:00",
-                        "session_end": "2026-07-31T11:30:00+08:00",
+                        "session_windows": [
+                            {
+                                "start": "2026-07-31T09:00:00+08:00",
+                                "end": "2026-07-31T10:15:00+08:00",
+                            },
+                            {
+                                "start": "2026-07-31T10:30:00+08:00",
+                                "end": "2026-07-31T11:30:00+08:00",
+                            },
+                            {
+                                "start": "2026-07-31T13:30:00+08:00",
+                                "end": "2026-07-31T15:00:00+08:00",
+                            },
+                        ],
                     }
                 ],
             },
@@ -108,6 +137,9 @@ def _fixture() -> dict[str, object]:
                 "schema_major": 1,
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
+                "query_identity": _query_identity(
+                    symbol="M2609.DCE", sort_field="bar_time"
+                ),
                 "metadata": _metadata("receipt-bars"),
                 "data": [
                     {
@@ -148,6 +180,7 @@ def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
     assert result["disposition"] == "observation"
     assert result["execution_eligible"] is False
     assert result["delayed_paper_eligible"] is False
+    assert result["learning_evidence_eligible"] is False
     assert result["evidence"]["symbol"] == "M2609.DCE"
     assert result["evidence"]["bar_ends"] == [
         "2026-07-31T09:30:00+08:00",
@@ -157,6 +190,9 @@ def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
     assert watermark["receipt_id"] == "receipt-bars"
     assert watermark["observed_at"] == "2026-07-31T09:40:00+08:00"
     assert len(watermark["lineage_sha256"]) == 64
+    assert result["evidence"]["query_identities"]["bars_5min"] == _query_identity(
+        symbol="M2609.DCE", sort_field="bar_time"
+    )
 
 
 def test_missing_multiplier_is_risk_reject_not_a_fallback_spec() -> None:
@@ -193,8 +229,13 @@ def test_missing_multiplier_is_risk_reject_not_a_fallback_spec() -> None:
             "completed_5min_bar_required",
         ),
         (
-            lambda fixture: fixture["queries"]["bars_5min"]["data"][1].update(
-                {"bar_time": "2026-07-31T09:40:00+08:00"}
+            lambda fixture: (
+                fixture["queries"]["bars_5min"]["data"][1].update(
+                    {"bar_time": "2026-07-31T09:40:00+08:00"}
+                ),
+                fixture["queries"]["bars_5min"]["metadata"].update(
+                    {"data_through": "2026-07-31T09:40:00+08:00"}
+                ),
             ),
             "bars_not_adjacent_5min",
         ),
@@ -235,6 +276,96 @@ def test_incomplete_evidence_returns_a_hold(mutate: object, reason: str) -> None
     ],
 )
 def test_query_envelope_pit_order_fails_closed(mutate: object, reason: str) -> None:
+    fixture = _fixture()
+    assert callable(mutate)
+    mutate(fixture)
+
+    result = evaluate_handoff_fixture(fixture)
+
+    assert result["disposition"] == "hold"
+    assert result["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda fixture: fixture["queries"]["bars_5min"]["metadata"].update(
+                {"data_through": "2026-07-31T09:34:00+08:00"}
+            ),
+            "bar_pit_order_invalid",
+        ),
+        (
+            lambda fixture: fixture["queries"]["bars_5min"]["data"][1].update(
+                {"bar_time": "2026-07-31T09:36:00+08:00"}
+            ),
+            "bar_not_on_5min_grid",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0].update(
+                {
+                    "session_windows": [
+                        {
+                            "start": "2026-07-31T09:00:00+08:00",
+                            "end": "2026-08-01T10:15:00+08:00",
+                        }
+                    ]
+                }
+            ),
+            "calendar_session_window_invalid",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0].update(
+                {
+                    "session_windows": [
+                        {
+                            "start": "2026-07-31T09:00:00+08:00",
+                            "end": "2026-07-31T09:25:00+08:00",
+                        }
+                    ]
+                }
+            ),
+            "bar_outside_calendar_session",
+        ),
+    ],
+)
+def test_bar_coverage_grid_and_calendar_windows_fail_closed(
+    mutate: object, reason: str
+) -> None:
+    fixture = _fixture()
+    assert callable(mutate)
+    mutate(fixture)
+
+    result = evaluate_handoff_fixture(fixture)
+
+    assert result["disposition"] == "hold"
+    assert result["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda fixture: fixture["queries"]["contract_master"]["data"][0][
+                "tradeability"
+            ].update({"trade_date": "20260801"}),
+            "contract_tradeability_trade_date_mismatch",
+        ),
+        (
+            lambda fixture: fixture["queries"]["bars_5min"].pop("query_identity"),
+            "mapping_required:query_identity",
+        ),
+        (
+            lambda fixture: fixture["queries"]["bars_5min"]["query_identity"].update(
+                {"cursor": "not-terminal"}
+            ),
+            "query_identity_cursor_required_null:bars_5min",
+        ),
+    ],
+)
+def test_tradeability_and_query_identity_are_bound_to_handoff(
+    mutate: object, reason: str
+) -> None:
     fixture = _fixture()
     assert callable(mutate)
     mutate(fixture)
@@ -331,6 +462,7 @@ def test_replay_is_deterministic_and_never_claims_execution_authority() -> None:
         assert item.get("execution_eligible") is not True
         assert item.get("execution_authority") is not True
         assert item.get("delayed_paper_eligible") is not True
+        assert item.get("learning_evidence_eligible") is not True
         assert item.get("durable") is not True
         assert item.get("capital_commit_id") in (None,)
         assert item.get("outbox_id") in (None,)
