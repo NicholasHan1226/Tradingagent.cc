@@ -75,3 +75,36 @@ def test_g4_health_service_is_read_only_and_timer_is_installable() -> None:
     assert "OnCalendar=*-*-* *:2/15:30" in timer
     assert "WantedBy=timers.target" in timer
     assert "enable" not in timer.lower()
+
+
+def test_g5_services_bind_only_the_g5_manifest_and_keep_g4_read_only() -> None:
+    service = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g5-delayed-paper.service"
+    ).read_text()
+    timer = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g5-delayed-paper.timer"
+    ).read_text()
+    health = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g5-health.service"
+    ).read_text()
+
+    assert "REAL_TRADING_ENABLED=false" in service
+    assert "crypto-delayed-paper-round-trip-g5.env" in service
+    assert "crypto-delayed-paper-round-trip-g4.env" not in service
+    assert "--epoch-manifest ${ROUND_TRIP_EPOCH_MANIFEST}" in service
+    assert "--runtime-manifest ${ROUND_TRIP_RUNTIME_MANIFEST}" in service
+    assert "crypto-delayed-paper-round-trip-epoch-g5-20260801" in service
+    assert "crypto-delayed-paper-round-trip-epoch-g4-20260731" in service
+    assert (
+        "ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-round-trip-epoch-g5-20260801"
+        in service
+    )
+    assert "binance" not in service.lower()
+    assert "Unit=tradingagent-crypto-round-trip-g5-delayed-paper.service" in timer
+    assert "WantedBy=timers.target" in timer
+
+    assert "REAL_TRADING_ENABLED=false" in health
+    assert "crypto-delayed-paper-round-trip-g5.env" in health
+    assert "ReadWritePaths=" not in health
+    assert "IPAddressDeny=any" in health
+    assert "RestrictAddressFamilies=AF_UNIX" in health
