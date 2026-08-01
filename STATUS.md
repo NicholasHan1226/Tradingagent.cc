@@ -1,18 +1,20 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-01 23:35 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 00:29 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
-> **2026-08-01 周末双市场运行复核：** Crypto G5 核心 timer 为
+> **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release
 > `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`
-> symlink。新鲜自然周期 `success/exit0`；只读 health 为 `healthy`，模拟账户
-> `balanced=true`，现金 `9000.18697278 USDT`、权益 `9999.48151578 USDT`、累计费用
-> `0.99881422 USDT`，当前只有一笔 ETH 模拟持仓，真实交易、Testnet/Live broker、
-> 模型网络、自动晋级和自动风险扩张均为 false。只读 acceptance 仍为 `not_ready`：
-> 23:35 CST 只读复核时 G5 有 29 个 completed 5-minute windows，最新连续段
-> 28 槽/140 分钟，低于 24 小时
-> 288 槽门槛，且尚无 completed round trip；因此 learning timer 继续关闭，核心采集与
-> 模拟账本继续独立运行。
+> symlink。只读 health 与 acceptance timers 已在比对安装字节和回滚命令后启用；首个
+> health 自动轮与随后核心自动轮均为 `success/exit0`。00:00 前的权威 health 读回为
+> `healthy/balanced=true`，G5 已有 32 个 completed 5-minute windows，并完成首个
+> BTC/ETH 规则约束下的模拟买入与卖出闭环；账户已平仓，现金/权益均为
+> `9997.92239662 USDT`，累计费用 `1.99754838 USDT`，已实现损益
+> `-2.07760338 USDT`，订单 2 笔、买卖各 1 笔、零重复 fill。该亏损只是早期工程样本，
+> 不代表策略胜率。24 小时 288 槽 acceptance 尚未完成，learning timer 继续关闭；
+> 真实交易、Testnet/Live broker、模型网络、自动晋级和自动风险扩张均为 false。只读
+> monitor 证据根为
+> `/opt/investment/release-evidence/tradingagent/20260801T234300Z-crypto-g5-readonly-monitor/`。
 >
 > A股 20260731 状态包完成周末只读日结：48 个预期 5 分钟槽中实际 40 个，缺少
 > 09:35、09:40、13:05、13:10、13:15、13:20、13:35、14:25；
@@ -20,7 +22,17 @@
 > `fixture_reconciled`，共 6 笔模拟 fill、10 笔未成交、费用 30.19992 CNY，40 条已接收
 > evidence 无新增拒绝。该报告只用于工程与决策账本复核，不进入训练、晋级或真实执行；
 > A股 30-symbol session/paper timers 保持 `enabled/active`，500-symbol 仍等待下一个真实
-> 交易时段的两根相邻 500/500 门禁。
+> 交易时段的两根相邻 500/500 门禁。日结证据位于
+> `/opt/investment/release-evidence/tradingagent/20260801T154443Z-ashare-weekend-readonly/`。
+> 同一周末的 ridge/logistic 影子 canary 用时约 `1.4/11.879 ms`，仅生成 4 个 fixture
+> score，保持 `authority=none/shadow_only=true`，证据位于
+> `/opt/investment/release-evidence/tradingagent/20260801T154614Z-shadow-model-weekend/`。
+>
+> CNFutures formal 18082 只读复核仍为 NO-GO：`fut_basic` 有 receipt/lineage 但为
+> `stale/degraded/quality invalid`，`ft_mins` 与 `rt_fut_min` query 均为 404；离线
+> acceptance/training/readiness 共 78 项测试通过，只证明 fixture fail-closed，未启动
+> runner、timer 或模拟成交。证据位于
+> `/opt/investment/release-evidence/tradingagent/20260801T155212Z-cnfutures-formal-readonly/`。
 
 > **2026-08-01 Tradings 清理边界：** MarketGraph 作为可选增强已暂停：API service
 > disabled/inactive、8080 关闭、MG cron 清零；TradingAgent 不依赖 MG 才能生成
