@@ -2,6 +2,13 @@
 
 > 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-08-01 dataset contract fingerprint 候选：** 独立分支
+> `codex/dataset-contract-fingerprint-v1` 在已合入的 readiness 合同上增加 canonical
+> per-dataset SHA-256 helper。它只投影 catalog 的 dataset/schema/default fields/
+> operators/order/limits/identity，排除运行状态和全局 catalog 版本；调用方必须重算，
+> 不能信任自报hash。候选尚未合入或部署，旧 consumer 在迁移前仍按现有manifest
+> fail closed。
+
 > **2026-08-01 有效运行版本解析候选：** 独立分支
 > `codex/effective-runtime-release-v1` 新增只读工具，分别核验 `current` symlink、
 > systemd effective ExecStart/WorkingDirectory 与 active process 的 cwd/exe/cmdline，

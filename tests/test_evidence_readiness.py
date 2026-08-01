@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from shared.governance.evidence_readiness import load_evidence_readiness_contract
+from shared.governance.evidence_readiness import (
+    dataset_contract_fingerprint,
+    dataset_contract_material,
+    load_evidence_readiness_contract,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +35,24 @@ def _observation_proofs() -> dict[str, bool]:
         "receipt_bound": True,
         "lineage_complete": True,
         "quality_valid": True,
+    }
+
+
+def _catalog_row() -> dict[str, object]:
+    return {
+        "dataset_id": "cn.equity.daily",
+        "schema_major": 2,
+        "default_fields": ["ts_code", "trade_date", "close"],
+        "filter_operators": {
+            "trade_date": ["between", "eq"],
+            "ts_code": ["in", "eq"],
+        },
+        "default_order": ["ts_code:asc", "trade_date:asc"],
+        "limits": {"max_page_size": 500, "max_lookback_days": 36500},
+        "identity_fields": ["ts_code", "trade_date"],
+        "state": "ready",
+        "degraded": False,
+        "runtime_state": "success",
     }
 
 
@@ -160,3 +182,75 @@ def test_contract_rejects_partial_shadow_notional_or_silent_replacement(
     path = _write_mutation(tmp_path, mutate)
     with pytest.raises(ValueError, match="partial cohort must remain zero-notional"):
         load_evidence_readiness_contract(path)
+
+
+def test_dataset_fingerprint_ignores_runtime_metadata_and_operator_order() -> None:
+    row = _catalog_row()
+    changed_runtime = {
+        **row,
+        "state": "stale",
+        "degraded": True,
+        "runtime_state": "failed",
+        "catalog_version": "unrelated-global-version",
+        "filter_operators": {
+            "ts_code": ["eq", "in"],
+            "trade_date": ["eq", "between"],
+        },
+    }
+
+    assert dataset_contract_fingerprint(row) == dataset_contract_fingerprint(
+        changed_runtime
+    )
+    assert dataset_contract_material(row)["dataset_id"] == "cn.equity.daily"
+
+
+def test_dataset_fingerprint_golden_vector_is_cross_repository_stable() -> None:
+    assert dataset_contract_fingerprint(_catalog_row()) == (
+        "2a64eade6402119d492ae339213af96865ad5125358ac45de576b5a71f1d9e07"
+    )
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("dataset_id", "cn.equity.daily.v2"),
+        ("schema_major", 3),
+        ("default_fields", ["ts_code", "trade_date", "open", "close"]),
+        ("filter_operators", {"trade_date": ["eq"]}),
+        ("default_order", ["trade_date:asc", "ts_code:asc"]),
+        ("limits", {"max_page_size": 100, "max_lookback_days": 36500}),
+        ("identity_fields", ["trade_date", "ts_code"]),
+    ],
+)
+def test_each_dataset_contract_field_changes_fingerprint(
+    field: str, value: object
+) -> None:
+    row = _catalog_row()
+    changed = {**row, field: value}
+
+    assert dataset_contract_fingerprint(row) != dataset_contract_fingerprint(changed)
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda row: row.update({"identity_fields": ["missing"]}),
+            "identity_fields must be default fields",
+        ),
+        (
+            lambda row: row.update({"filter_operators": {"missing": ["eq"]}}),
+            "filter_operators field must be a default field",
+        ),
+        (
+            lambda row: row.update({"limits": {"max_page_size": 0}}),
+            "limits values must be positive integers",
+        ),
+    ],
+)
+def test_dataset_fingerprint_rejects_malformed_contract(mutate, reason: str) -> None:
+    row = _catalog_row()
+    mutate(row)
+
+    with pytest.raises(ValueError, match=reason):
+        dataset_contract_fingerprint(row)
