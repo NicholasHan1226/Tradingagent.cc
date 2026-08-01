@@ -42,5 +42,31 @@ describe('TradingCopilotPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '加入关注' }))
     expect((await screen.findAllByText('暂无正式分析')).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '加入人工计划' })).toBeDisabled()
+    expect(screen.getByText('行情图表暂不可用')).toBeInTheDocument()
+    expect(screen.getByText('当前没有按股票代码验证通过的公告、新闻或舆情数据。')).toBeInTheDocument()
+  })
+
+  it('switches chart ranges, forecast views, and stock-linked event content', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
+    await screen.findByText('今天先看条件，再做决定')
+
+    expect(screen.getByRole('img', { name: '许继电气 1D 行情与预测图' })).toBeInTheDocument()
+    expect(screen.getAllByText('演示公告：项目进展提示').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('tab', { name: '1M' }))
+    expect(screen.getByRole('img', { name: '许继电气 1M 行情与预测图' })).toBeInTheDocument()
+
+    const forecastToggle = screen.getByRole('button', { name: '预测已显示' })
+    fireEvent.click(forecastToggle)
+    expect(screen.getByRole('button', { name: '显示预测' })).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(screen.getByRole('tab', { name: '预测' }))
+    expect(screen.getByText('方向情景权重')).toBeInTheDocument()
+    expect(screen.getAllByText('研究情景 · 未校准').length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /比亚迪.*002594\.SZ.*61.*等待/ }))
+    fireEvent.click(screen.getByRole('tab', { name: '概述' }))
+    expect((await screen.findAllByText('演示公告：月度经营数据说明')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('演示公告：项目进展提示')).not.toBeInTheDocument()
   })
 })
