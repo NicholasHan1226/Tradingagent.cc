@@ -176,11 +176,16 @@ class ShadowParityRuntimeConfig:
         if self.plan.expected_catalog_version != self.expected_catalog_version:
             raise ShadowParityError("shadow_parity_manifest_catalog_binding_invalid")
 
-    def client_config(self) -> SharedSignalsV1Config:
+    def client_config(self, dataset_ids: frozenset[str]) -> SharedSignalsV1Config:
+        if dataset_ids not in (
+            frozenset({EVENT_DATASET_ID}),
+            frozenset(MONEYFLOW_DATASET_IDS),
+        ):
+            raise ShadowParityError("shadow_parity_client_dataset_scope")
         return SharedSignalsV1Config(
             base_url=self.base_url,
             expected_catalog_version=self.expected_catalog_version,
-            dataset_ids=frozenset(DATASET_IDS),
+            dataset_ids=dataset_ids,
             access_policy_id=self.access_policy_id,
             catalog_version_policy="evidence_only",
             timeout_seconds=float(self.timeout_seconds),
@@ -259,26 +264,45 @@ def _reason(exc: Exception, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
 
 
-def run_shadow_parity(
+def _validate_client_scope(
     client: SharedSignalsV1Client,
     *,
+    dataset_ids: frozenset[str],
     plan: ShadowParityPlan,
-) -> dict[str, object]:
-    """Execute the three independent, zero-notional adapter parity checks."""
-
-    if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
-        raise ShadowParityError("real_trading_must_remain_disabled")
+) -> None:
     config = getattr(client, "config", None)
     if getattr(config, "catalog_version_policy", None) != "evidence_only":
         raise ShadowParityError("shadow_parity_catalog_policy")
-    if getattr(config, "dataset_ids", None) != frozenset(DATASET_IDS):
+    if getattr(config, "dataset_ids", None) != dataset_ids:
         raise ShadowParityError("shadow_parity_client_dataset_scope")
     if (
         getattr(config, "expected_catalog_version", None)
         != plan.expected_catalog_version
     ):
         raise ShadowParityError("shadow_parity_client_catalog_scope")
-    catalog = client.get_catalog()
+
+
+def run_shadow_parity(
+    event_client: SharedSignalsV1Client,
+    *,
+    moneyflow_client: SharedSignalsV1Client,
+    plan: ShadowParityPlan,
+) -> dict[str, object]:
+    """Execute the three independent, zero-notional adapter parity checks."""
+
+    if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
+        raise ShadowParityError("real_trading_must_remain_disabled")
+    _validate_client_scope(
+        event_client,
+        dataset_ids=frozenset({EVENT_DATASET_ID}),
+        plan=plan,
+    )
+    _validate_client_scope(
+        moneyflow_client,
+        dataset_ids=frozenset(MONEYFLOW_DATASET_IDS),
+        plan=plan,
+    )
+    catalog = event_client.get_catalog()
     if not isinstance(catalog, CatalogEnvelope):
         raise ShadowParityError("shadow_parity_catalog_invalid")
     rows = _target_rows(catalog)
@@ -302,7 +326,9 @@ def run_shadow_parity(
     sources: dict[str, dict[str, object]] = {}
     event_audit = AshareEvidenceAuditLedger()
     try:
-        event_snapshot = TradingDatasAshareEvidencePort(client).load_event_snapshot(
+        event_snapshot = TradingDatasAshareEvidencePort(
+            event_client
+        ).load_event_snapshot(
             profile=event_profile,
             filters=plan.filters_by_dataset[EVENT_DATASET_ID],
             decision_time=plan.decision_time,
@@ -321,7 +347,7 @@ def run_shadow_parity(
             audit_rejections=len(event_audit.records()),
         )
 
-    moneyflow_port = TradingDatasAshareMoneyflowPort(client)
+    moneyflow_port = TradingDatasAshareMoneyflowPort(moneyflow_client)
     for dataset_id in MONEYFLOW_DATASET_IDS:
         profile = moneyflow_profiles[dataset_id]
         audit = AshareMoneyflowAuditLedger()
@@ -425,7 +451,14 @@ def run_runtime_shadow_parity(
         base_url=config.base_url,
     )
     return run_shadow_parity(
-        SharedSignalsV1Client(config.client_config(), transport=transport),
+        SharedSignalsV1Client(
+            config.client_config(frozenset({EVENT_DATASET_ID})),
+            transport=transport,
+        ),
+        moneyflow_client=SharedSignalsV1Client(
+            config.client_config(frozenset(MONEYFLOW_DATASET_IDS)),
+            transport=transport,
+        ),
         plan=config.plan,
     )
 
