@@ -140,6 +140,34 @@ receives the same dedicated catalog/query consumer and shadow-parity proof.
 respective session/minute paths; failed evidence correctly blocks only the
 dependent session or minute observation rather than being silently downgraded.
 
+## Moneyflow shadow evidence
+
+`moneyflow_evidence.py` is a separate, fixture/mock-first AShare consumer for
+the two independent source variants `cn.dataset.moneyflow` and
+`cn.dataset.moneyflow_ths`. It has the same fixed V1 routes, injected-client
+boundary, catalog-bound profile, bounded pagination, same-observation replay,
+provider-neutral receipt/lineage, freshness/quality, and PIT gates as the
+event adapter. A profile is derived from the exact supplied catalog row;
+current production availability, schema, selectable fields, order, filters,
+and page limit are never baked into TA.
+Its pagination identity has `identity_source=catalog.default_order`: every
+non-empty order term must be exactly `field:asc` or `field:desc`, name a unique
+catalog field, and collectively include the catalog-selected symbol and
+source-time fields. TA never synthesizes an identity from merely present row
+fields; an incomplete or malformed order rejects the source before any query.
+
+Each source is queried and audited independently. A stale, degraded, empty,
+failed, receipt/lineage-incomplete, drifted, or PIT-late source produces no
+moneyflow feature and does not substitute the other source. It cannot suppress
+an otherwise valid minute baseline or dynamic-position shadow sleeve. Accepted
+records are zero-notional counterfactual features with raw moneyflow semantics,
+not calibrated probabilities; every candidate, execution, training,
+promotion, risk, position, live-trading, and LLM authority remains false.
+An explicit caller may project an accepted record only into the existing
+`flow` counterfactual sleeve. This adapter is not wired to the minute runner,
+scale-500 runtime, timer, production release, or any order path pending its
+own formal TradingDatas shadow-parity handoff. `REAL_TRADING_ENABLED=false`.
+
 For optional offline LLM review, an instant-proven event can be projected into
 the existing shared `EvidenceArtifact` / `LLMEvidenceRequest` schema. This
 projection only constructs an immutable request object; it does not instantiate
