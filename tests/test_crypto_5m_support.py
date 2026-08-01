@@ -81,6 +81,9 @@ def catalog_row(
         "schema_major": 1,
         "default_fields": list(fields),
         "default_order": list(order),
+        "identity_fields": (
+            ["symbol", "open_time"] if "open_time" in fields else ["symbol"]
+        ),
         "fields": [
             {
                 "name": field,

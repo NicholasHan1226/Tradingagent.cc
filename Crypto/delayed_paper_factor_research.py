@@ -27,6 +27,9 @@ from Crypto.delayed_paper_ledger import (
     _read_json,
 )
 from Crypto.factor_research import (
+    FACTOR_SET_ID,
+    FACTOR_SET_VERSION,
+    WINDOW_BARS,
     CryptoFactorResearchError,
     build_cross_asset_features,
     build_factor_snapshot,
@@ -46,6 +49,7 @@ OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS = 288
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
 _HORIZONS = (60, 240, 720, 1440)
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+SEGMENTED_LEARNING_CONSUMER_PROFILE_ID = "crypto-5m-ohlcv-13bar-forward-labels-v1"
 
 
 class CryptoFactorProjectionError(RuntimeError):
@@ -122,6 +126,8 @@ def _segmented_learning_policy() -> dict[str, Any]:
         != OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS
         or maturity.get("purpose") != "automatic_runtime_maturity"
         or segmented.get("allowed") is not True
+        or segmented.get("minimum_slots_source")
+        != "preregistered_feature_and_label_profile"
         or segmented.get("gap_crossing_allowed") is not False
         or segmented.get("automatic_promotion_allowed") is not False
     ):
@@ -134,8 +140,23 @@ def _segmented_learning_policy() -> dict[str, Any]:
             "minimum_continuous_slots"
         ],
         "segmented_learning_allowed": segmented["allowed"],
+        "minimum_slots_source": segmented["minimum_slots_source"],
         "gap_crossing_allowed": segmented["gap_crossing_allowed"],
         "automatic_promotion_allowed": segmented["automatic_promotion_allowed"],
+    }
+
+
+def _segmented_learning_consumer_profile() -> dict[str, Any]:
+    """Return the frozen feature/label definition for detached research only."""
+
+    return {
+        "consumer_profile_id": SEGMENTED_LEARNING_CONSUMER_PROFILE_ID,
+        "feature_set_id": FACTOR_SET_ID,
+        "feature_set_version": FACTOR_SET_VERSION,
+        "window_bars": WINDOW_BARS,
+        "bar_interval_minutes": 5,
+        "required_label_horizon_minutes": 60,
+        "auxiliary_attribution_horizons": list(_HORIZONS[1:]),
     }
 
 
@@ -487,6 +508,9 @@ def _record(source: Mapping[str, Any], *, segment_id: str) -> dict[str, Any]:
         ),
         "market_slot": observation.get("market_slot"),
         "segment_id": segment_id,
+        "segmented_learning_consumer_profile_id": (
+            SEGMENTED_LEARNING_CONSUMER_PROFILE_ID
+        ),
         "snapshots": snapshots,
         "cross_asset": build_cross_asset_features(
             snapshots=[snapshots["BTCUSDT"], snapshots["ETHUSDT"]]
@@ -617,6 +641,87 @@ def _labels(
     return created_or_verified
 
 
+def _learning_eligible_samples(
+    root: Path,
+    records: Mapping[str, Mapping[str, Any]],
+    *,
+    consumer_profile: Mapping[str, Any],
+) -> tuple[list[tuple[Mapping[str, Any], Mapping[str, Any]]], list[str]]:
+    """Use the registered required label only when it remains same-segment."""
+
+    profile_id = consumer_profile.get("consumer_profile_id")
+    required_horizon = consumer_profile.get("required_label_horizon_minutes")
+    auxiliary_horizons = consumer_profile.get("auxiliary_attribution_horizons")
+    if (
+        profile_id != SEGMENTED_LEARNING_CONSUMER_PROFILE_ID
+        or required_horizon != 60
+        or auxiliary_horizons != list(_HORIZONS[1:])
+    ):
+        raise CryptoFactorProjectionError("factor_projection_consumer_profile_invalid")
+    samples: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+    eligible_observation_ids: list[str] = []
+    for item in records.values():
+        record = item.get("record")
+        if not isinstance(record, Mapping):
+            raise CryptoFactorProjectionError("factor_projection_record_invalid")
+        observation_id = record.get("observation_id")
+        segment_id = record.get("segment_id")
+        if (
+            not isinstance(observation_id, str)
+            or not isinstance(segment_id, str)
+            or record.get("segmented_learning_consumer_profile_id") != profile_id
+        ):
+            raise CryptoFactorProjectionError("factor_projection_record_invalid")
+        observation_eligible = True
+        symbol_samples: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+        for symbol in _SYMBOLS:
+            snapshot = record.get("snapshots", {}).get(symbol)
+            if not isinstance(snapshot, Mapping):
+                raise CryptoFactorProjectionError("factor_projection_record_invalid")
+            slot = _utc(
+                snapshot.get("market_slot"),
+                reason="factor_projection_snapshot_slot_invalid",
+            )
+            labels: dict[int, Mapping[str, Any]] = {}
+            for horizon in (required_horizon,):
+                target = records.get(
+                    (slot + timedelta(minutes=horizon))
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                )
+                if (
+                    not isinstance(target, Mapping)
+                    or not isinstance(target.get("record"), Mapping)
+                    or target["record"].get("segment_id") != segment_id
+                ):
+                    observation_eligible = False
+                    break
+                path = _label_path(root, observation_id, symbol, horizon)
+                if not path.exists():
+                    observation_eligible = False
+                    break
+                label = _parse_canonical(path, reason="factor_projection_label_invalid")
+                material = dict(label)
+                claimed = material.pop("forward_label_sha256", None)
+                if (
+                    label.get("observation_id") != observation_id
+                    or label.get("symbol") != symbol
+                    or label.get("horizon_minutes") != horizon
+                    or label.get("source_factor_snapshot_sha256")
+                    != snapshot.get("factor_snapshot_sha256")
+                    or claimed != _sha256(material)
+                ):
+                    raise CryptoFactorProjectionError("factor_projection_label_invalid")
+                labels[horizon] = label
+            if not observation_eligible:
+                break
+            symbol_samples.append((snapshot, labels[required_horizon]))
+        if observation_eligible:
+            samples.extend(symbol_samples)
+            eligible_observation_ids.append(observation_id)
+    return samples, eligible_observation_ids
+
+
 def run_crypto_delayed_paper_factor_research_full_scrub(
     *, output_root: Path | str
 ) -> dict[str, Any]:
@@ -625,6 +730,7 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
     _assert_simulation_only()
     root = Path(output_root)
     policy = _segmented_learning_policy()
+    consumer_profile = _segmented_learning_consumer_profile()
     _, sources = _sources(root)
     if not sources:
         return _result(status="deferred_core_pending")
@@ -693,20 +799,11 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
             label_count = sum(
                 _labels(root, item["record"], records) for item in records.values()
             )
-            samples = []
-            for item in records.values():
-                record = item["record"]
-                for symbol in _SYMBOLS:
-                    label = _label_path(root, str(record["observation_id"]), symbol, 60)
-                    if label.exists():
-                        samples.append(
-                            (
-                                record["snapshots"][symbol],
-                                _parse_canonical(
-                                    label, reason="factor_projection_label_invalid"
-                                ),
-                            )
-                        )
+            samples, eligible_observation_ids = _learning_eligible_samples(
+                root,
+                records,
+                consumer_profile=consumer_profile,
+            )
             report = evaluate_factor_hypotheses(samples)
     except CryptoFactorResearchError as exc:
         raise CryptoFactorProjectionError(
@@ -723,6 +820,9 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
         operational_maturity=continuous
         >= policy["operational_maturity_minimum_continuous_slots"],
         segmented_learning_policy=policy,
+        segmented_learning_profile=consumer_profile,
+        label_learning_eligible_sample_count=len(samples),
+        label_learning_eligible_observation_ids=eligible_observation_ids,
     )
 
 
@@ -740,6 +840,7 @@ def run_crypto_delayed_paper_factor_research_incremental(
     _assert_simulation_only()
     root = Path(output_root)
     policy = _segmented_learning_policy()
+    consumer_profile = _segmented_learning_consumer_profile()
     _, checkpoint, source = _latest_source(root)
     core_count = checkpoint["completion_count"]
     evolution = _root(root)
@@ -750,6 +851,8 @@ def run_crypto_delayed_paper_factor_research_incremental(
             label_count=0,
             reason="factor_projection_checkpoint_missing",
             segmented_learning_policy=policy,
+            segmented_learning_profile=consumer_profile,
+            label_learning_eligible_sample_count=0,
         )
     try:
         with _lock(evolution):
@@ -776,6 +879,8 @@ def run_crypto_delayed_paper_factor_research_incremental(
                     completion_count=core_count,
                     label_count=0,
                     segmented_learning_policy=policy,
+                    segmented_learning_profile=consumer_profile,
+                    label_learning_eligible_sample_count=0,
                 )
             if core_count != sequence + 1:
                 return _result(
@@ -785,6 +890,8 @@ def run_crypto_delayed_paper_factor_research_incremental(
                     label_count=0,
                     reason="factor_projection_incremental_backlog",
                     segmented_learning_policy=policy,
+                    segmented_learning_profile=consumer_profile,
+                    label_learning_eligible_sample_count=0,
                 )
             if previous_checkpoint is None:
                 segment_id = "crypto-5m-segment-" + _market_slot(
@@ -838,6 +945,8 @@ def run_crypto_delayed_paper_factor_research_incremental(
         label_count=0,
         label_status="observation_only_pending_daily_scrub",
         segmented_learning_policy=policy,
+        segmented_learning_profile=consumer_profile,
+        label_learning_eligible_sample_count=0,
     )
 
 
