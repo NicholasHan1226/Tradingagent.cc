@@ -8,6 +8,8 @@ verified proofs against the tracked policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -30,6 +32,15 @@ EXPECTED_FRESHNESS_POLICIES = (
     "historical_pit",
 )
 EXPECTED_MARKETS = ("ashare", "crypto", "cn_futures")
+DATASET_CONTRACT_FINGERPRINT_FIELDS = (
+    "dataset_id",
+    "schema_major",
+    "default_fields",
+    "filter_operators",
+    "default_order",
+    "limits",
+    "identity_fields",
+)
 
 
 def _mapping(value: Any, field: str) -> Mapping[str, Any]:
@@ -76,6 +87,109 @@ def _non_negative_int(value: Any, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field} must be a non-negative integer")
     return value
+
+
+def _unique_text_list(value: Any, field: str, *, allow_empty: bool) -> list[str]:
+    if not isinstance(value, list) or (not allow_empty and not value):
+        qualifier = "a list" if allow_empty else "a non-empty list"
+        raise ValueError(f"{field} must be {qualifier}")
+    result = [_text(item, f"{field}[]") for item in value]
+    if len(result) != len(set(result)):
+        raise ValueError(f"{field} must not contain duplicates")
+    return result
+
+
+def _canonical_json_value(value: Any, field: str) -> Any:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return json.loads(encoded)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be canonical JSON") from exc
+
+
+def dataset_contract_material(catalog_row: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Project one public catalog row into the canonical consumer contract.
+
+    Unrelated catalog rows and runtime metadata are intentionally excluded.
+    Ordered fields/order/identity retain their order; filter operators are
+    normalized as sets because their advertised order has no wire meaning.
+    """
+
+    row = _mapping(catalog_row, "catalog_row")
+    dataset_id = _text(row.get("dataset_id"), "catalog_row.dataset_id")
+    schema_major = _positive_int(row.get("schema_major"), "catalog_row.schema_major")
+    default_fields = _unique_text_list(
+        row.get("default_fields"),
+        "catalog_row.default_fields",
+        allow_empty=False,
+    )
+    default_order = _unique_text_list(
+        row.get("default_order"),
+        "catalog_row.default_order",
+        allow_empty=True,
+    )
+    identity_fields = _unique_text_list(
+        row.get("identity_fields"),
+        "catalog_row.identity_fields",
+        allow_empty=True,
+    )
+    if not set(identity_fields).issubset(default_fields):
+        raise ValueError("catalog_row.identity_fields must be default fields")
+
+    raw_operators = _mapping(
+        row.get("filter_operators"), "catalog_row.filter_operators"
+    )
+    operators: dict[str, list[str]] = {}
+    for raw_field in sorted(raw_operators):
+        field = _text(raw_field, "catalog_row.filter_operators field")
+        if field not in default_fields:
+            raise ValueError(
+                "catalog_row.filter_operators field must be a default field"
+            )
+        values = _unique_text_list(
+            raw_operators[raw_field],
+            f"catalog_row.filter_operators.{field}",
+            allow_empty=False,
+        )
+        operators[field] = sorted(values)
+
+    limits = _canonical_json_value(row.get("limits"), "catalog_row.limits")
+    if not isinstance(limits, dict) or not limits:
+        raise ValueError("catalog_row.limits must be a non-empty mapping")
+    for key, value in limits.items():
+        _text(key, "catalog_row.limits key")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("catalog_row.limits values must be positive integers")
+
+    return {
+        "dataset_id": dataset_id,
+        "schema_major": schema_major,
+        "default_fields": default_fields,
+        "filter_operators": operators,
+        "default_order": default_order,
+        "limits": limits,
+        "identity_fields": identity_fields,
+    }
+
+
+def dataset_contract_fingerprint(catalog_row: Mapping[str, Any]) -> str:
+    """Return a stable SHA-256 for one provider-neutral catalog contract."""
+
+    material = dataset_contract_material(catalog_row)
+    encoded = json.dumps(
+        material,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -297,6 +411,8 @@ def _parse_binding(value: Any) -> ContractBindingPolicy:
         or not policy.per_dataset_contract_fingerprint_required
     ):
         raise ValueError("contract binding must be dataset-scoped and API-v1 bound")
+    if policy.fingerprint_fields != DATASET_CONTRACT_FINGERPRINT_FIELDS:
+        raise ValueError("contract binding fingerprint fields mismatch")
     return policy
 
 
@@ -394,10 +510,13 @@ def load_evidence_readiness_contract(
 
 
 __all__ = [
+    "DATASET_CONTRACT_FINGERPRINT_FIELDS",
     "DEFAULT_EVIDENCE_READINESS_PATH",
     "EvidenceReadinessContract",
     "FreshnessPolicy",
     "ReadinessAssessment",
     "ReadinessRole",
+    "dataset_contract_fingerprint",
+    "dataset_contract_material",
     "load_evidence_readiness_contract",
 ]
