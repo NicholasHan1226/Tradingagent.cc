@@ -337,6 +337,14 @@ capital commit、自动 Champion 晋级或风险扩张。
 绝不构成策略 edge 或晋级授权。后续若要接到 detached worker，必须另行冻结
 append-only 路径、full-scrub/幂等合同与 server one-shot，不能写入 core root。
 
+`delayed_paper_factor_research.py` 与其 manifest-bound worker 是未部署的
+detached projection：它只在最近连续 288 根 G4 completion 后，向
+`g4/evolution/factor_research/` 追加 snapshot、receipt、checkpoint 和随后可用的
+未来价格标签。每次 full scrub 都重验 core completion、投影与 checkpoint 链；
+篡改、缺失或不连续会 fail closed。它没有 service/timer，不能写 core、capital、
+order、Champion 或现有 `round_trip_learning/`，也不使用网络或模型。标签不足和
+50 条初筛不构成策略有效或自动晋级。
+
 `delayed_paper_round_trip_runtime.py` 是隔离 round-trip epoch 的唯一 closed-5m
 server wrapper。
 它仅复用已冻结的 TradingDatas manifest、token-file transport 与 13-bar 门禁，
