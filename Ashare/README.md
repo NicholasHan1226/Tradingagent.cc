@@ -205,6 +205,28 @@ handoff and real query parity for these profiles, this entire adapter remains
 fixture/mock-only and is not connected to the scale-500 minute initializer,
 runner, units, environment, timers, production release, or real trading.
 `REAL_TRADING_ENABLED=false`.
+
+### Formal event/moneyflow shadow-parity sidecar
+
+`evidence_shadow_parity.py` is a separate, bounded acceptance sidecar for only
+`cn.dataset.anns_d`, `cn.dataset.moneyflow`, and
+`cn.dataset.moneyflow_ths`. It reads an injected client through the same fixed
+`GET /v1/catalog` and `POST /v1/query` contract, freezes each target row from
+the catalog, and delegates the existing adapters' fingerprint, exact identity,
+bounded-pagination, replay, metadata, receipt, lineage and PIT checks. It
+requires a caller-supplied frozen mainboard symbol set; it never broadens the
+Universe or accepts a restricted individual stock.
+
+The sidecar has a secret-free `--preflight` mode that validates only its
+manifest and fixed `http://127.0.0.1:18082` endpoint. A real parity run is not
+permitted until TradingDatas publishes the formal active catalog rows,
+especially their exact `identity_fields`, and a TA-scoped token is supplied by
+the existing runtime transport. Each dataset remains independent: a failed
+source is recorded as rejected and cannot create a feature, while the combined
+parity receipt is `blocked` until all three sources pass. A successful receipt
+is still zero-notional and explicitly has no candidate, training, execution,
+promotion, timer, release-switch, scale-500, or LLM-network authority. It is
+not wired to the 30-symbol runner, any systemd unit, or `current`.
 Accepted snapshots and target-bound audit rejections retain expected/observed
 catalog versions, derived drift state, and both profile hashes; an audit before
 a profile can bind records the hashes as null rather than inventing them.
