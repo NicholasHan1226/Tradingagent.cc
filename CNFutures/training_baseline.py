@@ -6,7 +6,7 @@ paper runtime, broker adapter, scheduler, or training-quality claim.
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import hashlib
 import json
 import math
@@ -25,6 +25,11 @@ BASELINE_MODE = "fixture_mock_training_baseline"
 STRATEGY_NAME = "commodity_intraday_trend"
 _SYMBOL = re.compile(r"^m\d{3,4}\.dce$", re.IGNORECASE)
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
+_FIXTURE_DAY_SESSION_WINDOWS = (
+    (time(9), time(10, 15)),
+    (time(10, 30), time(11, 30)),
+    (time(13, 30), time(15)),
+)
 
 
 class TrainingBaselineError(ValueError):
@@ -51,6 +56,7 @@ def run_fixture_training_baseline(fixture: Mapping[str, Any]) -> dict[str, Any]:
             "missing_5min_bars",
             "missing_5min_bar",
             "lunch_or_offsession_bar",
+            "bar_not_on_5min_grid",
         }:
             raise
         lineage = _rejection_lineage(
@@ -261,11 +267,12 @@ def _bars(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, Any]]:
         ).astimezone(_SHANGHAI)
         if timestamp.strftime("%Y%m%d") != trade_date:
             raise TrainingBaselineError("bar_trade_date_mismatch")
+        if timestamp.second != 0 or timestamp.microsecond != 0 or timestamp.minute % 5:
+            raise TrainingBaselineError("bar_not_on_5min_grid")
         if not _is_day_session(timestamp):
             raise TrainingBaselineError("lunch_or_offsession_bar")
         if previous is not None:
-            gap = int((timestamp - previous).total_seconds() // 60)
-            if gap not in {5, 90}:
+            if not _is_expected_5min_gap(previous, timestamp):
                 raise TrainingBaselineError("missing_5min_bar")
         previous = timestamp
         open_price = _positive(row.get("open"), "open")
@@ -511,7 +518,16 @@ def _is_day_session(value: datetime) -> bool:
     if value.weekday() >= 5:
         return False
     current = value.time()
-    return time(9) <= current <= time(11, 30) or time(13) <= current <= time(15)
+    return any(start <= current <= end for start, end in _FIXTURE_DAY_SESSION_WINDOWS)
+
+
+def _is_expected_5min_gap(previous: datetime, current: datetime) -> bool:
+    if current - previous == timedelta(minutes=5):
+        return True
+    return (previous.time(), current.time(), current - previous) in {
+        (time(10, 15), time(10, 30), timedelta(minutes=15)),
+        (time(11, 30), time(13, 30), timedelta(minutes=120)),
+    }
 
 
 def _trade_date(value: Any) -> str:

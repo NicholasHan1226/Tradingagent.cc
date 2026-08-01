@@ -16,6 +16,12 @@ import re
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+from shared.governance.evidence_readiness import (
+    dataset_contract_fingerprint,
+    dataset_contract_material,
+    load_evidence_readiness_contract,
+)
+
 
 PROFILE_ID = "cn-futures-m-5min-handoff-v1"
 _ROLES = ("contract_master", "bars_5min", "calendar_session")
@@ -56,12 +62,18 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
         calendar = _calendar(
             calendar_query["data"], contract["symbol"], calendar_query["observed_at"]
         )
+        if contract["tradeable_on"] != calendar["trade_date"]:
+            raise HandoffAcceptanceError("contract_tradeability_trade_date_mismatch")
         bars = _bars(
             bars_query["data"],
             contract["symbol"],
             calendar,
+            bars_query["data_through"],
             bars_query["observed_at"],
             decision_time,
+        )
+        readiness = _observation_readiness(
+            dataset_contract_bound=catalog["dataset_contract_bound"]
         )
         lineage = _sha256(
             {
@@ -70,6 +82,22 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "contract": contract,
                 "calendar": calendar,
                 "bars": bars,
+                "query_identities": {
+                    role: query["query_identity"]
+                    for role, query in {
+                        "contract_master": contract_query,
+                        "calendar_session": calendar_query,
+                        "bars_5min": bars_query,
+                    }.items()
+                },
+                "query_receipt_watermarks": {
+                    role: query["receipt_watermark"]
+                    for role, query in {
+                        "contract_master": contract_query,
+                        "calendar_session": calendar_query,
+                        "bars_5min": bars_query,
+                    }.items()
+                },
                 "decision_time": decision_time.isoformat(),
             }
         )
@@ -83,8 +111,20 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "dataset_ids": {
                     role: profile["roles"][role]["dataset_id"] for role in _ROLES
                 },
+                "dataset_contract_fingerprints": {
+                    role: profile["roles"][role]["expected_contract_fingerprint"]
+                    for role in _ROLES
+                },
                 "query_receipt_watermarks": {
                     role: query["receipt_watermark"]
+                    for role, query in {
+                        "contract_master": contract_query,
+                        "calendar_session": calendar_query,
+                        "bars_5min": bars_query,
+                    }.items()
+                },
+                "query_identities": {
+                    role: query["query_identity"]
                     for role, query in {
                         "contract_master": contract_query,
                         "calendar_session": calendar_query,
@@ -97,6 +137,7 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "session_id": calendar["session_id"],
                 "bar_ends": [bar["bar_time"] for bar in bars],
             },
+            readiness=readiness,
         )
     except _RiskReject as exc:
         return _result("risk_reject", str(exc))
@@ -134,6 +175,10 @@ def _profile(raw: Mapping[str, Any]) -> dict[str, Any]:
             "schema_major": _whole_positive(
                 item.get("schema_major"), f"profile.{role}.schema_major"
             ),
+            "expected_contract_fingerprint": _fingerprint_text(
+                item.get("expected_contract_fingerprint"),
+                f"profile.{role}.expected_contract_fingerprint",
+            ),
         }
     return {"profile_id": PROFILE_ID, "roles": projected}
 
@@ -154,12 +199,21 @@ def _catalog(raw: Mapping[str, Any], profile: Mapping[str, Any]) -> dict[str, An
         dataset_id = _text(item.get("dataset_id"), "catalog.dataset_id")
         if dataset_id in indexed:
             raise HandoffAcceptanceError("duplicate_catalog_dataset_id")
+        try:
+            material = dataset_contract_material(item)
+            fingerprint = dataset_contract_fingerprint(item)
+        except ValueError as exc:
+            raise HandoffAcceptanceError(
+                f"catalog_contract_invalid:{dataset_id}"
+            ) from exc
         indexed[dataset_id] = {
             "schema_major": _whole_positive(
                 item.get("schema_major"), "catalog.schema_major"
             ),
             "state": _text(item.get("state"), "catalog.state"),
             "degraded": item.get("degraded"),
+            "contract_material": dict(material),
+            "contract_fingerprint": fingerprint,
         }
     roles = _mapping(profile, "roles")
     for role in _ROLES:
@@ -171,7 +225,15 @@ def _catalog(raw: Mapping[str, Any], profile: Mapping[str, Any]) -> dict[str, An
             raise HandoffAcceptanceError(f"catalog_schema_mismatch:{role}")
         if item["state"] != "ready" or item["degraded"] is not False:
             raise HandoffAcceptanceError(f"catalog_not_ready:{role}")
-    return {"catalog_version": catalog_version, "datasets": indexed}
+        if item["contract_fingerprint"] != expected["expected_contract_fingerprint"]:
+            raise HandoffAcceptanceError(
+                f"catalog_contract_fingerprint_mismatch:{role}"
+            )
+    return {
+        "catalog_version": catalog_version,
+        "datasets": indexed,
+        "dataset_contract_bound": True,
+    }
 
 
 def _query(
@@ -201,6 +263,8 @@ def _query(
         raise HandoffAcceptanceError(f"query_data_required:{role}")
     if raw.get("next_cursor") is not None:
         raise HandoffAcceptanceError(f"query_page_not_complete:{role}")
+    catalog_dataset = _mapping(catalog["datasets"], str(expected["dataset_id"]))
+    query_identity = _query_identity(raw, role, catalog_dataset["contract_material"])
     metadata = _mapping(raw, "metadata")
     lineage = _mapping(metadata, "lineage")
     if (
@@ -221,7 +285,9 @@ def _query(
     receipt_id = _text(metadata.get("receipt_id"), f"{role}.receipt_id")
     return {
         "data": data,
+        "data_through": data_through,
         "observed_at": observed_at,
+        "query_identity": query_identity,
         "receipt_watermark": {
             "receipt_id": receipt_id,
             "data_through": data_through.isoformat(),
@@ -242,8 +308,9 @@ def _contract(rows: list[Any], observed_at: datetime) -> dict[str, Any]:
         raise HandoffAcceptanceError("contract_product_m_required")
     if _text(row.get("exchange"), "contract.exchange").upper() != "DCE":
         raise HandoffAcceptanceError("contract_exchange_dce_required")
-    if row.get("active") is not True:
-        raise HandoffAcceptanceError("contract_active_required")
+    tradeability = _mapping(row, "tradeability")
+    if tradeability.get("state") != "tradeable":
+        raise HandoffAcceptanceError("contract_tradeability_required")
     if _positive_or_none(row.get("multiplier")) is None:
         raise _RiskReject("contract_multiplier_missing_or_invalid")
     if _positive_or_none(row.get("tick_size")) is None:
@@ -255,6 +322,7 @@ def _contract(rows: list[Any], observed_at: datetime) -> dict[str, Any]:
         "multiplier": _positive_or_none(row["multiplier"]),
         "tick_size": _positive_or_none(row["tick_size"]),
         "price_limit": _positive_or_none(row["price_limit"]),
+        "tradeable_on": _trade_date(tradeability.get("trade_date")),
         "observed_at": observed_at.isoformat(),
     }
 
@@ -270,15 +338,11 @@ def _calendar(rows: list[Any], symbol: str, observed_at: datetime) -> dict[str, 
         raise HandoffAcceptanceError("calendar_not_eligible")
     if _text(row.get("session_kind"), "calendar.session_kind") != "day":
         raise HandoffAcceptanceError("calendar_day_session_required")
-    start = _timestamp(row.get("session_start"), "calendar.session_start")
-    end = _timestamp(row.get("session_end"), "calendar.session_end")
-    if start > end:
-        raise HandoffAcceptanceError("calendar_session_window_invalid")
+    windows = _session_windows(row, trade_date)
     return {
         "trade_date": trade_date,
         "session_id": _text(row.get("session_id"), "calendar.session_id"),
-        "session_start": start.isoformat(),
-        "session_end": end.isoformat(),
+        "session_windows": windows,
         "observed_at": observed_at.isoformat(),
     }
 
@@ -287,13 +351,13 @@ def _bars(
     rows: list[Any],
     symbol: str,
     calendar: Mapping[str, Any],
+    data_through: datetime,
     observed_at: datetime,
     decision_time: datetime,
 ) -> list[dict[str, Any]]:
     if len(rows) != 2:
         raise HandoffAcceptanceError("two_adjacent_5min_bars_required")
-    start = _timestamp(calendar["session_start"], "calendar.session_start")
-    end = _timestamp(calendar["session_end"], "calendar.session_end")
+    windows = list(calendar["session_windows"])
     normalized: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping):
@@ -310,11 +374,18 @@ def _bars(
         if row.get("completed") is not True:
             raise HandoffAcceptanceError("completed_5min_bar_required")
         bar_time = _timestamp(row.get("bar_time"), f"bars[{index}].bar_time")
-        if not (bar_time <= observed_at <= decision_time):
+        local_bar_time = bar_time.astimezone(_SHANGHAI)
+        if (
+            local_bar_time.second != 0
+            or local_bar_time.microsecond != 0
+            or local_bar_time.minute % 5
+        ):
+            raise HandoffAcceptanceError("bar_not_on_5min_grid")
+        if not (bar_time <= data_through <= observed_at <= decision_time):
             raise HandoffAcceptanceError("bar_pit_order_invalid")
-        if not (start <= bar_time <= end):
+        if not _in_session_windows(bar_time, windows):
             raise HandoffAcceptanceError("bar_outside_calendar_session")
-        if bar_time.astimezone(_SHANGHAI).strftime("%Y%m%d") != calendar["trade_date"]:
+        if local_bar_time.strftime("%Y%m%d") != calendar["trade_date"]:
             raise HandoffAcceptanceError("bar_shanghai_trade_date_mismatch")
         open_ = _positive(row.get("open"), f"bars[{index}].open")
         high = _positive(row.get("high"), f"bars[{index}].high")
@@ -346,6 +417,7 @@ def _result(
     profile_id: str | None = None,
     lineage: str | None = None,
     evidence: Mapping[str, Any] | None = None,
+    readiness: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "mode": "fixture_catalog_query_handoff_acceptance",
@@ -354,9 +426,11 @@ def _result(
         "execution_eligible": False,
         "execution_authority": False,
         "delayed_paper_eligible": False,
+        "learning_evidence_eligible": False,
         "durable": False,
         "capital_commit_id": None,
         "outbox_id": None,
+        "readiness": dict(readiness or _blocked_readiness()),
         "profile_id": profile_id or PROFILE_ID,
         "disposition": disposition,
         "reason": reason,
@@ -365,11 +439,202 @@ def _result(
     }
 
 
+def _observation_readiness(*, dataset_contract_bound: bool) -> dict[str, Any]:
+    try:
+        contract = load_evidence_readiness_contract()
+        assessment = contract.assess(
+            {
+                "api_envelope_bound": True,
+                "dataset_contract_bound": dataset_contract_bound,
+                "identity_valid": True,
+                "receipt_bound": True,
+                "lineage_complete": True,
+                "quality_valid": True,
+            }
+        )
+    except Exception as exc:
+        raise HandoffAcceptanceError("evidence_readiness_contract_unavailable") from exc
+    if not assessment.grants("observation_ready"):
+        raise HandoffAcceptanceError("observation_readiness_not_granted")
+    return {
+        "contract_id": contract.contract_id,
+        "observation_ready": True,
+        "historical_pit_ready": False,
+        "delayed_paper_ready": False,
+        "execution_ready": False,
+    }
+
+
+def _blocked_readiness() -> dict[str, Any]:
+    return {
+        "contract_id": None,
+        "observation_ready": False,
+        "historical_pit_ready": False,
+        "delayed_paper_ready": False,
+        "execution_ready": False,
+    }
+
+
 def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     value = raw.get(key)
     if not isinstance(value, Mapping):
         raise HandoffAcceptanceError(f"mapping_required:{key}")
     return value
+
+
+def _query_identity(
+    raw: Mapping[str, Any], role: str, contract_material: Any
+) -> dict[str, Any]:
+    identity = _mapping(raw, "query_identity")
+    if set(identity) != {"filters", "sort", "identity_fields", "cursor"}:
+        raise HandoffAcceptanceError(f"query_identity_shape_invalid:{role}")
+    filters = _mapping(identity, "filters")
+    if not filters:
+        raise HandoffAcceptanceError(f"query_identity_filters_required:{role}")
+    if not isinstance(contract_material, Mapping):
+        raise HandoffAcceptanceError("catalog_contract_material_required")
+    material = contract_material
+    filter_operators = _mapping(material, "filter_operators")
+    default_fields = _text_list(
+        material.get("default_fields"), "catalog.default_fields"
+    )
+    default_order = _text_list(material.get("default_order"), "catalog.default_order")
+    declared_identity = _text_list(
+        material.get("identity_fields"), "catalog.identity_fields"
+    )
+    normalized_filters: dict[str, dict[str, Any]] = {}
+    for raw_field, predicate in filters.items():
+        field = _text(raw_field, f"query_identity.filters.field:{role}")
+        if field not in filter_operators:
+            raise HandoffAcceptanceError(
+                f"query_identity_filter_field_not_declared:{role}:{field}"
+            )
+        if not isinstance(predicate, Mapping):
+            raise HandoffAcceptanceError(
+                f"mapping_required:query_identity.filters.{field}"
+            )
+        predicate_mapping = predicate
+        if set(predicate_mapping) != {"operator", "value"}:
+            raise HandoffAcceptanceError(
+                f"query_identity_filter_invalid:{role}:{field}"
+            )
+        operator = _text(
+            predicate_mapping.get("operator"),
+            f"query_identity.filters.operator:{role}:{field}",
+        )
+        supported_operators = _text_list(
+            filter_operators[field], f"catalog.filter_operators.{field}"
+        )
+        if operator not in supported_operators:
+            raise HandoffAcceptanceError(
+                f"query_identity_filter_operator_not_declared:{role}:{field}"
+            )
+        normalized_filters[field] = {
+            "operator": operator,
+            "value": _canonical_json_projection(
+                predicate_mapping.get("value"),
+                f"query_identity.filters.value:{role}:{field}",
+            ),
+        }
+    sort = identity.get("sort")
+    if not isinstance(sort, list) or not sort:
+        raise HandoffAcceptanceError(f"query_identity_sort_required:{role}")
+    normalized_sort: list[dict[str, str]] = []
+    for index, item in enumerate(sort):
+        if not isinstance(item, Mapping) or set(item) != {"field", "direction"}:
+            raise HandoffAcceptanceError(f"query_identity_sort_invalid:{role}:{index}")
+        direction = _text(
+            item.get("direction"), f"query_identity.sort.direction:{role}"
+        )
+        if direction not in {"asc", "desc"}:
+            raise HandoffAcceptanceError(f"query_identity_sort_invalid:{role}:{index}")
+        field = _text(item.get("field"), f"query_identity.sort.field:{role}")
+        if field not in default_fields or f"{field}:{direction}" not in default_order:
+            raise HandoffAcceptanceError(
+                f"query_identity_sort_not_declared:{role}:{field}:{direction}"
+            )
+        normalized_sort.append(
+            {
+                "field": field,
+                "direction": direction,
+            }
+        )
+    identity_fields = _text_list(
+        identity.get("identity_fields"), f"query_identity.identity_fields:{role}"
+    )
+    if tuple(identity_fields) != tuple(declared_identity):
+        raise HandoffAcceptanceError(f"query_identity_fields_mismatch:{role}")
+    if identity.get("cursor") is not None:
+        raise HandoffAcceptanceError(f"query_identity_cursor_required_null:{role}")
+    return {
+        "filters": normalized_filters,
+        "sort": normalized_sort,
+        "identity_fields": identity_fields,
+        "cursor": None,
+    }
+
+
+def _fingerprint_text(value: Any, name: str) -> str:
+    result = _text(value, name)
+    if not re.fullmatch(r"[0-9a-f]{64}", result):
+        raise HandoffAcceptanceError(f"fingerprint_required:{name}")
+    return result
+
+
+def _text_list(value: Any, name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise HandoffAcceptanceError(f"text_list_required:{name}")
+    return [_text(item, name) for item in value]
+
+
+def _session_windows(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, str]]:
+    source = raw.get("session_windows")
+    if not isinstance(source, list) or not source:
+        raise HandoffAcceptanceError("calendar_session_windows_required")
+    windows: list[dict[str, str]] = []
+    previous_end: datetime | None = None
+    for index, item in enumerate(source):
+        if not isinstance(item, Mapping) or set(item) != {"start", "end"}:
+            raise HandoffAcceptanceError("calendar_session_window_invalid")
+        start = _timestamp(
+            item.get("start"), f"calendar.session_windows[{index}].start"
+        )
+        end = _timestamp(item.get("end"), f"calendar.session_windows[{index}].end")
+        if (
+            start >= end
+            or start.astimezone(_SHANGHAI).strftime("%Y%m%d") != trade_date
+            or end.astimezone(_SHANGHAI).strftime("%Y%m%d") != trade_date
+            or (previous_end is not None and start <= previous_end)
+        ):
+            raise HandoffAcceptanceError("calendar_session_window_invalid")
+        windows.append({"start": start.isoformat(), "end": end.isoformat()})
+        previous_end = end
+    return windows
+
+
+def _in_session_windows(value: datetime, windows: list[Any]) -> bool:
+    for item in windows:
+        if not isinstance(item, Mapping):
+            raise HandoffAcceptanceError("calendar_session_window_invalid")
+        start = _timestamp(item.get("start"), "calendar.session_window.start")
+        end = _timestamp(item.get("end"), "calendar.session_window.end")
+        if start <= value <= end:
+            return True
+    return False
+
+
+def _canonical_json_projection(value: Any, name: str) -> Any:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return json.loads(encoded)
+    except (TypeError, ValueError) as exc:
+        raise HandoffAcceptanceError(f"canonical_projection_required:{name}") from exc
 
 
 def _text(value: Any, name: str) -> str:
