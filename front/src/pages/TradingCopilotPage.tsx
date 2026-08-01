@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Activity, ArrowLeftRight, Bell, BookOpenCheck, Check, ChevronRight, CircleDollarSign,
+  Activity, ArrowLeftRight, Bell, BookOpenCheck, ChevronRight,
   Eye, Gauge, LayoutDashboard, ListPlus, Pencil, Plus, Search, ShieldCheck, Sparkles,
   WalletCards, X,
 } from 'lucide-react'
 import { copilotDemoAnalyses, createCopilotDemoState, unavailableAnalysis } from '../copilot/demo'
 import { analysisFromSignal } from '../copilot/analysis'
+import { getDemoStockIntelligence, unavailableStockIntelligence } from '../copilot/stockIntelligence'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
 import { isAshareSymbol, type CopilotAnalysis, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
 import { createTradingAgentSnapshotClient } from '../api/tradingAgentIntegration'
+import { StockDetailWorkspace } from '../components/copilot/StockDetailWorkspace'
 import '../styles/trading-copilot.css'
 
 type Editor = 'account' | 'holding' | null
@@ -60,6 +62,9 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const analysis = selected
     ? tradingAgentAnalyses[selected.symbol] ?? (demoPreviewEnabled ? copilotDemoAnalyses[selected.symbol] : undefined) ?? unavailableAnalysis(selected.symbol, selected.name)
     : unavailableAnalysis('------.--', '未选择股票')
+  const intelligence = selected && demoPreviewEnabled && analysis.mode === 'demo_fixture'
+    ? getDemoStockIntelligence(selected.symbol) ?? unavailableStockIntelligence(selected.symbol, selected.name)
+    : unavailableStockIntelligence(analysis.symbol, analysis.name)
   const holding = state?.holdings.find((item) => item.symbol === selected?.symbol)
   const latestDecision = state?.decisions.findLast((item) => item.symbol === selected?.symbol)
   const investedCost = useMemo(() => state?.holdings.reduce((sum, item) => sum + item.quantity * item.averageCost, 0) ?? 0, [state?.holdings])
@@ -168,47 +173,22 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
             </div>
           </aside>
 
-          <section className="stock-workspace">
-            <div className="stock-hero panel">
-              <div className="stock-title">
-                <span className="eyebrow">{analysis.symbol}</span>
-                <h2>{analysis.name}</h2>
-                <span className={`source-badge ${analysis.mode}`}>{analysisModeLabel(analysis.mode)}</span>
-              </div>
-              <div className="stock-meta">
-                <div><span>当前状态</span><strong>{analysis.verdict}</strong></div>
-                <div><span>你的持仓</span><strong>{holding ? `${holding.quantity.toLocaleString('zh-CN')} 股` : '未持有'}</strong></div>
-                <div><span>最近决定</span><strong>{latestDecision ? decisionLabel(latestDecision.action) : '尚未记录'}</strong></div>
-              </div>
-              <p className="analysis-summary">{analysis.summary}</p>
-              <div className="score-row">
-                <span><Gauge size={16} />建议强度</span>
-                <div className="score-track" aria-label={`建议强度 ${analysis.score ?? '暂无'}`}><i style={{ width: `${analysis.score ?? 0}%` }} /></div>
-                <strong>{analysis.score === null ? '--' : `${analysis.score}/100`}</strong>
-              </div>
-              <p className="score-caption">强度用于组织证据，不是胜率、收益承诺或自动下单指令。</p>
-            </div>
-
-            <div className="argument-grid">
-              <EvidenceCard kind="support" title="支持买入的证据" items={analysis.support} />
-              <EvidenceCard kind="oppose" title="反对买入的证据" items={analysis.oppose} />
-            </div>
-
-            <div className="condition-panel panel">
-              <div className="panel-heading"><div><span className="eyebrow">DECISION GATE</span><h2>买入前必须同时满足</h2></div><CircleDollarSign size={20} /></div>
-              <ol>{analysis.buyConditions.map((condition) => <li key={condition}><span><Check size={14} /></span>{condition}</li>)}</ol>
-              <div className="invalidation"><strong>失效条件</strong>{analysis.invalidation.map((item) => <span key={item}>{item}</span>)}</div>
-            </div>
-
-            <div className="decision-bar">
-              <div><strong>你的决定</strong><span>只写入人工决策账本，不会触发任何订单</span></div>
-              <button className="ghost-button" onClick={() => void recordDecision('skipped')} type="button">暂不交易</button>
-              <button className="secondary-button" onClick={() => void recordDecision('observing')} type="button">继续观察</button>
-              <button className="primary-button" disabled={analysis.mode === 'analysis_unavailable'} onClick={() => void recordDecision('planned')} type="button">加入人工计划</button>
-            </div>
-          </section>
+          <StockDetailWorkspace
+            analysis={analysis}
+            holding={holding}
+            intelligence={intelligence}
+            latestDecision={latestDecision ? decisionLabel(latestDecision.action) : '尚未记录'}
+            onRecordDecision={(action) => void recordDecision(action)}
+          />
 
           <aside className="copilot-rail">
+            <div className="panel recommendation-card">
+              <span className="eyebrow">DECISION STRENGTH</span><h2>建议强度</h2>
+              <div className="recommendation-value"><Gauge size={19} /><strong>{analysis.score ?? '—'}</strong><small>/100</small></div>
+              <div className="score-track" aria-label={`建议强度 ${analysis.score ?? '暂无'}`}><i style={{ width: `${analysis.score ?? 0}%` }} /></div>
+              <strong className="recommendation-verdict">{analysis.verdict}</strong>
+              <p>强度用于组织证据，不是胜率、收益承诺或自动下单指令。</p>
+            </div>
             <div className="panel holding-card">
               <div className="panel-heading"><div><span className="eyebrow">POSITION</span><h2>持仓关系</h2></div><button aria-label="编辑持仓" onClick={() => setEditor('holding')} type="button"><Pencil size={14} /></button></div>
               {holding ? <>
@@ -236,10 +216,6 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
       {notice && <div className="copilot-toast" role="status">{notice}</div>}
     </main>
   )
-}
-
-function EvidenceCard({ kind, title, items }: { kind: 'support' | 'oppose'; title: string; items: Array<{ title: string; detail: string }> }) {
-  return <section className={`panel evidence-card ${kind}`}><div className="panel-heading"><h2>{title}</h2><span>{items.length}</span></div>{items.length ? items.map((item) => <article key={`${item.title}-${item.detail}`}><i>{kind === 'support' ? '+' : '−'}</i><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>) : <div className="rail-empty">当前没有可验证证据。</div>}</section>
 }
 
 function AccountEditor({ account, onClose, onSave }: { account: TradingCopilotState['account']; onClose: () => void; onSave: (account: TradingCopilotState['account']) => void }) {
