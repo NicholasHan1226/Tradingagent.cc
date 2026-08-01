@@ -2,6 +2,13 @@
 
 > 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-08-01 Tradings 清理边界：** MarketGraph 作为可选增强已暂停：API service
+> disabled/inactive、8080 关闭、MG cron 清零；TradingAgent 不依赖 MG 才能生成
+> observation/hold/risk reject/sim-only 样本。旧 `/opt/investment/SharedSignals` 活跃路径
+> 已移至 root-only 退役归档，8082 关闭；TA 不恢复旧 route/SQLite/file fallback。
+> TradingDatas 18082/18083 与其采集 timer 未因该动作停止，`REAL_TRADING_ENABLED=false`
+> 不变。MG/SharedSignals 的研究与数据历史未删除，不能进入当前资本、模型或订单统计。
+
 > **2026-08-01 dataset contract fingerprint 候选：** 独立分支
 > `codex/dataset-contract-fingerprint-v1` 在已合入的 readiness 合同上增加 canonical
 > per-dataset SHA-256 helper。它只投影 catalog 的 dataset/schema/default fields/
