@@ -11,10 +11,12 @@ from Ashare.moneyflow_evidence import (
     FIXED_QUERY_ROUTE,
     MONEYFLOW_DATASET_IDS,
     AshareMoneyflowAuditLedger,
+    AshareMoneyflowAuditRecord,
     AshareMoneyflowEvidenceError,
     TradingDatasAshareMoneyflowPort,
 )
 from shared.data.sharedsignals_v1 import (
+    CatalogEnvelope,
     HTTPResponse,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
@@ -33,19 +35,24 @@ def _catalog_row(
     fields: list[str] | None = None,
     default_order: list[str] | None = None,
     max_page_size: int = 2,
+    identity_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     names = fields or FIELDS
+    order = (
+        default_order
+        if default_order is not None
+        else ["ts_code:asc", "trade_date:asc"]
+    )
     return {
         "dataset_id": dataset_id,
         "schema_major": 1,
         "default_fields": list(names),
-        "default_order": default_order
-        if default_order is not None
-        else ["ts_code:asc", "trade_date:asc"],
+        "default_order": order,
         "filter_operators": {
             name: ["eq", "in", "gte", "lte", "between"] for name in names
         },
         "limits": {"max_page_size": max_page_size},
+        "identity_fields": identity_fields or ["trade_date", "ts_code"],
         "availability": {"activation_states": ["active" if active else "paused"]},
     }
 
@@ -92,6 +99,8 @@ class _Transport:
         rows_by_dataset: dict[str, list[dict[str, Any]]] | None = None,
         metadata_by_dataset: dict[str, dict[str, Any]] | None = None,
         replay_drift: bool = False,
+        catalog_responses: list[tuple[str, list[dict[str, Any]]]] | None = None,
+        query_catalog_versions: list[str] | None = None,
     ) -> None:
         self.catalog_rows = catalog_rows or [
             _catalog_row(dataset_id) for dataset_id in MONEYFLOW_DATASET_IDS
@@ -103,19 +112,34 @@ class _Transport:
             dataset_id: _metadata() for dataset_id in MONEYFLOW_DATASET_IDS
         }
         self.replay_drift = replay_drift
+        self.catalog_responses = catalog_responses
+        self.query_catalog_versions = query_catalog_versions or []
         self.calls: list[dict[str, Any]] = []
         self._traversals: dict[str, int] = {}
+        self._catalog_call_count = 0
+        self._query_call_count = 0
+        self._current_catalog_version = CATALOG
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(copy.deepcopy(kwargs))
         if kwargs["method"] == "GET":
+            if self.catalog_responses:
+                index = min(
+                    self._catalog_call_count,
+                    len(self.catalog_responses) - 1,
+                )
+                catalog_version, catalog_rows = self.catalog_responses[index]
+            else:
+                catalog_version, catalog_rows = CATALOG, self.catalog_rows
+            self._catalog_call_count += 1
+            self._current_catalog_version = catalog_version
             return HTTPResponse(
                 200,
                 {
                     "api_version": "v1",
-                    "catalog_version": CATALOG,
+                    "catalog_version": catalog_version,
                     "request_id": f"catalog-{len(self.calls)}",
-                    "data": copy.deepcopy(self.catalog_rows),
+                    "data": copy.deepcopy(catalog_rows),
                 },
             )
         body = kwargs["json_body"]
@@ -137,11 +161,19 @@ class _Transport:
             page[0]["net_mf_amount"] = -page[0]["net_mf_amount"]
         next_index = index + len(page)
         next_cursor = f"{traversal}:{next_index}" if next_index < len(rows) else None
+        query_catalog_version = (
+            self.query_catalog_versions[
+                min(self._query_call_count, len(self.query_catalog_versions) - 1)
+            ]
+            if self.query_catalog_versions
+            else self._current_catalog_version
+        )
+        self._query_call_count += 1
         return HTTPResponse(
             200,
             {
                 "api_version": "v1",
-                "catalog_version": CATALOG,
+                "catalog_version": query_catalog_version,
                 "request_id": f"query-{len(self.calls)}",
                 "dataset_id": dataset_id,
                 "data": page,
@@ -151,10 +183,42 @@ class _Transport:
         )
 
 
+class _ManualCatalogClient(SharedSignalsV1Client):
+    """Fixture-only client for adapter checks beneath the shared parser."""
+
+    def __init__(
+        self,
+        transport: _Transport,
+        catalogs: list[CatalogEnvelope],
+    ) -> None:
+        super().__init__(_client(transport).config, transport=transport)
+        self._catalogs = list(catalogs)
+
+    def get_catalog(self) -> CatalogEnvelope:
+        if not self._catalogs:
+            raise AssertionError("fixture catalog exhausted")
+        catalog = self._catalogs.pop(0)
+        self._observed_catalog_version = catalog.catalog_version
+        return catalog
+
+
+def _catalog_envelope(
+    catalog_version: str,
+    rows: list[dict[str, Any]],
+) -> CatalogEnvelope:
+    return CatalogEnvelope(
+        api_version="v1",
+        catalog_version=catalog_version,
+        request_id=f"fixture-{catalog_version}",
+        data=tuple(rows),
+    )
+
+
 def _client(
     transport: _Transport,
     *,
     dataset_ids: frozenset[str] = frozenset(MONEYFLOW_DATASET_IDS),
+    catalog_version_policy: str = "evidence_only",
 ) -> SharedSignalsV1Client:
     return SharedSignalsV1Client(
         SharedSignalsV1Config(
@@ -162,6 +226,7 @@ def _client(
             expected_catalog_version=CATALOG,
             dataset_ids=dataset_ids,
             access_policy_id="ashare-moneyflow-fixture",
+            catalog_version_policy=catalog_version_policy,
             max_limit=100,
             cache_ttl_seconds=0,
         ),
@@ -201,8 +266,8 @@ def test_single_source_profile_and_snapshot_are_catalog_bound_shadow_only() -> N
 
     assert tuple(profiles.by_dataset) == ("cn.dataset.moneyflow",)
     assert profiles.by_dataset["cn.dataset.moneyflow"].identity_fields == (
-        "ts_code",
         "trade_date",
+        "ts_code",
     )
     assert snapshot.query_route == FIXED_QUERY_ROUTE == "POST /v1/query"
     assert snapshot.catalog_route == FIXED_CATALOG_ROUTE == "GET /v1/catalog"
@@ -225,6 +290,243 @@ def test_single_source_profile_and_snapshot_are_catalog_bound_shadow_only() -> N
         "POST",
         "POST",
     ]
+
+
+def test_unrelated_global_catalog_drift_is_audited_without_blocking_moneyflow() -> None:
+    initial_rows = [_catalog_row(dataset_id) for dataset_id in MONEYFLOW_DATASET_IDS]
+    current_rows = copy.deepcopy(initial_rows)
+    current_rows.append(
+        _catalog_row(
+            "cn.dataset.unrelated",
+            fields=["id"],
+            default_order=["id:asc"],
+            identity_fields=["id"],
+        )
+    )
+    transport = _Transport(
+        catalog_responses=[
+            (CATALOG, initial_rows),
+            ("fixture-global-catalog-v2", current_rows),
+        ]
+    )
+    port, profile, audit, _ = _port_and_profile(transport)
+
+    snapshot = port.load_shadow_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+    )
+
+    assert snapshot.expected_catalog_version == CATALOG
+    assert snapshot.observed_catalog_version == "fixture-global-catalog-v2"
+    assert snapshot.catalog_version_drift is True
+    assert snapshot.dataset_contract_fingerprint == profile.dataset_contract_fingerprint
+    assert snapshot.consumer_profile_sha256 == profile.consumer_profile_sha256
+    assert audit.records() == ()
+
+
+def test_unrelated_catalog_duplicate_does_not_block_moneyflow_profile_freeze() -> None:
+    unrelated = _catalog_row(
+        "cn.dataset.unrelated",
+        fields=["id"],
+        default_order=["id:asc"],
+        identity_fields=["id"],
+    )
+    transport = _Transport()
+    client = _ManualCatalogClient(
+        transport,
+        [
+            _catalog_envelope(
+                CATALOG,
+                [
+                    *[_catalog_row(dataset_id) for dataset_id in MONEYFLOW_DATASET_IDS],
+                    unrelated,
+                    unrelated,
+                ],
+            )
+        ],
+    )
+
+    profiles = TradingDatasAshareMoneyflowPort(client).freeze_profiles(
+        audit_ledger=AshareMoneyflowAuditLedger()
+    )
+
+    assert set(profiles.by_dataset) == set(MONEYFLOW_DATASET_IDS)
+
+
+def test_catalog_to_query_version_drift_fails_closed_with_audit_binding() -> None:
+    rows = [_catalog_row(dataset_id) for dataset_id in MONEYFLOW_DATASET_IDS]
+    transport = _Transport(
+        catalog_responses=[(CATALOG, rows), ("fixture-global-catalog-v2", rows)],
+        query_catalog_versions=["fixture-query-catalog-v3"],
+    )
+    port, profile, audit, _ = _port_and_profile(transport)
+
+    with pytest.raises(AshareMoneyflowEvidenceError, match="query_failed"):
+        port.load_shadow_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+        )
+
+    record = audit.records()[-1]
+    assert record.expected_catalog_version == CATALOG
+    assert record.observed_catalog_version == "fixture-global-catalog-v2"
+    assert record.catalog_version_drift is True
+    assert record.dataset_contract_fingerprint == profile.dataset_contract_fingerprint
+    assert record.consumer_profile_sha256 == profile.consumer_profile_sha256
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    (
+        "dataset_id",
+        "schema_major",
+        "default_fields",
+        "filter_operators",
+        "default_order",
+        "limits",
+        "identity_fields",
+    ),
+)
+def test_target_catalog_seven_field_drift_fails_before_query(field_name: str) -> None:
+    initial_rows = [_catalog_row(dataset_id) for dataset_id in MONEYFLOW_DATASET_IDS]
+    current_rows = copy.deepcopy(initial_rows)
+    target = next(
+        row for row in current_rows if row["dataset_id"] == "cn.dataset.moneyflow"
+    )
+    replacements: dict[str, Any] = {
+        "dataset_id": "cn.dataset.moneyflow.drifted",
+        "schema_major": 2,
+        "default_fields": [*target["default_fields"], "contract_drift"],
+        "filter_operators": {
+            **target["filter_operators"],
+            "ts_code": ["eq"],
+        },
+        "default_order": ["ts_code:desc", "trade_date:asc"],
+        "limits": {"max_page_size": 1},
+        "identity_fields": ["ts_code", "trade_date"],
+    }
+    target[field_name] = replacements[field_name]
+    transport = _Transport(
+        catalog_responses=[
+            (CATALOG, initial_rows),
+            ("fixture-global-catalog-v2", current_rows),
+        ]
+    )
+    port, profile, audit, _ = _port_and_profile(transport)
+
+    with pytest.raises(AshareMoneyflowEvidenceError):
+        port.load_shadow_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+        )
+
+    assert not [call for call in transport.calls if call["method"] == "POST"]
+    assert audit.records()[-1].dataset_contract_fingerprint == (
+        profile.dataset_contract_fingerprint
+    )
+
+
+def test_catalog_identity_field_order_mismatch_fails_before_query() -> None:
+    rows = [_catalog_row("cn.dataset.moneyflow")]
+    rows[0]["identity_fields"] = ["ts_code", "trade_date"]
+    transport = _Transport(catalog_rows=rows)
+    port = TradingDatasAshareMoneyflowPort(
+        _client(transport, dataset_ids=frozenset({"cn.dataset.moneyflow"}))
+    )
+
+    with pytest.raises(AshareMoneyflowEvidenceError, match="catalog_identity_mismatch"):
+        port.freeze_profiles(audit_ledger=AshareMoneyflowAuditLedger())
+
+    assert not [call for call in transport.calls if call["method"] == "POST"]
+
+
+@pytest.mark.parametrize("mode", ("missing", "duplicate"))
+def test_target_catalog_missing_or_duplicate_fails_before_query(mode: str) -> None:
+    initial_rows = [_catalog_row(dataset_id) for dataset_id in MONEYFLOW_DATASET_IDS]
+    current_rows = copy.deepcopy(initial_rows)
+    if mode == "missing":
+        current_rows = [
+            row for row in current_rows if row["dataset_id"] != "cn.dataset.moneyflow"
+        ]
+    else:
+        current_rows.append(
+            copy.deepcopy(
+                next(
+                    row
+                    for row in current_rows
+                    if row["dataset_id"] == "cn.dataset.moneyflow"
+                )
+            )
+        )
+    transport = _Transport()
+    client = _ManualCatalogClient(
+        transport,
+        [
+            _catalog_envelope(CATALOG, initial_rows),
+            _catalog_envelope("fixture-global-catalog-v2", current_rows),
+        ],
+    )
+    port = TradingDatasAshareMoneyflowPort(client)
+    audit = AshareMoneyflowAuditLedger()
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset[
+        "cn.dataset.moneyflow"
+    ]
+
+    with pytest.raises(
+        AshareMoneyflowEvidenceError,
+        match="dataset_catalog_row_missing",
+    ):
+        port.load_shadow_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+        )
+
+    assert not [call for call in transport.calls if call["method"] == "POST"]
+
+
+def test_audit_catalog_drift_is_derived_and_rejects_forged_value() -> None:
+    with pytest.raises(
+        AshareMoneyflowEvidenceError,
+        match="audit_catalog_drift_mismatch",
+    ):
+        AshareMoneyflowAuditRecord(
+            reason_code="fixture_rejection",
+            dataset_id="catalog",
+            expected_catalog_version="expected-v1",
+            observed_catalog_version="observed-v2",
+            catalog_version_drift=False,
+            dataset_contract_fingerprint=None,
+            consumer_profile_sha256=None,
+            decision_time=DECISION_TIME,
+            rejected_payload_sha256="0" * 64,
+        )
+
+
+def test_runtime_requires_evidence_only_catalog_version_policy() -> None:
+    transport = _Transport(catalog_rows=[_catalog_row("cn.dataset.moneyflow")])
+    port = TradingDatasAshareMoneyflowPort(
+        _client(
+            transport,
+            dataset_ids=frozenset({"cn.dataset.moneyflow"}),
+            catalog_version_policy="strict",
+        )
+    )
+
+    with pytest.raises(
+        AshareMoneyflowEvidenceError,
+        match="catalog_version_policy_invalid",
+    ):
+        port.freeze_profiles(audit_ledger=AshareMoneyflowAuditLedger())
+
+    assert not transport.calls
 
 
 def test_two_variants_are_independent_and_never_implicitly_substituted() -> None:
@@ -262,7 +564,7 @@ def test_catalog_drift_is_audit_only_and_never_queries_a_fallback_source() -> No
     port, profile, audit, actual = _port_and_profile(transport)
     actual.catalog_rows[0]["limits"]["max_page_size"] = 3
 
-    with pytest.raises(AshareMoneyflowEvidenceError, match="catalog_contract_drift"):
+    with pytest.raises(AshareMoneyflowEvidenceError, match="dataset_contract_drift"):
         port.load_shadow_snapshot(
             profile=profile,
             filters={},
@@ -270,7 +572,7 @@ def test_catalog_drift_is_audit_only_and_never_queries_a_fallback_source() -> No
             audit_ledger=audit,
         )
 
-    assert audit.records()[-1].reason_code == "ashare_moneyflow_catalog_contract_drift"
+    assert audit.records()[-1].reason_code == "ashare_moneyflow_dataset_contract_drift"
     assert [call for call in actual.calls if call["method"] == "POST"] == []
 
 

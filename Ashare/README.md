@@ -160,11 +160,24 @@ provider-neutral receipt/lineage, freshness/quality, and PIT gates as the
 event adapter. A profile is derived from the exact supplied catalog row;
 current production availability, schema, selectable fields, order, filters,
 and page limit are never baked into TA.
-Its pagination identity has `identity_source=catalog.default_order`: every
-non-empty order term must be exactly `field:asc` or `field:desc`, name a unique
-catalog field, and collectively include the catalog-selected symbol and
-source-time fields. TA never synthesizes an identity from merely present row
-fields; an incomplete or malformed order rejects the source before any query.
+Each catalog-derived initial profile retains the shared canonical seven-field
+`dataset_contract_fingerprint` plus a separate TA-owned
+`consumer_profile_sha256`; an upstream owner freezes that profile before use.
+At read time the passed-in profile's target fingerprint must match exactly.
+Global catalog version is expected/observed/drift audit evidence only, so an
+unrelated dataset change cannot block this consumer; target-row changes,
+missing/duplicate target rows, or catalog-to-query version drift fail closed.
+The injected runtime client must explicitly use
+`catalog_version_policy="evidence_only"`.
+
+Its pagination identity is `identity_source=catalog.identity_fields`, read
+directly and in the exact published order (for the current moneyflow contracts,
+`[trade_date, ts_code]`). `default_order` remains a separate canonical
+contract field and pagination-sort validation, rather than an identity source:
+every non-empty order term must be exactly `field:asc` or `field:desc`, name a
+unique catalog field, and cover the published identity fields. TA never
+synthesizes identity from field presence or sort order; mismatch, incomplete,
+or malformed catalog identity/order rejects the source before any query.
 
 Each source is queried and audited independently. A stale, degraded, empty,
 failed, receipt/lineage-incomplete, drifted, or PIT-late source produces no
@@ -192,6 +205,9 @@ handoff and real query parity for these profiles, this entire adapter remains
 fixture/mock-only and is not connected to the scale-500 minute initializer,
 runner, units, environment, timers, production release, or real trading.
 `REAL_TRADING_ENABLED=false`.
+Accepted snapshots and target-bound audit rejections retain expected/observed
+catalog versions, derived drift state, and both profile hashes; an audit before
+a profile can bind records the hashes as null rather than inventing them.
 
 ## Five-minute simulation adapter
 

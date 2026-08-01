@@ -29,6 +29,7 @@ from shared.data.tradingdatas_pagination import (
     PaginationContractError,
     collect_query_pages,
 )
+from shared.governance.evidence_readiness import dataset_contract_fingerprint
 from shared.universe.policy import classify_instrument
 
 
@@ -131,18 +132,6 @@ def _strings(value: object, reason: str, *, nonempty: bool = True) -> tuple[str,
     return result
 
 
-def _catalog_contract(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "dataset_id": row.get("dataset_id"),
-        "schema_major": row.get("schema_major"),
-        "default_fields": row.get("default_fields"),
-        "default_order": row.get("default_order"),
-        "filter_operators": row.get("filter_operators"),
-        "limits": row.get("limits"),
-        "availability": row.get("availability"),
-    }
-
-
 def _active_catalog_row(row: Mapping[str, Any]) -> bool:
     availability = row.get("availability")
     return bool(
@@ -155,20 +144,19 @@ def _first_field(fields: frozenset[str], candidates: tuple[str, ...]) -> str | N
     return next((candidate for candidate in candidates if candidate in fields), None)
 
 
-def _identity_fields(
+def _validate_default_order(
     default_order: tuple[str, ...],
     fields: frozenset[str],
     *,
-    symbol_field: str,
-    source_time_field: str,
-) -> tuple[str, ...]:
-    """Derive pagination identity only from the catalog primary-key projection."""
+    identity_fields: tuple[str, ...],
+) -> None:
+    """Validate catalog sorting without inventing the public row identity."""
 
     if not default_order:
         raise AshareMoneyflowEvidenceError(
             "ashare_moneyflow_catalog_default_order_missing"
         )
-    identity: list[str] = []
+    ordered_fields: list[str] = []
     for term in default_order:
         if term.count(":") != 1:
             raise AshareMoneyflowEvidenceError(
@@ -179,17 +167,16 @@ def _identity_fields(
             not field_name
             or field_name not in fields
             or direction not in {"asc", "desc"}
-            or field_name in identity
+            or field_name in ordered_fields
         ):
             raise AshareMoneyflowEvidenceError(
                 "ashare_moneyflow_catalog_default_order_invalid"
             )
-        identity.append(field_name)
-    if symbol_field not in identity or source_time_field not in identity:
+        ordered_fields.append(field_name)
+    if not set(identity_fields).issubset(ordered_fields):
         raise AshareMoneyflowEvidenceError(
             "ashare_moneyflow_catalog_default_order_identity_incomplete"
         )
-    return tuple(identity)
 
 
 def _mainboard_allowlist(value: tuple[str, ...] | None) -> frozenset[str] | None:
@@ -279,13 +266,15 @@ def _parse_source_time(
 class MoneyflowDatasetProfile:
     """One exact active catalog interpretation for one source variant."""
 
-    catalog_version: str
+    expected_catalog_version: str
+    observed_catalog_version: str
     dataset_id: str
     schema_major: int
     default_fields: tuple[str, ...]
     default_order: tuple[str, ...]
     filter_operators: tuple[tuple[str, tuple[str, ...]], ...]
-    catalog_contract_sha256: str
+    dataset_contract_fingerprint: str
+    consumer_profile_sha256: str
     identity_fields: tuple[str, ...]
     symbol_field: str
     source_time_field: str
@@ -297,7 +286,14 @@ class MoneyflowDatasetProfile:
     query_route: str = FIXED_QUERY_ROUTE
 
     def __post_init__(self) -> None:
-        _text(self.catalog_version, "ashare_moneyflow_profile_catalog_invalid")
+        _text(
+            self.expected_catalog_version,
+            "ashare_moneyflow_profile_expected_catalog_invalid",
+        )
+        _text(
+            self.observed_catalog_version,
+            "ashare_moneyflow_profile_observed_catalog_invalid",
+        )
         if self.dataset_id not in MONEYFLOW_DATASET_IDS:
             raise AshareMoneyflowEvidenceError(
                 "ashare_moneyflow_profile_dataset_invalid"
@@ -311,19 +307,22 @@ class MoneyflowDatasetProfile:
                 "ashare_moneyflow_profile_schema_invalid"
             )
         _sha256_text(
-            self.catalog_contract_sha256,
-            "ashare_moneyflow_profile_contract_sha_invalid",
+            self.dataset_contract_fingerprint,
+            "ashare_moneyflow_profile_dataset_contract_fingerprint_invalid",
+        )
+        _sha256_text(
+            self.consumer_profile_sha256,
+            "ashare_moneyflow_profile_consumer_sha_invalid",
         )
         fields = frozenset(self.default_fields)
-        expected_identity = _identity_fields(
+        _validate_default_order(
             self.default_order,
             fields,
-            symbol_field=self.symbol_field,
-            source_time_field=self.source_time_field,
+            identity_fields=self.identity_fields,
         )
         if (
             not fields
-            or self.identity_fields != expected_identity
+            or self.identity_fields != (self.source_time_field, self.symbol_field)
             or any(
                 field not in fields
                 for field in (
@@ -352,11 +351,22 @@ class MoneyflowDatasetProfile:
                 "ashare_moneyflow_profile_page_limit_invalid"
             )
 
+    @property
+    def catalog_version(self) -> str:
+        return self.observed_catalog_version
+
+    @property
+    def catalog_version_drift(self) -> bool:
+        return self.expected_catalog_version != self.observed_catalog_version
+
     @classmethod
     def from_catalog_row(
         cls,
         catalog: CatalogEnvelope,
         row: Mapping[str, Any],
+        *,
+        expected_catalog_version: str,
+        expected_dataset_contract_fingerprint: str | None = None,
     ) -> "MoneyflowDatasetProfile":
         dataset_id = _text(
             row.get("dataset_id"), "ashare_moneyflow_catalog_dataset_id_invalid"
@@ -394,11 +404,18 @@ class MoneyflowDatasetProfile:
             raise AshareMoneyflowEvidenceError(
                 "ashare_moneyflow_catalog_semantic_fields_missing"
             )
-        identity_fields = _identity_fields(
+        identity_fields = _strings(
+            row.get("identity_fields"),
+            "ashare_moneyflow_catalog_identity_fields_invalid",
+        )
+        if identity_fields != (source_time_field, symbol_field):
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_catalog_identity_mismatch"
+            )
+        _validate_default_order(
             default_order,
             fields,
-            symbol_field=symbol_field,
-            source_time_field=source_time_field,
+            identity_fields=identity_fields,
         )
         raw_operators = row.get("filter_operators")
         if not isinstance(raw_operators, Mapping):
@@ -428,14 +445,51 @@ class MoneyflowDatasetProfile:
                 "ashare_moneyflow_catalog_page_limit_invalid"
             )
         max_pages = 16
+        try:
+            contract_fingerprint = dataset_contract_fingerprint(row)
+        except (TypeError, ValueError) as exc:
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_dataset_contract_invalid"
+            ) from exc
+        if expected_dataset_contract_fingerprint is not None:
+            expected_fingerprint = _sha256_text(
+                expected_dataset_contract_fingerprint,
+                "ashare_moneyflow_dataset_contract_fingerprint_invalid",
+            )
+            if expected_fingerprint != contract_fingerprint:
+                raise AshareMoneyflowEvidenceError(
+                    "ashare_moneyflow_dataset_contract_drift"
+                )
+        profile_material = {
+            "dataset_contract_fingerprint": contract_fingerprint,
+            "selected_fields": list(default_fields),
+            "filter_operators": {
+                field_name: list(operators)
+                for field_name, operators in filter_operators
+            },
+            "default_order": list(default_order),
+            "identity_fields": list(identity_fields),
+            "field_mapping": {
+                "symbol": symbol_field,
+                "source_time": source_time_field,
+                "net_flow_amount": net_flow_amount_field,
+            },
+            "page_budgets": {
+                "max_pages": max_pages,
+                "max_rows": max_page_size * max_pages,
+                "page_limit": max_page_size,
+            },
+        }
         return cls(
-            catalog_version=catalog.catalog_version,
+            expected_catalog_version=expected_catalog_version,
+            observed_catalog_version=catalog.catalog_version,
             dataset_id=dataset_id,
             schema_major=schema_major,
             default_fields=default_fields,
             default_order=default_order,
             filter_operators=filter_operators,
-            catalog_contract_sha256=_sha256(_catalog_contract(row)),
+            dataset_contract_fingerprint=contract_fingerprint,
+            consumer_profile_sha256=_sha256(profile_material),
             identity_fields=identity_fields,
             symbol_field=symbol_field,
             source_time_field=source_time_field,
@@ -448,9 +502,10 @@ class MoneyflowDatasetProfile:
 
 @dataclass(frozen=True)
 class MoneyflowProfileSet:
-    catalog_version: str
+    expected_catalog_version: str
+    observed_catalog_version: str
     by_dataset: Mapping[str, MoneyflowDatasetProfile]
-    catalog_contract_sha256: str
+    consumer_profile_set_sha256: str
     catalog_route: str = FIXED_CATALOG_ROUTE
     query_route: str = FIXED_QUERY_ROUTE
     counterfactual_only: bool = True
@@ -462,9 +517,16 @@ class MoneyflowProfileSet:
     real_trading_enabled: bool = False
 
     def __post_init__(self) -> None:
-        _text(self.catalog_version, "ashare_moneyflow_profile_set_catalog_invalid")
+        _text(
+            self.expected_catalog_version,
+            "ashare_moneyflow_profile_set_expected_catalog_invalid",
+        )
+        _text(
+            self.observed_catalog_version,
+            "ashare_moneyflow_profile_set_observed_catalog_invalid",
+        )
         _sha256_text(
-            self.catalog_contract_sha256,
+            self.consumer_profile_set_sha256,
             "ashare_moneyflow_profile_set_sha_invalid",
         )
         profiles = dict(self.by_dataset)
@@ -472,7 +534,8 @@ class MoneyflowProfileSet:
             not isinstance(profile, MoneyflowDatasetProfile)
             or dataset_id not in MONEYFLOW_DATASET_IDS
             or dataset_id != profile.dataset_id
-            or profile.catalog_version != self.catalog_version
+            or profile.expected_catalog_version != self.expected_catalog_version
+            or profile.observed_catalog_version != self.observed_catalog_version
             for dataset_id, profile in profiles.items()
         ):
             raise AshareMoneyflowEvidenceError(
@@ -498,6 +561,14 @@ class MoneyflowProfileSet:
             )
         object.__setattr__(self, "by_dataset", MappingProxyType(profiles))
 
+    @property
+    def catalog_version(self) -> str:
+        return self.observed_catalog_version
+
+    @property
+    def catalog_version_drift(self) -> bool:
+        return self.expected_catalog_version != self.observed_catalog_version
+
 
 @dataclass(frozen=True)
 class AshareMoneyflowAuditRecord:
@@ -505,7 +576,11 @@ class AshareMoneyflowAuditRecord:
 
     reason_code: str
     dataset_id: str
-    catalog_version: str
+    expected_catalog_version: str
+    observed_catalog_version: str
+    catalog_version_drift: bool
+    dataset_contract_fingerprint: str | None
+    consumer_profile_sha256: str | None
     decision_time: datetime
     rejected_payload_sha256: str
     pit_feature_eligible: bool = False
@@ -520,7 +595,14 @@ class AshareMoneyflowAuditRecord:
         for value, reason in (
             (self.reason_code, "ashare_moneyflow_audit_reason_invalid"),
             (self.dataset_id, "ashare_moneyflow_audit_dataset_invalid"),
-            (self.catalog_version, "ashare_moneyflow_audit_catalog_invalid"),
+            (
+                self.expected_catalog_version,
+                "ashare_moneyflow_audit_expected_catalog_invalid",
+            ),
+            (
+                self.observed_catalog_version,
+                "ashare_moneyflow_audit_observed_catalog_invalid",
+            ),
         ):
             _text(value, reason)
         _aware(self.decision_time, "ashare_moneyflow_audit_decision_time_invalid")
@@ -528,6 +610,22 @@ class AshareMoneyflowAuditRecord:
             self.rejected_payload_sha256,
             "ashare_moneyflow_audit_payload_sha_invalid",
         )
+        if type(self.catalog_version_drift) is not bool:
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_audit_catalog_drift_invalid"
+            )
+        if self.catalog_version_drift != (
+            self.expected_catalog_version != self.observed_catalog_version
+        ):
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_audit_catalog_drift_mismatch"
+            )
+        for value in (
+            self.dataset_contract_fingerprint,
+            self.consumer_profile_sha256,
+        ):
+            if value is not None:
+                _sha256_text(value, "ashare_moneyflow_audit_profile_sha_invalid")
         if self.pit_feature_eligible or any(
             (
                 self.candidate_eligible,
@@ -556,7 +654,11 @@ class AshareMoneyflowAuditLedger:
             {
                 "reason_code": record.reason_code,
                 "dataset_id": record.dataset_id,
-                "catalog_version": record.catalog_version,
+                "expected_catalog_version": record.expected_catalog_version,
+                "observed_catalog_version": record.observed_catalog_version,
+                "catalog_version_drift": record.catalog_version_drift,
+                "dataset_contract_fingerprint": record.dataset_contract_fingerprint,
+                "consumer_profile_sha256": record.consumer_profile_sha256,
                 "decision_time": record.decision_time.astimezone(
                     timezone.utc
                 ).isoformat(),
@@ -792,6 +894,34 @@ class MoneyflowShadowSnapshot:
             raise AshareMoneyflowEvidenceError(
                 "ashare_moneyflow_snapshot_authority_or_replay_invalid"
             )
+        observed_catalog_version = self.features[0].catalog_version
+        if any(
+            feature.catalog_version != observed_catalog_version
+            for feature in self.features
+        ):
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_snapshot_catalog_version_drift"
+            )
+
+    @property
+    def expected_catalog_version(self) -> str:
+        return self.profile.expected_catalog_version
+
+    @property
+    def observed_catalog_version(self) -> str:
+        return self.features[0].catalog_version
+
+    @property
+    def catalog_version_drift(self) -> bool:
+        return self.expected_catalog_version != self.observed_catalog_version
+
+    @property
+    def dataset_contract_fingerprint(self) -> str:
+        return self.profile.dataset_contract_fingerprint
+
+    @property
+    def consumer_profile_sha256(self) -> str:
+        return self.profile.consumer_profile_sha256
 
 
 def _validate_filters(
@@ -828,10 +958,7 @@ def _map_run(
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
     metadata = envelope.metadata
-    if (
-        envelope.dataset_id != profile.dataset_id
-        or envelope.catalog_version != profile.catalog_version
-    ):
+    if envelope.dataset_id != profile.dataset_id:
         raise AshareMoneyflowEvidenceError("ashare_moneyflow_query_binding_mismatch")
     if metadata.state.strip().lower() != "ready" or metadata.degraded is not False:
         raise AshareMoneyflowEvidenceError("ashare_moneyflow_metadata_not_ready")
@@ -910,7 +1037,7 @@ def _map_run(
         features.append(
             MoneyflowShadowFeature(
                 dataset_id=profile.dataset_id,
-                catalog_version=profile.catalog_version,
+                catalog_version=envelope.catalog_version,
                 symbol=symbol,
                 source_time=source_time,
                 source_time_precision=precision,
@@ -942,12 +1069,26 @@ def _snapshot_from_runs(
 ) -> MoneyflowShadowSnapshot:
     rejected_payload = {
         "dataset_id": profile.dataset_id,
-        "catalog_version": profile.catalog_version,
+        "expected_catalog_version": profile.expected_catalog_version,
+        "observed_catalog_version": getattr(
+            getattr(first, "envelope", None), "catalog_version", None
+        ),
+        "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
+        "consumer_profile_sha256": profile.consumer_profile_sha256,
         "first_semantic_sha256": getattr(first, "semantic_sha256", None),
         "replay_semantic_sha256": getattr(replay, "semantic_sha256", None),
     }
+    observed_catalog_version = "unobserved"
     try:
         allowlist = _mainboard_allowlist(allowed_symbols)
+        observed_catalog_version = _text(
+            first.envelope.catalog_version,
+            "ashare_moneyflow_query_catalog_version_invalid",
+        )
+        if replay.envelope.catalog_version != observed_catalog_version:
+            raise AshareMoneyflowEvidenceError(
+                "ashare_moneyflow_query_catalog_version_drift"
+            )
         if (
             first.semantic_sha256 != replay.semantic_sha256
             or first.semantic_trace_sha256 != replay.semantic_trace_sha256
@@ -988,7 +1129,13 @@ def _snapshot_from_runs(
             AshareMoneyflowAuditRecord(
                 reason_code=exc.reason_code,
                 dataset_id=profile.dataset_id,
-                catalog_version=profile.catalog_version,
+                expected_catalog_version=profile.expected_catalog_version,
+                observed_catalog_version=observed_catalog_version,
+                catalog_version_drift=(
+                    profile.expected_catalog_version != observed_catalog_version
+                ),
+                dataset_contract_fingerprint=profile.dataset_contract_fingerprint,
+                consumer_profile_sha256=profile.consumer_profile_sha256,
                 decision_time=_aware(
                     decision_time,
                     "ashare_moneyflow_decision_time_timezone_required",
@@ -1033,8 +1180,14 @@ class TradingDatasAshareMoneyflowPort:
         if not isinstance(audit_ledger, AshareMoneyflowAuditLedger):
             raise TypeError("audit_ledger must be AshareMoneyflowAuditLedger")
         decision_time = datetime.now(timezone.utc)
+        observed_catalog_version = "unobserved"
         try:
+            if self._client.config.catalog_version_policy != "evidence_only":
+                raise AshareMoneyflowEvidenceError(
+                    "ashare_moneyflow_catalog_version_policy_invalid"
+                )
             catalog = self._client.get_catalog()
+            observed_catalog_version = catalog.catalog_version
             rows: dict[str, Mapping[str, Any]] = {}
             for row in catalog.data:
                 if not isinstance(row, Mapping):
@@ -1050,7 +1203,11 @@ class TradingDatasAshareMoneyflowPort:
                     )
                 rows[dataset_id] = row
             profiles = {
-                dataset_id: MoneyflowDatasetProfile.from_catalog_row(catalog, row)
+                dataset_id: MoneyflowDatasetProfile.from_catalog_row(
+                    catalog,
+                    row,
+                    expected_catalog_version=self._client.config.expected_catalog_version,
+                )
                 for dataset_id, row in rows.items()
                 if _active_catalog_row(row)
             }
@@ -1059,13 +1216,20 @@ class TradingDatasAshareMoneyflowPort:
                     "ashare_moneyflow_no_active_catalog_profile"
                 )
             return MoneyflowProfileSet(
-                catalog_version=catalog.catalog_version,
+                expected_catalog_version=self._client.config.expected_catalog_version,
+                observed_catalog_version=catalog.catalog_version,
                 by_dataset=profiles,
-                catalog_contract_sha256=_sha256(
+                consumer_profile_set_sha256=_sha256(
                     {
-                        "catalog_version": catalog.catalog_version,
                         "profiles": {
-                            dataset_id: profile.catalog_contract_sha256
+                            dataset_id: {
+                                "dataset_contract_fingerprint": (
+                                    profile.dataset_contract_fingerprint
+                                ),
+                                "consumer_profile_sha256": (
+                                    profile.consumer_profile_sha256
+                                ),
+                            }
                             for dataset_id, profile in sorted(profiles.items())
                         },
                     }
@@ -1079,7 +1243,14 @@ class TradingDatasAshareMoneyflowPort:
             AshareMoneyflowAuditRecord(
                 reason_code=reason,
                 dataset_id="catalog",
-                catalog_version=self._client.config.expected_catalog_version,
+                expected_catalog_version=self._client.config.expected_catalog_version,
+                observed_catalog_version=observed_catalog_version,
+                catalog_version_drift=(
+                    self._client.config.expected_catalog_version
+                    != observed_catalog_version
+                ),
+                dataset_contract_fingerprint=None,
+                consumer_profile_sha256=None,
                 decision_time=decision_time,
                 rejected_payload_sha256=_sha256(
                     {
@@ -1112,28 +1283,38 @@ class TradingDatasAshareMoneyflowPort:
             decision_time, "ashare_moneyflow_decision_time_timezone_required"
         )
         audits_before = len(audit_ledger.records())
+        runtime_catalog_version = "unobserved"
         try:
             normalized_allowed = _mainboard_allowlist(allowed_symbols)
-            catalog = self._client.get_catalog()
-            if catalog.catalog_version != profile.catalog_version:
+            if self._client.config.catalog_version_policy != "evidence_only":
                 raise AshareMoneyflowEvidenceError(
-                    "ashare_moneyflow_catalog_version_drift"
+                    "ashare_moneyflow_catalog_version_policy_invalid"
                 )
-            row = next(
-                (
-                    item
-                    for item in catalog.data
-                    if item.get("dataset_id") == profile.dataset_id
-                ),
-                None,
-            )
-            if row is None or not _active_catalog_row(row):
+            catalog = self._client.get_catalog()
+            runtime_catalog_version = catalog.catalog_version
+            matches = [
+                item
+                for item in catalog.data
+                if item.get("dataset_id") == profile.dataset_id
+            ]
+            if len(matches) != 1:
+                raise AshareMoneyflowEvidenceError(
+                    "ashare_moneyflow_dataset_catalog_row_missing"
+                )
+            row = matches[0]
+            if not _active_catalog_row(row):
                 raise AshareMoneyflowEvidenceError(
                     "ashare_moneyflow_dataset_not_active"
                 )
-            if _sha256(_catalog_contract(row)) != profile.catalog_contract_sha256:
+            try:
+                current_fingerprint = dataset_contract_fingerprint(row)
+            except (TypeError, ValueError) as exc:
                 raise AshareMoneyflowEvidenceError(
-                    "ashare_moneyflow_catalog_contract_drift"
+                    "ashare_moneyflow_dataset_contract_invalid"
+                ) from exc
+            if current_fingerprint != profile.dataset_contract_fingerprint:
+                raise AshareMoneyflowEvidenceError(
+                    "ashare_moneyflow_dataset_contract_drift"
                 )
             _validate_filters(profile=profile, filters=filters)
             request = QueryRequest(
@@ -1185,12 +1366,31 @@ class TradingDatasAshareMoneyflowPort:
                 AshareMoneyflowAuditRecord(
                     reason_code=reason,
                     dataset_id=profile.dataset_id,
-                    catalog_version=profile.catalog_version,
+                    expected_catalog_version=profile.expected_catalog_version,
+                    observed_catalog_version=runtime_catalog_version,
+                    catalog_version_drift=(
+                        profile.expected_catalog_version != runtime_catalog_version
+                    ),
+                    dataset_contract_fingerprint=profile.dataset_contract_fingerprint,
+                    consumer_profile_sha256=profile.consumer_profile_sha256,
                     decision_time=decision,
                     rejected_payload_sha256=_sha256(
                         {
                             "dataset_id": profile.dataset_id,
-                            "catalog_version": profile.catalog_version,
+                            "expected_catalog_version": (
+                                profile.expected_catalog_version
+                            ),
+                            "observed_catalog_version": runtime_catalog_version,
+                            "catalog_version_drift": (
+                                profile.expected_catalog_version
+                                != runtime_catalog_version
+                            ),
+                            "dataset_contract_fingerprint": (
+                                profile.dataset_contract_fingerprint
+                            ),
+                            "consumer_profile_sha256": (
+                                profile.consumer_profile_sha256
+                            ),
                             "filters_sha256": _sha256(dict(filters)),
                             "source_reason": source_reason,
                         }
