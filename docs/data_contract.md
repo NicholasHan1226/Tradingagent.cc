@@ -98,7 +98,7 @@ POST /v1/query
 
 `order` 是可选的非空、有序且无重复字符串列表；未配置时从请求中省略，排序由 TradingDatas registry 默认值决定。`filters` 与 `as_of` 也按 dataset 显式配置：例如分区日线必须携带精确 `trade_date` filter；`query_as_of_mode=decision_as_of` 时发送决策时点，`query_as_of_mode=omit` 时不发送 `as_of`。TA 不得猜测默认排序、删除过滤条件或把一个 dataset 的查询方式复制给另一个 dataset。
 
-`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。`access_policy_id` 只是 TA 本地 cache/receipt 对 transport 身份的命名空间，不是 credential。HTTP 认证只允许最终 transport 从 `TRADINGDATAS_API_TOKEN_FILE` 指向的仓外受限文件加载，再向两个固定端点注入 Bearer；通用 client、manifest、日志和调用方 header 都不得持有或覆盖 token。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。响应 envelope 至少保留：
+`base_url`、`expected_catalog_version`、`dataset_ids`、`access_policy_id`、timeout 和 max limit 必须显式配置。`catalog_version_policy` 默认 `strict`；只有已用 canonical per-dataset fingerprint 验证目标 catalog rows 的消费者才可显式使用 `evidence_only`。后者仍要求先读取一次 catalog，并让随后每个 query envelope 的版本与本次观察一致；未读 catalog、读后版本再变或目标 dataset fingerprint 漂移都 fail closed。`access_policy_id` 只是 TA 本地 cache/receipt 对 transport 身份的命名空间，不是 credential。HTTP 认证只允许最终 transport 从 `TRADINGDATAS_API_TOKEN_FILE` 指向的仓外受限文件加载，再向两个固定端点注入 Bearer；通用 client、manifest、日志和调用方 header 都不得持有或覆盖 token。dataset ID 不允许从 provider 名称、URL 或返回行中猜测。响应 envelope 至少保留：
 
 ```yaml
 api_version: v1
