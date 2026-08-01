@@ -16,7 +16,11 @@ import re
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from shared.governance.evidence_readiness import load_evidence_readiness_contract
+from shared.governance.evidence_readiness import (
+    dataset_contract_fingerprint,
+    dataset_contract_material,
+    load_evidence_readiness_contract,
+)
 
 
 PROFILE_ID = "cn-futures-m-5min-handoff-v1"
@@ -68,7 +72,9 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
             bars_query["observed_at"],
             decision_time,
         )
-        readiness = _observation_readiness()
+        readiness = _observation_readiness(
+            dataset_contract_bound=catalog["dataset_contract_bound"]
+        )
         lineage = _sha256(
             {
                 "profile": profile,
@@ -104,6 +110,10 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "catalog_version": catalog["catalog_version"],
                 "dataset_ids": {
                     role: profile["roles"][role]["dataset_id"] for role in _ROLES
+                },
+                "dataset_contract_fingerprints": {
+                    role: profile["roles"][role]["expected_contract_fingerprint"]
+                    for role in _ROLES
                 },
                 "query_receipt_watermarks": {
                     role: query["receipt_watermark"]
@@ -165,6 +175,10 @@ def _profile(raw: Mapping[str, Any]) -> dict[str, Any]:
             "schema_major": _whole_positive(
                 item.get("schema_major"), f"profile.{role}.schema_major"
             ),
+            "expected_contract_fingerprint": _fingerprint_text(
+                item.get("expected_contract_fingerprint"),
+                f"profile.{role}.expected_contract_fingerprint",
+            ),
         }
     return {"profile_id": PROFILE_ID, "roles": projected}
 
@@ -185,12 +199,21 @@ def _catalog(raw: Mapping[str, Any], profile: Mapping[str, Any]) -> dict[str, An
         dataset_id = _text(item.get("dataset_id"), "catalog.dataset_id")
         if dataset_id in indexed:
             raise HandoffAcceptanceError("duplicate_catalog_dataset_id")
+        try:
+            material = dataset_contract_material(item)
+            fingerprint = dataset_contract_fingerprint(item)
+        except ValueError as exc:
+            raise HandoffAcceptanceError(
+                f"catalog_contract_invalid:{dataset_id}"
+            ) from exc
         indexed[dataset_id] = {
             "schema_major": _whole_positive(
                 item.get("schema_major"), "catalog.schema_major"
             ),
             "state": _text(item.get("state"), "catalog.state"),
             "degraded": item.get("degraded"),
+            "contract_material": dict(material),
+            "contract_fingerprint": fingerprint,
         }
     roles = _mapping(profile, "roles")
     for role in _ROLES:
@@ -202,7 +225,15 @@ def _catalog(raw: Mapping[str, Any], profile: Mapping[str, Any]) -> dict[str, An
             raise HandoffAcceptanceError(f"catalog_schema_mismatch:{role}")
         if item["state"] != "ready" or item["degraded"] is not False:
             raise HandoffAcceptanceError(f"catalog_not_ready:{role}")
-    return {"catalog_version": catalog_version, "datasets": indexed}
+        if item["contract_fingerprint"] != expected["expected_contract_fingerprint"]:
+            raise HandoffAcceptanceError(
+                f"catalog_contract_fingerprint_mismatch:{role}"
+            )
+    return {
+        "catalog_version": catalog_version,
+        "datasets": indexed,
+        "dataset_contract_bound": True,
+    }
 
 
 def _query(
@@ -232,7 +263,8 @@ def _query(
         raise HandoffAcceptanceError(f"query_data_required:{role}")
     if raw.get("next_cursor") is not None:
         raise HandoffAcceptanceError(f"query_page_not_complete:{role}")
-    query_identity = _query_identity(raw, role)
+    catalog_dataset = _mapping(catalog["datasets"], str(expected["dataset_id"]))
+    query_identity = _query_identity(raw, role, catalog_dataset["contract_material"])
     metadata = _mapping(raw, "metadata")
     lineage = _mapping(metadata, "lineage")
     if (
@@ -407,13 +439,13 @@ def _result(
     }
 
 
-def _observation_readiness() -> dict[str, Any]:
+def _observation_readiness(*, dataset_contract_bound: bool) -> dict[str, Any]:
     try:
         contract = load_evidence_readiness_contract()
         assessment = contract.assess(
             {
                 "api_envelope_bound": True,
-                "dataset_contract_bound": True,
+                "dataset_contract_bound": dataset_contract_bound,
                 "identity_valid": True,
                 "receipt_bound": True,
                 "lineage_complete": True,
@@ -450,13 +482,60 @@ def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
-def _query_identity(raw: Mapping[str, Any], role: str) -> dict[str, Any]:
+def _query_identity(
+    raw: Mapping[str, Any], role: str, contract_material: Any
+) -> dict[str, Any]:
     identity = _mapping(raw, "query_identity")
-    if set(identity) != {"filters", "sort", "cursor"}:
+    if set(identity) != {"filters", "sort", "identity_fields", "cursor"}:
         raise HandoffAcceptanceError(f"query_identity_shape_invalid:{role}")
     filters = _mapping(identity, "filters")
     if not filters:
         raise HandoffAcceptanceError(f"query_identity_filters_required:{role}")
+    if not isinstance(contract_material, Mapping):
+        raise HandoffAcceptanceError("catalog_contract_material_required")
+    material = contract_material
+    filter_operators = _mapping(material, "filter_operators")
+    default_fields = _text_list(
+        material.get("default_fields"), "catalog.default_fields"
+    )
+    default_order = _text_list(material.get("default_order"), "catalog.default_order")
+    declared_identity = _text_list(
+        material.get("identity_fields"), "catalog.identity_fields"
+    )
+    normalized_filters: dict[str, dict[str, Any]] = {}
+    for raw_field, predicate in filters.items():
+        field = _text(raw_field, f"query_identity.filters.field:{role}")
+        if field not in filter_operators:
+            raise HandoffAcceptanceError(
+                f"query_identity_filter_field_not_declared:{role}:{field}"
+            )
+        if not isinstance(predicate, Mapping):
+            raise HandoffAcceptanceError(
+                f"mapping_required:query_identity.filters.{field}"
+            )
+        predicate_mapping = predicate
+        if set(predicate_mapping) != {"operator", "value"}:
+            raise HandoffAcceptanceError(
+                f"query_identity_filter_invalid:{role}:{field}"
+            )
+        operator = _text(
+            predicate_mapping.get("operator"),
+            f"query_identity.filters.operator:{role}:{field}",
+        )
+        supported_operators = _text_list(
+            filter_operators[field], f"catalog.filter_operators.{field}"
+        )
+        if operator not in supported_operators:
+            raise HandoffAcceptanceError(
+                f"query_identity_filter_operator_not_declared:{role}:{field}"
+            )
+        normalized_filters[field] = {
+            "operator": operator,
+            "value": _canonical_json_projection(
+                predicate_mapping.get("value"),
+                f"query_identity.filters.value:{role}:{field}",
+            ),
+        }
     sort = identity.get("sort")
     if not isinstance(sort, list) or not sort:
         raise HandoffAcceptanceError(f"query_identity_sort_required:{role}")
@@ -469,21 +548,43 @@ def _query_identity(raw: Mapping[str, Any], role: str) -> dict[str, Any]:
         )
         if direction not in {"asc", "desc"}:
             raise HandoffAcceptanceError(f"query_identity_sort_invalid:{role}:{index}")
+        field = _text(item.get("field"), f"query_identity.sort.field:{role}")
+        if field not in default_fields or f"{field}:{direction}" not in default_order:
+            raise HandoffAcceptanceError(
+                f"query_identity_sort_not_declared:{role}:{field}:{direction}"
+            )
         normalized_sort.append(
             {
-                "field": _text(item.get("field"), f"query_identity.sort.field:{role}"),
+                "field": field,
                 "direction": direction,
             }
         )
+    identity_fields = _text_list(
+        identity.get("identity_fields"), f"query_identity.identity_fields:{role}"
+    )
+    if tuple(identity_fields) != tuple(declared_identity):
+        raise HandoffAcceptanceError(f"query_identity_fields_mismatch:{role}")
     if identity.get("cursor") is not None:
         raise HandoffAcceptanceError(f"query_identity_cursor_required_null:{role}")
     return {
-        "filters": _canonical_json_projection(
-            filters, f"query_identity.filters:{role}"
-        ),
+        "filters": normalized_filters,
         "sort": normalized_sort,
+        "identity_fields": identity_fields,
         "cursor": None,
     }
+
+
+def _fingerprint_text(value: Any, name: str) -> str:
+    result = _text(value, name)
+    if not re.fullmatch(r"[0-9a-f]{64}", result):
+        raise HandoffAcceptanceError(f"fingerprint_required:{name}")
+    return result
+
+
+def _text_list(value: Any, name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise HandoffAcceptanceError(f"text_list_required:{name}")
+    return [_text(item, name) for item in value]
 
 
 def _session_windows(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, str]]:
