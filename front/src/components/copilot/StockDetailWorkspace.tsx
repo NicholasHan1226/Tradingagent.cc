@@ -4,6 +4,7 @@ import {
   Newspaper, ShieldAlert, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react'
 import type { CopilotAnalysis, CopilotDecisionAction, CopilotHolding } from '../../copilot/types'
+import type { ForecastReadinessStatus } from '../../copilot/forecastReadiness'
 import type { StockDetailTab, StockEvent, StockIntelligence, StockRange } from '../../copilot/stockIntelligence'
 import { StockMarketChart } from './StockMarketChart'
 
@@ -26,7 +27,7 @@ export function StockDetailWorkspace({ analysis, intelligence, holding, latestDe
 }) {
   const [activeTab, setActiveTab] = useState<StockDetailTab>('overview')
   const [range, setRange] = useState<StockRange>('1D')
-  const [showForecast, setShowForecast] = useState(true)
+  const [showForecast, setShowForecast] = useState(false)
   const stockKey = `${analysis.symbol}-${intelligence.mode}`
 
   return <section className="stock-workspace" data-stock={stockKey}>
@@ -110,26 +111,29 @@ function ForecastPanel({ intelligence, range, showForecast, onRangeChange, onTog
   const { forecast } = intelligence
   return <>
     <section className="forecast-disclaimer panel">
-      <div><ShieldAlert size={18} /><span><strong>研究情景 · 未校准</strong><small>{forecast.horizonLabel}</small></span></div>
+      <div><ShieldAlert size={18} /><span><strong>{readinessLabel(forecast.readiness.status)}</strong><small>预测期限：{forecast.horizonLabel}</small></span></div>
       <p>{forecast.caveat}</p>
     </section>
     <StockMarketChart intelligence={intelligence} range={range} showForecast={showForecast} onRangeChange={onRangeChange} onToggleForecast={onToggleForecast} />
     <section className="forecast-grid">
       <div className="panel scenario-card">
-        <SectionHeading eyebrow="SCENARIO WEIGHTS" title="方向情景权重" />
-        <div className="scenario-track" aria-label={`向上 ${forecast.scenarioWeights.up}，震荡 ${forecast.scenarioWeights.neutral}，向下 ${forecast.scenarioWeights.down}`}>
-          <i className="up" style={{ width: `${forecast.scenarioWeights.up}%` }} />
-          <i className="neutral" style={{ width: `${forecast.scenarioWeights.neutral}%` }} />
-          <i className="down" style={{ width: `${forecast.scenarioWeights.down}%` }} />
+        <SectionHeading eyebrow="DIRECTIONAL SCENARIO" title="方向研究情景" />
+        <div className={`directional-view ${forecast.directionalView === '偏强' ? 'up' : forecast.directionalView === '偏弱' ? 'down' : 'neutral'}`}>
+          {forecast.directionalView === '偏强' ? <TrendingUp size={17} /> : forecast.directionalView === '偏弱' ? <TrendingDown size={17} /> : <Gauge size={17} />}
+          <span>当前定性结果</span><strong>{forecast.directionalView}</strong>
         </div>
-        <div className="scenario-values"><span><TrendingUp size={15} />向上 <strong>{forecast.scenarioWeights.up}%</strong></span><span>震荡 <strong>{forecast.scenarioWeights.neutral}%</strong></span><span><TrendingDown size={15} />向下 <strong>{forecast.scenarioWeights.down}%</strong></span></div>
         <p>{forecast.takeaway}</p>
       </div>
       <div className="panel driver-card">
-        <SectionHeading eyebrow="INPUT EXPLAINER" title="本轮使用的分析维度" />
-        <ul>{forecast.drivers.map((driver) => <li key={driver}><Check size={14} />{driver}</li>)}</ul>
-        <small>正式上线前必须补齐样本外校准、覆盖率、漂移和费用后表现。</small>
+        <SectionHeading eyebrow="DELIVERY GATES" title="预测交付门禁" />
+        <ul className="forecast-gate-list">{forecast.readiness.gates.map((gate) => <li className={gate.passed ? 'passed' : 'blocked'} key={gate.id}>{gate.passed ? <Check size={14} /> : <AlertTriangle size={14} />}{gate.label}</li>)}</ul>
+        <small>只有全部通过，页面才允许显示概率与覆盖率标签。</small>
       </div>
+    </section>
+    <section className="model-boundary panel">
+      <div><strong>当前模型</strong><span>{modelLabel(forecast.modelId)}</span></div>
+      <div><strong>Kronos 角色</strong><span>Challenger · 同门禁对照</span></div>
+      <p>Kronos 不直接合并进最终建议；只有在同一 PIT 输入、冻结样本外、费用口径和校准门禁下稳定超过线性基线，才进入人工评审。</p>
     </section>
   </>
 }
@@ -218,3 +222,9 @@ function eventKindLabel(kind: StockEvent['kind']) { return kind === 'announcemen
 function analysisModeLabel(mode: CopilotAnalysis['mode']) { return mode === 'tradingagent_observation' ? 'TradingAgent 观察' : mode === 'demo_fixture' ? '演示数据' : '暂无正式分析' }
 function formatMarketCap(value: number) { return value >= 100_000_000_000 ? `¥${(value / 100_000_000_000).toFixed(2)} 千亿` : `¥${(value / 100_000_000).toFixed(0)} 亿` }
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function readinessLabel(status: ForecastReadinessStatus) {
+  return status === 'decision_support_ready' ? '预测门禁已通过' : status === 'illustrative_only' ? '研究演示 · 概率停显' : '预测已阻断'
+}
+function modelLabel(modelId: 'naive_last_value' | 'linear_ridge_baseline' | 'kronos_challenger') {
+  return ({ naive_last_value: '最后值基线', linear_ridge_baseline: '线性 / 岭回归基线', kronos_challenger: 'Kronos Challenger' })[modelId]
+}

@@ -6,7 +6,8 @@ import {
 } from 'lucide-react'
 import { copilotDemoAnalyses, createCopilotDemoState, unavailableAnalysis } from '../copilot/demo'
 import { analysisFromSignal } from '../copilot/analysis'
-import { getDemoStockIntelligence, unavailableStockIntelligence } from '../copilot/stockIntelligence'
+import { getDemoStockIntelligence, unavailableStockIntelligence, type StockIntelligence } from '../copilot/stockIntelligence'
+import { loadStockIntelligence } from '../copilot/stockIntelligenceClient'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
 import { isAshareSymbol, type CopilotAnalysis, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
 import { createTradingAgentSnapshotClient } from '../api/tradingAgentIntegration'
@@ -24,6 +25,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const [query, setQuery] = useState('')
   const [usingDemoSeed, setUsingDemoSeed] = useState(false)
   const [tradingAgentAnalyses, setTradingAgentAnalyses] = useState<Record<string, CopilotAnalysis>>({})
+  const [formalStockIntelligence, setFormalStockIntelligence] = useState<Record<string, StockIntelligence>>({})
 
   useEffect(() => {
     let active = true
@@ -58,12 +60,27 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     return () => { active = false; window.clearInterval(timer) }
   }, [])
 
+  useEffect(() => {
+    if (!selectedSymbol) return
+    let active = true
+    void loadStockIntelligence(selectedSymbol).then((projection) => {
+      if (!active || !projection) return
+      setFormalStockIntelligence((current) => ({ ...current, [selectedSymbol]: projection }))
+    })
+    return () => { active = false }
+  }, [selectedSymbol])
+
   const selected = state?.watchlist.find((item) => item.symbol === selectedSymbol) ?? state?.watchlist[0]
+  const selectedFormalIntelligence = selected ? formalStockIntelligence[selected.symbol] : undefined
   const analysis = selected
-    ? tradingAgentAnalyses[selected.symbol] ?? (demoPreviewEnabled ? copilotDemoAnalyses[selected.symbol] : undefined) ?? unavailableAnalysis(selected.symbol, selected.name)
+    ? tradingAgentAnalyses[selected.symbol]
+      ?? (!selectedFormalIntelligence && demoPreviewEnabled ? copilotDemoAnalyses[selected.symbol] : undefined)
+      ?? unavailableAnalysis(selected.symbol, selected.name)
     : unavailableAnalysis('------.--', '未选择股票')
-  const intelligence = selected && demoPreviewEnabled && analysis.mode === 'demo_fixture'
-    ? getDemoStockIntelligence(selected.symbol) ?? unavailableStockIntelligence(selected.symbol, selected.name)
+  const intelligence = selected
+    ? selectedFormalIntelligence
+      ?? (demoPreviewEnabled && analysis.mode === 'demo_fixture' ? getDemoStockIntelligence(selected.symbol) : null)
+      ?? unavailableStockIntelligence(selected.symbol, selected.name)
     : unavailableStockIntelligence(analysis.symbol, analysis.name)
   const holding = state?.holdings.find((item) => item.symbol === selected?.symbol)
   const latestDecision = state?.decisions.findLast((item) => item.symbol === selected?.symbol)

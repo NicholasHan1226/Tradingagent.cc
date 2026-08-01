@@ -16,7 +16,9 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
 }) {
   const summaryId = useId()
   const points = intelligence.series[range]
-  const chartData = useMemo(() => showForecast ? points : points.filter((point) => point.price !== null), [points, showForecast])
+  const forecastMatchesRange = range === '1D' && intelligence.forecast?.horizon === 'm30'
+  const forecastVisible = showForecast && forecastMatchesRange
+  const chartData = useMemo(() => forecastVisible ? points : points.filter((point) => point.price !== null), [points, forecastVisible])
   const lastHistorical = points.findLast((point) => point.price !== null)
 
   if (!intelligence.quote || !points.length) {
@@ -43,14 +45,14 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
         {rangeOptions.map((option) => <button aria-selected={range === option} className={range === option ? 'active' : ''} key={option} onClick={() => onRangeChange(option)} role="tab" type="button">{option}</button>)}
       </div>
       <div className="chart-tools">
-        <button aria-pressed={showForecast} onClick={onToggleForecast} type="button">
-          {showForecast ? <Eye size={15} /> : <EyeOff size={15} />}{showForecast ? '预测已显示' : '显示预测'}
+        <button aria-pressed={forecastVisible} disabled={!forecastMatchesRange} onClick={onToggleForecast} type="button">
+          {forecastVisible ? <Eye size={15} /> : <EyeOff size={15} />}{!forecastMatchesRange ? '该周期无预测' : forecastVisible ? '预测已显示' : '显示预测'}
         </button>
         <button aria-label="图表指标说明" title="价格、成交量与预测区间" type="button"><SlidersHorizontal size={15} /></button>
       </div>
     </div>
-    <p className="sr-only" id={summaryId}>展示 {intelligence.name} {range} 演示价格、成交量，以及未校准预测中位线和百分之五十、百分之八十情景区间。</p>
-    <div aria-describedby={summaryId} aria-label={`${intelligence.name} ${range} 行情与预测图`} className="stock-chart-visual" role="img">
+    <p className="sr-only" id={summaryId}>展示 {intelligence.name} {range} 演示价格、成交量，以及{intelligence.forecast?.horizonLabel ?? '未提供期限'}的未校准研究中位线和宽窄包络。</p>
+    <div aria-describedby={summaryId} aria-label={`${intelligence.name} ${range} ${forecastMatchesRange ? '行情与预测图' : '行情图'}`} className="stock-chart-visual" role="img">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={chartData} margin={{ top: 20, right: 18, bottom: 4, left: 0 }}>
           <CartesianGrid stroke="rgba(222, 230, 233, .055)" vertical={false} />
@@ -58,22 +60,22 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
           <YAxis axisLine={false} domain={['auto', 'auto']} orientation="right" tick={{ fill: '#69747c', fontSize: 10 }} tickFormatter={(value) => Number(value).toFixed(Number(value) > 100 ? 0 : 2)} tickLine={false} width={48} yAxisId="price" />
           <YAxis domain={[0, (dataMax: number) => dataMax * 7]} hide yAxisId="volume" />
           <Tooltip content={<StockChartTooltip />} cursor={{ stroke: 'rgba(215, 226, 230, .14)' }} />
-          {showForecast ? <Area dataKey="forecastBand80" fill="rgba(205, 169, 95, .09)" isAnimationActive={false} stroke="transparent" type="monotone" yAxisId="price" /> : null}
-          {showForecast ? <Area dataKey="forecastBand50" fill="rgba(205, 169, 95, .16)" isAnimationActive={false} stroke="rgba(205, 169, 95, .18)" strokeWidth={1} type="monotone" yAxisId="price" /> : null}
+          {forecastVisible ? <Area dataKey="forecastWideEnvelope" fill="rgba(205, 169, 95, .09)" isAnimationActive={false} stroke="transparent" type="monotone" yAxisId="price" /> : null}
+          {forecastVisible ? <Area dataKey="forecastNarrowEnvelope" fill="rgba(205, 169, 95, .16)" isAnimationActive={false} stroke="rgba(205, 169, 95, .18)" strokeWidth={1} type="monotone" yAxisId="price" /> : null}
           <Bar dataKey="volume" fill="rgba(219, 106, 117, .28)" isAnimationActive={false} maxBarSize={5} yAxisId="volume" />
           {lastHistorical ? <ReferenceLine stroke="rgba(215, 226, 230, .14)" strokeDasharray="2 6" x={lastHistorical.label} yAxisId="price" /> : null}
           <Line dataKey="price" dot={false} isAnimationActive={false} stroke="#df707b" strokeWidth={2} type="monotone" yAxisId="price" />
-          {showForecast ? <Line dataKey="forecastMedian" dot={false} isAnimationActive={false} stroke="#cdaa62" strokeDasharray="5 6" strokeWidth={1.8} type="monotone" yAxisId="price" /> : null}
+          {forecastVisible ? <Line dataKey="forecastMedian" dot={false} isAnimationActive={false} stroke="#cdaa62" strokeDasharray="5 6" strokeWidth={1.8} type="monotone" yAxisId="price" /> : null}
           <ReferenceLine stroke="rgba(215, 226, 230, .22)" strokeDasharray="5 7" y={intelligence.quote.previousClose} yAxisId="price" />
         </ComposedChart>
       </ResponsiveContainer>
-      {showForecast ? <div className="forecast-watermark"><strong>研究情景</strong><span>未校准</span></div> : null}
+      {forecastVisible ? <div className="forecast-watermark"><strong>研究情景</strong><span>{intelligence.forecast?.horizonLabel ?? '期限未提供'}</span></div> : null}
     </div>
     <div className="chart-legend-row">
       <span><i className="history" />历史/盘中价格</span>
       <span><i className="median" />预测中位线</span>
-      <span><i className="band" />50% / 80% 情景区间</span>
-      <em>预测区间不代表真实置信度</em>
+      <span><i className="band" />窄幅 / 宽幅研究包络</span>
+      <em>未校准包络不使用概率或置信度标签</em>
     </div>
   </section>
 }
@@ -87,8 +89,8 @@ function StockChartTooltip({ active, payload, label }: { active?: boolean; paylo
     {point.price !== null ? <span>价格 ¥{point.price.toFixed(2)}</span> : null}
     {point.volume !== null ? <span>成交量 {formatVolume(point.volume)}</span> : null}
     {point.forecastMedian !== null ? <span>情景中位 ¥{point.forecastMedian.toFixed(2)}</span> : null}
-    {point.forecastBand50 ? <span>50% 区间 ¥{point.forecastBand50[0].toFixed(2)}–{point.forecastBand50[1].toFixed(2)}</span> : null}
-    {point.forecastBand80 ? <span>80% 区间 ¥{point.forecastBand80[0].toFixed(2)}–{point.forecastBand80[1].toFixed(2)}</span> : null}
+    {point.forecastNarrowEnvelope ? <span>窄幅包络 ¥{point.forecastNarrowEnvelope[0].toFixed(2)}–{point.forecastNarrowEnvelope[1].toFixed(2)}</span> : null}
+    {point.forecastWideEnvelope ? <span>宽幅包络 ¥{point.forecastWideEnvelope[0].toFixed(2)}–{point.forecastWideEnvelope[1].toFixed(2)}</span> : null}
     <em>演示数据 · 不构成建议</em>
   </div>
 }
