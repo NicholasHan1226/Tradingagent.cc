@@ -181,6 +181,13 @@ def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
     assert result["execution_eligible"] is False
     assert result["delayed_paper_eligible"] is False
     assert result["learning_evidence_eligible"] is False
+    assert result["readiness"] == {
+        "contract_id": "tradingagent.evidence_readiness.v1",
+        "observation_ready": True,
+        "historical_pit_ready": False,
+        "delayed_paper_ready": False,
+        "execution_ready": False,
+    }
     assert result["evidence"]["symbol"] == "M2609.DCE"
     assert result["evidence"]["bar_ends"] == [
         "2026-07-31T09:30:00+08:00",
@@ -205,6 +212,13 @@ def test_missing_multiplier_is_risk_reject_not_a_fallback_spec() -> None:
     assert result["disposition"] == "risk_reject"
     assert result["reason"] == "contract_multiplier_missing_or_invalid"
     assert result["execution_eligible"] is False
+    assert result["readiness"] == {
+        "contract_id": None,
+        "observation_ready": False,
+        "historical_pit_ready": False,
+        "delayed_paper_ready": False,
+        "execution_ready": False,
+    }
 
 
 @pytest.mark.parametrize(
@@ -463,6 +477,8 @@ def test_replay_is_deterministic_and_never_claims_execution_authority() -> None:
         assert item.get("execution_authority") is not True
         assert item.get("delayed_paper_eligible") is not True
         assert item.get("learning_evidence_eligible") is not True
+        assert item.get("historical_pit_ready") is not True
+        assert item.get("delayed_paper_ready") is not True
         assert item.get("durable") is not True
         assert item.get("capital_commit_id") in (None,)
         assert item.get("outbox_id") in (None,)

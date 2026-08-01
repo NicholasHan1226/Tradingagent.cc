@@ -16,6 +16,8 @@ import re
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
+from shared.governance.evidence_readiness import load_evidence_readiness_contract
+
 
 PROFILE_ID = "cn-futures-m-5min-handoff-v1"
 _ROLES = ("contract_master", "bars_5min", "calendar_session")
@@ -66,6 +68,7 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
             bars_query["observed_at"],
             decision_time,
         )
+        readiness = _observation_readiness()
         lineage = _sha256(
             {
                 "profile": profile,
@@ -124,6 +127,7 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "session_id": calendar["session_id"],
                 "bar_ends": [bar["bar_time"] for bar in bars],
             },
+            readiness=readiness,
         )
     except _RiskReject as exc:
         return _result("risk_reject", str(exc))
@@ -381,6 +385,7 @@ def _result(
     profile_id: str | None = None,
     lineage: str | None = None,
     evidence: Mapping[str, Any] | None = None,
+    readiness: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "mode": "fixture_catalog_query_handoff_acceptance",
@@ -393,11 +398,48 @@ def _result(
         "durable": False,
         "capital_commit_id": None,
         "outbox_id": None,
+        "readiness": dict(readiness or _blocked_readiness()),
         "profile_id": profile_id or PROFILE_ID,
         "disposition": disposition,
         "reason": reason,
         "handoff_lineage_sha256": lineage,
         "evidence": dict(evidence or {}),
+    }
+
+
+def _observation_readiness() -> dict[str, Any]:
+    try:
+        contract = load_evidence_readiness_contract()
+        assessment = contract.assess(
+            {
+                "api_envelope_bound": True,
+                "dataset_contract_bound": True,
+                "identity_valid": True,
+                "receipt_bound": True,
+                "lineage_complete": True,
+                "quality_valid": True,
+            }
+        )
+    except Exception as exc:
+        raise HandoffAcceptanceError("evidence_readiness_contract_unavailable") from exc
+    if not assessment.grants("observation_ready"):
+        raise HandoffAcceptanceError("observation_readiness_not_granted")
+    return {
+        "contract_id": contract.contract_id,
+        "observation_ready": True,
+        "historical_pit_ready": False,
+        "delayed_paper_ready": False,
+        "execution_ready": False,
+    }
+
+
+def _blocked_readiness() -> dict[str, Any]:
+    return {
+        "contract_id": None,
+        "observation_ready": False,
+        "historical_pit_ready": False,
+        "delayed_paper_ready": False,
+        "execution_ready": False,
     }
 
 

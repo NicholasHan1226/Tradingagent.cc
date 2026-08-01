@@ -43,7 +43,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
   tests/test_cn_futures_tradingdatas_handoff_acceptance.py
 ```
 
-通过时仅产生 `observation`；缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `execution_eligible=false`、`delayed_paper_eligible=false`、`learning_evidence_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
+通过时仅产生 `observation`，并只在现有共享 `tradingagent.evidence_readiness.v1` 对应六项 envelope/contract/identity/receipt/lineage/quality 证明均成立时映射 `readiness.observation_ready=true`；它不意味着历史 PIT 或模拟执行可用。缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `historical_pit_ready=false`、`delayed_paper_ready=false`、`execution_eligible=false`、`learning_evidence_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
 
 ## 当前只读发现（2026-07-30）
 
