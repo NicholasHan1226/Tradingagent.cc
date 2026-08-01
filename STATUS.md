@@ -2,6 +2,13 @@
 
 > 最后更新：2026-08-01 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-08-01 有效运行版本解析候选：** 独立分支
+> `codex/effective-runtime-release-v1` 新增只读工具，分别核验 `current` symlink、
+> systemd effective ExecStart/WorkingDirectory 与 active process 的 cwd/exe/cmdline，
+> 发现 drop-in 固定旧 release、process/unit 不一致、active无PID或release不可证明时
+> fail closed。候选不读取 Environment/token/账本，不切换current、不重启service或
+> timer；尚未合入main或部署。
+
 > **2026-08-01 分层 readiness 合同候选：** 独立分支
 > `codex/readiness-authority-v1` 新增机器合同
 > `tradingagent.evidence_readiness.v1`，把 observation、historical PIT、

@@ -132,3 +132,7 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 - [当前状态](STATUS.md)
 
 本地通过、候选远端分支、远端主线、服务器旁路、生产文件、生产 runtime、cron 生效和真实市场样本是不同层级；任何一层都不能替代其它层。Nicholas 已授予正常代码发布 standing authorization：范围明确且 release gate 通过后，主助手默认继续完成 commit、普通 PR/merge、push、版本化 loopback-only sidecar 和逐层读回。该默认不包含 force-push/历史重写、删除或覆盖运行数据、密钥/账号/权限、破坏性数据库迁移、现役源码或入口切换、安装/启用 cron/service、真实模型网络、邮件/GUI、broker 或真实交易；这些高风险动作必须由当期任务明确包含并通过专用门禁。
+
+生产版本核验使用 `tools/effective_runtime_release.py`，同时绑定 `current`、systemd
+effective configuration 和运行进程；它只读且不查询 Environment/secret。只看仓库
+HEAD、release 目录或 symlink 都不能证明服务实际运行了该版本。
