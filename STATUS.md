@@ -6,6 +6,8 @@
 
 > **2026-08-02 TradingCopilot 共享能力边界：** 机器合同 `tradingagent.trading_copilot_shared_capability_boundary.v1` 把能力固定为共享只读底座、Quant Core 专属 authority 与 TradingCopilot 专属个人状态三组。行情/规则/PIT特征/事件/市场状态/基线与Kronos/OOS/校准/个股投影只维护一套研究证据；Quant独占候选/组合/资本/风险放行/订单/样本/晋级，Copilot独占申报资金/持仓/关注/人工意图/个人复盘。合同和负例测试禁止Copilot状态流入量化资本、执行、样本或晋级，也禁止前端生成的曲线成为正式预测证据。该边界只改变仓库架构合同与文档，不改变生产文件、runtime、timer、模型网络、broker或真实交易权限。
 
+> **2026-08-02 TradingCopilot V4 个股终端候选：** 当前开发分支把个股首屏重排为行情主区与公司资料/证据共识/舆论温度右栏，关注列表改为抽屉；重大价格变化、公告、新闻和舆论按股票代码并列展示，证据共识明确不是分析师一致预期，舆论热度不转换为上涨概率。该候选只消费正式只读个股投影或明确 `demo_fixture`，只保留 Copilot `human_intent_only` 写面；未新增 Quant Core 资本、订单、样本或晋级写入口。生产文件、runtime 与正式个股投影数据仍未改变。
+
 > **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
 > `enabled/active`，并固定到 immutable release
 > `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`

@@ -86,11 +86,11 @@ function Overview({ analysis, intelligence, range, showForecast, onRangeChange, 
     <StockMarketChart intelligence={intelligence} range={range} showForecast={showForecast} onRangeChange={onRangeChange} onToggleForecast={onToggleForecast} />
     <MetricGrid intelligence={intelligence} />
     <section className="significant-moves panel">
-      <SectionHeading eyebrow="PRICE & EVENT CONTEXT" title="显著变化与关联事件" />
-      <EventTimeline events={intelligence.events} unavailable={intelligence.mode === 'analysis_unavailable'} />
+      <SectionHeading eyebrow="PRICE & EVENT CONTEXT" title="显著价格变化" />
+      <EventTimeline events={intelligence.events} intelligence={intelligence} unavailable={intelligence.mode === 'analysis_unavailable'} />
     </section>
     <section className="story-analysis panel">
-      <SectionHeading eyebrow="STORIES & ANALYSIS" title="公告、新闻与舆情" />
+      <SectionHeading eyebrow="STORIES & ANALYSIS" title="公告、新闻与舆论" />
       <EventCards events={intelligence.events} unavailable={intelligence.mode === 'analysis_unavailable'} />
     </section>
     <section className="key-questions panel">
@@ -186,14 +186,17 @@ function MetricGrid({ intelligence }: { intelligence: StockIntelligence }) {
   </dl>
 }
 
-function EventTimeline({ events, unavailable }: { events: StockEvent[]; unavailable: boolean }) {
+function EventTimeline({ events, intelligence, unavailable }: { events: StockEvent[]; intelligence: StockIntelligence; unavailable: boolean }) {
   if (!events.length) return <div className="event-empty"><MessageSquareText size={20} /><p>{unavailable ? '当前没有按股票代码验证通过的公告、新闻或舆情数据。' : '当前窗口没有关联事件。'}</p></div>
-  return <div className="event-timeline">{events.map((event) => <article key={event.id}><time>{formatDateTime(event.publishedAt)}</time><i className={event.sentiment} /><div><span>{eventKindLabel(event.kind)} · {event.source}</span><strong>{event.title}</strong><p>{event.summary}</p><small>关联：{event.relatedSymbols.join('、')} · {event.url ? '有来源链接' : '演示无外链'}</small></div></article>)}</div>
+  return <div className="event-timeline">
+    {intelligence.quote ? <article className="price-move-summary"><time>{formatDateTime(intelligence.updatedAt ?? '')}</time><i className={intelligence.quote.change >= 0 ? 'positive' : 'negative'} /><div><span>价格变化 · {intelligence.mode === 'demo_fixture' ? '演示行情' : '正式个股投影'}</span><strong>¥{intelligence.quote.price.toFixed(2)} · {signedPercent(intelligence.quote.changePct)}</strong><p>相对前收 ¥{intelligence.quote.previousClose.toFixed(2)}；以下事件仅作为关联解释，不单独形成交易理由。</p></div></article> : null}
+    {events.map((event) => <article key={event.id}><time>{formatDateTime(event.publishedAt)}</time><i className={event.sentiment} /><div><span>{eventKindLabel(event.kind)} · {event.source}</span><strong>{event.title}</strong><p>{event.summary}</p><small>关联：{event.relatedSymbols.join('、')} · {event.url ? '已绑定来源链接' : '演示无外链'}</small></div></article>)}
+  </div>
 }
 
 function EventCards({ events, unavailable }: { events: StockEvent[]; unavailable: boolean }) {
   if (!events.length) return <div className="event-empty"><Newspaper size={20} /><p>{unavailable ? '事件数据未交付；公告标题和舆情结论不会由模型自动补写。' : '当前没有关联内容。'}</p></div>
-  return <div className="event-card-grid">{events.map((event) => <article key={event.id}><span className={`event-kind ${event.kind}`}>{eventKindLabel(event.kind)}</span><h3>{event.title}</h3><p>{event.summary}</p><small>{event.source} · {formatDateTime(event.publishedAt)}</small></article>)}</div>
+  return <div className="event-card-grid">{events.map((event) => <article key={event.id}><span className={`event-kind ${event.kind}`}>{eventKindLabel(event.kind)}</span><h3>{event.title}</h3><p>{event.summary}</p><small>{event.source} · {formatDateTime(event.publishedAt)}</small>{event.url ? <a href={event.url} rel="noreferrer" target="_blank">查看来源</a> : null}</article>)}</div>
 }
 
 function QuestionRows({ analysis }: { analysis: CopilotAnalysis }) {
@@ -222,6 +225,7 @@ function eventKindLabel(kind: StockEvent['kind']) { return kind === 'announcemen
 function analysisModeLabel(mode: CopilotAnalysis['mode']) { return mode === 'tradingagent_observation' ? 'TradingAgent 观察' : mode === 'demo_fixture' ? '演示数据' : '暂无正式分析' }
 function formatMarketCap(value: number) { return value >= 100_000_000_000 ? `¥${(value / 100_000_000_000).toFixed(2)} 千亿` : `¥${(value / 100_000_000).toFixed(0)} 亿` }
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
+function signedPercent(value: number) { return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` }
 function readinessLabel(status: ForecastReadinessStatus) {
   return status === 'decision_support_ready' ? '预测门禁已通过' : status === 'illustrative_only' ? '研究演示 · 概率停显' : '预测已阻断'
 }

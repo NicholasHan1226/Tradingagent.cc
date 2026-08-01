@@ -205,8 +205,8 @@ npm run build:api
 
 ## 当前缺口
 
-- TradingCopilot 个股详情已实现多周期价格/成交量、未校准预测区间、方向情景权重、公告/新闻/舆情关联和七页签阅读结构。开发模式使用明确的 `demo_fixture`；正式模式在缺少逐标的只读投影时显示不可用。普通 TradingAgent signal 不会被扩写为价格序列或事件内容。
-- TradingCopilot 的预测展示固定区分历史实线、研究情景中位线与 50% / 80% 区间，并显示 `shadow_uncalibrated` 语义。没有样本外校准、覆盖率、漂移和费用后验证前，不得改称真实概率或交易胜率。
+- TradingCopilot 个股详情已实现多周期价格/成交量、未校准预测包络、方向研究情景、公告/新闻/舆论关联和七页签阅读结构；个股首屏使用“行情主区 + 公司资料/证据共识/舆论温度右栏”，关注列表以抽屉方式进入，避免压缩行情图。开发模式使用明确的 `demo_fixture`；正式模式在缺少逐标的只读投影时显示不可用。普通 TradingAgent signal 不会被扩写为价格序列或事件内容。
+- TradingCopilot 的预测展示固定区分历史实线、研究情景中位线与宽/窄研究包络，并显示 `shadow_uncalibrated` 语义。没有样本外校准、覆盖率、漂移和费用后验证前，不得改称真实概率、置信区间或交易胜率。
 
 - 模拟盘持仓和已成交信号已接入 `shared/logs/sim_ledger/*/*/{positions.json,trade_journal.jsonl}`。
 - 收益曲线现在只读取当前授权的显式权益快照：`shared/review/{portfolio,daily,*}/{equity_snapshots,equity_series}.jsonl`
