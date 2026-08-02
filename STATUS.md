@@ -1,6 +1,17 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 14:08 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 14:47 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 A股 systemd TradingDatas 依赖修复已部署：** 已合入 `main` 的
+> [PR #169](https://github.com/NicholasHan1226/Tradingagent.cc/pull/169) 提交
+> `e55602e` 被作为冻结 unit 工件安装到服务器。五个 A股 30/scale500 service 的
+> `After=` 均从不存在的 `tradingdatas-api.service` 改为实际运行的
+> `tradingdatas-v1-internal.service`；安装前文件已备份，安装后 unit 哈希与冻结工件逐一一致，
+> `systemd-analyze verify` 与 `daemon-reload` 通过。30 股 session/paper timer 保持
+> `enabled/active`、下次仍为 2026-08-03 09:18/09:49 CST；scale500 timer 保持
+> `disabled/inactive`，没有运行 worker、没有切换 `current=2b7b52b...`、没有触及资本、
+> broker 或真实交易。回滚副本与读回证据位于
+> `/opt/investment/release-evidence/tradingagent/20260802T064551Z-ashare-systemd-td-v1-unit-e55602e/`。
 
 > **2026-08-02 Crypto 十币种健康观测候选：** PR [#166](https://github.com/NicholasHan1226/Tradingagent.cc/pull/166) 已经 CI 通过并普通合入 `main`
 > `c17d511`。服务器只构建了独立候选 worktree
@@ -13,8 +24,8 @@
 > `/opt/investment/release-evidence/tradingagent/20260802T060533Z-ta-crypto-observation-c17d511-replay/`。
 >
 > 同时对现役 G5 做只读健康复核：timer enabled/active，最近 one-shot
-> `Result=success`；`168` 个 observation/completion、`336` 个核验 decision events、
-> 无 pending，completion lag `500s/1800s`，资本账本 `balanced=true`。它仍是
+> `Result=success`；`176` 个 observation/completion、`352` 个核验 decision events、
+> 无 pending，completion lag `464s/1800s`，资本账本 `balanced=true`。它仍是
 > 10,000 USDT、BTC/ETH 的 sim-only 往返样本链，`REAL_TRADING_ENABLED=false`、
 > Testnet/Live broker、模型网络、自动晋级和自动风险扩张均保持关闭；该状态不代表
 > 策略收益或实盘资格。
