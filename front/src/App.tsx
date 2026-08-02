@@ -31,7 +31,7 @@ const DASHBOARD_BUILD_ID = '20260716-today-paper-run-candidate'
 
 function App() {
   if (new URLSearchParams(window.location.search).get('product') === 'copilot') {
-    return <TradingCopilotPage demoPreviewEnabled={isDemoPreviewEnabled()} onOpenQuant={() => openProduct(null)} />
+    return <TradingCopilotPage demoPreviewEnabled={isCopilotDemoPreviewEnabled()} onOpenQuant={() => openProduct(null)} />
   }
   return <QuantApp />
 }
@@ -333,6 +333,11 @@ function isDemoPreviewEnabled() {
   const configuredPreview = import.meta.env.VITE_TRADING_AGENT_DEMO_PREVIEW
   if (configuredPreview === '0') return false
   return configuredPreview === '1' || import.meta.env.DEV
+}
+
+function isCopilotDemoPreviewEnabled() {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('demo') === '1' || import.meta.env.VITE_TRADING_COPILOT_DEMO_PREVIEW === '1'
 }
 
 function openProduct(product: 'copilot' | null) {

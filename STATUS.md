@@ -1,6 +1,8 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 01:51 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 03:50 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 TradingCopilot V5 个人状态逻辑候选：** 当前开发分支把关注列表、完整资金与持仓、人工决策记录拆成独立工作区；个股右栏只显示当前股票持仓，并可进入全部持仓。持仓会自动纳入关注，纯关注不计入资产，持仓未移除前不能取消关注。普通 `/?product=copilot` 不再因开发模式注入许继电气等演示资产；演示只由 `?demo=1` 或专用环境开关显式进入，且演示修改不持久化。缺少实时市值时页面不再用成本倒推资产差额，券商资产保留“待人工确认”。移动端保留四个主工作区底部导航并使用卡片列表。该候选仍只写 TradingCopilot 独立状态，不连接券商、不影响 Quant Core 资本/订单/样本/模型晋级；生产文件与 runtime 未改变。
 
 > **2026-08-02 TradingCopilot V3 预测门禁主线：** PR [#155](https://github.com/NicholasHan1226/Tradingagent.cc/pull/155) 已合入 `main` `d33ed92`。同仓 `TradingCopilot/` 领域和 `front/?product=copilot` 已包含申报资金/持仓、关注股、个股图表、关联事件、多空证据与人工意图。V3 新增只读 `GET /api/trading-copilot/stock-intelligence?symbol=` 正式投影入口和九项预测readiness门禁；未校准演示默认关闭预测，只显示明确的 `m30` 定性情景及宽/窄研究包络，不再发布情景百分比、50%/80%或置信度标签。研究线由最近最多20点的确定性线性基线生成并可重放，非1D周期明确停用当前m30预测。Kronos固定为同门禁Challenger，不能凭模型名显示概率。对应前端全量为 `50 files / 313 tests passed`，lint与client/API build通过；该主线代码不下载Kronos权重、不连接券商、不写量化资本/订单/样本。生产文件、runtime、正式个股投影数据与入口部署仍未改变。
 
