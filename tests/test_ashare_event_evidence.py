@@ -556,16 +556,22 @@ def test_current_primary_identity_variants_are_catalog_bound() -> None:
         ),
         "cn.dataset.research_report": (
             [
-                "trade_date", "abstr", "title", "report_type", "author",
-                "name", "ts_code", "inst_csname", "ind_name", "url",
+                "trade_date",
+                "abstr",
+                "title",
+                "report_type",
+                "author",
+                "name",
+                "ts_code",
+                "inst_csname",
+                "ind_name",
+                "url",
             ],
-            ["trade_date", "title", "author", "url"],
+            ["trade_date", "title", "url"],
         ),
     }
     for dataset_id, (fields, identity_fields) in current_fields.items():
-        index = next(
-            i for i, row in enumerate(rows) if row["dataset_id"] == dataset_id
-        )
+        index = next(i for i, row in enumerate(rows) if row["dataset_id"] == dataset_id)
         rows[index] = _catalog_row(
             dataset_id,
             fields=fields,
@@ -573,11 +579,51 @@ def test_current_primary_identity_variants_are_catalog_bound() -> None:
         )
 
     profiles = TradingDatasAshareEvidencePort(
-        _client(_Transport(catalog_rows=rows), configured_ids=frozenset(PRIMARY_DATASET_IDS))
+        _client(
+            _Transport(catalog_rows=rows), configured_ids=frozenset(PRIMARY_DATASET_IDS)
+        )
     ).freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
 
     for dataset_id, (_, identity_fields) in current_fields.items():
         assert profiles.by_dataset[dataset_id].identity_fields == tuple(identity_fields)
+
+
+def test_research_report_author_identity_variant_remains_catalog_bound() -> None:
+    rows = _catalog_rows()
+    target_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row["dataset_id"] == "cn.dataset.research_report"
+    )
+    rows[target_index] = _catalog_row(
+        "cn.dataset.research_report",
+        fields=[
+            "trade_date",
+            "abstr",
+            "title",
+            "report_type",
+            "author",
+            "name",
+            "ts_code",
+            "inst_csname",
+            "ind_name",
+            "url",
+        ],
+        identity_fields=["trade_date", "title", "author", "url"],
+    )
+
+    profiles = TradingDatasAshareEvidencePort(
+        _client(
+            _Transport(catalog_rows=rows), configured_ids=frozenset(PRIMARY_DATASET_IDS)
+        )
+    ).freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
+
+    assert profiles.by_dataset["cn.dataset.research_report"].identity_fields == (
+        "trade_date",
+        "title",
+        "author",
+        "url",
+    )
 
 
 def test_major_news_formal_catalog_profile_is_optional_and_macro_scoped() -> None:
