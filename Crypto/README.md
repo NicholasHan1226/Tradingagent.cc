@@ -437,6 +437,8 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 one-shot、同槽 replay、资本/持仓/订单/receipt 守恒与零重复 fill 验收后才可启用。
 G5 acceptance 仍只报告 `not_ready` 或 `eligible`，并沿用 288 根连续 closed-5m
 completion 的 learning maturity 门槛；它不因 epoch generation 改变而放宽门禁。
+核心单请求超时固定为 8 秒：该值覆盖正式 18083 已验证的冷路径 catalog 尾延迟，且两轮
+最坏分页预算仍低于 systemd 的 180 秒停止线；超时不重试、不回退，也不放宽 freshness。
 
 ## Outage epoch restart 候选
 

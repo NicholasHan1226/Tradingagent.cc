@@ -74,9 +74,11 @@ RUNTIME_MANIFEST_MAX_BYTES = 512 * 1024
 SLOT_CUTOFF_DELAY_SECONDS = 55
 RUNTIME_ACCESS_POLICY_MAX_CHARS = 128
 # Each snapshot may consume one catalog request plus the full ten-page query
-# budget. Two bounded cycles at 6s per request need at most 132s, below the
+# budget. Two bounded cycles at 8s per request need at most 176s, below the
 # systemd 180s stop line without relying on the normal one-page response.
-RUNTIME_TIMEOUT_SECONDS = 6.0
+# Formal 18083 catalog reads have a verified cold-path tail above six seconds.
+# Eight seconds remains within the existing two-cycle, 180-second systemd bound.
+RUNTIME_TIMEOUT_SECONDS = 8.0
 MAX_CYCLES_PER_INVOCATION = 2
 MAX_PROFILE_PAGE_BUDGET = 10
 OUTAGE_GAP_CONTRACT = "tradingagent.crypto.delayed_paper_data_gap.v1"
