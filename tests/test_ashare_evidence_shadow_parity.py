@@ -208,7 +208,7 @@ def test_one_source_rejection_blocks_only_that_source_and_the_overall_parity(
     assert receipt["execution_eligible"] is False
 
 
-def test_macro_event_rejection_blocks_shadow_parity_without_stock_authority(
+def test_macro_event_rejection_degrades_coverage_without_stock_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     event_port, _ = _install_success_fixtures(monkeypatch)
@@ -228,13 +228,37 @@ def test_macro_event_rejection_blocks_shadow_parity_without_stock_authority(
         plan=_plan(),
     )
 
-    assert receipt["status"] == "blocked"
+    assert receipt["status"] == "partial"
     assert receipt["sources"]["cn.dataset.major_news"]["status"] == "rejected"
     assert receipt["sources"]["cn.dataset.major_news"]["reason_code"] == (
         "ashare_evidence_receipt_missing"
     )
     assert receipt["candidate_authority"] is False
     assert receipt["execution_authority"] is False
+
+
+def test_required_source_rejection_blocks_shadow_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, moneyflow_port = _install_success_fixtures(monkeypatch)
+    moneyflow_port.load_shadow_snapshot.side_effect = [
+        AshareMoneyflowEvidenceError("ashare_moneyflow_receipt_missing"),
+        SimpleNamespace(
+            row_count=1,
+            page_count=1,
+            same_observation=True,
+            observed_catalog_version=CATALOG_VERSION,
+        ),
+    ]
+
+    receipt = parity.run_shadow_parity(
+        _client(_catalog(), frozenset(EVENT_DATASET_IDS)),
+        moneyflow_client=_client(_catalog(), frozenset(MONEYFLOW_DATASET_IDS)),
+        plan=_plan(),
+    )
+
+    assert receipt["status"] == "blocked"
+    assert receipt["sources"]["cn.dataset.moneyflow"]["status"] == "rejected"
 
 
 @pytest.mark.parametrize(
