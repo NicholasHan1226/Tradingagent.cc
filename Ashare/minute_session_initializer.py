@@ -362,6 +362,7 @@ def initialize_minute_session(
     timeout_seconds: float = 20.0,
     transport_factory: TransportFactory = build_runtime_transport,
     universe_source: Path | str | None = None,
+    bootstrap_manifest: Path | str | None = None,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -379,8 +380,34 @@ def initialize_minute_session(
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     target = now.astimezone(SHANGHAI).date()
-    template_root = _find_template_day(root, target)
-    template_config = load_minute_canary_config(template_root / "minute-manifest.json")
+    bootstrap_path = None if bootstrap_manifest is None else Path(bootstrap_manifest)
+    try:
+        template_root = _find_template_day(root, target)
+    except MinuteSessionInitializerError as exc:
+        if exc.args != ("minute_session_template_missing",) or bootstrap_path is None:
+            raise
+        if (
+            not bootstrap_path.is_absolute()
+            or bootstrap_path.is_symlink()
+            or not bootstrap_path.is_file()
+        ):
+            raise MinuteSessionInitializerError(
+                "minute_session_bootstrap_manifest_invalid"
+            ) from exc
+        if universe_source is None:
+            raise MinuteSessionInitializerError(
+                "minute_session_bootstrap_universe_required"
+            ) from exc
+        template_root = None
+        template_config = load_minute_canary_config(bootstrap_path)
+    else:
+        if bootstrap_path is not None:
+            raise MinuteSessionInitializerError(
+                "minute_session_bootstrap_not_permitted_after_initialization"
+            )
+        template_config = load_minute_canary_config(
+            template_root / "minute-manifest.json"
+        )
     if (
         template_config.base_url != base_url
         or template_config.access_policy_id != access_policy_id
@@ -392,9 +419,11 @@ def initialize_minute_session(
         )
     universe_path = (
         template_root / "universe.json"
-        if universe_source is None
-        else Path(universe_source)
+        if universe_source is None and template_root is not None
+        else Path(universe_source) if universe_source is not None else None
     )
+    if universe_path is None:
+        raise MinuteSessionInitializerError("minute_session_universe_source_invalid")
     if universe_source is not None and (
         not universe_path.is_absolute()
         or universe_path.is_symlink()
@@ -656,6 +685,7 @@ def initialize_minute_session(
         "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
         "consumer_profile_sha256": profile.consumer_profile_sha256,
         "universe_sha256": _sha256(universe_raw),
+        "bootstrap": template_root is None,
         "reused": reused,
         "state_bundle_created": False,
         "capital_authority": False,
@@ -674,6 +704,14 @@ def main(argv: list[str] | None = None) -> int:
         "--universe-source",
         type=Path,
         help="Optional absolute, reviewed universe artifact for a scale transition",
+    )
+    parser.add_argument(
+        "--bootstrap-manifest",
+        type=Path,
+        help=(
+            "One-time absolute reviewed minute manifest for an empty state root; "
+            "requires --universe-source and is rejected after initialization"
+        ),
     )
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
@@ -695,6 +733,7 @@ def main(argv: list[str] | None = None) -> int:
             token_file=args.token_file,
             now=now,
             universe_source=configured_universe_source,
+            bootstrap_manifest=args.bootstrap_manifest,
         )
     except (
         MinuteSessionInitializerError,
