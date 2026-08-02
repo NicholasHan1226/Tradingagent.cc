@@ -21,7 +21,11 @@ broker、Testnet、Live、模型网络、公开交易入口或真实交易权限
 
 ## A股
 
-- 30 股分钟 session/paper timer 均为 `enabled/active`，仍是 simulation-only。
+- 30 股分钟 session/paper timer 均为 `enabled/active`，仍是 simulation-only。2026-08-03
+  01:11 CST 的 systemd 读回显示两个 service 均尚无 `ExecMainStartTimestamp`；timer 的
+  `enabled/active` 只表示等待下一触发，不能表述为已自动运行。首日需先完成受审核
+  bootstrap manifest/universe 的 one-shot、目录与 journal 读回，之后才以实际 session/paper
+  receipt 证明运行面可用。
 - 500 股 scale500 session/paper timer 均为 `disabled/inactive`。它需要 TradingDatas
   正式连续两根 500/500、同一 bar time、完整 receipt/lineage、terminal pagination
   replay 的证据；周末或候选 loopback 不能替代。

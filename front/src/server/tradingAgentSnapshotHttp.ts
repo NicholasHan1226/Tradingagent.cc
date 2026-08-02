@@ -13,6 +13,8 @@ type SnapshotHttpServerOptions = {
   readSnapshot?: () => Promise<TradingAgentReadModelSnapshot>
   workspaceRoot?: string
   copilotStatePath?: string
+  copilotProjectionDir?: string
+  copilotProjectionNow?: () => Date
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -30,11 +32,17 @@ export function createSnapshotRequestHandler({
   apiToken = process.env.TRADING_AGENT_SNAPSHOT_API_TOKEN,
   workspaceRoot = process.env.FINANCE_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
   copilotStatePath,
+  copilotProjectionDir = process.env.TRADING_COPILOT_PROJECTION_DIR,
+  copilotProjectionNow,
   readSnapshot = () => readTradingAgentSnapshot({ workspaceRoot }),
 }: SnapshotHttpServerOptions = {}) {
   assertRestrictedCorsOrigins(allowedOrigins)
   const handleTradingCopilotState = createTradingCopilotStateHandler({ statePath: copilotStatePath, workspaceRoot })
-  const handleStockIntelligence = createTradingCopilotStockIntelligenceHandler({ workspaceRoot })
+  const handleStockIntelligence = createTradingCopilotStockIntelligenceHandler({
+    workspaceRoot,
+    projectionDir: copilotProjectionDir,
+    now: copilotProjectionNow,
+  })
 
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost')

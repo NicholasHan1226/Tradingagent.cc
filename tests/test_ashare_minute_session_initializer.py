@@ -416,6 +416,65 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
     }
 
 
+def test_initializer_bootstraps_an_empty_root_from_explicit_reviewed_inputs(
+    tmp_path: Path,
+) -> None:
+    template = _template(tmp_path / "reviewed-inputs")
+    bootstrap_manifest = template / "minute-manifest.json"
+    universe = template / "universe.json"
+    state_root = tmp_path / "runtime"
+    transport = FixtureTransport()
+
+    result = initialize_minute_session(
+        state_root=state_root,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=universe,
+        bootstrap_manifest=bootstrap_manifest,
+        transport_factory=_factory(transport),
+    )
+
+    assert result["status"] == "pass"
+    assert result["bootstrap"] is True
+    assert (state_root / "20260729" / "minute-manifest.json").is_file()
+
+
+def test_initializer_rejects_bootstrap_without_an_explicit_universe(
+    tmp_path: Path,
+) -> None:
+    template = _template(tmp_path / "reviewed-inputs")
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_bootstrap_universe_required",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path / "runtime",
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            bootstrap_manifest=template / "minute-manifest.json",
+            transport_factory=_factory(FixtureTransport()),
+        )
+
+
+def test_initializer_rejects_bootstrap_after_a_state_root_is_initialized(
+    tmp_path: Path,
+) -> None:
+    template = _template(tmp_path)
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_bootstrap_not_permitted_after_initialization",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            bootstrap_manifest=template / "minute-manifest.json",
+            universe_source=template / "universe.json",
+            transport_factory=_factory(FixtureTransport()),
+        )
+
+
 def test_initializer_promotes_explicit_reviewed_universe_to_500(
     tmp_path: Path,
 ) -> None:
