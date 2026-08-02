@@ -45,13 +45,17 @@ from shared.universe.policy import classify_instrument
 
 
 FORMAL_BASE_URL = "http://127.0.0.1:18082"
+RUNTIME_TRANSPORT_ID = "http-json-v1"
 DATASET_IDS = (
     "cn.dataset.anns_d",
+    "cn.dataset.major_news",
     "cn.dataset.moneyflow",
     "cn.dataset.moneyflow_ths",
 )
-EVENT_DATASET_ID = DATASET_IDS[0]
-MONEYFLOW_DATASET_IDS = DATASET_IDS[1:]
+EVENT_DATASET_IDS = DATASET_IDS[:2]
+MACRO_EVENT_DATASET_IDS = frozenset({"cn.dataset.major_news"})
+MONEYFLOW_DATASET_IDS = DATASET_IDS[2:]
+REQUIRED_DATASET_IDS = frozenset(("cn.dataset.anns_d", *MONEYFLOW_DATASET_IDS))
 RECEIPT_SCHEMA = "tradingagent.ashare.evidence-shadow-parity.v1"
 TransportFactory = Callable[..., HTTPTransport]
 
@@ -117,7 +121,7 @@ def _mainboard_symbols(value: object) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class ShadowParityPlan:
-    """All secret-free inputs for one bounded three-source parity run."""
+    """All secret-free inputs for one bounded four-source parity run."""
 
     expected_catalog_version: str
     decision_time: datetime
@@ -164,9 +168,10 @@ class ShadowParityRuntimeConfig:
         for field_name in (
             "expected_catalog_version",
             "access_policy_id",
-            "transport_id",
         ):
             _text(getattr(self, field_name), f"shadow_parity_{field_name}_invalid")
+        if self.transport_id != RUNTIME_TRANSPORT_ID:
+            raise ShadowParityError("shadow_parity_transport_id_invalid")
         if (
             isinstance(self.timeout_seconds, bool)
             or not isinstance(self.timeout_seconds, (int, float))
@@ -178,7 +183,7 @@ class ShadowParityRuntimeConfig:
 
     def client_config(self, dataset_ids: frozenset[str]) -> SharedSignalsV1Config:
         if dataset_ids not in (
-            frozenset({EVENT_DATASET_ID}),
+            frozenset(EVENT_DATASET_IDS),
             frozenset(MONEYFLOW_DATASET_IDS),
         ):
             raise ShadowParityError("shadow_parity_client_dataset_scope")
@@ -288,13 +293,13 @@ def run_shadow_parity(
     moneyflow_client: SharedSignalsV1Client,
     plan: ShadowParityPlan,
 ) -> dict[str, object]:
-    """Execute the three independent, zero-notional adapter parity checks."""
+    """Execute four independent, zero-notional adapter parity checks."""
 
     if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
         raise ShadowParityError("real_trading_must_remain_disabled")
     _validate_client_scope(
         event_client,
-        dataset_ids=frozenset({EVENT_DATASET_ID}),
+        dataset_ids=frozenset(EVENT_DATASET_IDS),
         plan=plan,
     )
     _validate_client_scope(
@@ -307,11 +312,14 @@ def run_shadow_parity(
         raise ShadowParityError("shadow_parity_catalog_invalid")
     rows = _target_rows(catalog)
     try:
-        event_profile = EvidenceDatasetProfile.from_catalog_row(
-            catalog,
-            rows[EVENT_DATASET_ID],
-            expected_catalog_version=plan.expected_catalog_version,
-        )
+        event_profiles = {
+            dataset_id: EvidenceDatasetProfile.from_catalog_row(
+                catalog,
+                rows[dataset_id],
+                expected_catalog_version=plan.expected_catalog_version,
+            )
+            for dataset_id in EVENT_DATASET_IDS
+        }
         moneyflow_profiles = {
             dataset_id: MoneyflowDatasetProfile.from_catalog_row(
                 catalog,
@@ -324,28 +332,33 @@ def run_shadow_parity(
         raise ShadowParityError(_reason(exc, "shadow_parity_profile_invalid")) from exc
 
     sources: dict[str, dict[str, object]] = {}
-    event_audit = AshareEvidenceAuditLedger()
-    try:
-        event_snapshot = TradingDatasAshareEvidencePort(
-            event_client
-        ).load_event_snapshot(
-            profile=event_profile,
-            filters=plan.filters_by_dataset[EVENT_DATASET_ID],
-            decision_time=plan.decision_time,
-            audit_ledger=event_audit,
-            allowed_symbols=plan.allowed_symbols,
-        )
-        sources[EVENT_DATASET_ID] = _source_accepted(
-            profile=event_profile,
-            snapshot=event_snapshot,
-            audit_rejections=len(event_audit.records()),
-        )
-    except AshareEvidenceContractError as exc:
-        sources[EVENT_DATASET_ID] = _source_rejected(
-            profile=event_profile,
-            reason_code=_reason(exc, "ashare_evidence_query_failed"),
-            audit_rejections=len(event_audit.records()),
-        )
+    event_port = TradingDatasAshareEvidencePort(event_client)
+    for dataset_id in EVENT_DATASET_IDS:
+        profile = event_profiles[dataset_id]
+        event_audit = AshareEvidenceAuditLedger()
+        try:
+            event_snapshot = event_port.load_event_snapshot(
+                profile=profile,
+                filters=plan.filters_by_dataset[dataset_id],
+                decision_time=plan.decision_time,
+                audit_ledger=event_audit,
+                allowed_symbols=(
+                    None
+                    if dataset_id in MACRO_EVENT_DATASET_IDS
+                    else plan.allowed_symbols
+                ),
+            )
+            sources[dataset_id] = _source_accepted(
+                profile=profile,
+                snapshot=event_snapshot,
+                audit_rejections=len(event_audit.records()),
+            )
+        except AshareEvidenceContractError as exc:
+            sources[dataset_id] = _source_rejected(
+                profile=profile,
+                reason_code=_reason(exc, "ashare_evidence_query_failed"),
+                audit_rejections=len(event_audit.records()),
+            )
 
     moneyflow_port = TradingDatasAshareMoneyflowPort(moneyflow_client)
     for dataset_id in MONEYFLOW_DATASET_IDS:
@@ -371,12 +384,23 @@ def run_shadow_parity(
                 audit_rejections=len(audit.records()),
             )
 
-    accepted = all(source["status"] == "accepted" for source in sources.values())
+    required_accepted = all(
+        sources[dataset_id]["status"] == "accepted"
+        for dataset_id in REQUIRED_DATASET_IDS
+    )
+    optional_accepted = all(
+        sources[dataset_id]["status"] == "accepted"
+        for dataset_id in MACRO_EVENT_DATASET_IDS
+    )
     receipt = {
         "schema": RECEIPT_SCHEMA,
-        "status": "pass" if accepted else "blocked",
+        "status": ("pass" if optional_accepted else "partial")
+        if required_accepted
+        else "blocked",
         "decision_time": plan.decision_time.isoformat(),
         "dataset_ids": list(DATASET_IDS),
+        "required_dataset_ids": sorted(REQUIRED_DATASET_IDS),
+        "optional_dataset_ids": sorted(MACRO_EVENT_DATASET_IDS),
         "catalog_route": "GET /v1/catalog",
         "query_route": "POST /v1/query",
         "initial_observed_catalog_version": catalog.catalog_version,
@@ -452,7 +476,7 @@ def run_runtime_shadow_parity(
     )
     return run_shadow_parity(
         SharedSignalsV1Client(
-            config.client_config(frozenset({EVENT_DATASET_ID})),
+            config.client_config(frozenset(EVENT_DATASET_IDS)),
             transport=transport,
         ),
         moneyflow_client=SharedSignalsV1Client(
@@ -538,6 +562,7 @@ if __name__ == "__main__":
 __all__ = [
     "DATASET_IDS",
     "FORMAL_BASE_URL",
+    "RUNTIME_TRANSPORT_ID",
     "RECEIPT_SCHEMA",
     "ShadowParityError",
     "ShadowParityPlan",

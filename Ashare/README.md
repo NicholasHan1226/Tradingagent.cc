@@ -81,10 +81,15 @@ The first catalog-validated profiles are:
   `cn.dataset.irm_qa_sh`, `cn.dataset.irm_qa_sz`, and
   `cn.dataset.research_report`;
 - optional, explicitly coverage-degrading: `cn.dataset.disclosure_date`,
-  `cn.dataset.report_rc`, `cn.dataset.broker_recommend`, and
-  `cn.dataset.stk_surv`;
-- forbidden fallbacks while paused: `cn.dataset.news` and
-  `cn.dataset.major_news`.
+  `cn.dataset.report_rc`, `cn.dataset.broker_recommend`, `cn.dataset.stk_surv`,
+  and receipt-bound `cn.dataset.major_news`;
+- forbidden fallback while paused: `cn.dataset.news`.
+
+`major_news` is macro-context event evidence only: its formal identity is
+`[src, pub_time, title]`, `pub_time` uses declared Asia/Shanghai semantics,
+and rows without a stock identity remain `CN-MACRO` context. It can lower or
+annotate a shadow assessment but cannot select a stock, create a candidate,
+train a model, alter risk, or authorize an order.
 
 Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
 identity must be present in the exact active catalog row. Each event profile
@@ -213,7 +218,7 @@ runner, units, environment, timers, production release, or real trading.
 ### Formal event/moneyflow shadow-parity sidecar
 
 `evidence_shadow_parity.py` is a separate, bounded acceptance sidecar for only
-`cn.dataset.anns_d`, `cn.dataset.moneyflow`, and
+`cn.dataset.anns_d`, `cn.dataset.major_news`, `cn.dataset.moneyflow`, and
 `cn.dataset.moneyflow_ths`. It reads an injected client through the same fixed
 `GET /v1/catalog` and `POST /v1/query` contract, freezes each target row from
 the catalog, and delegates the existing adapters' fingerprint, exact identity,
@@ -221,13 +226,18 @@ bounded-pagination, replay, metadata, receipt, lineage and PIT checks. It
 requires a caller-supplied frozen mainboard symbol set; it never broadens the
 Universe or accepts a restricted individual stock.
 
-The sidecar creates a separately scoped `evidence_only` client for
-`anns_d` and for the two moneyflow variants. It shares only the already-bound
-transport, never a broader dataset allow-list, so the moneyflow adapter keeps
-its source-isolation contract.
+The sidecar creates a separately scoped `evidence_only` client for the two
+event sources and for the two moneyflow variants. It shares only the
+already-bound transport, never a broader dataset allow-list, so the moneyflow
+adapter keeps its source-isolation contract. `major_news` receives no stock
+allow-list because it is explicitly macro context. Its failure yields a
+coverage-degrading `partial` sidecar receipt after the required announcement
+and moneyflow sources pass; it cannot invalidate those independent sources or
+create any trading authority.
 
 The sidecar has a secret-free `--preflight` mode that validates only its
-manifest and fixed `http://127.0.0.1:18082` endpoint. A real parity run is not
+manifest, fixed `http://127.0.0.1:18082` endpoint, and exact `http-json-v1`
+transport ID. A real parity run is not
 permitted until TradingDatas publishes the formal active catalog rows,
 especially their exact `identity_fields`, and a TA-scoped token is supplied by
 the existing runtime transport. Each dataset remains independent: a failed
