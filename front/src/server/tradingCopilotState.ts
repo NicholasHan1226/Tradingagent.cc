@@ -13,12 +13,18 @@ export type TradingCopilotStateOptions = {
 }
 
 type StateEvent = {
+  sequence?: number
   eventId: string
   recordedAt: string
   previousSha256: string | null
   stateSha256: string
+  eventSha256?: string
   state: TradingCopilotState
 }
+
+type LedgerSnapshot = { state: TradingCopilotState; headSha256: string; sequence: number }
+const EMPTY_HEAD = 'empty'
+const stateLocks = new Map<string, Promise<void>>()
 
 export function createTradingCopilotStateHandler(options: TradingCopilotStateOptions) {
   const statePath = resolveStatePath(options)
@@ -28,15 +34,36 @@ export function createTradingCopilotStateHandler(options: TradingCopilotStateOpt
     if (pathname !== TRADING_COPILOT_STATE_ROUTE) return false
 
     if (req.method === 'GET') {
-      sendJson(res, 200, await readLatestState(statePath))
+      try {
+        const snapshot = await readLedger(statePath)
+        setStateHeaders(res, snapshot)
+        sendJson(res, 200, snapshot.state)
+      } catch {
+        sendJson(res, 503, { error: 'TradingCopilot state ledger integrity check failed' })
+      }
       return true
     }
 
     if (req.method === 'PUT') {
       try {
         const state = validateState(await readJsonBody(req))
-        await appendState(statePath, state)
-        sendJson(res, 200, { ok: true, state })
+        const expectedHead = parseIfMatch(req.headers['if-match'])
+        if (!expectedHead) {
+          sendJson(res, 428, { error: 'If-Match state head is required' })
+          return true
+        }
+        const result = await withStateLock(statePath, async () => {
+          const current = await readLedger(statePath)
+          if (expectedHead !== current.headSha256) return { conflict: true as const, current }
+          return { conflict: false as const, snapshot: await appendState(statePath, state, current) }
+        })
+        if (result.conflict) {
+          setStateHeaders(res, result.current)
+          sendJson(res, 409, { error: 'TradingCopilot state changed in another tab or session', state: result.current.state, headSha256: result.current.headSha256 })
+          return true
+        }
+        setStateHeaders(res, result.snapshot)
+        sendJson(res, 200, { ok: true, state, headSha256: result.snapshot.headSha256 })
       } catch (error) {
         sendJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid TradingCopilot state' })
       }
@@ -49,39 +76,51 @@ export function createTradingCopilotStateHandler(options: TradingCopilotStateOpt
 }
 
 export async function readLatestState(statePath: string): Promise<TradingCopilotState> {
-  try {
-    const content = await readFile(statePath, 'utf8')
-    const lines = content.split('\n').filter(Boolean)
-    if (!lines.length) return emptyTradingCopilotState()
-    const event = JSON.parse(lines.at(-1) ?? '') as StateEvent
-    return validateState(event.state)
-  } catch (error) {
-    if (isMissingFile(error)) return emptyTradingCopilotState()
-    throw error
-  }
+  return (await readLedger(statePath)).state
 }
 
-async function appendState(statePath: string, state: TradingCopilotState) {
+async function appendState(statePath: string, state: TradingCopilotState, previous: LedgerSnapshot): Promise<LedgerSnapshot> {
   await mkdir(dirname(statePath), { recursive: true, mode: 0o700 })
-  const previous = await readLastEvent(statePath)
   const serialized = stableStateJson(state)
-  const event: StateEvent = {
+  const core = {
+    sequence: previous.sequence + 1,
     eventId: randomUUID(),
     recordedAt: new Date().toISOString(),
-    previousSha256: previous?.stateSha256 ?? null,
+    previousSha256: previous.headSha256 === EMPTY_HEAD ? null : previous.headSha256,
     stateSha256: createHash('sha256').update(serialized).digest('hex'),
     state,
   }
+  const event: StateEvent = { ...core, eventSha256: createHash('sha256').update(stableJson(core)).digest('hex') }
   await appendFile(statePath, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 })
+  return { state, headSha256: event.stateSha256, sequence: core.sequence }
 }
 
-async function readLastEvent(statePath: string): Promise<StateEvent | null> {
+async function readLedger(statePath: string): Promise<LedgerSnapshot> {
   try {
     const content = await readFile(statePath, 'utf8')
-    const line = content.split('\n').filter(Boolean).at(-1)
-    return line ? JSON.parse(line) as StateEvent : null
+    const lines = content.split('\n').filter(Boolean)
+    if (!lines.length) return { state: emptyTradingCopilotState(), headSha256: EMPTY_HEAD, sequence: 0 }
+    let previousStateSha256: string | null = null
+    let latestState = emptyTradingCopilotState()
+    lines.forEach((line, index) => {
+      const event = JSON.parse(line) as StateEvent
+      const state = validateState(event.state)
+      const canonicalStateSha256 = createHash('sha256').update(stableStateJson(state)).digest('hex')
+      const legacyStateSha256 = createHash('sha256').update(JSON.stringify(state)).digest('hex')
+      if (event.stateSha256 !== canonicalStateSha256 && event.stateSha256 !== legacyStateSha256) throw new Error(`TradingCopilot ledger state hash mismatch at line ${index + 1}`)
+      if (event.previousSha256 !== previousStateSha256) throw new Error(`TradingCopilot ledger chain mismatch at line ${index + 1}`)
+      if (event.sequence !== undefined && event.sequence !== index + 1) throw new Error(`TradingCopilot ledger sequence mismatch at line ${index + 1}`)
+      if (event.eventSha256) {
+        const core = { sequence: event.sequence, eventId: event.eventId, recordedAt: event.recordedAt, previousSha256: event.previousSha256, stateSha256: event.stateSha256, state: event.state }
+        const eventSha256 = createHash('sha256').update(stableJson(core)).digest('hex')
+        if (event.eventSha256 !== eventSha256) throw new Error(`TradingCopilot ledger event hash mismatch at line ${index + 1}`)
+      }
+      previousStateSha256 = event.stateSha256
+      latestState = state
+    })
+    return { state: latestState, headSha256: previousStateSha256 ?? EMPTY_HEAD, sequence: lines.length }
   } catch (error) {
-    if (isMissingFile(error)) return null
+    if (isMissingFile(error)) return { state: emptyTradingCopilotState(), headSha256: EMPTY_HEAD, sequence: 0 }
     throw error
   }
 }
@@ -98,16 +137,27 @@ function validateState(value: unknown): TradingCopilotState {
   if (state.account.availableCashCny > state.account.declaredCapitalCny) throw new Error('Available cash cannot exceed declared capital')
   if (!isTimestamp(state.account.updatedAt)) throw new Error('Account updatedAt must be an ISO timestamp')
   if (!Array.isArray(state.holdings) || !Array.isArray(state.watchlist) || !Array.isArray(state.decisions)) throw new Error('State lists are required')
-  for (const holding of state.holdings) {
+  const holdings = state.holdings
+  const watchlist = state.watchlist
+  const decisions = state.decisions
+  if (new Set(holdings.map((item) => item.symbol)).size !== holdings.length || new Set(watchlist.map((item) => item.symbol)).size !== watchlist.length || new Set(decisions.map((item) => item.id)).size !== decisions.length) throw new Error('State lists contain duplicate identities')
+  for (const holding of holdings) {
     if (!isAshareSymbol(holding.symbol) || !holding.name?.trim()) throw new Error('Holding must use a valid A-share symbol and name')
     if (!Number.isInteger(holding.quantity) || !Number.isInteger(holding.sellableQuantity) || holding.quantity < 0 || holding.sellableQuantity < 0 || holding.sellableQuantity > holding.quantity) throw new Error('Holding quantities are invalid')
     if (!isFiniteNonNegative(holding.averageCost) || !isTimestamp(holding.updatedAt)) throw new Error('Holding cost or timestamp is invalid')
   }
-  for (const item of state.watchlist) {
+  for (const item of watchlist) {
     if (!isAshareSymbol(item.symbol) || !item.name?.trim() || !isTimestamp(item.addedAt)) throw new Error('Watchlist item is invalid')
   }
-  for (const decision of state.decisions) {
+  if (holdings.some((holding) => !watchlist.some((item) => item.symbol === holding.symbol))) throw new Error('Every holding must remain on the watchlist')
+  for (const decision of decisions) {
     if (!decision.id || !isAshareSymbol(decision.symbol) || !['planned', 'observing', 'skipped'].includes(decision.action) || decision.authority !== 'human_intent_only' || !isTimestamp(decision.recordedAt)) throw new Error('Decision record is invalid')
+    if (decision.plan) {
+      if (!decision.plan.reason.trim() || !decision.plan.trigger.trim() || !decision.plan.invalidation.trim() || (decision.plan.maxRiskCny !== null && !isFiniteNonNegative(decision.plan.maxRiskCny))) throw new Error('Decision plan is invalid')
+    }
+    if (decision.review) {
+      if (!['pending', 'executed', 'not_executed', 'expired'].includes(decision.review.status) || !decision.review.actualAction.trim() || !decision.review.note.trim() || !isTimestamp(decision.review.reviewedAt)) throw new Error('Decision review is invalid')
+    }
   }
   return state as TradingCopilotState
 }
@@ -132,7 +182,39 @@ function resolveStatePath({ statePath, workspaceRoot }: TradingCopilotStateOptio
 }
 
 function stableStateJson(state: TradingCopilotState) {
-  return JSON.stringify(state)
+  return stableJson(state)
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
+}
+
+function parseIfMatch(value: string | string[] | undefined) {
+  const raw = Array.isArray(value) ? value[0] : value
+  return raw?.trim().replace(/^W\//, '').replace(/^"|"$/g, '') || null
+}
+
+function setStateHeaders(res: ServerResponse, snapshot: LedgerSnapshot) {
+  res.setHeader('ETag', `"${snapshot.headSha256}"`)
+  res.setHeader('X-Trading-Copilot-Revision', String(snapshot.sequence))
+}
+
+async function withStateLock<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const previous = stateLocks.get(path) ?? Promise.resolve()
+  let release: () => void = () => {}
+  const current = new Promise<void>((resolve) => { release = resolve })
+  const queued = previous.then(() => current)
+  stateLocks.set(path, queued)
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (stateLocks.get(path) === queued) stateLocks.delete(path)
+  }
 }
 
 function isTimestamp(value: unknown): value is string {

@@ -137,7 +137,7 @@
 | `tradingagent_production_runtime` | `CURRENT_VERIFIED / production_runtime_read_only_snapshot` | `6db813c…`与`eb2e18a…`不可变release未切current；front退役停机、worker inactive/static、timer不存在；TA active配置无8082引用 |
 | `tradingagent_server_sidecar_candidate` | `CURRENT_VERIFIED / server_validated_non_authority_simulation_only` | detached候选已在目标机通过测试与已停止的18787 loopback canary；现役service/cron/8787未变，无live数据或交易authority |
 | `tradingagent_front` | `CURRENT_VERIFIED / repository_contract` | 只读模拟看板；`tradingagent.cc`仅作待验收的单用户认证入口，不写订单或资金、不允许匿名访问/API直出 |
-| `tradingcopilot_v1` | `CURRENT_VERIFIED / repository_contract` | A股人工决策页与独立用户申报状态；支持资金/持仓/关注/人工意图，不连接券商、不写量化资本或订单；生产未验证 |
+| `tradingcopilot_v1` | `CURRENT_VERIFIED / repository_contract` | A股人工决策页与独立用户申报状态；支持资金/持仓/关注、分离的人工计划与复盘；正式投影需 detached receipt，状态写入需 ETag/CAS 与哈希链验证；不连接券商、不写量化资本/订单/样本/晋级；生产未验证 |
 
 ## 阶段出口前的必需证据
 

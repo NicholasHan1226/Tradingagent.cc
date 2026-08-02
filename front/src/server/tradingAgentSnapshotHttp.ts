@@ -93,7 +93,8 @@ function applyCors({
 }) {
   res.setHeader('Vary', 'Origin')
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, If-Match')
+  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Trading-Copilot-Revision')
 
   if (!origin) return true
   if (allowedOrigins.includes(origin)) {

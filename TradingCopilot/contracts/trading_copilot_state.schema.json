@@ -61,7 +61,29 @@
           "action": { "enum": ["planned", "observing", "skipped"] },
           "recordedAt": { "type": "string", "format": "date-time" },
           "actor": { "type": "string", "minLength": 1 },
-          "authority": { "const": "human_intent_only" }
+          "authority": { "const": "human_intent_only" },
+          "plan": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reason", "trigger", "invalidation", "maxRiskCny"],
+            "properties": {
+              "reason": { "type": "string", "minLength": 1 },
+              "trigger": { "type": "string", "minLength": 1 },
+              "invalidation": { "type": "string", "minLength": 1 },
+              "maxRiskCny": { "type": ["number", "null"], "minimum": 0 }
+            }
+          },
+          "review": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["status", "actualAction", "note", "reviewedAt"],
+            "properties": {
+              "status": { "enum": ["pending", "executed", "not_executed", "expired"] },
+              "actualAction": { "type": "string", "minLength": 1 },
+              "note": { "type": "string", "minLength": 1 },
+              "reviewedAt": { "type": "string", "format": "date-time" }
+            }
+          }
         }
       }
     }

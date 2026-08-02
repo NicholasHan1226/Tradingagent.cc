@@ -8,10 +8,21 @@ function event(id: string, sentiment: StockEvent['sentiment'], publishedAt: stri
     title: id,
     summary: id,
     source: 'test',
+    sourceClass: 'aggregated_sentiment',
+    sourceConfidence: 'medium',
     publishedAt,
+    retrievedAt: publishedAt,
+    revisedAt: null,
+    novelty: 'new',
     sentiment,
+    sentimentConfidence: 0.7,
+    impactDirection: sentiment === 'positive' ? 'positive' : sentiment === 'negative' ? 'negative' : 'neutral',
+    impactHorizon: 'short_term',
     relatedSymbols: ['000400.SZ'],
     url: null,
+    sourceReceiptId: null,
+    sourceReceiptSha256: null,
+    contentSha256: null,
   }
 }
 

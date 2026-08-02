@@ -8,7 +8,8 @@ export const copilotDemoAnalyses: Record<string, CopilotAnalysis> = {
     name: '许继电气',
     mode: 'demo_fixture',
     generatedAt: DEMO_TIME,
-    score: 74,
+    evidenceStrength: demoEvidenceStrength(),
+    readiness: demoReadiness(),
     verdict: '等待条件',
     summary: '演示判断：结构偏强，但只有价格、量能与风险条件同时满足后才进入人工计划。',
     support: [
@@ -29,7 +30,8 @@ export const copilotDemoAnalyses: Record<string, CopilotAnalysis> = {
     name: '比亚迪',
     mode: 'demo_fixture',
     generatedAt: DEMO_TIME,
-    score: 61,
+    evidenceStrength: demoEvidenceStrength(),
+    readiness: demoReadiness(),
     verdict: '等待条件',
     summary: '演示判断：关注中，等待趋势与估值风险出现更好的共同条件。',
     support: [{ title: '产业位置', detail: '龙头地位可作为持续跟踪线索。' }],
@@ -42,7 +44,8 @@ export const copilotDemoAnalyses: Record<string, CopilotAnalysis> = {
     name: '紫金矿业',
     mode: 'demo_fixture',
     generatedAt: DEMO_TIME,
-    score: 56,
+    evidenceStrength: demoEvidenceStrength(),
+    readiness: demoReadiness(),
     verdict: '积极观察',
     summary: '演示判断：适合跟踪商品周期与价格结构，不等于当前买入建议。',
     support: [{ title: '周期线索', detail: '商品价格与盈利弹性可形成研究驱动。' }],
@@ -55,7 +58,8 @@ export const copilotDemoAnalyses: Record<string, CopilotAnalysis> = {
     name: '贵州茅台',
     mode: 'demo_fixture',
     generatedAt: DEMO_TIME,
-    score: 48,
+    evidenceStrength: demoEvidenceStrength(),
+    readiness: demoReadiness(),
     verdict: '暂不参与',
     summary: '演示判断：基本面研究价值不等于价格条件合适，当前等待更清楚的触发。',
     support: [{ title: '质量线索', detail: '品牌与现金流可进入长期研究框架。' }],
@@ -87,12 +91,47 @@ export function unavailableAnalysis(symbol: string, name: string): CopilotAnalys
     name,
     mode: 'analysis_unavailable',
     generatedAt: null,
-    score: null,
+    evidenceStrength: {
+      value: null,
+      label: '暂无可验证评分',
+      semantics: 'unavailable',
+      contractVersion: 'v1',
+      sourceRefs: [],
+      asOf: null,
+    },
+    readiness: {
+      data: 'unavailable',
+      evidence: 'unavailable',
+      model: 'not_applicable',
+      action: 'blocked',
+      reasons: ['正式个股投影未交付', '来源、PIT 时点和反证均不可验证'],
+    },
     verdict: '暂无分析',
     summary: '这只股票已加入关注，但 TradingAgent 当前没有可验证的分析结果。Copilot 不会自动补写结论。',
     support: [],
     oppose: [{ title: '覆盖缺口', detail: '等待 TradingAgent 形成带来源和时间的正式观察证据。' }],
     buyConditions: ['正式分析可用', '数据新鲜度与来源验证通过', '你重新复核资金和持仓风险'],
     invalidation: ['任何关键数据缺失时不形成交易计划'],
+  }
+}
+
+function demoEvidenceStrength(): CopilotAnalysis['evidenceStrength'] {
+  return {
+    value: null,
+    label: '演示未评分',
+    semantics: 'demo_unscored',
+    contractVersion: 'v1',
+    sourceRefs: [],
+    asOf: DEMO_TIME,
+  }
+}
+
+function demoReadiness(): CopilotAnalysis['readiness'] {
+  return {
+    data: 'demo',
+    evidence: 'demo',
+    model: 'blocked',
+    action: 'observe_only',
+    reasons: ['演示数据只验证界面交互', '没有正式 receipt、样本外与校准证据'],
   }
 }

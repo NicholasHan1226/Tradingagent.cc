@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -32,7 +32,7 @@ describe('TradingCopilot state API', () => {
     state.account = { declaredCapitalCny: 100000, availableCashCny: 80000, updatedAt: state.updatedAt }
 
     const saved = await fetch(`${baseUrl}/api/trading-copilot/state`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state),
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"empty"' }, body: JSON.stringify(state),
     })
     const loaded = await fetch(`${baseUrl}/api/trading-copilot/state`)
 
@@ -48,9 +48,33 @@ describe('TradingCopilot state API', () => {
     const state = emptyTradingCopilotState('2026-08-01T00:00:00.000Z')
     state.holdings = [{ symbol: '000400.SZ', name: '许继电气', quantity: 100, sellableQuantity: 200, averageCost: 30, updatedAt: state.updatedAt }]
     const response = await fetch(`${baseUrl}/api/trading-copilot/state`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state),
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"empty"' }, body: JSON.stringify(state),
     })
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toMatchObject({ error: 'Holding quantities are invalid' })
+  })
+
+  it('requires optimistic concurrency and returns the latest state on conflict', async () => {
+    const { baseUrl } = await fixture()
+    const first = emptyTradingCopilotState('2026-08-01T00:00:00.000Z')
+    const missing = await fetch(`${baseUrl}/api/trading-copilot/state`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(first) })
+    expect(missing.status).toBe(428)
+    const saved = await fetch(`${baseUrl}/api/trading-copilot/state`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"empty"' }, body: JSON.stringify(first) })
+    expect(saved.status).toBe(200)
+    const conflict = await fetch(`${baseUrl}/api/trading-copilot/state`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"empty"' }, body: JSON.stringify(first) })
+    expect(conflict.status).toBe(409)
+    await expect(conflict.json()).resolves.toMatchObject({ error: expect.stringContaining('changed'), state: { ownerId: 'nicholas' }, headSha256: expect.stringMatching(/^[a-f0-9]{64}$/) })
+  })
+
+  it('fails closed when an append-only event is tampered with', async () => {
+    const { baseUrl, statePath } = await fixture()
+    const state = emptyTradingCopilotState('2026-08-01T00:00:00.000Z')
+    await fetch(`${baseUrl}/api/trading-copilot/state`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': '"empty"' }, body: JSON.stringify(state) })
+    const event = JSON.parse((await readFile(statePath, 'utf8')).trim())
+    event.state.ownerId = 'tampered'
+    await writeFile(statePath, `${JSON.stringify(event)}\n`)
+    const response = await fetch(`${baseUrl}/api/trading-copilot/state`)
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('integrity') })
   })
 })
