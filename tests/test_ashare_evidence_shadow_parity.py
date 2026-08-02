@@ -338,7 +338,7 @@ def test_secret_free_manifest_preflight_never_needs_a_token(tmp_path: Path) -> N
   "base_url": "http://127.0.0.1:18082",
   "expected_catalog_version": "catalog-expected",
   "access_policy_id": "ashare-shadow-fixture",
-  "transport_id": "tradingdatas_v1",
+  "transport_id": "http-json-v1",
   "timeout_seconds": 20,
   "decision_time": "2026-08-01T13:00:00+08:00",
   "allowed_symbols": ["600000.SH"],
@@ -363,7 +363,7 @@ def test_manifest_rejects_nonformal_endpoint_before_transport(tmp_path: Path) ->
   "base_url": "https://provider.invalid",
   "expected_catalog_version": "catalog-expected",
   "access_policy_id": "ashare-shadow-fixture",
-  "transport_id": "tradingdatas_v1",
+  "transport_id": "http-json-v1",
   "timeout_seconds": 20,
   "decision_time": "2026-08-01T13:00:00+08:00",
   "allowed_symbols": ["600000.SH"],
@@ -380,6 +380,34 @@ def test_manifest_rejects_nonformal_endpoint_before_transport(tmp_path: Path) ->
 
     with pytest.raises(
         parity.ShadowParityError, match="shadow_parity_base_url_invalid"
+    ):
+        parity.load_shadow_parity_config(manifest)
+
+
+def test_manifest_rejects_unknown_transport_before_token_access(tmp_path: Path) -> None:
+    manifest = tmp_path / "shadow-parity.json"
+    manifest.write_text(
+        """{
+  "base_url": "http://127.0.0.1:18082",
+  "expected_catalog_version": "catalog-expected",
+  "access_policy_id": "ashare-shadow-fixture",
+  "transport_id": "tradingdatas_v1",
+  "timeout_seconds": 20,
+  "decision_time": "2026-08-01T13:00:00+08:00",
+  "allowed_symbols": ["600000.SH"],
+  "filters_by_dataset": {
+    "cn.dataset.anns_d": {},
+    "cn.dataset.major_news": {},
+    "cn.dataset.moneyflow": {},
+    "cn.dataset.moneyflow_ths": {}
+  }
+}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        parity.ShadowParityError, match="shadow_parity_transport_id_invalid"
     ):
         parity.load_shadow_parity_config(manifest)
 

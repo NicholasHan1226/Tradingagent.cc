@@ -45,6 +45,7 @@ from shared.universe.policy import classify_instrument
 
 
 FORMAL_BASE_URL = "http://127.0.0.1:18082"
+RUNTIME_TRANSPORT_ID = "http-json-v1"
 DATASET_IDS = (
     "cn.dataset.anns_d",
     "cn.dataset.major_news",
@@ -167,9 +168,10 @@ class ShadowParityRuntimeConfig:
         for field_name in (
             "expected_catalog_version",
             "access_policy_id",
-            "transport_id",
         ):
             _text(getattr(self, field_name), f"shadow_parity_{field_name}_invalid")
+        if self.transport_id != RUNTIME_TRANSPORT_ID:
+            raise ShadowParityError("shadow_parity_transport_id_invalid")
         if (
             isinstance(self.timeout_seconds, bool)
             or not isinstance(self.timeout_seconds, (int, float))
@@ -560,6 +562,7 @@ if __name__ == "__main__":
 __all__ = [
     "DATASET_IDS",
     "FORMAL_BASE_URL",
+    "RUNTIME_TRANSPORT_ID",
     "RECEIPT_SCHEMA",
     "ShadowParityError",
     "ShadowParityPlan",
