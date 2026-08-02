@@ -319,9 +319,9 @@ def test_secret_free_manifest_preflight_never_needs_a_token(tmp_path: Path) -> N
   "decision_time": "2026-08-01T13:00:00+08:00",
   "allowed_symbols": ["600000.SH"],
   "filters_by_dataset": {
-      "cn.dataset.anns_d": {},
-      "cn.dataset.major_news": {},
-      "cn.dataset.moneyflow": {},
+    "cn.dataset.anns_d": {},
+    "cn.dataset.major_news": {},
+    "cn.dataset.moneyflow": {},
     "cn.dataset.moneyflow_ths": {}
   }
 }
@@ -344,9 +344,9 @@ def test_manifest_rejects_nonformal_endpoint_before_transport(tmp_path: Path) ->
   "decision_time": "2026-08-01T13:00:00+08:00",
   "allowed_symbols": ["600000.SH"],
   "filters_by_dataset": {
-      "cn.dataset.anns_d": {},
-      "cn.dataset.major_news": {},
-      "cn.dataset.moneyflow": {},
+    "cn.dataset.anns_d": {},
+    "cn.dataset.major_news": {},
+    "cn.dataset.moneyflow": {},
     "cn.dataset.moneyflow_ths": {}
   }
 }
