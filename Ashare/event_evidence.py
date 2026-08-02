@@ -258,20 +258,29 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             naive_datetime_timezone="Asia/Shanghai",
         ),
         "cn.dataset.cctv_news": _DatasetSpec(
-            identity_candidates=_GENERIC_IDENTITY + (("date", "title"),),
+            identity_candidates=_GENERIC_IDENTITY
+            + (("date", "title"), ("date", "title", "content")),
             event_time_candidates=("event_time", "date"),
             symbol_candidates=("ts_code", "symbol"),
             default_entity="CN-MACRO",
         ),
         "cn.dataset.irm_qa_sh": _DatasetSpec(
-            identity_candidates=_GENERIC_IDENTITY + (("ts_code", "pub_time", "q"),),
+            identity_candidates=_GENERIC_IDENTITY
+            + (
+                ("ts_code", "pub_time", "q"),
+                ("trade_date", "ts_code", "pub_time", "q", "a"),
+            ),
             event_time_candidates=("event_time", "pub_time", "trade_date"),
             title_candidates=("title", "q", "question"),
             content_candidates=("content", "a", "answer"),
             naive_datetime_timezone="Asia/Shanghai",
         ),
         "cn.dataset.irm_qa_sz": _DatasetSpec(
-            identity_candidates=_GENERIC_IDENTITY + (("ts_code", "pub_time", "q"),),
+            identity_candidates=_GENERIC_IDENTITY
+            + (
+                ("ts_code", "pub_time", "q"),
+                ("trade_date", "ts_code", "pub_time", "q", "a"),
+            ),
             event_time_candidates=("event_time", "pub_time", "trade_date"),
             title_candidates=("title", "q", "question"),
             content_candidates=("content", "a", "answer"),
@@ -282,6 +291,7 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             + (
                 ("trade_date", "url"),
                 ("trade_date", "ts_code", "inst_csname", "title"),
+                ("trade_date", "title", "author", "url"),
             ),
             event_time_candidates=("event_time", "trade_date"),
             source_candidates=("source", "inst_csname"),
