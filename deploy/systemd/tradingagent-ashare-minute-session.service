@@ -1,7 +1,7 @@
 [Unit]
 Description=Prepare TradingAgent A-share delayed-paper minute session
 Wants=network-online.target
-After=network-online.target tradingdatas-api.service
+After=network-online.target tradingdatas-v1-internal.service
 ConditionPathExists=/etc/tradingagent/ashare-minute-paper.env
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
 ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
