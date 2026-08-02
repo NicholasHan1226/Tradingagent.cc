@@ -653,6 +653,57 @@ def test_major_news_formal_catalog_profile_is_optional_and_macro_scoped() -> Non
     assert profile.source_field == "src"
     assert profile.default_entity == "CN-MACRO"
     assert profile.optional_dataset is True
+    assert profile.omit_as_of is True
+
+
+def test_major_news_current_observation_query_omits_unsupported_as_of() -> None:
+    rows = _catalog_rows()
+    target_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row["dataset_id"] == "cn.dataset.major_news"
+    )
+    rows[target_index] = _catalog_row(
+        "cn.dataset.major_news",
+        fields=["title", "content", "pub_time", "src"],
+        identity_fields=["src", "pub_time", "title"],
+    )
+    transport = _Transport(
+        catalog_rows=rows,
+        rows_by_dataset={
+            "cn.dataset.major_news": [
+                {
+                    "title": "宏观新闻",
+                    "content": "仅作当前观察。",
+                    "pub_time": "2026-07-31 10:00:00",
+                    "src": "fixture-news",
+                }
+            ]
+        },
+    )
+    port = TradingDatasAshareEvidencePort(
+        _client(
+            transport,
+            configured_ids=frozenset((*PRIMARY_DATASET_IDS, *OPTIONAL_DATASET_IDS)),
+        )
+    )
+    audit = AshareEvidenceAuditLedger()
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset[
+        "cn.dataset.major_news"
+    ]
+
+    port.load_event_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+    )
+
+    queries = [
+        call["json_body"] for call in transport.calls if call["method"] == "POST"
+    ]
+    assert len(queries) == 2
+    assert all("as_of" not in query for query in queries)
 
 
 @pytest.mark.parametrize(

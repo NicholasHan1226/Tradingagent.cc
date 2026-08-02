@@ -235,6 +235,12 @@ coverage-degrading `partial` sidecar receipt after the required announcement
 and moneyflow sources pass; it cannot invalidate those independent sources or
 create any trading authority.
 
+`major_news` is a current-observation append-only profile: its public query
+does not support `as_of`, so the sidecar omits that optional request member for
+this profile only. It still requires the provider row's event time and the
+query envelope's receipt, lineage and `observed_at` evidence to be valid at
+the supplied decision time. It is therefore not historical PIT evidence.
+
 The sidecar has a secret-free `--preflight` mode that validates only its
 manifest, fixed `http://127.0.0.1:18082` endpoint, and exact `http-json-v1`
 transport ID. A real parity run is not
