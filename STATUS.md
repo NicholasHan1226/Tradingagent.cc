@@ -10,9 +10,9 @@
 | 本地主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 本地 `main` 必须与远端主线同 head；状态页不固定会被自身提交淘汰的 SHA。 |
 | GitHub 主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 合入记录、CI 与精确 commit 以 GitHub 和 Git 历史为准；不是生产切换。 |
 | 三条市场 lane | A股、Crypto、CNFutures 均与 `origin/main` 同 head，`ahead=0`、`behind=0` | 三个长期 worktree 均干净；它们不是独立生产 release。 |
-| TA production current | `2b7b52bfb552247478c5a78f854d365eb9fcc335` | 当前 A股 timer 使用该 immutable release。 |
-| TradingDatas current | `983c5f63fee1c166db40859420f817b04cc639d9` | 18082 仅内部监听，generic collector timer active。 |
-| TradingDatas Crypto current | `a60e5425c9119bf9fe24c1b08a070907db58febd` | 18083 独立内部监听。 |
+| TA production current | `c305e69a53289bba5a01db39acf9077e9e770329` | 已由验证的 immutable release 原子切换；A股 session/paper timer 已恢复，Crypto G5 不受该指针影响。 |
+| TradingDatas current | `2cd289db369ffebdb7b475ce71d45c9d5993eb48` | 18082 仅内部监听，generic collector timer active。 |
+| TradingDatas Crypto current | `557a2967bc9582ffef26bc412d702767e0ef5c17` | 18083 独立内部监听。 |
 
 `tradingagent-front-api.service` 保持 inactive；8082、8787 均未监听。旧
 SharedSignals service/timer 均为 masked，MarketGraph runtime 保持暂停。当前没有
