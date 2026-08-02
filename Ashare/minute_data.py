@@ -950,10 +950,25 @@ def _map_run(
     metadata = envelope.metadata
     if envelope.dataset_id != profile.dataset_id:
         raise MinuteDataContractError("minute_query_binding_mismatch")
-    if metadata.state.strip().lower() != "ready" or metadata.degraded is not False:
-        raise MinuteDataContractError("minute_metadata_not_ready")
-    if not _fresh(metadata.freshness):
-        raise MinuteDataContractError("minute_metadata_not_fresh")
+    historical_display = evidence_use is MinuteEvidenceUse.HISTORICAL_DISPLAY
+    state = metadata.state.strip().lower()
+    if historical_display:
+        freshness_only_degraded = (
+            state == "stale"
+            and metadata.degraded is True
+            and bool(metadata.reasons)
+            and set(metadata.reasons) <= {"freshness_sla_exceeded"}
+        )
+        if not (
+            (state == "ready" and metadata.degraded is False)
+            or freshness_only_degraded
+        ):
+            raise MinuteDataContractError("minute_metadata_not_displayable")
+    else:
+        if state != "ready" or metadata.degraded is not False:
+            raise MinuteDataContractError("minute_metadata_not_ready")
+        if not _fresh(metadata.freshness):
+            raise MinuteDataContractError("minute_metadata_not_fresh")
     if not _valid_quality(metadata.quality):
         raise MinuteDataContractError("minute_metadata_quality_invalid")
     if not _complete_lineage(metadata.lineage):
