@@ -2,9 +2,8 @@
 
 > 最后更新：2026-08-02 14:47 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
-> **2026-08-02 A股 systemd TradingDatas 依赖修复已部署：** 已合入 `main` 的
-> [PR #169](https://github.com/NicholasHan1226/Tradingagent.cc/pull/169) 提交
-> `e55602e` 被作为冻结 unit 工件安装到服务器。五个 A股 30/scale500 service 的
+> **2026-08-02 A股 systemd TradingDatas 依赖修复已部署：** 已合入 `main` 的 unit
+> 修复提交 `e55602e` 被作为冻结工件安装到服务器。五个 A股 30/scale500 service 的
 > `After=` 均从不存在的 `tradingdatas-api.service` 改为实际运行的
 > `tradingdatas-v1-internal.service`；安装前文件已备份，安装后 unit 哈希与冻结工件逐一一致，
 > `systemd-analyze verify` 与 `daemon-reload` 通过。30 股 session/paper timer 保持
