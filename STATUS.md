@@ -2,6 +2,8 @@
 
 > 最后更新：2026-08-02 14:08 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
 
+> **2026-08-02 TradingCopilot V8 正式投影与组合复核交付：** 仓库已新增 one-shot `Ashare.trading_copilot_observation_worker`，复用正式分钟 Evidence Gate，并只允许从五项 committed A股 observation 或显式 TradingDatas receipt 输入读取证券主数据；公告/新闻经固定 catalog/query 事件端口进入，缺代码、URL或回执即不展示，缺分类回执时不猜测情绪方向。批量 publisher 在任何写入前验证全批并为行情、主数据、分页和事件来源生成 detached receipt。个人组合页新增申报资金一致性、单股/已验证行业集中、T+1及人工计划风险复核。新增同冻结样本的最后值/线性基线/Kronos Challenger 评估，校验无未来标签、同样本、成本、有效独立样本和误差/方向/效用门槛；Kronos 最多进入影子比较，不取得校准、晋级、资金或交易 authority。桌面端代码、合同、全量测试与浏览器交互已通过；正式数据覆盖和隔离运行状态只按对应批次回执与运行读回陈述，不能由代码批量容量推断。
+
 > **2026-08-02 Crypto 十币种健康观测候选：** PR [#166](https://github.com/NicholasHan1226/Tradingagent.cc/pull/166) 已经 CI 通过并普通合入 `main`
 > `c17d511`。服务器只构建了独立候选 worktree
 > `ta-crypto-observation-c17d511`，没有切换 TradingAgent `current` 或安装新 timer。

@@ -178,9 +178,9 @@ function MetricGrid({ intelligence }: { intelligence: StockIntelligence }) {
     <Metric label="日内范围" value={`¥${quote.low.toFixed(2)}–¥${quote.high.toFixed(2)}`} />
     <Metric label="前收" value={`¥${quote.previousClose.toFixed(2)}`} />
     <Metric label="成交量" value={`${(quote.volume / 10_000).toFixed(1)} 万`} />
-    <Metric label="换手率" value={`${quote.turnoverRate.toFixed(2)}%`} />
+    <Metric label="换手率" value={quote.turnoverRate === null ? '未交付' : `${quote.turnoverRate.toFixed(2)}%`} />
     <Metric label="市盈率（TTM）" value={quote.peTtm?.toFixed(2) ?? '—'} />
-    <Metric label={intelligence.mode === 'demo_fixture' ? '演示市值' : '市值'} value={formatMarketCap(quote.marketCapCny)} />
+    <Metric label={intelligence.mode === 'demo_fixture' ? '演示市值' : '市值'} value={quote.marketCapCny === null ? '未交付' : formatMarketCap(quote.marketCapCny)} />
     <Metric label="行情来源" value={intelligence.source ? `${intelligence.source.datasetId}/${intelligence.source.freshness}` : intelligence.mode} />
   </dl>
 }

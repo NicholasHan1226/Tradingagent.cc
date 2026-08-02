@@ -95,9 +95,9 @@ export type StockIntelligence = {
     high: number
     low: number
     volume: number
-    turnoverRate: number
+    turnoverRate: number | null
     peTtm: number | null
-    marketCapCny: number
+    marketCapCny: number | null
   } | null
   company: {
     exchange: 'SH' | 'SZ'

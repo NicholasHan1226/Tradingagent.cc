@@ -53,9 +53,12 @@ function assertMarketRules(rules: StockIntelligence['marketRules'] | undefined) 
 }
 
 function assertQuote(quote: NonNullable<StockIntelligence['quote']>) {
-  const numbers = [quote.price, quote.previousClose, quote.change, quote.changePct, quote.open, quote.high, quote.low, quote.volume, quote.turnoverRate, quote.marketCapCny]
-  if (numbers.some((number) => !Number.isFinite(number)) || quote.price <= 0 || quote.previousClose <= 0 || quote.high < quote.low || quote.volume < 0 || quote.turnoverRate < 0 || quote.marketCapCny < 0) throw new Error('stock_intelligence_quote_invalid')
-  if (quote.peTtm !== null && !Number.isFinite(quote.peTtm)) throw new Error('stock_intelligence_quote_invalid')
+  const numbers = [quote.price, quote.previousClose, quote.change, quote.changePct, quote.open, quote.high, quote.low, quote.volume]
+  if (numbers.some((number) => !Number.isFinite(number)) || quote.price <= 0 || quote.previousClose <= 0 || quote.high < quote.low || quote.volume < 0) throw new Error('stock_intelligence_quote_invalid')
+  for (const optional of [quote.turnoverRate, quote.peTtm, quote.marketCapCny]) {
+    if (optional !== null && !Number.isFinite(optional)) throw new Error('stock_intelligence_quote_invalid')
+  }
+  if ((quote.turnoverRate !== null && quote.turnoverRate < 0) || (quote.marketCapCny !== null && quote.marketCapCny < 0)) throw new Error('stock_intelligence_quote_invalid')
 }
 
 function assertAnalysis(analysis: StockIntelligence['analysis'] | undefined, symbol: string) {

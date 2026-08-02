@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity, ArrowLeftRight, Bell, BookOpenCheck, Building2, ChevronRight,
   Eye, Gauge, LayoutDashboard, ListPlus, Pencil, Plus, Search, ShieldCheck, Sparkles, Star,
@@ -8,6 +8,7 @@ import { copilotDemoAnalyses, createCopilotDemoState, unavailableAnalysis } from
 import { analysisFromSignal } from '../copilot/analysis'
 import { getDemoStockIntelligence, summarizeStockSentiment, unavailableStockIntelligence, type StockIntelligence } from '../copilot/stockIntelligence'
 import { loadStockIntelligence } from '../copilot/stockIntelligenceClient'
+import { buildPortfolioAssistantReport } from '../copilot/portfolioAssistant'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
 import { isAshareSymbol, type CopilotAnalysis, type CopilotDecision, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
 import { createTradingAgentSnapshotClient } from '../api/tradingAgentIntegration'
@@ -35,6 +36,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const [usingDemoSeed, setUsingDemoSeed] = useState(false)
   const [tradingAgentAnalyses, setTradingAgentAnalyses] = useState<Record<string, CopilotAnalysis>>({})
   const [formalStockIntelligence, setFormalStockIntelligence] = useState<Record<string, StockIntelligence>>({})
+  const attemptedFormalSymbols = useRef(new Set<string>())
   const [pendingDecisionAction, setPendingDecisionAction] = useState<CopilotDecisionAction | null>(null)
   const [reviewTarget, setReviewTarget] = useState<CopilotDecision | null>(null)
 
@@ -82,14 +84,21 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   }, [])
 
   useEffect(() => {
-    if (!selectedSymbol) return
+    if (!state && !selectedSymbol) return
+    const stateSymbols = state ? [...state.watchlist, ...state.holdings].map((item) => item.symbol) : []
+    const symbols = [...new Set([selectedSymbol, ...stateSymbols])]
+      .filter(Boolean)
+      .filter((symbol) => !formalStockIntelligence[symbol] && !attemptedFormalSymbols.current.has(symbol))
+    if (!symbols.length) return
+    symbols.forEach((symbol) => attemptedFormalSymbols.current.add(symbol))
     let active = true
-    void loadStockIntelligence(selectedSymbol).then((projection) => {
-      if (!active || !projection) return
-      setFormalStockIntelligence((current) => ({ ...current, [selectedSymbol]: projection }))
+    void Promise.all(symbols.map(async (symbol) => [symbol, await loadStockIntelligence(symbol)] as const)).then((results) => {
+      if (!active) return
+      const verified = results.filter((item): item is readonly [string, StockIntelligence] => Boolean(item[1]))
+      if (verified.length) setFormalStockIntelligence((current) => ({ ...current, ...Object.fromEntries(verified) }))
     })
     return () => { active = false }
-  }, [selectedSymbol])
+  }, [selectedSymbol, state, formalStockIntelligence])
 
   const selected = state?.watchlist.find((item) => item.symbol === selectedSymbol)
     ?? (browseTarget?.symbol === selectedSymbol ? browseTarget : undefined)
@@ -111,6 +120,11 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const investedCost = useMemo(() => state?.holdings.reduce((sum, item) => sum + item.quantity * item.averageCost, 0) ?? 0, [state?.holdings])
   const hasDeclaredState = Boolean(state && (state.account.declaredCapitalCny > 0 || state.account.availableCashCny > 0 || state.holdings.length > 0 || state.watchlist.length > 0 || state.decisions.length > 0))
   const selectedIsWatched = Boolean(selected && state?.watchlist.some((item) => item.symbol === selected.symbol))
+  const visibleAnalyses = useMemo(() => ({
+    ...tradingAgentAnalyses,
+    ...Object.fromEntries(Object.entries(formalStockIntelligence).flatMap(([symbol, item]) => item.analysis ? [[symbol, item.analysis]] : [])),
+  }), [formalStockIntelligence, tradingAgentAnalyses])
+  const portfolioReport = useMemo(() => state ? buildPortfolioAssistantReport(state, formalStockIntelligence) : null, [formalStockIntelligence, state])
 
   async function commit(transform: (current: TradingCopilotState) => TradingCopilotState, message: string) {
     if (!state) return
@@ -300,8 +314,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
           <button className="secondary-button" onClick={() => setAccountEditorOpen(true)} type="button"><Pencil size={15} />调整资金</button>
         </section>
 
-        {view === 'watchlist' && <WatchlistWorkspace analyses={tradingAgentAnalyses} demoPreviewEnabled={demoPreviewEnabled} holdings={state.holdings} onAdd={() => void addWatchItem()} onOpen={openStock} onRemove={(symbol) => void removeWatchItem(symbol)} query={query} setQuery={setQuery} watchlist={state.watchlist} />}
-        {view === 'portfolio' && <PortfolioWorkspace account={state.account} holdings={state.holdings} investedCost={investedCost} holdingQuery={holdingQuery} onAdd={beginAddHolding} onEdit={(item) => setHoldingTarget(item)} onOpen={openStock} setHoldingQuery={setHoldingQuery} />}
+        {view === 'watchlist' && <WatchlistWorkspace analyses={visibleAnalyses} demoPreviewEnabled={demoPreviewEnabled} holdings={state.holdings} onAdd={() => void addWatchItem()} onOpen={openStock} onRemove={(symbol) => void removeWatchItem(symbol)} query={query} setQuery={setQuery} watchlist={state.watchlist} />}
+        {view === 'portfolio' && portfolioReport && <PortfolioWorkspace account={state.account} holdings={state.holdings} investedCost={investedCost} holdingQuery={holdingQuery} onAdd={beginAddHolding} onEdit={(item) => setHoldingTarget(item)} onOpen={openStock} report={portfolioReport} setHoldingQuery={setHoldingQuery} />}
         {view === 'decisions' && <DecisionWorkspace decisions={state.decisions} onOpen={openStock} onReview={setReviewTarget} />}
 
         {view === 'desk' && !selected && <EmptyDesk deskQuery={deskQuery} onBrowse={browseStock} onPortfolio={() => setView('portfolio')} onWatchlist={() => setView('watchlist')} setDeskQuery={setDeskQuery} />}
@@ -412,7 +426,7 @@ function WatchlistWorkspace({ analyses, demoPreviewEnabled, holdings, onAdd, onO
   </section>
 }
 
-function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onAdd, onEdit, onOpen, setHoldingQuery }: {
+function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onAdd, onEdit, onOpen, report, setHoldingQuery }: {
   account: TradingCopilotState['account']
   holdings: CopilotHolding[]
   investedCost: number
@@ -420,6 +434,7 @@ function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onA
   onAdd: () => void
   onEdit: (holding: CopilotHolding) => void
   onOpen: (symbol: string) => void
+  report: ReturnType<typeof buildPortfolioAssistantReport>
   setHoldingQuery: (value: string) => void
 }) {
   return <section className="management-workspace" aria-label="资金与持仓管理">
@@ -433,6 +448,18 @@ function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onA
       <div><span>持仓成本合计</span><strong>{money(investedCost)}</strong></div>
       <div className="reconcile-pending"><span>券商资产核对</span><strong>待人工确认</strong><small>缺少实时市值，不用成本倒推差额</small></div>
     </div>
+    <section className="portfolio-assistant panel" aria-label="组合级人工决策辅助">
+      <div className="panel-heading"><div><span className="eyebrow">PORTFOLIO DECISION CHECK</span><h2>组合级人工复核</h2></div><span className="management-count">{report.checks.filter((item) => item.level !== 'ok').length} 项需关注</span></div>
+      <div className="portfolio-assistant-summary">
+        <span><small>成本占申报资金</small><strong>{report.declaredUtilizationPct === null ? '不可计算' : `${report.declaredUtilizationPct.toFixed(1)}%`}</strong></span>
+        <span><small>最大单股</small><strong>{report.maxSingleStockPct === null ? '不可计算' : `${report.maxSingleStockPct.toFixed(1)}%`}</strong></span>
+        <span><small>T+1 可卖</small><strong>{report.sellableQuantity.toLocaleString('zh-CN')} / {report.totalQuantity.toLocaleString('zh-CN')} 股</strong></span>
+        <span><small>待执行人工计划风险</small><strong>{money(report.pendingRiskBudgetCny)}</strong></span>
+      </div>
+      <div className="portfolio-check-list">{report.checks.map((item) => <article className={item.level} key={item.id}><i /><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>)}</div>
+      <div className="industry-exposure"><h3>行业成本暴露</h3>{report.industryExposure.length ? report.industryExposure.map((item) => <div key={item.industry}><span><strong>{item.industry}</strong><small>{item.symbols.join('、')}</small></span><b>{money(item.costBasisCny)}{item.sharePct === null ? '' : ` · ${item.sharePct.toFixed(1)}%`}</b></div>) : <p>暂无持仓。</p>}</div>
+      <p className="management-footnote">组合检查仅使用你的申报成本、可卖数量、人工计划风险上限及已验证个股行业投影；不读取量化资本，不预约现金，不生成订单，也不把成本当作实时市值。</p>
+    </section>
     <div className="management-search">
       <Search size={16} />
       <input aria-label="输入新增持仓股票代码和名称" onChange={(event) => setHoldingQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') onAdd() }} placeholder="000001.SZ 平安银行" value={holdingQuery} />

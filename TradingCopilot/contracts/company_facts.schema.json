@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradingagent.trading_copilot_company_facts.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractId", "source", "items"],
+  "properties": {
+    "contractId": { "const": "tradingagent.trading_copilot_company_facts.v1" },
+    "source": { "$ref": "#/$defs/source" },
+    "items": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["symbol", "name", "industry", "area", "listingDate", "description", "marketRules", "turnoverRate", "peTtm", "marketCapCny"],
+        "properties": {
+          "symbol": { "type": "string", "pattern": "^(0|3|6)[0-9]{5}\\.(SH|SZ)$" },
+          "name": { "type": "string", "minLength": 1 }, "industry": { "type": "string", "minLength": 1 },
+          "area": { "type": "string", "minLength": 1 }, "listingDate": { "type": "string", "format": "date" },
+          "description": { "type": "string", "minLength": 1 },
+          "marketRules": {
+            "type": "object", "additionalProperties": false, "required": ["board", "priceLimitPct", "stStatus"],
+            "properties": {
+              "board": { "enum": ["main", "gem", "star", "beijing", "unknown"] },
+              "priceLimitPct": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+              "stStatus": { "enum": ["normal", "st", "star_st", "unknown"] }
+            }
+          },
+          "turnoverRate": { "type": ["number", "null"], "minimum": 0 },
+          "peTtm": { "type": ["number", "null"] },
+          "marketCapCny": { "type": ["number", "null"], "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["transportContract", "datasetId", "receiptId", "receiptSha256", "dataThrough", "retrievedAt", "freshness", "adjustment"],
+      "properties": {
+        "transportContract": { "const": "tradingdatas_v1_catalog_query" },
+        "datasetId": { "type": "string", "minLength": 1 }, "receiptId": { "type": "string", "minLength": 1 },
+        "receiptSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "dataThrough": { "type": "string", "format": "date-time" }, "retrievedAt": { "type": "string", "format": "date-time" },
+        "freshness": { "enum": ["fresh", "stale", "degraded"] }, "adjustment": { "enum": ["none", "forward", "backward", "unknown"] }
+      }
+    }
+  }
+}

@@ -111,6 +111,9 @@ tests/test_sample_journal.py
 tests/test_ashare_forward_label_ops.py
 tests/test_ashare_sample_ops.py
 tests/test_ashare_sample_ops_p0.py
+tests/test_trading_copilot_projection.py
+tests/test_trading_copilot_observation_worker.py
+tests/test_trading_copilot_forecast_evaluation.py
 tests/test_ashare_no_legacy_sim_fallback.py
 tests/test_cron_coverage.py
 tests/test_merge_tradingagent_crontab.py

@@ -1506,6 +1506,12 @@ entries:
       - TradingCopilot/README.md
       - TradingCopilot/contracts/trading_copilot_state.schema.json
       - TradingCopilot/contracts/stock_projection_receipt.schema.json
+      - TradingCopilot/contracts/projection_batch_input.schema.json
+      - TradingCopilot/contracts/company_facts.schema.json
+      - TradingCopilot/contracts/forecast_evaluation_input.schema.json
+      - Ashare/trading_copilot_observation_worker.py
+      - Ashare/trading_copilot_projection.py
+      - Ashare/trading_copilot_forecast_evaluation.py
       - front/src/server/tradingCopilotStockIntelligence.test.ts
       - front/src/server/tradingCopilotState.test.ts
       - front/src/copilot/forecastReadiness.test.ts
@@ -1516,6 +1522,9 @@ entries:
       - fail_closed_on_unverified_projection_or_forecast_evidence
       - preserve_etag_cas_and_append_only_human_state_integrity
       - record_separate_human_plan_and_review
+      - publish_receipt_bound_read_only_stock_projections
+      - review_declared_portfolio_concentration_and_t_plus_one
+      - evaluate_baselines_and_kronos_as_nonpromoting_challengers
       - record_human_intent_only
     prohibited_uses:
       - claim_broker_verified_account_or_positions
