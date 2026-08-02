@@ -9,7 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from Ashare.event_evidence import EventEvidenceSnapshot
+from Ashare.event_evidence import (
+    AshareEvidenceContractError,
+    EventEvidenceSnapshot,
+    PRIMARY_DATASET_IDS,
+)
 from Ashare.minute_data import (
     MinuteBarEvidence,
     MinuteBarSnapshot,
@@ -22,7 +26,9 @@ from Ashare.trading_copilot_observation_worker import (
     build_projection_batch,
     company_facts_from_verified_observation,
     load_company_facts,
+    load_current_event_snapshots,
 )
+import Ashare.trading_copilot_observation_worker as observation_worker
 from Ashare.trading_copilot_projection import publish_projection_batch
 
 
@@ -145,6 +151,48 @@ def test_historical_projection_marks_price_source_stale() -> None:
     )
 
     assert batch["items"][0]["source"]["freshness"] == "stale"
+
+
+def test_event_catalog_failure_returns_explicit_full_coverage_debt(monkeypatch) -> None:
+    monkeypatch.setattr(
+        observation_worker,
+        "build_runtime_transport",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        observation_worker,
+        "SharedSignalsV1Client",
+        lambda *args, **kwargs: object(),
+    )
+
+    class BlockedPort:
+        def __init__(self, client) -> None:
+            pass
+
+        def freeze_profiles(self, *, audit_ledger):
+            raise AshareEvidenceContractError("ashare_evidence_catalog_identity_mismatch")
+
+    monkeypatch.setattr(
+        observation_worker,
+        "TradingDatasAshareEvidencePort",
+        BlockedPort,
+    )
+
+    events, blocked = load_current_event_snapshots(
+        minute_config=SimpleNamespace(
+            transport_id="http-json-v1",
+            base_url="http://127.0.0.1:18082",
+            expected_catalog_version="catalog-v1",
+            access_policy_id="test-read-v1",
+            timeout_seconds=1,
+        ),
+        token_file=Path("/not-read-by-test"),
+        decision_time=datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc),
+        symbols=("600000.SH",),
+    )
+
+    assert events == ()
+    assert blocked == tuple(PRIMARY_DATASET_IDS)
 
 
 def test_omits_event_without_verifiable_url_and_never_invents_sentiment() -> None:

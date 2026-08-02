@@ -235,7 +235,10 @@ def load_current_event_snapshots(
     )
     audit = AshareEvidenceAuditLedger()
     port = TradingDatasAshareEvidencePort(client)
-    profiles = port.freeze_profiles(audit_ledger=audit)
+    try:
+        profiles = port.freeze_profiles(audit_ledger=audit)
+    except AshareEvidenceContractError:
+        return (), tuple(PRIMARY_DATASET_IDS)
     accepted: list[EventEvidenceSnapshot] = []
     blocked: list[str] = []
     allowed = tuple(sorted(set(symbols)))
