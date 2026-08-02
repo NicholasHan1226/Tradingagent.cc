@@ -230,8 +230,10 @@ The sidecar creates a separately scoped `evidence_only` client for the two
 event sources and for the two moneyflow variants. It shares only the
 already-bound transport, never a broader dataset allow-list, so the moneyflow
 adapter keeps its source-isolation contract. `major_news` receives no stock
-allow-list because it is explicitly macro context; its receipt still blocks the
-combined sidecar result if contract, freshness, replay, or lineage checks fail.
+allow-list because it is explicitly macro context. Its failure yields a
+coverage-degrading `partial` sidecar receipt after the required announcement
+and moneyflow sources pass; it cannot invalidate those independent sources or
+create any trading authority.
 
 The sidecar has a secret-free `--preflight` mode that validates only its
 manifest and fixed `http://127.0.0.1:18082` endpoint. A real parity run is not

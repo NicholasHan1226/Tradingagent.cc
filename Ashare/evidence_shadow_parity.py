@@ -54,6 +54,7 @@ DATASET_IDS = (
 EVENT_DATASET_IDS = DATASET_IDS[:2]
 MACRO_EVENT_DATASET_IDS = frozenset({"cn.dataset.major_news"})
 MONEYFLOW_DATASET_IDS = DATASET_IDS[2:]
+REQUIRED_DATASET_IDS = frozenset(("cn.dataset.anns_d", *MONEYFLOW_DATASET_IDS))
 RECEIPT_SCHEMA = "tradingagent.ashare.evidence-shadow-parity.v1"
 TransportFactory = Callable[..., HTTPTransport]
 
@@ -381,12 +382,23 @@ def run_shadow_parity(
                 audit_rejections=len(audit.records()),
             )
 
-    accepted = all(source["status"] == "accepted" for source in sources.values())
+    required_accepted = all(
+        sources[dataset_id]["status"] == "accepted"
+        for dataset_id in REQUIRED_DATASET_IDS
+    )
+    optional_accepted = all(
+        sources[dataset_id]["status"] == "accepted"
+        for dataset_id in MACRO_EVENT_DATASET_IDS
+    )
     receipt = {
         "schema": RECEIPT_SCHEMA,
-        "status": "pass" if accepted else "blocked",
+        "status": ("pass" if optional_accepted else "partial")
+        if required_accepted
+        else "blocked",
         "decision_time": plan.decision_time.isoformat(),
         "dataset_ids": list(DATASET_IDS),
+        "required_dataset_ids": sorted(REQUIRED_DATASET_IDS),
+        "optional_dataset_ids": sorted(MACRO_EVENT_DATASET_IDS),
         "catalog_route": "GET /v1/catalog",
         "query_route": "POST /v1/query",
         "initial_observed_catalog_version": catalog.catalog_version,
