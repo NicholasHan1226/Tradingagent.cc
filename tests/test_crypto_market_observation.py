@@ -171,6 +171,7 @@ def test_collects_the_exact_ten_symbol_closed_bar_cohort_without_authority() -> 
     assert report.execution_eligible is False
     assert report.capital_write_eligible is False
     assert report.model_authority is False
+    assert len(report.market_data_sha256) == 64
     assert len(report.observation_sha256) == 64
     queries = [
         item["json_body"] for item in transport.calls if item["method"] == "POST"
@@ -183,6 +184,27 @@ def test_collects_the_exact_ten_symbol_closed_bar_cohort_without_authority() -> 
         query["filters"]["open_time"]["between"][0].endswith("+00:00")
         for query in queries
     )
+
+
+def test_current_replay_has_a_stable_market_digest_when_receipt_metadata_advances() -> (
+    None
+):
+    transport = _Transport()
+    first = collect_market_observation(
+        _client(transport), expected_catalog_version=CATALOG_VERSION, window=_window()
+    )
+    for dataset, metadata in transport.metadata.items():
+        metadata["receipt_id"] = f"later-{dataset}"
+        metadata["observed_at"] = _iso(WINDOW_END + timedelta(seconds=40))
+    second = collect_market_observation(
+        _client(transport), expected_catalog_version=CATALOG_VERSION, window=_window()
+    )
+
+    assert first.market_data_sha256 == second.market_data_sha256
+    assert first.observation_sha256 != second.observation_sha256
+    assert [source.receipt_id for source in first.sources] != [
+        source.receipt_id for source in second.sources
+    ]
 
 
 def test_rejects_a_gap_even_when_metadata_is_ready() -> None:

@@ -207,6 +207,8 @@ class CryptoObservationSource:
     receipt_id: str
     data_through: datetime
     observed_at: datetime
+    identity_sha256: str
+    market_data_sha256: str
     semantic_sha256: str
     pagination_trace_sha256: str
 
@@ -219,8 +221,21 @@ class CryptoObservationSource:
             "receipt_id": self.receipt_id,
             "data_through": _iso(self.data_through),
             "observed_at": _iso(self.observed_at),
+            "identity_sha256": self.identity_sha256,
+            "market_data_sha256": self.market_data_sha256,
             "semantic_sha256": self.semantic_sha256,
             "pagination_trace_sha256": self.pagination_trace_sha256,
+        }
+
+    def to_market_data_payload(self) -> dict[str, object]:
+        """The row-level replay identity, deliberately excluding mutable receipts."""
+
+        return {
+            "symbol": self.symbol,
+            "dataset_id": self.dataset_id,
+            "row_count": self.row_count,
+            "identity_sha256": self.identity_sha256,
+            "market_data_sha256": self.market_data_sha256,
         }
 
 
@@ -229,6 +244,7 @@ class CryptoMarketObservation:
     catalog_version: str
     window: CryptoObservationWindow
     sources: tuple[CryptoObservationSource, ...]
+    market_data_sha256: str
     observation_sha256: str
     authority: str = "none"
     execution_eligible: bool = False
@@ -247,6 +263,11 @@ class CryptoMarketObservation:
             raise CryptoMarketObservationError("crypto_observation_authority_invalid")
         if tuple(source.symbol for source in self.sources) != OBSERVATION_SYMBOLS:
             raise CryptoMarketObservationError("crypto_observation_sources_incomplete")
+        expected_market_data = _canonical_sha256(self.to_market_data_payload())
+        if self.market_data_sha256 != expected_market_data:
+            raise CryptoMarketObservationError(
+                "crypto_observation_market_data_digest_invalid"
+            )
         expected = _canonical_sha256(self.to_payload(include_digest=False))
         if self.observation_sha256 != expected:
             raise CryptoMarketObservationError("crypto_observation_digest_invalid")
@@ -258,6 +279,7 @@ class CryptoMarketObservation:
             "window_end": _iso(self.window.window_end),
             "observation_cutoff": _iso(self.window.observation_cutoff),
             "sources": [source.to_payload() for source in self.sources],
+            "market_data_sha256": self.market_data_sha256,
             "authority": self.authority,
             "execution_eligible": self.execution_eligible,
             "capital_write_eligible": self.capital_write_eligible,
@@ -266,6 +288,21 @@ class CryptoMarketObservation:
         if include_digest:
             payload["observation_sha256"] = self.observation_sha256
         return payload
+
+    def to_market_data_payload(self) -> dict[str, object]:
+        """Return row/identity evidence suitable for current replay checks.
+
+        Current-query receipts may advance between otherwise identical reads. Their
+        receipt and observation timestamps remain part of the full evidence digest,
+        but are not mistaken for market-row drift.
+        """
+
+        return {
+            "contract": OBSERVATION_CONTRACT,
+            "catalog_version": self.catalog_version,
+            "window_end": _iso(self.window.window_end),
+            "sources": [source.to_market_data_payload() for source in self.sources],
+        }
 
 
 def _validate_run(
@@ -351,6 +388,8 @@ def _validate_run(
         receipt_id=metadata.receipt_id,
         data_through=data_through,
         observed_at=observed_at,
+        identity_sha256=run.identity_sha256,
+        market_data_sha256=run.ordered_rows_sha256,
         semantic_sha256=run.semantic_sha256,
         pagination_trace_sha256=run.pagination_trace_sha256,
     )
@@ -408,12 +447,21 @@ def collect_market_observation(
         sources.append(
             _validate_run(run, symbol=symbol, dataset_id=dataset_id, window=window)
         )
+    sources_tuple = tuple(sources)
+    market_data_payload = {
+        "contract": OBSERVATION_CONTRACT,
+        "catalog_version": expected_catalog_version,
+        "window_end": _iso(window.window_end),
+        "sources": [source.to_market_data_payload() for source in sources_tuple],
+    }
+    market_data_sha256 = _canonical_sha256(market_data_payload)
     payload = {
         "contract": OBSERVATION_CONTRACT,
         "catalog_version": expected_catalog_version,
         "window_end": _iso(window.window_end),
         "observation_cutoff": _iso(window.observation_cutoff),
-        "sources": [source.to_payload() for source in sources],
+        "sources": [source.to_payload() for source in sources_tuple],
+        "market_data_sha256": market_data_sha256,
         "authority": "none",
         "execution_eligible": False,
         "capital_write_eligible": False,
@@ -422,7 +470,8 @@ def collect_market_observation(
     return CryptoMarketObservation(
         catalog_version=expected_catalog_version,
         window=window,
-        sources=tuple(sources),
+        sources=sources_tuple,
+        market_data_sha256=market_data_sha256,
         observation_sha256=_canonical_sha256(payload),
     )
 
