@@ -39,7 +39,10 @@ from Ashare.trading_copilot_projection import (
     _source,
     publish_projection_batch,
 )
-from shared.runtime.ashare_runtime_ports import load_verified_ashare_runtime_authority_bundle
+from shared.runtime.ashare_runtime_ports import (
+    AshareRuntimeAuthorityLoadBlocked,
+    load_verified_ashare_runtime_authority_bundle,
+)
 from shared.runtime_test.sharedsignals_v1_integration_probe import load_probe_manifest
 from shared.data.sharedsignals_v1 import SharedSignalsV1Client, SharedSignalsV1Config
 from shared.data.tradingdatas_transport import build_runtime_transport
@@ -111,15 +114,20 @@ def company_facts_from_verified_observation(
     schema_majors = {item.schema_major for item in manifest.datasets}
     if len(schema_majors) != 1:
         raise TradingCopilotObservationError("copilot_observation_schema_major_mismatch")
-    bundle = load_verified_ashare_runtime_authority_bundle(
-        state_root=Path(state_root),
-        profile_id=manifest.profile_id,
-        catalog_version=manifest.catalog_version,
-        decision_as_of=manifest.as_of,
-        manifest_as_of=manifest.as_of,
-        manifest_sha256=manifest.manifest_sha256,
-        schema_major=next(iter(schema_majors)),
-    )
+    try:
+        bundle = load_verified_ashare_runtime_authority_bundle(
+            state_root=Path(state_root),
+            profile_id=manifest.profile_id,
+            catalog_version=manifest.catalog_version,
+            decision_as_of=manifest.as_of,
+            manifest_as_of=manifest.as_of,
+            manifest_sha256=manifest.manifest_sha256,
+            schema_major=next(iter(schema_majors)),
+        )
+    except AshareRuntimeAuthorityLoadBlocked as exc:
+        raise TradingCopilotObservationError(
+            f"copilot_observation_bundle_blocked:{exc}"
+        ) from exc
     master_dataset_id = next(
         (item.dataset_id for item in manifest.datasets if item.probe_role == "security_master"),
         None,
@@ -498,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--valid-until", required=True)
     parser.add_argument("--batch-output", type=Path, required=True)
     parser.add_argument("--projection-output-root", type=Path, required=True)
+    parser.add_argument("--result-output", type=Path, required=True)
     arguments = parser.parse_args(argv)
     try:
         decision_time = datetime.fromisoformat(arguments.decision_time.replace("Z", "+00:00"))
@@ -553,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
         "blockedDatasetIds": list(blocked_event_datasets),
         "sentimentLabelsInvented": False,
     }
+    result["resultOutput"] = str(arguments.result_output.resolve())
+    _atomic_json(arguments.result_output.resolve(), result)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

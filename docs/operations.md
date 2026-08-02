@@ -985,7 +985,8 @@ python3 -m Ashare.trading_copilot_observation_worker \
   --evidence-use historical_display \
   --valid-until 2026-08-03T09:00:00+08:00 \
   --batch-output /absolute/private-staging/projection-batch.json \
-  --projection-output-root /absolute/private-runtime/stock-intelligence
+  --projection-output-root /absolute/private-runtime/stock-intelligence \
+  --result-output /absolute/private-staging/worker-result.json
 ```
 
 退出 `0` 只证明本批 projection/receipt 已原子发布。`delayed_paper` 仍要求一个 bar cadence 加 jitter；休市日显式使用 `historical_display` 时只允许展示带当前查询回执的旧行情并固定标记 `stale`，它不证明历史 first-seen/revision 链，不取得 historical-PIT 训练、延迟模拟或执行资格。stdout 的 `symbolCount` 是本批真实覆盖；`eventCoverage.blockedDatasetIds` 非空表示相应事件数据集失败关闭，不能用摘要、缓存或演示事件补位。输出中的 `forecast=null` 是正常停止线，只有另行通过冻结OOS、校准、覆盖率、费用与基线门禁后才可发布正式预测。

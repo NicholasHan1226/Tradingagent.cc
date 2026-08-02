@@ -222,6 +222,38 @@ def test_company_facts_loader_binds_one_verified_source(tmp_path: Path) -> None:
     assert load_company_facts(path)["600000.SH"]["source"]["receiptId"] == "company-receipt"
 
 
+def test_company_observation_load_failure_is_structured(monkeypatch, tmp_path: Path) -> None:
+    dataset = SimpleNamespace(schema_major=2, probe_role="security_master")
+    manifest = SimpleNamespace(
+        datasets=(dataset,),
+        profile_id="profile-v1",
+        catalog_version="catalog-v1",
+        as_of=datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc),
+        manifest_sha256=_sha("manifest"),
+    )
+    monkeypatch.setattr(observation_worker, "load_probe_manifest", lambda path: manifest)
+
+    def blocked(**kwargs):
+        raise observation_worker.AshareRuntimeAuthorityLoadBlocked(
+            "observation_membership_missing"
+        )
+
+    monkeypatch.setattr(
+        observation_worker,
+        "load_verified_ashare_runtime_authority_bundle",
+        blocked,
+    )
+
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_observation_bundle_blocked:observation_membership_missing",
+    ):
+        company_facts_from_verified_observation(
+            manifest_path=tmp_path / "manifest.json",
+            state_root=tmp_path / "state",
+        )
+
+
 def test_company_facts_can_only_come_from_verified_observation_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import Ashare.trading_copilot_observation_worker as module
 
