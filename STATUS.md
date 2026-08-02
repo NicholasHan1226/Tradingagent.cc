@@ -14,22 +14,17 @@
 
 > **2026-08-02 TradingCopilot V4 个股终端候选：** 当前开发分支把个股首屏重排为行情主区与公司资料/证据共识/舆论温度右栏，关注列表改为抽屉；重大价格变化、公告、新闻和舆论按股票代码并列展示，证据共识明确不是分析师一致预期，舆论热度不转换为上涨概率。该候选只消费正式只读个股投影或明确 `demo_fixture`，只保留 Copilot `human_intent_only` 写面；未新增 Quant Core 资本、订单、样本或晋级写入口。生产文件、runtime 与正式个股投影数据仍未改变。
 
-> **2026-08-02 周末双市场运行复核：** Crypto G5 核心 timer 为
-> `enabled/active`，并固定到 immutable release
-> `e2c159e90d458d8859c0a1b37b8de83f07665c4a`，不依赖服务器 TA `current`
-> symlink。只读 health 与 acceptance timers 已在比对安装字节和回滚命令后启用；首个
-> health 自动轮与随后核心自动轮均为 `success/exit0`。01:51 的 fresh 只读 health 与
-> acceptance 读回为 `healthy/balanced=true`，G5 已有 56 个 completed 5-minute
-> windows；最新连续段为 55 根/275 分钟，早期仍保留一个 10 分钟缺口。当前已完成两次
-> BTC/ETH 规则约束下的模拟买入与卖出闭环，均为 ETHUSDT 的
-> `momentum_reversal_observed` 退出；账户已平仓，现金/权益均为
-> `9994.46946191 USDT`，累计费用 `3.99402809 USDT`，已实现损益
-> `-5.53053809 USDT`，订单 4 笔、买卖各 2 笔、零重复 fill。该亏损只是早期工程样本，
-> 不代表策略胜率。24 小时 288 槽 acceptance 尚未完成，状态为 `not_ready`，
-> `next_action=continue_core_accumulation`，learning timer 继续关闭；
-> 真实交易、Testnet/Live broker、模型网络、自动晋级和自动风险扩张均为 false。只读
-> monitor 证据根为
-> `/opt/investment/release-evidence/tradingagent/20260801T234300Z-crypto-g5-readonly-monitor/`。
+> **2026-08-02 周末双市场运行复核：** 12:39 CST 的 Crypto G5 readback 为
+> `healthy/balanced=true`。累积器 timer 固定在 immutable release
+> `3a42c3fb234330dfa267df094e4b7e01ece13509`，只读 acceptance timer 固定在
+> `e2c159e90d458d8859c0a1b37b8de83f07665c4a`；两者所用 round-trip runtime/report
+> 文件字节一致，且均不依赖 TA `current=2b7b52b...`。当前有 150 个 completed
+> 5-minute windows、300 个经核验的 BTC/ETH 决策事件，订单18笔（买10/卖8）、持仓2个、
+> 零重复 fill，资本/持仓/订单/receipt 对账守恒；现金 `8001.20040507 USDT`、权益
+> `9998.17679567 USDT`、累计费用 `17.99427793 USDT`、已实现损益 `1.01868634 USDT`。
+> 这些是 sim-only 工程样本，不代表策略胜率或可交易收益。此前约2.5小时新鲜度缺口仍保留，
+> post-fix 的连续24小时/288槽 acceptance 未达成，learning timer 继续关闭。
+> 真实交易、Testnet/Live broker、模型网络、自动晋级和自动风险扩张均为 false。
 >
 > A股 20260731 状态包完成周末只读日结：48 个预期 5 分钟槽中实际 40 个，缺少
 > 09:35、09:40、13:05、13:10、13:15、13:20、13:35、14:25；
@@ -63,12 +58,14 @@
 > 不能信任自报hash。候选尚未合入或部署，旧 consumer 在迁移前仍按现有manifest
 > fail closed。
 
-> **2026-08-01 有效运行版本解析候选：** 独立分支
-> `codex/effective-runtime-release-v1` 新增只读工具，分别核验 `current` symlink、
-> systemd effective ExecStart/WorkingDirectory 与 active process 的 cwd/exe/cmdline，
-> 发现 drop-in 固定旧 release、process/unit 不一致、active无PID或release不可证明时
-> fail closed。候选不读取 Environment/token/账本，不切换current、不重启service或
-> timer；尚未合入main或部署。
+> **2026-08-02 有效运行版本解析：** 工具已以 `9ddb4c1` 合入 `main`。它分别核验
+> `current` symlink、systemd effective ExecStart/WorkingDirectory 与 active process 的
+> cwd/exe/cmdline；systemd 省略空属性的真实运行面已新增回归并保持 fail-closed。一次
+> 服务器只读映射确认 A股 session/paper 都绑定 `current=2b7b52b...`，G5 累积器绑定
+> `3a42c3...`、G5 acceptance 绑定 `e2c159...`。oneshot service 空闲时固定
+> `runtime_verified=false`，不得把声明 release 误报为正在运行。该工具不读取
+> Environment/token/账本，不切换 current、不重启 service/timer；当前 immutable
+> TA release 尚未为此运维工具单独切换。
 
 > **2026-08-01 分层 readiness 合同候选：** 独立分支
 > `codex/readiness-authority-v1` 新增机器合同
