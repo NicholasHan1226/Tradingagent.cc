@@ -99,6 +99,10 @@ def test_g5_services_bind_only_the_g5_manifest_and_keep_g4_read_only() -> None:
         "ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-round-trip-epoch-g5-20260801"
         in service
     )
+    assert (
+        "AssertPathIsDirectory=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-round-trip-epoch-g5-20260801"
+        in service
+    )
     assert "binance" not in service.lower()
     assert "Unit=tradingagent-crypto-round-trip-g5-delayed-paper.service" in timer
     assert "WantedBy=timers.target" in timer

@@ -5,6 +5,7 @@ After=network-online.target
 AssertPathExists=/etc/tradingagent/crypto-delayed-paper-round-trip-g5.env
 AssertPathExists=/run/secrets/tradingagent/tradingdatas-crypto-read.token
 AssertPathExists=/opt/investment/releases/tradingagent/current/Crypto/delayed_paper_round_trip_runtime.py
+AssertPathIsDirectory=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-round-trip-epoch-g5-20260801
 
 [Service]
 Type=oneshot
