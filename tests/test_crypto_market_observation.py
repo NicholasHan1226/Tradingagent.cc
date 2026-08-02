@@ -179,6 +179,10 @@ def test_collects_the_exact_ten_symbol_closed_bar_cohort_without_authority() -> 
     assert all(query["limit"] == 13 and "cursor" not in query for query in queries)
     assert all(query["fields"] == list(BAR_FIELDS) for query in queries)
     assert all("as_of" not in query for query in queries)
+    assert all(
+        query["filters"]["open_time"]["between"][0].endswith("+00:00")
+        for query in queries
+    )
 
 
 def test_rejects_a_gap_even_when_metadata_is_ready() -> None:

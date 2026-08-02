@@ -96,6 +96,12 @@ def _iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _wire_iso(value: datetime) -> str:
+    """Use the formal current-query RFC3339 offset spelling on the wire."""
+
+    return value.astimezone(timezone.utc).isoformat()
+
+
 def _decimal(value: object, reason: str, *, positive: bool) -> Decimal:
     if not isinstance(value, str):
         raise CryptoMarketObservationError(reason)
@@ -384,8 +390,8 @@ def collect_market_observation(
                     "symbol": {"eq": symbol},
                     "open_time": {
                         "between": [
-                            _iso(window.first_open_time),
-                            _iso(window.last_open_time),
+                            _wire_iso(window.first_open_time),
+                            _wire_iso(window.last_open_time),
                         ]
                     },
                 },
