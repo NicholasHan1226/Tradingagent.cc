@@ -230,7 +230,7 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
   | sudo -u marketgraph tee "$EVIDENCE/npm-version.txt" >/dev/null
 ```
 
-`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、TradingDatas catalog/dataset/auth或DeepSeek credential。`TRADINGDATAS_API_URL`、旧名 tombstone `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 在旁路验收中必须显式为空，避免任何未退役旧 reader 把“变量缺失”解释为 localhost 默认地址并读取现役服务；这些空值不是 V1 联调配置。依赖范围未完全锁 hash 时，receipt 必须保存 Python/pip/Node/npm 版本、完整 `pip freeze`、requirements 与 `package-lock.json` 哈希；未保存这些证据不得声称复现了同一环境。若 evidence 文件先由 root 重定向创建，必须在任何 `marketgraph` 进程读回前恢复 evidence 目录 owner/mode，并把修正前失败保留在 receipt；不得把证据解析脚本失败误报成候选测试失败或静默覆盖。
+`env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、TradingDatas catalog/dataset/auth或DeepSeek credential。`TRADINGDATAS_API_URL`、旧名 tombstone `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 在旁路验收中必须显式为空，避免任何未退役旧 reader 把“变量缺失”解释为 localhost 默认地址并读取现役服务；这些空值不是 V1 联调配置。依赖范围未完全锁 hash 时，receipt 必须保存 Python/pip/Node/npm 版本、完整 `pip freeze`、requirements 与 `package-lock.json` 哈希；未保存这些证据不得声称复现了同一环境。所有 evidence 文件必须由 `marketgraph` 创建或通过该用户的 `tee` 写入；若已出现 root-owned 文件，保留失败证据、停止当前验收，不能在事后改 owner 后把同一轮误报为通过。
 
 只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
 
@@ -245,8 +245,12 @@ test "$CANARY_PORT" -ne 8787
 CANARY_OUTPUT="/opt/investment/tradingagent-canary-output/${RELEASE_ID}-api"
 WORKSPACE_LINK="$CANARY_OUTPUT/TradingAgent"
 PID_FILE="$EVIDENCE/canary.pid"
+CANARY_LOG="$EVIDENCE/canary-api.log"
 SERVER_JS="$CANDIDATE/front/dist-server/server/tradingAgentSnapshotHttp.js"
 NODE_BIN="$(sudo -u marketgraph env -i PATH="$SAFE_PATH" sh -c 'command -v node')"
+FRONT_STATE="$(systemctl is-active tradingagent-front-api.service || true)"
+FRONT_ENABLED="$(systemctl is-enabled tradingagent-front-api.service || true)"
+FRONT_LISTENER_BEFORE="$(ss -ltn | grep -F '127.0.0.1:8787' || true)"
 test -f "$SERVER_JS"
 test ! -e "$CANARY_OUTPUT"
 sudo install -d -m 0700 -o marketgraph -g marketgraph "$CANARY_OUTPUT"
@@ -273,9 +277,8 @@ sudo -u marketgraph env -i \
   FINANCE_WORKSPACE_ROOT="$WORKSPACE_LINK" \
   TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1 \
   TRADING_AGENT_SNAPSHOT_PORT="$CANARY_PORT" \
-  sh -c 'set -eu; printf "%s\n" "$$" > "$1"; exec "$2" "$3"' \
-  sh "$PID_FILE" "$NODE_BIN" "$SERVER_JS" \
-  > "$EVIDENCE/canary-api.log" 2>&1 &
+  sh -c 'set -eu; printf "%s\n" "$$" > "$1"; exec "$2" "$3" > "$4" 2>&1' \
+  sh "$PID_FILE" "$NODE_BIN" "$SERVER_JS" "$CANARY_LOG" &
 SUDO_PID=$!
 
 for _ in $(seq 1 50); do
@@ -291,10 +294,13 @@ for _ in $(seq 1 50); do
   curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" >/dev/null && break
   sleep 0.1
 done
-curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" >/dev/null
-curl -fsS -D "$EVIDENCE/canary-snapshot-headers.txt" \
+curl -fsS "http://127.0.0.1:$CANARY_PORT/healthz" \
+  | sudo -u marketgraph tee "$EVIDENCE/canary-health.json" >/dev/null
+curl -fsS -D - -o /dev/null \
   "http://127.0.0.1:$CANARY_PORT/api/trading-agent/snapshot" \
-  > "$EVIDENCE/canary-snapshot.json"
+  | sudo -u marketgraph tee "$EVIDENCE/canary-snapshot-headers.txt" >/dev/null
+curl -fsS "http://127.0.0.1:$CANARY_PORT/api/trading-agent/snapshot" \
+  | sudo -u marketgraph tee "$EVIDENCE/canary-snapshot.json" >/dev/null
 test -r "/proc/$CANARY_PID/cmdline"
 tr '\0' '\n' < "/proc/$CANARY_PID/cmdline" | grep -Fxq "$SERVER_JS"
 LISTENER="$(ss -ltnp | grep -F "127.0.0.1:$CANARY_PORT")"
@@ -344,7 +350,19 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 ! ss -ltn | grep -Fq "127.0.0.1:$CANARY_PORT"
-curl -fsS http://127.0.0.1:8787/healthz >/dev/null
+if [[ "$FRONT_STATE" = active ]]; then
+  curl -fsS http://127.0.0.1:8787/healthz \
+    | sudo -u marketgraph tee "$EVIDENCE/current-8787-health.json" >/dev/null
+elif [[ "$FRONT_STATE" = inactive && "$FRONT_ENABLED" = disabled && -z "$FRONT_LISTENER_BEFORE" ]]; then
+  # A deliberately retired front remains unavailable; candidate validation must
+  # neither start it nor use it as an implicit fallback.
+  test "$(systemctl is-active tradingagent-front-api.service || true)" = inactive
+  test "$(systemctl is-enabled tradingagent-front-api.service || true)" = disabled
+  ! ss -ltn | grep -Fq '127.0.0.1:8787'
+else
+  echo "unexpected front baseline: state=$FRONT_STATE enabled=$FRONT_ENABLED" >&2
+  exit 1
+fi
 ```
 
 验收至少证明：
@@ -353,7 +371,8 @@ curl -fsS http://127.0.0.1:8787/healthz >/dev/null
 - 顶层`mode=simulated`且所有真实交易标志为false；
 - snapshot的POST返回405，未知路由返回404；
 - canary停止后备用端口无监听；
-- 现役8787服务始终健康。
+- 若现役8787前端原本 active，始终健康；若它在 preflight 时已明确
+  `inactive + disabled`，则整个候选过程保持该退役状态、没有监听，也不作为回退路径。
 
 冻结fixture必须写到独立canary output root。A股基线fixture与Crypto `auto_sim_spot_cycle_v1.json`至少完成首次运行、同根幂等重放和跨根业务bundle字节一致性检查；CNFutures至少运行其fixture闭环聚焦测试。输出必须保持`non_authority`/`local_candidate`或`fixture_simulated`的精确市场语义，并明确`production_verified=false`、`real_trading_enabled=false`。Crypto还必须保持`execution_eligible=false`、`execution_authority=false`、`durable_execution_receipt=false`与`local_fixture_opening_baseline_only`。不得写正式SampleJournal、活动runtime根或前端投影根。
 
