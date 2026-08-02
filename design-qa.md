@@ -11,8 +11,6 @@ final result: passed
 ## Browser-rendered implementation
 
 - Desktop final: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/desktop-final.png` at `1660 x 770`.
-- Mobile final: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/mobile-overview.png` at `390 x 844`.
-- Mobile watchlist: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/mobile-watchlist.png` at `390 x 844`.
 - Same-frame comparison: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/reference-comparison-pass2.png`.
 - Verified URL state: `http://127.0.0.1:5174/?product=copilot&demo=1`.
 
@@ -43,14 +41,13 @@ The source image is a focused chart crop, while TradingCopilot keeps its account
 - `继续观察` requires a reason, trigger, invalidation condition and optional risk before writing the human-intent ledger.
 - The decision ledger displays plan, trigger, invalidation, actual action and review note separately.
 - Funds and holdings page shows both demo holdings (`000400.SZ`, `601899.SH`) and does not reduce the portfolio to the currently open stock.
-- Mobile bottom navigation reaches watchlist, funds/holdings and decision records; `390 px` viewport has no document-level horizontal overflow.
 - Browser console and warning log were empty after the complete interaction path.
 
 ## Required fidelity surfaces
 
 - Typography: existing Inter/system CJK stack; secondary text remains readable and semantic hierarchy is preserved.
 - Assets: existing Lucide icon family and Recharts chart implementation; no placeholder illustration or handcrafted fake asset.
-- Responsive behavior: desktop two-column terminal becomes a single-column stock workspace with fixed bottom navigation on mobile.
+- Scope: current acceptance covers the desktop terminal only. Existing responsive compatibility is preserved but is not claimed as part of this delivery.
 - Accessibility: named tabs, buttons, chart images, form fields and regions were verified through the DOM snapshot.
 
 ## Acceptance boundary
