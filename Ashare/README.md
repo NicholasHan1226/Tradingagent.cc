@@ -218,7 +218,7 @@ runner, units, environment, timers, production release, or real trading.
 ### Formal event/moneyflow shadow-parity sidecar
 
 `evidence_shadow_parity.py` is a separate, bounded acceptance sidecar for only
-`cn.dataset.anns_d`, `cn.dataset.moneyflow`, and
+`cn.dataset.anns_d`, `cn.dataset.major_news`, `cn.dataset.moneyflow`, and
 `cn.dataset.moneyflow_ths`. It reads an injected client through the same fixed
 `GET /v1/catalog` and `POST /v1/query` contract, freezes each target row from
 the catalog, and delegates the existing adapters' fingerprint, exact identity,
@@ -226,10 +226,12 @@ bounded-pagination, replay, metadata, receipt, lineage and PIT checks. It
 requires a caller-supplied frozen mainboard symbol set; it never broadens the
 Universe or accepts a restricted individual stock.
 
-The sidecar creates a separately scoped `evidence_only` client for
-`anns_d` and for the two moneyflow variants. It shares only the already-bound
-transport, never a broader dataset allow-list, so the moneyflow adapter keeps
-its source-isolation contract.
+The sidecar creates a separately scoped `evidence_only` client for the two
+event sources and for the two moneyflow variants. It shares only the
+already-bound transport, never a broader dataset allow-list, so the moneyflow
+adapter keeps its source-isolation contract. `major_news` receives no stock
+allow-list because it is explicitly macro context; its receipt still blocks the
+combined sidecar result if contract, freshness, replay, or lineage checks fail.
 
 The sidecar has a secret-free `--preflight` mode that validates only its
 manifest and fixed `http://127.0.0.1:18082` endpoint. A real parity run is not
