@@ -244,6 +244,7 @@ class _DatasetSpec:
     source_candidates: tuple[str, ...] = ("source",)
     default_entity: str | None = None
     naive_datetime_timezone: str | None = None
+    omit_as_of: bool = False
 
 
 _GENERIC_IDENTITY = (("event_id",),)
@@ -304,6 +305,10 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             source_candidates=("src", "source"),
             default_entity="CN-MACRO",
             naive_datetime_timezone="Asia/Shanghai",
+            # This public append-only feed has no as-of projection.  Current
+            # observation validity is instead bound by the query envelope's
+            # observed_at and the event-time checks below.
+            omit_as_of=True,
         ),
         "cn.dataset.disclosure_date": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY
@@ -373,6 +378,7 @@ class EvidenceDatasetProfile:
     max_pages: int
     max_rows: int
     page_limit: int
+    omit_as_of: bool = False
     catalog_route: str = FIXED_CATALOG_ROUTE
     query_route: str = FIXED_QUERY_ROUTE
 
@@ -405,6 +411,10 @@ class EvidenceDatasetProfile:
             raise AshareEvidenceContractError("ashare_evidence_schema_major_invalid")
         if type(self.optional_dataset) is not bool:
             raise AshareEvidenceContractError("ashare_evidence_optional_flag_invalid")
+        if type(self.omit_as_of) is not bool:
+            raise AshareEvidenceContractError(
+                "ashare_evidence_profile_as_of_policy_invalid"
+            )
         _sha256_text(
             self.dataset_contract_fingerprint,
             "ashare_evidence_dataset_contract_fingerprint_invalid",
@@ -584,6 +594,7 @@ class EvidenceDatasetProfile:
             "default_entity": spec.default_entity,
             "optional_dataset": dataset_id in OPTIONAL_DATASET_IDS,
             "naive_datetime_timezone": spec.naive_datetime_timezone,
+            "as_of_policy": "omitted" if spec.omit_as_of else "decision_time",
             "page_budgets": {
                 "max_pages": max_pages,
                 "max_rows": max_page_size * max_pages,
@@ -613,6 +624,7 @@ class EvidenceDatasetProfile:
             max_pages=max_pages,
             max_rows=max_page_size * max_pages,
             page_limit=max_page_size,
+            omit_as_of=spec.omit_as_of,
         )
 
 
@@ -1582,7 +1594,7 @@ class TradingDatasAshareEvidencePort:
                 schema_major=profile.schema_major,
                 fields=profile.default_fields,
                 filters=dict(filters),
-                as_of=decision.isoformat(),
+                as_of=None if profile.omit_as_of else decision.isoformat(),
                 order=profile.default_order or None,
                 limit=profile.page_limit,
             )
