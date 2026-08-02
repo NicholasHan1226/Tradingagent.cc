@@ -31,6 +31,14 @@ broker、Testnet、Live、模型网络、公开交易入口或真实交易权限
   `ashare_evidence_metadata_not_ready` 拒绝。它没有切换 `current`、启用新 unit、
   创建候选/订单/资本/训练事实或生成情绪标签。详见
   [event-evidence v2 readback](docs/reports/2026-08-02-trading-copilot-event-evidence-v2-readback.md)。
+- `cn.dataset.major_news` 已在独立的 `318efe7` 旁路 release 中完成一次正式
+  current-observation 读回：1 行、单页同观察重放一致、receipt/lineage 完整。
+  它的 public contract 不支持 `as_of`，因此侧车只对该宏观 append-only profile
+  省略该可选请求成员，并继续用 event time 与 envelope `observed_at` 验证当前可用性。
+  同轮的 `anns_d`、`moneyflow`、`moneyflow_ths` 均因 2026-07-31 日频事实超过
+  86400 秒 SLA 被拒绝，四源 sidecar 如实为 `blocked`；零名义金额、无 LLM、候选、
+  资金、订单、timer 或 `current` 变更。详见
+  [major-news shadow readback](docs/reports/2026-08-02-ashare-major-news-shadow-readback.md)。
 - 当前为休市日，不把旧分钟行、HTTP 200 或 timer active 误报为 fresh market evidence。
 
 ## Crypto
@@ -59,9 +67,10 @@ TradingAgent 只消费 `GET /v1/catalog` 与 `POST /v1/query`。数据集必须�
 其 receipt、lineage、identity、pagination、freshness、quality 与 degraded 合同；不得
 直读 SQLite、调用 provider、使用旧 8082/SharedSignals 或文件 fallback。
 
-TradingDatas 已提供通用 `windowed_unique_primary_key` 与有界 fanout 完整性能力；它
-没有激活 `major_news` 或任何新数据集。新闻、资金流与其它日频接口只能在各自真实
-receipt + formal API readback 后进入消费者。
+TradingDatas 已提供通用 `windowed_unique_primary_key` 与有界 fanout 完整性能力；
+`major_news` 已有真实 receipt + formal API readback，并且只可作为当前、零名义的
+宏观 shadow 观察。新闻、资金流与其它日频接口仍必须逐项满足自己的 fresh metadata
+与 formal API readback，不能由这个单项结果代替。
 
 ## 下一停止线
 
@@ -70,9 +79,10 @@ receipt + formal API readback 后进入消费者。
    资本和 timer 不依赖 learning 成功。
 2. **A股**：下一个交易时段验证 30 股当前分钟链；500 股仅在 TD 的两轮正式 500/500
    canary 通过后由独立 scale500 root late-start。
-3. **事件/新闻**：等待 TD 以通用 registry/collector 提供 `major_news` 等数据集的
-   producer receipt、完整性合同与正式 API metadata；不得用候选能力或空 HTTP 响应
-   提前放行。
+3. **事件/新闻**：在下一个日频事实 fresh 窗口重跑四源 sidecar；只有 `anns_d`、
+   `moneyflow` 与 `moneyflow_ths` 也逐项 fresh/valid/non-degraded 时，才可把
+   `major_news` 的已验证 current-observation 一并报告为完整 shadow parity。它仍
+   不产生候选、训练、订单或 LLM 网络调用。
 4. **CNFutures**：等待 TD 的最小 M 日盘 5 分钟纵向切片。通过后先运行 read-only
    observation/hold/risk-reject，不直接进入 delayed-paper。
 
