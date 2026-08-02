@@ -1,6 +1,16 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 14:08 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 14:47 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 A股 systemd TradingDatas 依赖修复已部署：** 已合入 `main` 的 unit
+> 修复提交 `e55602e` 被作为冻结工件安装到服务器。五个 A股 30/scale500 service 的
+> `After=` 均从不存在的 `tradingdatas-api.service` 改为实际运行的
+> `tradingdatas-v1-internal.service`；安装前文件已备份，安装后 unit 哈希与冻结工件逐一一致，
+> `systemd-analyze verify` 与 `daemon-reload` 通过。30 股 session/paper timer 保持
+> `enabled/active`、下次仍为 2026-08-03 09:18/09:49 CST；scale500 timer 保持
+> `disabled/inactive`，没有运行 worker、没有切换 `current=2b7b52b...`、没有触及资本、
+> broker 或真实交易。回滚副本与读回证据位于
+> `/opt/investment/release-evidence/tradingagent/20260802T064551Z-ashare-systemd-td-v1-unit-e55602e/`。
 
 > **2026-08-02 TradingCopilot V8 正式投影与组合复核交付：** 仓库已新增 one-shot `Ashare.trading_copilot_observation_worker`，复用正式分钟 Evidence Gate，并只允许从五项 committed A股 observation 或显式 TradingDatas receipt 输入读取证券主数据；公告/新闻经固定 catalog/query 事件端口进入，缺代码、URL或回执即不展示，缺分类回执时不猜测情绪方向。批量 publisher 在任何写入前验证全批并为行情、主数据、分页和事件来源生成 detached receipt。个人组合页新增申报资金一致性、单股/已验证行业集中、T+1及人工计划风险复核。新增同冻结样本的最后值/线性基线/Kronos Challenger 评估，校验无未来标签、同样本、成本、有效独立样本和误差/方向/效用门槛；Kronos 最多进入影子比较，不取得校准、晋级、资金或交易 authority。桌面端代码、合同、全量测试与浏览器交互已通过；正式数据覆盖和隔离运行状态只按对应批次回执与运行读回陈述，不能由代码批量容量推断。
 
@@ -15,8 +25,8 @@
 > `/opt/investment/release-evidence/tradingagent/20260802T060533Z-ta-crypto-observation-c17d511-replay/`。
 >
 > 同时对现役 G5 做只读健康复核：timer enabled/active，最近 one-shot
-> `Result=success`；`168` 个 observation/completion、`336` 个核验 decision events、
-> 无 pending，completion lag `500s/1800s`，资本账本 `balanced=true`。它仍是
+> `Result=success`；`176` 个 observation/completion、`352` 个核验 decision events、
+> 无 pending，completion lag `464s/1800s`，资本账本 `balanced=true`。它仍是
 > 10,000 USDT、BTC/ETH 的 sim-only 往返样本链，`REAL_TRADING_ENABLED=false`、
 > Testnet/Live broker、模型网络、自动晋级和自动风险扩张均保持关闭；该状态不代表
 > 策略收益或实盘资格。
