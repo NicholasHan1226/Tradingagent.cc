@@ -1,7 +1,7 @@
 [Unit]
 Description=TradingAgent A-share scale-500 delayed five-minute paper accumulator
 Wants=network-online.target
-After=network-online.target tradingdatas-api.service
+After=network-online.target tradingdatas-v1-internal.service
 OnFailure=tradingagent-ashare-minute-scale500-rollback.service
 ConditionPathExists=/etc/tradingagent/ashare-minute-scale500.env
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token

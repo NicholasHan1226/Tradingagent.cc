@@ -1,7 +1,7 @@
 [Unit]
 Description=Run one explicit A-share scale-500 partial-session delayed-paper step
 Wants=network-online.target
-After=network-online.target tradingdatas-api.service
+After=network-online.target tradingdatas-v1-internal.service
 OnFailure=tradingagent-ashare-minute-scale500-rollback.service
 ConditionPathExists=/etc/tradingagent/ashare-minute-scale500.env
 ConditionPathExists=/var/lib/tradingagent/ashare-minute-paper-scale500/current-canary-receipt.json
