@@ -7,7 +7,8 @@
 
 | 层级 | 当前事实 | 证据边界 |
 | --- | --- | --- |
-| TradingAgent GitHub/main | `6a4e4bdc4359a1e401f07734e48563b6c168db39` | 含 TradingCopilot event-evidence v2 读回记录；不是生产切换。 |
+| 本地主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 本地 `main` 必须与远端主线同 head；状态页不固定会被自身提交淘汰的 SHA。 |
+| GitHub 主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 合入记录、CI 与精确 commit 以 GitHub 和 Git 历史为准；不是生产切换。 |
 | 三条市场 lane | A股、Crypto、CNFutures 均与 `origin/main` 同 head，`ahead=0`、`behind=0` | 三个长期 worktree 均干净；它们不是独立生产 release。 |
 | TA production current | `2b7b52bfb552247478c5a78f854d365eb9fcc335` | 当前 A股 timer 使用该 immutable release。 |
 | TradingDatas current | `983c5f63fee1c166db40859420f817b04cc639d9` | 18082 仅内部监听，generic collector timer active。 |
@@ -58,9 +59,9 @@ TradingAgent 只消费 `GET /v1/catalog` 与 `POST /v1/query`。数据集必须�
 其 receipt、lineage、identity、pagination、freshness、quality 与 degraded 合同；不得
 直读 SQLite、调用 provider、使用旧 8082/SharedSignals 或文件 fallback。
 
-TradingDatas PR #55 已合入主线，提供通用 `windowed_unique_primary_key` 与有界
-fanout 完整性能力；它没有激活 `major_news` 或任何新数据集。新闻、资金流与其它日频
-接口只能在各自真实 receipt + formal API readback 后进入消费者。
+TradingDatas 已提供通用 `windowed_unique_primary_key` 与有界 fanout 完整性能力；它
+没有激活 `major_news` 或任何新数据集。新闻、资金流与其它日频接口只能在各自真实
+receipt + formal API readback 后进入消费者。
 
 ## 下一停止线
 
@@ -79,6 +80,9 @@ fanout 完整性能力；它没有激活 `major_news` 或任何新数据集。�
 
 - `STATUS.md` 只写当前事实与下一停止线；历史候选、失败与临时数字写入对应 readback
   报告、仓外 evidence 或 Git 历史。
+- `current-v1` 只指固定 catalog/query 的当前消费者；旧 reader 属于
+  `active-compatibility` 或 `retirement-pending`，已阻断的旧运行入口保持
+  `hard-blocked`，不得成为 fallback。
 - 当前临时开发分支已清理；仅保留 `main` 与三个长期 market lane worktree。
 - candidate、main、server release、runtime、真实 receipt/API readback 和真实交易
   权限必须分别陈述，任何一层都不能替代另一层。
