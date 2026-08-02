@@ -1,6 +1,23 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 12:20 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 14:08 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 Crypto 十币种健康观测候选：** PR [#166](https://github.com/NicholasHan1226/Tradingagent.cc/pull/166) 已经 CI 通过并普通合入 `main`
+> `c17d511`。服务器只构建了独立候选 worktree
+> `ta-crypto-observation-c17d511`，没有切换 TradingAgent `current` 或安装新 timer。
+> 用正式 18083 的既有 TA token-file 做同一 closed 5-minute window 的两次只读查询后，
+> 十个币种均为 13 根、`ready/fresh/valid/non-degraded`；新的
+> `market_data_sha256` 两次一致。完整 `observation_sha256` 因 current-query 的
+> `observed_at` 前进而不同，仍保留为独立审计事实，不能误报为行情或 receipt 漂移。
+> 观测器固定 `authority=none`，无 capital/order/model/promotion 权限。证据位于
+> `/opt/investment/release-evidence/tradingagent/20260802T060533Z-ta-crypto-observation-c17d511-replay/`。
+>
+> 同时对现役 G5 做只读健康复核：timer enabled/active，最近 one-shot
+> `Result=success`；`168` 个 observation/completion、`336` 个核验 decision events、
+> 无 pending，completion lag `500s/1800s`，资本账本 `balanced=true`。它仍是
+> 10,000 USDT、BTC/ETH 的 sim-only 往返样本链，`REAL_TRADING_ENABLED=false`、
+> Testnet/Live broker、模型网络、自动晋级和自动风险扩张均保持关闭；该状态不代表
+> 策略收益或实盘资格。
 
 > **2026-08-02 TradingCopilot V6 可见个股终端候选：** 普通 `/?product=copilot` 在个人资金、关注和持仓均为空时，不再用空账本遮挡个股能力；默认展示明确标记且只读的 `000400.SZ` 研究界面预览，完整保留七页签、行情/成交量、未校准预测门禁、公告新闻舆论、显著价格变化、多空证据、公司资料和证据共识。预览不进入个人关注、持仓或决策记录，三类决定按钮停用；决策台新增独立 A 股搜索，打开任意合法代码不会写个人状态，只有明确点击“加入关注”或录入持仓才写 TradingCopilot namespace。浏览器在 `1440×900`、`1024×768` 和 `390×844` 验证无横向溢出，fresh tab 无 console warning/error；该候选仍不连接券商、不改变 Quant Core 资本、订单、样本、模型或晋级 authority，生产文件与 runtime 尚未改变。
 
