@@ -44,7 +44,11 @@ from shared.runtime.ashare_runtime_ports import (
     load_verified_ashare_runtime_authority_bundle,
 )
 from shared.runtime_test.sharedsignals_v1_integration_probe import load_probe_manifest
-from shared.data.sharedsignals_v1 import SharedSignalsV1Client, SharedSignalsV1Config
+from shared.data.sharedsignals_v1 import (
+    SharedSignalsV1Client,
+    SharedSignalsV1Config,
+    SharedSignalsV1Error,
+)
 from shared.data.tradingdatas_transport import build_runtime_transport
 
 
@@ -554,7 +558,12 @@ def main(argv: list[str] | None = None) -> int:
             input_path=batch_path,
             output_root=arguments.projection_output_root.resolve(),
         )
-    except (TradingCopilotObservationError, TradingCopilotProjectionError, ValueError) as exc:
+    except (
+        TradingCopilotObservationError,
+        TradingCopilotProjectionError,
+        SharedSignalsV1Error,
+        ValueError,
+    ) as exc:
         print(json.dumps({"status": "blocked", "reason": str(exc)}, ensure_ascii=False))
         return 2
     result["eventCoverage"] = {
