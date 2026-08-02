@@ -1,8 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { analysisFromSignal } from '../copilot/analysis'
 import { TradingCopilotPage } from './TradingCopilotPage'
 
+beforeEach(() => {
+  window.localStorage.clear()
+  Object.defineProperty(window, 'scrollTo', { configurable: true, value: vi.fn(), writable: true })
+})
 afterEach(() => vi.unstubAllGlobals())
 
 describe('TradingCopilotPage', () => {
@@ -35,15 +39,18 @@ describe('TradingCopilotPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '加入人工计划' }))
     expect(await screen.findByText(/加入计划（未下单）/)).toBeInTheDocument()
-    await waitFor(() => expect(window.localStorage.length).toBe(1))
+    await waitFor(() => expect(screen.getByText(/演示修改未保存/)).toBeInTheDocument())
+    expect(window.localStorage.length).toBe(0)
   })
 
   it('adds an uncovered A-share and fails closed to no formal analysis', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
     await screen.findByText('今天先看条件，再做决定')
+    fireEvent.click(screen.getByRole('button', { name: '关注列表' }))
     fireEvent.change(screen.getByLabelText('输入股票代码和名称'), { target: { value: '000001.SZ 平安银行' } })
     fireEvent.click(screen.getByRole('button', { name: '加入关注' }))
+    fireEvent.click(screen.getByRole('button', { name: /平安银行.*000001\.SZ/ }))
     expect((await screen.findAllByText('暂无正式分析')).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '加入人工计划' })).toBeDisabled()
     expect(screen.getByText('行情图表暂不可用')).toBeInTheDocument()
@@ -74,9 +81,45 @@ describe('TradingCopilotPage', () => {
     expect(screen.queryByText(/50%|80%|向上 \d+%|向下 \d+%/)).not.toBeInTheDocument()
     expect(screen.getByText('Challenger · 同门禁对照')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /比亚迪.*002594\.SZ.*61.*等待/ }))
+    fireEvent.click(screen.getByRole('button', { name: '关注列表' }))
+    fireEvent.click(screen.getByRole('button', { name: /比亚迪.*002594\.SZ/ }))
     fireEvent.click(screen.getByRole('tab', { name: '概述' }))
     expect((await screen.findAllByText('演示公告：月度经营数据说明')).length).toBeGreaterThan(0)
     expect(screen.queryByText('演示公告：项目进展提示')).not.toBeInTheDocument()
+  })
+
+  it('separates the complete portfolio from the selected stock relationship', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
+    await screen.findByText('今天先看条件，再做决定')
+
+    expect(screen.getByText('当前个股持仓')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /查看全部 2 只持仓/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '资金与持仓' }))
+    expect(screen.getByRole('heading', { name: '资金与持仓' })).toBeInTheDocument()
+    expect(screen.getAllByText('2 只申报持仓').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /许继电气.*000400\.SZ/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /紫金矿业.*601899\.SH/ })).toBeInTheDocument()
+  })
+
+  it('distinguishes holdings from watch-only stocks in the watchlist', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
+    await screen.findByText('今天先看条件，再做决定')
+    fireEvent.click(screen.getByRole('button', { name: '关注列表' }))
+
+    expect(screen.getByText('4 只关注 · 2 只持仓')).toBeInTheDocument()
+    expect(screen.getAllByText('持仓')).toHaveLength(2)
+    expect(screen.getAllByText('仅关注')).toHaveLength(2)
+  })
+
+  it('does not inject demo holdings into the normal personal URL state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    render(<TradingCopilotPage demoPreviewEnabled={false} onOpenQuant={() => undefined} />)
+
+    expect(await screen.findByText('先录入真实关注和持仓')).toBeInTheDocument()
+    expect(screen.getByText('尚未录入个人状态')).toBeInTheDocument()
+    expect(screen.queryByText('许继电气')).not.toBeInTheDocument()
+    expect(screen.queryByText('紫金矿业')).not.toBeInTheDocument()
   })
 })
