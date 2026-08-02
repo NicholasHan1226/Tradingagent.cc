@@ -220,7 +220,11 @@ def load_current_event_snapshots(
     token_file: Path | str,
     decision_time: datetime,
     symbols: Sequence[str],
-) -> tuple[tuple[EventEvidenceSnapshot, ...], tuple[str, ...]]:
+) -> tuple[
+    tuple[EventEvidenceSnapshot, ...],
+    tuple[str, ...],
+    dict[str, str],
+]:
     """Read current event evidence through the same two fixed TD V1 routes.
 
     A dataset-level failure is returned as explicit coverage debt.  It never
@@ -249,29 +253,43 @@ def load_current_event_snapshots(
     port = TradingDatasAshareEvidencePort(client)
     try:
         profiles = port.freeze_profiles(audit_ledger=audit)
-    except AshareEvidenceContractError:
-        return (), tuple(PRIMARY_DATASET_IDS)
+    except AshareEvidenceContractError as exc:
+        return (
+            (),
+            tuple(PRIMARY_DATASET_IDS),
+            {dataset_id: exc.reason_code for dataset_id in PRIMARY_DATASET_IDS},
+        )
     accepted: list[EventEvidenceSnapshot] = []
     blocked: list[str] = []
+    blocked_reasons: dict[str, str] = {}
     allowed = tuple(sorted(set(symbols)))
     for dataset_id in PRIMARY_DATASET_IDS:
         profile = profiles.by_dataset.get(dataset_id)
         if profile is None:
             blocked.append(dataset_id)
+            blocked_reasons[dataset_id] = "ashare_evidence_profile_missing"
             continue
+        filter_contract = dict(profile.filter_operators)
+        filters: dict[str, Any] = {}
+        if (
+            profile.symbol_field is not None
+            and "in" in filter_contract.get(profile.symbol_field, ())
+        ):
+            filters[profile.symbol_field] = {"in": list(allowed)}
         try:
             snapshot = port.load_event_snapshot(
                 profile=profile,
-                filters={},
+                filters=filters,
                 decision_time=decision_time,
                 audit_ledger=audit,
                 allowed_symbols=allowed,
             )
-        except AshareEvidenceContractError:
+        except AshareEvidenceContractError as exc:
             blocked.append(dataset_id)
+            blocked_reasons[dataset_id] = exc.reason_code
             continue
         accepted.extend(snapshot.events)
-    return tuple(accepted), tuple(blocked)
+    return tuple(accepted), tuple(blocked), blocked_reasons
 
 
 def _published_at(event: EventEvidenceSnapshot) -> str:
@@ -536,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise TradingCopilotObservationError("copilot_observation_manifest_required")
             company_facts = load_company_facts(arguments.company_facts.resolve())
         if arguments.load_current_events:
-            events, blocked_event_datasets = load_current_event_snapshots(
+            events, blocked_event_datasets, blocked_event_reasons = load_current_event_snapshots(
                 minute_config=config,
                 token_file=arguments.token_file.resolve(),
                 decision_time=decision_time,
@@ -545,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             events = load_event_bundle(arguments.event_bundle.resolve() if arguments.event_bundle else None)
             blocked_event_datasets = ()
+            blocked_event_reasons = {}
         batch = build_projection_batch(
             snapshot=snapshot,
             company_facts=company_facts,
@@ -569,6 +588,7 @@ def main(argv: list[str] | None = None) -> int:
     result["eventCoverage"] = {
         "acceptedEventCount": len(events),
         "blockedDatasetIds": list(blocked_event_datasets),
+        "blockedDatasetReasons": blocked_event_reasons,
         "sentimentLabelsInvented": False,
     }
     result["resultOutput"] = str(arguments.result_output.resolve())

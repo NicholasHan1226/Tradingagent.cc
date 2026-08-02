@@ -178,7 +178,7 @@ def test_event_catalog_failure_returns_explicit_full_coverage_debt(monkeypatch) 
         BlockedPort,
     )
 
-    events, blocked = load_current_event_snapshots(
+    events, blocked, reasons = load_current_event_snapshots(
         minute_config=SimpleNamespace(
             transport_id="http-json-v1",
             base_url="http://127.0.0.1:18082",
@@ -193,6 +193,70 @@ def test_event_catalog_failure_returns_explicit_full_coverage_debt(monkeypatch) 
 
     assert events == ()
     assert blocked == tuple(PRIMARY_DATASET_IDS)
+    assert reasons == {
+        dataset_id: "ashare_evidence_catalog_identity_mismatch"
+        for dataset_id in PRIMARY_DATASET_IDS
+    }
+
+
+def test_event_loader_pushes_allowed_symbols_into_query(monkeypatch) -> None:
+    dataset_id = "cn.dataset.research_report"
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(observation_worker, "PRIMARY_DATASET_IDS", (dataset_id,))
+    monkeypatch.setattr(
+        observation_worker,
+        "build_runtime_transport",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        observation_worker,
+        "SharedSignalsV1Client",
+        lambda *args, **kwargs: object(),
+    )
+
+    class FilteredPort:
+        def __init__(self, client) -> None:
+            pass
+
+        def freeze_profiles(self, *, audit_ledger):
+            return SimpleNamespace(
+                by_dataset={
+                    dataset_id: SimpleNamespace(
+                        symbol_field="ts_code",
+                        filter_operators=(("ts_code", ("eq", "in")),),
+                    )
+                }
+            )
+
+        def load_event_snapshot(self, **kwargs):
+            seen["filters"] = kwargs["filters"]
+            return SimpleNamespace(events=())
+
+    monkeypatch.setattr(
+        observation_worker,
+        "TradingDatasAshareEvidencePort",
+        FilteredPort,
+    )
+
+    events, blocked, reasons = load_current_event_snapshots(
+        minute_config=SimpleNamespace(
+            transport_id="http-json-v1",
+            base_url="http://127.0.0.1:18082",
+            expected_catalog_version="catalog-v1",
+            access_policy_id="test-read-v1",
+            timeout_seconds=1,
+        ),
+        token_file=Path("/not-read-by-test"),
+        decision_time=datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc),
+        symbols=("002294.SZ", "000333.SZ"),
+    )
+
+    assert events == ()
+    assert blocked == ()
+    assert reasons == {}
+    assert seen["filters"] == {
+        "ts_code": {"in": ["000333.SZ", "002294.SZ"]}
+    }
 
 
 def test_omits_event_without_verifiable_url_and_never_invents_sentiment() -> None:
