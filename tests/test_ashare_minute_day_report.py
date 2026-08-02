@@ -155,13 +155,27 @@ def test_day_report_marks_complete_clean_fixture_as_learning_projection_ready(
         value.strftime("%Y-%m-%d %H:%M:%S")
         for value in session_bar_ends(date(2026, 7, 28))
     ]
-    report = build_minute_day_report(
-        state_bundle=_bundle(
-            tmp_path / "state.json",
-            accepted_bar_ends=slots,
-            audit_rejections=0,
-        )
+    path = _bundle(
+        tmp_path / "state.json",
+        accepted_bar_ends=slots,
+        audit_rejections=0,
     )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_history"] = [
+        {
+            **raw["last_receipt"],
+            "bar_end": bar_end,
+            "snapshot_sha256": snapshot_sha256,
+        }
+        for bar_end, snapshot_sha256 in zip(
+            raw["loop_state"]["accepted_bar_ends"],
+            raw["loop_state"]["processed_snapshot_hashes"],
+            strict=True,
+        )
+    ]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    report = build_minute_day_report(state_bundle=path)
 
     assert report["session_integrity"]["learning_eligible"] is True
     assert report["operational_readiness"] == {
@@ -173,6 +187,50 @@ def test_day_report_marks_complete_clean_fixture_as_learning_projection_ready(
         "audit_rejection_count": 0,
         "reconciliation_complete": True,
     }
+
+
+def test_day_report_blocks_full_session_without_per_bar_receipt_history(
+    tmp_path: Path,
+) -> None:
+    slots = [
+        value.strftime("%Y-%m-%d %H:%M:%S")
+        for value in session_bar_ends(date(2026, 7, 28))
+    ]
+
+    report = build_minute_day_report(
+        state_bundle=_bundle(
+            tmp_path / "state.json",
+            accepted_bar_ends=slots,
+            audit_rejections=0,
+        )
+    )
+
+    assert report["session_integrity"]["full_session_complete"] is True
+    assert report["session_integrity"]["learning_eligible"] is False
+    assert report["evidence"]["receipt_history_complete"] is False
+    assert report["operational_readiness"]["blocker_codes"] == [
+        "receipt_history_incomplete"
+    ]
+
+
+def test_day_report_rejects_truncated_per_bar_receipt_history(
+    tmp_path: Path,
+) -> None:
+    slots = [
+        value.strftime("%Y-%m-%d %H:%M:%S")
+        for value in session_bar_ends(date(2026, 7, 28))
+    ]
+    path = _bundle(
+        tmp_path / "state.json",
+        accepted_bar_ends=slots,
+        audit_rejections=0,
+    )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["receipt_history"] = [raw["last_receipt"]]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(MinuteDayReportError, match="receipt_history_invalid"):
+        build_minute_day_report(state_bundle=path)
 
 
 def test_day_report_exposes_reconciliation_blocker_deterministically(
