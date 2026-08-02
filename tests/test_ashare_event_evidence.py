@@ -539,6 +539,47 @@ def test_anns_d_formal_identity_including_title_is_catalog_bound() -> None:
     )
 
 
+def test_current_primary_identity_variants_are_catalog_bound() -> None:
+    rows = _catalog_rows()
+    current_fields = {
+        "cn.dataset.cctv_news": (
+            ["date", "title", "content"],
+            ["date", "title", "content"],
+        ),
+        "cn.dataset.irm_qa_sh": (
+            ["ts_code", "name", "trade_date", "q", "a", "pub_time"],
+            ["trade_date", "ts_code", "pub_time", "q", "a"],
+        ),
+        "cn.dataset.irm_qa_sz": (
+            ["ts_code", "name", "trade_date", "q", "a", "pub_time", "industry"],
+            ["trade_date", "ts_code", "pub_time", "q", "a"],
+        ),
+        "cn.dataset.research_report": (
+            [
+                "trade_date", "abstr", "title", "report_type", "author",
+                "name", "ts_code", "inst_csname", "ind_name", "url",
+            ],
+            ["trade_date", "title", "author", "url"],
+        ),
+    }
+    for dataset_id, (fields, identity_fields) in current_fields.items():
+        index = next(
+            i for i, row in enumerate(rows) if row["dataset_id"] == dataset_id
+        )
+        rows[index] = _catalog_row(
+            dataset_id,
+            fields=fields,
+            identity_fields=identity_fields,
+        )
+
+    profiles = TradingDatasAshareEvidencePort(
+        _client(_Transport(catalog_rows=rows), configured_ids=frozenset(PRIMARY_DATASET_IDS))
+    ).freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
+
+    for dataset_id, (_, identity_fields) in current_fields.items():
+        assert profiles.by_dataset[dataset_id].identity_fields == tuple(identity_fields)
+
+
 def test_major_news_formal_catalog_profile_is_optional_and_macro_scoped() -> None:
     rows = _catalog_rows()
     target_index = next(

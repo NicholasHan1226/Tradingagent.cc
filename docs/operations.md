@@ -966,6 +966,41 @@ A股 forward-label CLI 与 sample-ops CLI 合同都要求：
 
 这两个模块当前仍位于`runtime_test`且默认reader尚在旧消费者退役清单中，所以不得把参数合同写成已接通SS V1的实时运行入口，也不得对默认review/Journal根执行。现阶段只允许通过注入reader的测试或显式隔离fixture验证；待同`as_of` V1 cutover、受信artifact registry和生产calendar readback完成后，才能另行登记scheduler命令。顶层fixture tier、`production_eligible=false`和内容hash都不能自行证明calendar来源真实。
 
+### 4.3 TradingCopilot 正式只读投影 one-shot
+
+该入口只发布桌面 TradingCopilot 的只读个股投影，不是量化 day loop、候选生成器或交易服务。运行前必须保持 `REAL_TRADING_ENABLED=false`，使用现有 TA 只读 token-file，且输出到专用仓外 `0700/0600` root。证券主数据二选一：五项 committed A股 observation bundle，或显式的 `tradingagent.trading_copilot_company_facts.v1` 回执输入。两者不能混用。
+
+```bash
+export REAL_TRADING_ENABLED=false
+
+python3 -m Ashare.trading_copilot_observation_worker \
+  --minute-manifest /absolute/session/minute-manifest.json \
+  --reference-facts /absolute/session/reference-facts.json \
+  --observation-manifest /absolute/observation-manifest.json \
+  --observation-state-root /absolute/committed/research-snapshots \
+  --load-current-events \
+  --token-file /absolute/tradingdatas-read.token \
+  --decision-time 2026-08-02T16:00:00+08:00 \
+  --trading-date 2026-07-31 \
+  --evidence-use historical_display \
+  --valid-until 2026-08-03T09:00:00+08:00 \
+  --batch-output /absolute/private-staging/projection-batch.json \
+  --projection-output-root /absolute/private-runtime/stock-intelligence \
+  --result-output /absolute/private-staging/worker-result.json
+```
+
+退出 `0` 只证明本批 projection/receipt 已原子发布。`delayed_paper` 仍要求一个 bar cadence 加 jitter；休市日显式使用 `historical_display` 时只允许展示带当前查询回执的旧行情并固定标记 `stale`，它不证明历史 first-seen/revision 链，不取得 historical-PIT 训练、延迟模拟或执行资格。stdout 的 `symbolCount` 是本批真实覆盖；`eventCoverage.blockedDatasetIds` 非空表示相应事件数据集失败关闭，不能用摘要、缓存或演示事件补位。输出中的 `forecast=null` 是正常停止线，只有另行通过冻结OOS、校准、覆盖率、费用与基线门禁后才可发布正式预测。
+
+Kronos/基线评估只消费外部冻结的同样本预测，不下载权重、不训练、不晋级：
+
+```bash
+python3 -m Ashare.trading_copilot_forecast_evaluation \
+  --input /absolute/frozen/forecast-evaluation-input.json \
+  --output /absolute/private-research/forecast-evaluation.json
+```
+
+`eligible_for_shadow_comparison` 仍然只能进入研究影子比较。不得据此修改 Quant Core Champion、Copilot概率展示、资本、订单、broker、timer或生产路由。
+
 ## 5. 每个模拟日的验收顺序
 
 固定阶段为：

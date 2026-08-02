@@ -218,6 +218,7 @@ class MinuteEvidenceUse(str, Enum):
 
     LOW_LATENCY_EXECUTION = "low_latency_execution"
     DELAYED_PAPER = "delayed_paper"
+    HISTORICAL_DISPLAY = "historical_display"
 
 
 @dataclass(frozen=True)
@@ -631,12 +632,12 @@ class MinuteBarEvidence:
             raise MinuteDataContractError("minute_evidence_time_order_invalid")
         if not isinstance(self.evidence_use, MinuteEvidenceUse):
             raise MinuteDataContractError("minute_evidence_use_invalid")
-        maximum_latency = (
-            MAX_MINUTE_DATA_LATENCY
-            if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION
-            else MAX_DELAYED_PAPER_LATENCY
-        )
-        if (
+        maximum_latency = None
+        if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION:
+            maximum_latency = MAX_MINUTE_DATA_LATENCY
+        elif self.evidence_use is MinuteEvidenceUse.DELAYED_PAPER:
+            maximum_latency = MAX_DELAYED_PAPER_LATENCY
+        if maximum_latency is not None and (
             available - bar_end > maximum_latency
             or decision - bar_end > maximum_latency
         ):
@@ -672,7 +673,10 @@ class MinuteBarEvidence:
 
     @property
     def delayed_paper_eligible(self) -> bool:
-        return self.available_at - self.bar_end <= MAX_DELAYED_PAPER_LATENCY
+        return bool(
+            self.evidence_use is MinuteEvidenceUse.DELAYED_PAPER
+            and self.available_at - self.bar_end <= MAX_DELAYED_PAPER_LATENCY
+        )
 
     def canonical_payload(self) -> dict[str, Any]:
         def stamp(value: datetime) -> str:
@@ -946,11 +950,38 @@ def _map_run(
     metadata = envelope.metadata
     if envelope.dataset_id != profile.dataset_id:
         raise MinuteDataContractError("minute_query_binding_mismatch")
-    if metadata.state.strip().lower() != "ready" or metadata.degraded is not False:
-        raise MinuteDataContractError("minute_metadata_not_ready")
-    if not _fresh(metadata.freshness):
-        raise MinuteDataContractError("minute_metadata_not_fresh")
-    if not _valid_quality(metadata.quality):
+    historical_display = evidence_use is MinuteEvidenceUse.HISTORICAL_DISPLAY
+    state = metadata.state.strip().lower()
+    if historical_display:
+        freshness_only_degraded = (
+            state == "stale"
+            and metadata.degraded is True
+            and bool(metadata.reasons)
+            and set(metadata.reasons) <= {"freshness_sla_exceeded"}
+        )
+        if not (
+            (state == "ready" and metadata.degraded is False)
+            or freshness_only_degraded
+        ):
+            raise MinuteDataContractError("minute_metadata_not_displayable")
+    else:
+        if state != "ready" or metadata.degraded is not False:
+            raise MinuteDataContractError("minute_metadata_not_ready")
+        if not _fresh(metadata.freshness):
+            raise MinuteDataContractError("minute_metadata_not_fresh")
+    quality = metadata.quality
+    quality_evidence = quality.get("evidence")
+    historical_freshness_only_quality = (
+        historical_display
+        and freshness_only_degraded
+        and quality.get("state") == "degraded"
+        and quality.get("valid") is False
+        and isinstance(quality_evidence, list)
+        and bool(quality_evidence)
+        and all(isinstance(item, str) for item in quality_evidence)
+        and set(quality_evidence) <= {"freshness_sla_exceeded"}
+    )
+    if not _valid_quality(quality) and not historical_freshness_only_quality:
         raise MinuteDataContractError("minute_metadata_quality_invalid")
     if not _complete_lineage(metadata.lineage):
         raise MinuteDataContractError("minute_metadata_lineage_incomplete")

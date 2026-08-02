@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradingagent.trading_copilot_projection_batch_input.v1",
+  "title": "Verified TradingCopilot projection publisher input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractId", "generatedAt", "validUntil", "items"],
+  "properties": {
+    "contractId": { "const": "tradingagent.trading_copilot_projection_batch_input.v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "validUntil": { "type": "string", "format": "date-time" },
+    "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transportContract", "datasetId", "receiptId", "receiptSha256", "dataThrough", "retrievedAt", "freshness", "adjustment"],
+      "properties": {
+        "transportContract": { "const": "tradingdatas_v1_catalog_query" },
+        "datasetId": { "type": "string", "minLength": 1 },
+        "receiptId": { "type": "string", "minLength": 1 },
+        "receiptSha256": { "$ref": "#/$defs/sha256" },
+        "dataThrough": { "type": "string", "format": "date-time" },
+        "retrievedAt": { "type": "string", "format": "date-time" },
+        "freshness": { "enum": ["fresh", "stale", "degraded"] },
+        "adjustment": { "enum": ["none", "forward", "backward", "unknown"] }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receiptId", "receiptSha256"],
+      "properties": {
+        "receiptId": { "type": "string", "minLength": 1 },
+        "receiptSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "seriesPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "price", "volume", "forecastMedian", "forecastNarrowEnvelope", "forecastWideEnvelope"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "price": { "type": ["number", "null"], "minimum": 0 },
+        "volume": { "type": ["number", "null"], "minimum": 0 },
+        "forecastMedian": { "type": ["number", "null"], "minimum": 0 },
+        "forecastNarrowEnvelope": { "$ref": "#/$defs/interval" },
+        "forecastWideEnvelope": { "$ref": "#/$defs/interval" }
+      }
+    },
+    "interval": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "array", "prefixItems": [{ "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 }], "items": false, "minItems": 2, "maxItems": 2 }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "detail", "sourceRef", "knownAt"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 },
+        "sourceRef": { "type": "string", "minLength": 1 },
+        "knownAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "summary", "source", "sourceClass", "sourceConfidence", "publishedAt", "retrievedAt", "revisedAt", "novelty", "sentiment", "sentimentConfidence", "impactDirection", "impactHorizon", "relatedSymbols", "url", "sourceReceiptId", "sourceReceiptSha256", "contentSha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["announcement", "news", "sentiment"] },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "sourceClass": { "enum": ["primary_disclosure", "professional_news", "aggregated_sentiment"] },
+        "sourceConfidence": { "enum": ["high", "medium", "low"] },
+        "publishedAt": { "type": "string", "format": "date-time" },
+        "retrievedAt": { "type": "string", "format": "date-time" },
+        "revisedAt": { "type": ["string", "null"], "format": "date-time" },
+        "novelty": { "enum": ["new", "updated", "repeated"] },
+        "sentiment": { "enum": ["positive", "neutral", "negative"] },
+        "sentimentConfidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "impactDirection": { "enum": ["positive", "neutral", "negative", "uncertain"] },
+        "impactHorizon": { "enum": ["intraday", "short_term", "medium_term", "unknown"] },
+        "relatedSymbols": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+        "url": { "type": "string", "format": "uri" },
+        "sourceReceiptId": { "type": "string", "minLength": 1 },
+        "sourceReceiptSha256": { "$ref": "#/$defs/sha256" },
+        "contentSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "name", "source", "marketRules", "quote", "company", "series", "events", "summary", "support", "oppose", "buyConditions", "invalidation"],
+      "properties": {
+        "symbol": { "type": "string", "pattern": "^(0|3|6)[0-9]{5}\\.(SH|SZ)$" },
+        "name": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/source" },
+        "sourceReceipts": { "type": "array", "items": { "$ref": "#/$defs/receipt" } },
+        "marketRules": {
+          "type": "object", "additionalProperties": false,
+          "required": ["board", "lotSize", "tPlusOne", "priceLimitPct", "stStatus", "tradingStatus", "session", "corporateActionAdjusted"],
+          "properties": {
+            "board": { "enum": ["main", "gem", "star", "beijing", "unknown"] },
+            "lotSize": { "const": 100 }, "tPlusOne": { "const": true },
+            "priceLimitPct": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+            "stStatus": { "enum": ["normal", "st", "star_st", "unknown"] },
+            "tradingStatus": { "enum": ["trading", "suspended", "unknown"] },
+            "session": { "enum": ["call_auction", "continuous", "midday_break", "closing_auction", "closed", "unknown"] },
+            "corporateActionAdjusted": { "type": ["boolean", "null"] }
+          }
+        },
+        "quote": {
+          "type": "object", "additionalProperties": false,
+          "required": ["price", "previousClose", "open", "high", "low", "volume", "turnoverRate", "peTtm", "marketCapCny"],
+          "properties": {
+            "price": { "type": "number", "exclusiveMinimum": 0 }, "previousClose": { "type": "number", "exclusiveMinimum": 0 },
+            "open": { "type": "number", "exclusiveMinimum": 0 }, "high": { "type": "number", "exclusiveMinimum": 0 },
+            "low": { "type": "number", "exclusiveMinimum": 0 }, "volume": { "type": "number", "minimum": 0 },
+            "turnoverRate": { "type": ["number", "null"], "minimum": 0 }, "peTtm": { "type": ["number", "null"] },
+            "marketCapCny": { "type": ["number", "null"], "minimum": 0 }
+          }
+        },
+        "company": {
+          "type": "object", "additionalProperties": false,
+          "required": ["exchange", "industry", "area", "listingDate", "description", "source"],
+          "properties": {
+            "exchange": { "enum": ["SH", "SZ"] }, "industry": { "type": "string", "minLength": 1 },
+            "area": { "type": "string", "minLength": 1 }, "listingDate": { "type": "string", "format": "date" },
+            "description": { "type": "string", "minLength": 1 }, "source": { "$ref": "#/$defs/source" }
+          }
+        },
+        "series": {
+          "type": "object", "additionalProperties": false,
+          "required": ["1D", "5D", "1M", "6M", "YTD", "1Y"],
+          "properties": {
+            "1D": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/seriesPoint" } },
+            "5D": { "type": "array", "items": { "$ref": "#/$defs/seriesPoint" } },
+            "1M": { "type": "array", "items": { "$ref": "#/$defs/seriesPoint" } },
+            "6M": { "type": "array", "items": { "$ref": "#/$defs/seriesPoint" } },
+            "YTD": { "type": "array", "items": { "$ref": "#/$defs/seriesPoint" } },
+            "1Y": { "type": "array", "items": { "$ref": "#/$defs/seriesPoint" } }
+          }
+        },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+        "summary": { "type": "string", "minLength": 1 },
+        "support": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+        "oppose": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+        "buyConditions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "invalidation": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

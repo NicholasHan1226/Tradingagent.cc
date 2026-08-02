@@ -138,6 +138,25 @@
 .portfolio-checks small { color: #5f6c74; font-size: 8px; }
 .portfolio-checks .reconcile-pending strong { color: var(--copilot-amber); font-size: 13px; }
 .management-footnote { margin-top: 12px !important; color: #647179; font-size: 9px; line-height: 1.55; }
+.portfolio-assistant { padding: 22px; margin-top: 18px; margin-bottom: 18px; }
+.portfolio-assistant-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--copilot-line); margin: 16px 0; }
+.portfolio-assistant-summary span { display: grid; gap: 6px; padding: 15px; border-right: 1px solid var(--copilot-line); }
+.portfolio-assistant-summary span:last-child { border-right: 0; }
+.portfolio-assistant-summary small { color: var(--copilot-muted); font-size: 11px; }
+.portfolio-assistant-summary strong { color: var(--copilot-text); font-size: 16px; }
+.portfolio-check-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.portfolio-check-list article { display: flex; gap: 10px; padding: 14px; border: 1px solid var(--copilot-line); background: rgba(255, 255, 255, .012); }
+.portfolio-check-list article i { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; flex: 0 0 auto; background: #53c7b3; box-shadow: 0 0 0 4px rgba(83, 199, 179, .09); }
+.portfolio-check-list article.attention i { background: #d8a45d; box-shadow: 0 0 0 4px rgba(216, 164, 93, .09); }
+.portfolio-check-list article.blocked i { background: #d46670; box-shadow: 0 0 0 4px rgba(212, 102, 112, .09); }
+.portfolio-check-list strong { display: block; margin-bottom: 4px; font-size: 13px; }
+.portfolio-check-list p { margin: 0; color: var(--copilot-muted); font-size: 12px; line-height: 1.55; }
+.industry-exposure { margin-top: 18px; }
+.industry-exposure h3 { margin: 0 0 9px; font-size: 13px; }
+.industry-exposure > div { display: flex; justify-content: space-between; gap: 18px; padding: 10px 0; border-top: 1px solid var(--copilot-line); }
+.industry-exposure span { display: grid; gap: 3px; }
+.industry-exposure small { color: var(--copilot-muted); }
+.industry-exposure b { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .empty-desk { min-height: calc(100vh - 136px); padding: 70px 26px; display: grid; place-items: start center; background: #090e13; }
 .empty-desk-card { width: min(680px, 100%); padding: 48px; text-align: center; }
 .empty-desk-card > svg { color: var(--copilot-teal); }

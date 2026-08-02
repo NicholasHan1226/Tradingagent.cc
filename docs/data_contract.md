@@ -142,7 +142,7 @@ daily_bars      -> cn.equity.daily
 
 这三个 dataset ID 是经过上游 catalog/handoff 审核的 TA 业务映射，不是由 provider
 名称、alias、返回行或 URL 猜测。builder 只依据 catalog 的 `fields`、
-`filter_operators`、`default_order`、`limits` 和 `schema_major` 生成查询合同；
+`filter_operators`（允许包含非默认返回但 catalog 明确声明为可过滤的字段）、`default_order`、`limits` 和 `schema_major` 生成查询合同；
 完整分页交易日历用于确定最近完成开市日，证券主数据和该日 daily 再分别执行
 `limit=1` 当前 metadata/source-proof 预检。三项任一不是
 `ACCEPT/weight=1.0` 就不发布 current manifest。其它 active dataset 无论 catalog
@@ -894,6 +894,9 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 - TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。每次读取返回 `ETag`，写入必须使用 `If-Match`；服务端串行化写入并校验 state hash、previous hash、sequence 与 event hash 的 append-only 链。浏览器草稿只能标为未同步状态，不得静默覆盖新版本。人工决策的计划理由/触发/失效/风险上限与事后实际动作/复盘分离，二者都不得写入量化 capital/execution/sample/decision namespace。
 - 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。正式投影还必须附带 `tradingagent.trading_copilot_stock_projection_receipt.v1` 独立回执、定型证据强度、数据/证据/模型/人工行动四层就绪度、A股交易约束，以及逐事件来源和内容回执。普通 signal confidence 不等于证据强度。演示数据不得冒充实时；无正式定型分析时不得自动形成人工计划。
 - Quant Core 与 TradingCopilot 的能力归属以 `TradingCopilot/contracts/shared_capability_boundary.v1.json` 为机器合同：共享项只能作为 `evidence_only` 只读投影；Quant专属资本/订单/样本/晋级与Copilot专属申报账户/持仓/人工意图禁止双向写入或身份转换。正式预测、Kronos、OOS与校准由 learning/research plane 统一产生，前端计算不得成为正式预测证据。
+- TradingCopilot 正式投影写侧输入固定为 `tradingagent.trading_copilot_projection_batch_input.v1`。行情主来源、证券主数据、附加分页回执和逐事件回执必须绑定 TradingDatas V1 receipt/proof SHA；整个批次必须在第一次写入前完成验证。输出固定为每股 projection + `tradingagent.trading_copilot_stock_projection_receipt.v1`，以及无资本/订单/券商/训练/晋级权限的 batch receipt。
+- 事件没有代码、可验证 URL、发布时间/采集时间、内容 SHA 或来源回执时不得进入正式投影；没有正式情绪分类与影响评估回执时只能输出 `sentiment=neutral`、`sentimentConfidence=null`、`impactDirection=uncertain`。这表示未知，不表示中性结论已经被模型证明。
+- 预测对照输入固定为 `tradingagent.trading_copilot_forecast_evaluation_input.v1`，同一条样本必须同时包含最后值、线性/岭基线及可选 Challenger 的冻结预测，并满足 `decisionTime < labelTime <= generatedAt`。评估只发布误差、方向、扣成本效用、覆盖率和独立样本数；Kronos 通过门槛只获得影子比较资格，`promotionAuthority=false`。它不能被 Copilot 或 Quant Core 反向转换成晋级、资金、风险或订单 authority。
 
 ## 版本与变更
 

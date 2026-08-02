@@ -148,10 +148,6 @@ def dataset_contract_material(catalog_row: Mapping[str, Any]) -> Mapping[str, An
     operators: dict[str, list[str]] = {}
     for raw_field in sorted(raw_operators):
         field = _text(raw_field, "catalog_row.filter_operators field")
-        if field not in default_fields:
-            raise ValueError(
-                "catalog_row.filter_operators field must be a default field"
-            )
         values = _unique_text_list(
             raw_operators[raw_field],
             f"catalog_row.filter_operators.{field}",

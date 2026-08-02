@@ -710,6 +710,54 @@ def test_latency_future_and_replay_mismatch_fail_closed() -> None:
     assert audit.records()[0].reason_code == "minute_evidence_latency_exceeded"
 
 
+def test_historical_display_accepts_old_receipt_without_delayed_authority() -> None:
+    stale = _metadata(
+        state="stale",
+        degraded=True,
+        freshness={"state": "stale", "stale": True},
+        quality={
+            "state": "degraded",
+            "valid": False,
+            "evidence": ["freshness_sla_exceeded"],
+        },
+        reasons=["freshness_sla_exceeded"],
+    )
+    snapshot, audit = _load(
+        _Transport(metadata=stale),
+        decision_time="2026-08-02T09:00:00+08:00",
+        evidence_use=MinuteEvidenceUse.HISTORICAL_DISPLAY,
+    )
+
+    assert audit.records() == ()
+    assert all(
+        bar.evidence_use is MinuteEvidenceUse.HISTORICAL_DISPLAY
+        for bar in snapshot.bars
+    )
+    assert all(bar.delayed_paper_eligible is False for bar in snapshot.bars)
+    assert all(bar.execution_latency_eligible is False for bar in snapshot.bars)
+
+
+def test_historical_display_rejects_nonfreshness_degradation() -> None:
+    degraded = _metadata(
+        state="stale",
+        degraded=True,
+        freshness={"state": "stale", "stale": True},
+        quality={
+            "state": "degraded",
+            "valid": False,
+            "evidence": ["quality_threshold_failed"],
+        },
+        reasons=["quality_threshold_failed"],
+    )
+
+    with pytest.raises(MinuteDataContractError, match="not_displayable"):
+        _load(
+            _Transport(metadata=degraded),
+            decision_time="2026-08-02T09:00:00+08:00",
+            evidence_use=MinuteEvidenceUse.HISTORICAL_DISPLAY,
+        )
+
+
 def test_delayed_paper_allows_one_cadence_plus_shared_jitter_only() -> None:
     delayed = _metadata(
         observed_at="2026-07-27T09:45:30+08:00",
