@@ -969,7 +969,19 @@ def _map_run(
             raise MinuteDataContractError("minute_metadata_not_ready")
         if not _fresh(metadata.freshness):
             raise MinuteDataContractError("minute_metadata_not_fresh")
-    if not _valid_quality(metadata.quality):
+    quality = metadata.quality
+    quality_evidence = quality.get("evidence")
+    historical_freshness_only_quality = (
+        historical_display
+        and freshness_only_degraded
+        and quality.get("state") == "degraded"
+        and quality.get("valid") is False
+        and isinstance(quality_evidence, list)
+        and bool(quality_evidence)
+        and all(isinstance(item, str) for item in quality_evidence)
+        and set(quality_evidence) <= {"freshness_sla_exceeded"}
+    )
+    if not _valid_quality(quality) and not historical_freshness_only_quality:
         raise MinuteDataContractError("minute_metadata_quality_invalid")
     if not _complete_lineage(metadata.lineage):
         raise MinuteDataContractError("minute_metadata_lineage_incomplete")

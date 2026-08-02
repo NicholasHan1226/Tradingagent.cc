@@ -715,6 +715,11 @@ def test_historical_display_accepts_old_receipt_without_delayed_authority() -> N
         state="stale",
         degraded=True,
         freshness={"state": "stale", "stale": True},
+        quality={
+            "state": "degraded",
+            "valid": False,
+            "evidence": ["freshness_sla_exceeded"],
+        },
         reasons=["freshness_sla_exceeded"],
     )
     snapshot, audit = _load(
@@ -737,6 +742,11 @@ def test_historical_display_rejects_nonfreshness_degradation() -> None:
         state="stale",
         degraded=True,
         freshness={"state": "stale", "stale": True},
+        quality={
+            "state": "degraded",
+            "valid": False,
+            "evidence": ["quality_threshold_failed"],
+        },
         reasons=["quality_threshold_failed"],
     )
 
