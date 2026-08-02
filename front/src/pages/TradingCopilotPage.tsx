@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Activity, ArrowLeftRight, Bell, BookOpenCheck, Building2, ChevronRight,
-  Eye, Gauge, LayoutDashboard, ListPlus, Pencil, Plus, Search, ShieldCheck, Sparkles,
+  Eye, Gauge, LayoutDashboard, ListPlus, Pencil, Plus, Search, ShieldCheck, Sparkles, Star,
   MessageCircleMore, WalletCards, X,
 } from 'lucide-react'
 import { copilotDemoAnalyses, createCopilotDemoState, unavailableAnalysis } from '../copilot/demo'
@@ -16,16 +16,20 @@ import '../styles/trading-copilot.css'
 
 type CopilotView = 'desk' | 'watchlist' | 'portfolio' | 'decisions'
 type HoldingTarget = Pick<CopilotHolding, 'symbol' | 'name'>
+const researchPreviewStock: HoldingTarget = { symbol: '000400.SZ', name: '许继电气' }
 
 export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPreviewEnabled: boolean; onOpenQuant: () => void }) {
   const [state, setState] = useState<TradingCopilotState | null>(null)
   const [persistence, setPersistence] = useState<CopilotPersistence>('local_draft')
   const [selectedSymbol, setSelectedSymbol] = useState('')
+  const [browseTarget, setBrowseTarget] = useState<HoldingTarget | null>(null)
+  const [researchPreview, setResearchPreview] = useState(false)
   const [view, setView] = useState<CopilotView>('desk')
   const [accountEditorOpen, setAccountEditorOpen] = useState(false)
   const [holdingTarget, setHoldingTarget] = useState<HoldingTarget | null>(null)
   const [notice, setNotice] = useState('')
   const [query, setQuery] = useState('')
+  const [deskQuery, setDeskQuery] = useState('')
   const [holdingQuery, setHoldingQuery] = useState('')
   const [usingDemoSeed, setUsingDemoSeed] = useState(false)
   const [tradingAgentAnalyses, setTradingAgentAnalyses] = useState<Record<string, CopilotAnalysis>>({})
@@ -44,7 +48,10 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
       const next = ensureHoldingsWatched(demoPreviewEnabled ? createCopilotDemoState() : loaded.state)
       setUsingDemoSeed(demoPreviewEnabled)
       setState(next)
-      setSelectedSymbol(next.watchlist[0]?.symbol ?? '')
+      const initial = next.watchlist[0] ?? researchPreviewStock
+      setBrowseTarget(initial)
+      setSelectedSymbol(initial.symbol)
+      setResearchPreview(!demoPreviewEnabled && next.watchlist.length === 0)
       setPersistence(loaded.persistence)
     })
     return () => { active = false }
@@ -79,22 +86,25 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     return () => { active = false }
   }, [selectedSymbol])
 
-  const selected = state?.watchlist.find((item) => item.symbol === selectedSymbol) ?? state?.watchlist[0]
+  const selected = state?.watchlist.find((item) => item.symbol === selectedSymbol)
+    ?? (browseTarget?.symbol === selectedSymbol ? browseTarget : undefined)
+    ?? state?.watchlist[0]
   const selectedFormalIntelligence = selected ? formalStockIntelligence[selected.symbol] : undefined
   const analysis = selected
     ? tradingAgentAnalyses[selected.symbol]
-      ?? (!selectedFormalIntelligence && demoPreviewEnabled ? copilotDemoAnalyses[selected.symbol] : undefined)
+      ?? (!selectedFormalIntelligence && (demoPreviewEnabled || researchPreview) ? copilotDemoAnalyses[selected.symbol] : undefined)
       ?? unavailableAnalysis(selected.symbol, selected.name)
     : unavailableAnalysis('------.--', '未选择股票')
   const intelligence = selected
     ? selectedFormalIntelligence
-      ?? (demoPreviewEnabled && analysis.mode === 'demo_fixture' ? getDemoStockIntelligence(selected.symbol) : null)
+      ?? ((demoPreviewEnabled || researchPreview) && analysis.mode === 'demo_fixture' ? getDemoStockIntelligence(selected.symbol) : null)
       ?? unavailableStockIntelligence(selected.symbol, selected.name)
     : unavailableStockIntelligence(analysis.symbol, analysis.name)
   const holding = state?.holdings.find((item) => item.symbol === selected?.symbol)
   const latestDecision = state?.decisions.findLast((item) => item.symbol === selected?.symbol)
   const investedCost = useMemo(() => state?.holdings.reduce((sum, item) => sum + item.quantity * item.averageCost, 0) ?? 0, [state?.holdings])
   const hasDeclaredState = Boolean(state && (state.account.declaredCapitalCny > 0 || state.account.availableCashCny > 0 || state.holdings.length > 0 || state.watchlist.length > 0 || state.decisions.length > 0))
+  const selectedIsWatched = Boolean(selected && state?.watchlist.some((item) => item.symbol === selected.symbol))
 
   async function commit(transform: (current: TradingCopilotState) => TradingCopilotState, message: string) {
     if (!state) return
@@ -121,7 +131,40 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     const now = new Date().toISOString()
     await commit((current) => ({ ...current, watchlist: [...current.watchlist, { ...parsed, addedAt: now }] }), '已加入关注；暂无证据时不会生成建议')
     setSelectedSymbol(parsed.symbol)
+    setBrowseTarget(parsed)
+    setResearchPreview(false)
     setQuery('')
+  }
+
+  function browseStock() {
+    const parsed = parseWatchQuery(deskQuery)
+    if (!parsed || !isAshareSymbol(parsed.symbol)) {
+      setNotice('请输入“000001.SZ 平安银行”或六位 A 股代码')
+      return
+    }
+    setBrowseTarget(parsed)
+    setSelectedSymbol(parsed.symbol)
+    setResearchPreview(false)
+    setDeskQuery('')
+    setView('desk')
+  }
+
+  async function addSelectedToWatchlist() {
+    if (!state || !selected) return
+    if (state.watchlist.some((item) => item.symbol === selected.symbol)) {
+      setNotice('这只股票已在关注列表中')
+      return
+    }
+    const addedAt = new Date().toISOString()
+    await commit((current) => ({ ...current, watchlist: [...current.watchlist, { symbol: selected.symbol, name: selected.name, addedAt }] }), '已加入关注；个人持仓没有改变')
+    setResearchPreview(false)
+  }
+
+  function showResearchPreview() {
+    setBrowseTarget(researchPreviewStock)
+    setSelectedSymbol(researchPreviewStock.symbol)
+    setResearchPreview(true)
+    setView('desk')
   }
 
   function beginAddHolding() {
@@ -143,6 +186,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
         : [...current.watchlist, { symbol: nextHolding.symbol, name: nextHolding.name, addedAt: now }],
     }), '申报持仓已更新，并已纳入关注')
     setSelectedSymbol(nextHolding.symbol)
+    setBrowseTarget({ symbol: nextHolding.symbol, name: nextHolding.name })
+    setResearchPreview(false)
     setHoldingTarget(null)
     setHoldingQuery('')
   }
@@ -159,11 +204,21 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
       return
     }
     await commit((current) => ({ ...current, watchlist: current.watchlist.filter((item) => item.symbol !== symbol) }), '已移除关注')
-    if (selectedSymbol === symbol) setSelectedSymbol(state.watchlist.find((item) => item.symbol !== symbol)?.symbol ?? '')
+    if (selectedSymbol === symbol) {
+      const next = state.watchlist.find((item) => item.symbol !== symbol) ?? researchPreviewStock
+      setBrowseTarget(next)
+      setSelectedSymbol(next.symbol)
+      setResearchPreview(next.symbol === researchPreviewStock.symbol && state.watchlist.length === 1)
+    }
   }
 
   function openStock(symbol: string) {
+    const target = state?.watchlist.find((item) => item.symbol === symbol)
+      ?? state?.holdings.find((item) => item.symbol === symbol)
+      ?? { symbol, name: symbol.slice(0, 6) }
+    setBrowseTarget(target)
     setSelectedSymbol(symbol)
+    setResearchPreview(false)
     setView('desk')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -206,7 +261,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
         <header className="copilot-topbar">
           <div><span className="eyebrow">PERSONAL A-SHARE DESK</span><h1>{viewTitle(view)}</h1></div>
           <div className="copilot-top-actions">
-            <span className={`persistence ${usingDemoSeed ? 'demo' : persistence}`}>{usingDemoSeed ? '独立演示样例 · 修改不会保存' : hasDeclaredState ? persistence === 'server' ? '已保存到个人状态账本' : '本机草稿' : '尚未录入个人状态'}</span>
+            <span className={`persistence ${usingDemoSeed || researchPreview ? 'demo' : persistence}`}>{usingDemoSeed ? '独立演示样例 · 修改不会保存' : researchPreview ? '研究界面预览 · 个人状态仍为空' : hasDeclaredState ? persistence === 'server' ? '已保存到个人状态账本' : '本机草稿' : '尚未录入个人状态'}</span>
             <button aria-label="提醒功能尚未启用" className="round-button" disabled title="提醒功能尚未启用" type="button"><Bell size={17} /></button>
             <span className="avatar">N</span>
           </div>
@@ -224,10 +279,20 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
         {view === 'portfolio' && <PortfolioWorkspace account={state.account} holdings={state.holdings} investedCost={investedCost} holdingQuery={holdingQuery} onAdd={beginAddHolding} onEdit={(item) => setHoldingTarget(item)} onOpen={openStock} setHoldingQuery={setHoldingQuery} />}
         {view === 'decisions' && <DecisionWorkspace decisions={state.decisions} onOpen={openStock} />}
 
-        {view === 'desk' && !selected && <EmptyDesk onPortfolio={() => setView('portfolio')} onWatchlist={() => setView('watchlist')} />}
-        {view === 'desk' && selected && <div className="copilot-grid">
+        {view === 'desk' && !selected && <EmptyDesk deskQuery={deskQuery} onBrowse={browseStock} onPortfolio={() => setView('portfolio')} onWatchlist={() => setView('watchlist')} setDeskQuery={setDeskQuery} />}
+        {view === 'desk' && selected && <>
+          <section className={`stock-browser-strip ${researchPreview ? 'preview' : ''}`} aria-label="个股研究入口">
+            <div className="stock-browser-search"><Search size={16} /><input aria-label="搜索 A 股并打开个股终端" onChange={(event) => setDeskQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') browseStock() }} placeholder="输入代码或代码 + 名称，例如 000001.SZ 平安银行" value={deskQuery} /><button className="primary-button" onClick={browseStock} type="button">打开个股</button></div>
+            <div className="stock-browser-actions">
+              {researchPreview ? <span><Sparkles size={14} />当前是完整界面演示：不属于你的关注、持仓或决策记录</span> : <span><ShieldCheck size={14} />研究浏览与个人账户分离</span>}
+              {!researchPreview && <button className="ghost-button" onClick={showResearchPreview} type="button">查看界面预览</button>}
+              <button className="secondary-button" disabled={selectedIsWatched} onClick={() => void addSelectedToWatchlist()} type="button"><Star size={14} />{selectedIsWatched ? '已关注' : '加入关注'}</button>
+            </div>
+          </section>
+          <div className="copilot-grid">
           <StockDetailWorkspace
             analysis={analysis}
+            decisionDisabled={researchPreview}
             holding={holding}
             intelligence={intelligence}
             latestDecision={latestDecision ? decisionLabel(latestDecision.action) : '尚未记录'}
@@ -268,7 +333,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
               {!state.decisions.length && <div className="rail-empty">还没有人工决策记录。</div>}
             </div>
           </aside>
-        </div>}
+          </div>
+        </>}
       </section>
 
       {accountEditorOpen && <AccountEditor account={state.account} onClose={() => setAccountEditorOpen(false)} onSave={(account) => { void commit((current) => ({ ...current, account }), '资金信息已更新'); setAccountEditorOpen(false) }} />}
@@ -370,9 +436,9 @@ function DecisionWorkspace({ decisions, onOpen }: { decisions: TradingCopilotSta
   </section>
 }
 
-function EmptyDesk({ onPortfolio, onWatchlist }: { onPortfolio: () => void; onWatchlist: () => void }) {
+function EmptyDesk({ deskQuery, onBrowse, onPortfolio, onWatchlist, setDeskQuery }: { deskQuery: string; onBrowse: () => void; onPortfolio: () => void; onWatchlist: () => void; setDeskQuery: (value: string) => void }) {
   return <section className="empty-desk">
-    <div className="empty-desk-card panel"><Sparkles size={28} /><span className="eyebrow">START WITH YOUR OWN FACTS</span><h2>先录入真实关注和持仓</h2><p>当前没有个人状态。开发环境不会再自动把任何演示样例当成你的账户。</p><div><button className="primary-button" onClick={onWatchlist} type="button">建立关注列表</button><button className="secondary-button" onClick={onPortfolio} type="button">录入全部持仓</button></div></div>
+    <div className="empty-desk-card panel"><Sparkles size={28} /><span className="eyebrow">A-SHARE RESEARCH ENTRY</span><h2>先打开股票，再决定是否关注或持有</h2><p>研究终端不依赖个人账户。输入任意 A 股代码即可查看七页签、图表、预测门禁、公告新闻舆论与多空证据；没有正式投影的字段会明确显示不可用。</p><div className="empty-desk-search"><Search size={16} /><input aria-label="搜索 A 股并打开个股终端" onChange={(event) => setDeskQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') onBrowse() }} placeholder="000001.SZ 平安银行" value={deskQuery} /><button className="primary-button" onClick={onBrowse} type="button">打开个股</button></div><div className="empty-desk-actions"><button className="ghost-button" onClick={onWatchlist} type="button">管理关注列表</button><button className="secondary-button" onClick={onPortfolio} type="button">录入真实持仓</button></div></div>
   </section>
 }
 

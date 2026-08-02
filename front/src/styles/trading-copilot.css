@@ -71,6 +71,26 @@
 .account-strip strong em { font-style: normal; font-size: 12px; color: var(--copilot-muted); }
 .account-strip small { display: none; font-size: 9px; color: #687680; }
 
+.stock-browser-strip {
+  min-height: 54px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--copilot-line);
+  background: #090e13;
+  display: grid;
+  grid-template-columns: minmax(310px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+.stock-browser-strip.preview { background: linear-gradient(90deg, rgba(215, 173, 97, .055), #090e13 38%); }
+.stock-browser-search { min-width: 0; height: 36px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; border: 1px solid var(--copilot-line); color: var(--copilot-muted); background: #070c10; padding-left: 11px; }
+.stock-browser-search input { min-width: 0; height: 34px; padding: 0 9px; border: 0; outline: 0; color: var(--copilot-text); background: transparent; font-size: 10px; }
+.stock-browser-search .primary-button { min-height: 34px; border-width: 0 0 0 1px; }
+.stock-browser-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.stock-browser-actions > span { max-width: 340px; display: inline-flex; align-items: center; gap: 6px; color: #859198; font-size: 9px; line-height: 1.4; }
+.stock-browser-strip.preview .stock-browser-actions > span { color: var(--copilot-amber); }
+.stock-browser-actions button { min-height: 32px; white-space: nowrap; }
+.stock-browser-actions .secondary-button:disabled { opacity: .55; cursor: default; }
+
 .copilot-grid { display: grid; grid-template-columns: minmax(520px, 1fr) 248px; min-height: calc(100vh - 136px); }
 .panel { background: var(--copilot-panel); border: 1px solid var(--copilot-line); }
 .panel-heading { min-height: 55px; padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--copilot-line); }
@@ -124,7 +144,10 @@
 .empty-desk-card .eyebrow { display: block; margin-top: 16px; }
 .empty-desk-card h2 { margin-top: 7px; font-size: 22px; }
 .empty-desk-card p { max-width: 500px; margin: 10px auto 22px; color: #7f8c93; font-size: 11px; line-height: 1.65; }
-.empty-desk-card > div { display: flex; justify-content: center; gap: 9px; }
+.empty-desk-card .empty-desk-search { max-width: 560px; min-height: 40px; margin: 0 auto 14px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; border: 1px solid var(--copilot-line); background: #080d12; color: var(--copilot-muted); padding-left: 12px; }
+.empty-desk-search input { min-width: 0; height: 38px; padding: 0 10px; border: 0; outline: 0; color: var(--copilot-text); background: transparent; font-size: 11px; text-align: left; }
+.empty-desk-search .primary-button { min-height: 38px; border-width: 0 0 0 1px; }
+.empty-desk-card .empty-desk-actions { display: flex; justify-content: center; gap: 9px; }
 
 .stock-workspace { min-width: 0; padding: 16px; display: grid; align-content: start; gap: 12px; background: #090e13; }
 .stock-hero { padding: 18px; }
@@ -408,6 +431,8 @@
   .copilot-boundary { display: none; }
   .quant-switch { font-size: 0; width: 42px; }
   .copilot-grid { grid-template-columns: minmax(430px, 1fr); }
+  .stock-browser-strip { grid-template-columns: 1fr; }
+  .stock-browser-actions { justify-content: space-between; }
   .copilot-rail { grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); border-left: 0; border-top: 1px solid var(--copilot-line); }
   .management-table-head, .management-row { grid-template-columns: minmax(160px, 1.2fr) .65fr .8fr 55px 160px; }
   .portfolio-table-head, .portfolio-row { grid-template-columns: minmax(150px, 1fr) .9fr .7fr .8fr 150px; }
@@ -438,6 +463,10 @@
   .account-strip > div:nth-of-type(2) { border-right: 0; }
   .account-strip > button { grid-column: 1 / -1; }
   .copilot-grid { display: block; }
+  .stock-browser-strip { padding: 10px 12px; }
+  .stock-browser-actions { align-items: stretch; flex-wrap: wrap; }
+  .stock-browser-actions > span { width: 100%; max-width: none; }
+  .stock-browser-actions button { flex: 1; }
   .management-workspace { padding: 18px 12px 32px; }
   .management-heading { flex-direction: column; gap: 12px; }
   .management-search { margin-top: 18px; }
