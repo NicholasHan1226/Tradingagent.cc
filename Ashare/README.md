@@ -236,7 +236,8 @@ and moneyflow sources pass; it cannot invalidate those independent sources or
 create any trading authority.
 
 The sidecar has a secret-free `--preflight` mode that validates only its
-manifest and fixed `http://127.0.0.1:18082` endpoint. A real parity run is not
+manifest, fixed `http://127.0.0.1:18082` endpoint, and exact `http-json-v1`
+transport ID. A real parity run is not
 permitted until TradingDatas publishes the formal active catalog rows,
 especially their exact `identity_fields`, and a TA-scoped token is supplied by
 the existing runtime transport. Each dataset remains independent: a failed
