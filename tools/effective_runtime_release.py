@@ -32,6 +32,13 @@ SYSTEMD_PROPERTIES = (
     "ExecStartPre",
     "WorkingDirectory",
 )
+# systemd omits properties whose value is empty unless the caller explicitly
+# requests all properties.  These fields are optional source material for
+# release-path extraction; represent an omitted empty value exactly as an
+# empty string rather than treating a valid systemctl response as incomplete.
+OPTIONAL_EMPTY_SYSTEMD_PROPERTIES = frozenset(
+    {"DropInPaths", "ExecStart", "ExecStartPre", "WorkingDirectory"}
+)
 
 
 class EffectiveRuntimeReleaseError(RuntimeError):
@@ -141,6 +148,8 @@ def _systemd_show(unit: str) -> Mapping[str, str]:
         key, separator, value = line.partition("=")
         if separator and key in SYSTEMD_PROPERTIES:
             values[key] = value
+    for field in OPTIONAL_EMPTY_SYSTEMD_PROPERTIES:
+        values.setdefault(field, "")
     if set(values) != set(SYSTEMD_PROPERTIES):
         raise EffectiveRuntimeReleaseError("systemd_show_incomplete")
     return values

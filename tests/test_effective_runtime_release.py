@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -10,6 +11,7 @@ from tools.effective_runtime_release import (
     SYSTEMD_PROPERTIES,
     resolve_effective_runtime_release,
 )
+import tools.effective_runtime_release as effective_runtime_release
 
 
 ROOT = Path("/opt/investment/releases/tradingagent")
@@ -50,6 +52,54 @@ def test_active_current_unit_is_bound_to_process_and_release() -> None:
     assert result.current_matches_effective is True
     assert result.runtime_verified is True
     assert result.blockers == ()
+
+
+def test_systemd_show_accepts_systemd_omitting_empty_optional_properties(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = "\n".join(
+        (
+            "LoadState=loaded",
+            "ActiveState=inactive",
+            "SubState=dead",
+            "MainPID=0",
+            "FragmentPath=/etc/systemd/system/tradingagent.service",
+            f"ExecStart=python {ROOT}/current/Crypto/runtime.py",
+            f"WorkingDirectory={ROOT}/current",
+        )
+    )
+
+    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout=output)
+
+    monkeypatch.setattr(effective_runtime_release.subprocess, "run", fake_run)
+
+    result = effective_runtime_release._systemd_show("tradingagent-crypto.service")
+
+    assert result["DropInPaths"] == ""
+    assert result["ExecStartPre"] == ""
+    assert result["ExecStart"].endswith("Crypto/runtime.py")
+
+
+def test_systemd_show_rejects_missing_required_state_property(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = "\n".join(
+        (
+            "LoadState=loaded",
+            "SubState=dead",
+            "MainPID=0",
+            "FragmentPath=/etc/systemd/system/tradingagent.service",
+        )
+    )
+
+    def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout=output)
+
+    monkeypatch.setattr(effective_runtime_release.subprocess, "run", fake_run)
+
+    with pytest.raises(EffectiveRuntimeReleaseError, match="systemd_show_incomplete"):
+        effective_runtime_release._systemd_show("tradingagent-crypto.service")
 
 
 def test_explicit_dropin_release_wins_and_exposes_current_mismatch() -> None:
