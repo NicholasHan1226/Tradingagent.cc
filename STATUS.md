@@ -1,6 +1,18 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 14:47 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 18:59 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 TradingCopilot V8 正式个股投影最终读回：** 候选 `fcc2ba1`
+> 通过正式 TradingDatas catalog/query 与既有只读 TA token 完成隔离 one-shot。
+> 30/30 证券主数据均有行业和地区；分钟 Evidence Gate 实际只接纳
+> `000333.SZ`、`002294.SZ` 两只，每只仅 1 个 stale 的 `1D` 历史展示点，其他周期为空、
+> forecast 为 null。五个公告/新闻/互动/研报数据集均因
+> `ashare_evidence_metadata_not_ready` 拒绝，接纳事件为 0，未猜测舆情标签。
+> 两只投影与 detached receipt 哈希一致，目录/文件为 `0700/0600`；broker、capital、
+> orders、training、promotion、real-trading authority 全为 false。未安装 Copilot unit、
+> 未切换 `/opt/investment/current=2b7b52b...`。证据目录和逐项边界见
+> [正式投影读回](docs/reports/2026-08-02-trading-copilot-formal-projection-readback.md)；
+> 该结果证明 2/30 和零事件的真实覆盖及失败关闭，不代表 30/30 实时数据已具备。
 
 > **2026-08-02 A股 systemd TradingDatas 依赖修复已部署：** 已合入 `main` 的 unit
 > 修复提交 `e55602e` 被作为冻结工件安装到服务器。五个 A股 30/scale500 service 的
