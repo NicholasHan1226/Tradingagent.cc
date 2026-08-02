@@ -24,6 +24,15 @@
 > [正式投影读回](docs/reports/2026-08-02-trading-copilot-formal-projection-readback.md)；
 > 该结果证明 2/30 和零事件的真实覆盖及失败关闭，不代表 30/30 实时数据已具备。
 
+> **2026-08-02 TradingCopilot 事件证据 v2 只读回读：** 主线 `18141b3` 修复了
+> TradingDatas 正式 `research_report` 已声明的 `[trade_date,title,url]` identity
+> 兼容性；独立候选以 UID987 通过既有 catalog/query 与 token-file 完成一次受控读回，
+> 接纳 1 条 `research_report` 事件。`anns_d`、`cctv_news`、`irm_qa_sh` 与
+> `irm_qa_sz` 仍因 `ashare_evidence_metadata_not_ready` 明确拒绝，未补造事件或情绪。
+> 该结果仅证明事件适配兼容性，不改变分钟 2/30 覆盖、`current=2b7b52b...`、timer、
+> capital、订单、模型网络或真实交易。详见
+> [v2 event readback](docs/reports/2026-08-02-trading-copilot-event-evidence-v2-readback.md)。
+
 > **2026-08-02 A股 systemd TradingDatas 依赖修复已部署：** 已合入 `main` 的 unit
 > 修复提交 `e55602e` 被作为冻结工件安装到服务器。五个 A股 30/scale500 service 的
 > `After=` 均从不存在的 `tradingdatas-api.service` 改为实际运行的
