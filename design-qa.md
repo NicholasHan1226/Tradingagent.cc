@@ -1,64 +1,58 @@
-# TradingCopilot V6 Design QA
+# TradingCopilot V7 Design QA
 
 final result: passed
 
 ## Source visual truth
 
-- Conversation reference: `Google Chrome Appshot 2026-08-01T19-45-42.827Z.png`, Perplexity Finance desktop stock-detail composition.
-- Focused chart reference: `/var/folders/gg/h6vhh_j50tvg5x4ktqwgxy4r0000gn/T/TemporaryItems/NSIRD_screencaptureui_7weerO/截屏2026-08-02 02.19.50.png`.
-- Source pixels: `1660 x 770`; desktop dark theme; tabs + dual quote header + chart/volume region.
-- Intended adaptation: A股个人辅助决策台，保留来源与人工确认边界，不复制美股盘后或分析师共识语义。
+- Primary reference: `/var/folders/gg/h6vhh_j50tvg5x4ktqwgxy4r0000gn/T/TemporaryItems/NSIRD_screencaptureui_7weerO/截屏2026-08-02 02.19.50.png`.
+- Reference pixels: `1660 x 770`; dark stock-detail terminal with horizontal tabs, compact quote context, chart controls, line/volume chart and a narrow evidence rail.
+- Product adaptation: A股个人辅助决策台。账户申报、A股交易约束、证据来源和人工确认边界是必须保留的 TradingCopilot 层；美股盘后、分析师共识和自动交易语义不复制。
 
 ## Browser-rendered implementation
 
-- Screenshot: `/tmp/tradingcopilot-visible-terminal-1440x900-v2.png`.
-- Implementation pixels/CSS viewport: `1440 x 900`, `devicePixelRatio=1`.
-- URL state: `http://127.0.0.1:5174/?product=copilot`.
-- State: 个人申报资金 `0`、关注 `0`、持仓 `0`；默认显示明确标记的只读研究界面预览；`000400.SZ 许继电气`；概述 / 1D / 预测默认隐藏。
-- Responsive evidence: `/tmp/tradingcopilot-visible-terminal-390x844.png`; also checked at `1024 x 768`.
+- Desktop final: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/desktop-final.png` at `1660 x 770`.
+- Mobile final: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/mobile-overview.png` at `390 x 844`.
+- Mobile watchlist: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/mobile-watchlist.png` at `390 x 844`.
+- Same-frame comparison: `/Users/nicholashan/.codex/visualizations/2026/08/01/019fbe3b-6b29-7bb0-a2d4-50172cb760b5/tradingcopilot-v7-qa/reference-comparison-pass2.png`.
+- Verified URL state: `http://127.0.0.1:5174/?product=copilot&demo=1`.
 
-## Full-view comparison evidence
+## Same-frame comparison judgment
 
-The source crop and `1440 x 900` implementation were emitted together in one comparison input. The implementation preserves the reference's visible reading order and density:
+The reference and final implementation were inspected together at the same `1660 x 770` viewport. The implementation matches the reference's visual language and reading hierarchy:
 
-- persistent dark navigation and compact top hierarchy;
-- stock identity followed by the same seven horizontal reading tabs;
-- wide primary quote/chart/volume surface and narrow company/evidence rail;
-- compact low-radius surfaces, subtle dividers and muted secondary typography;
-- lower sections for significant price changes, stories, announcements/news/sentiment and paired bullish/bearish evidence.
+- near-black continuous workspace, restrained borders, compact tabs and low-radius controls;
+- wide chart-led primary surface with a narrow company/evidence rail;
+- A股 red-up/green-down semantics, muted metadata and a single teal system accent;
+- stock identity, quote context, range controls, line/volume chart and evidence context in one continuous terminal.
 
-The account strip, A股 search, evidence-source labels and human-intent boundary are intentional product adaptations. The reference's after-hours quote is replaced by A股 previous-close context; analyst consensus is replaced by `Copilot 证据共识`; neither is fabricated.
+The source image is a focused chart crop, while TradingCopilot keeps its account summary, stock search and A股 rules above the chart. Those are deliberate product requirements rather than fidelity defects. Forecast output is hidden by default and demo output is permanently watermarked.
 
-## Focused region comparison evidence
+## Scientific and boundary checks
 
-- Tabs and quote/chart: the source focused crop and implementation were inspected together. Both use tabs above quote context, compact controls, a wide line/volume chart, fine horizontal guides and a dark continuous surface. Exact price-path geometry is intentionally different because the fixtures represent different instruments and markets.
-- Right rail: company facts, score, support/oppose counts and event/sentiment temperature remain readable above the fold at `1440 x 900`.
-- Empty personal state: account values stay at zero while the complete research preview remains visible; preview text states that it is not watchlist, holding or decision state.
-- Responsive: `scrollWidth === clientWidth` at `1024` and `390`; mobile keeps search, stock tabs, quote, chart controls and bottom navigation without horizontal clipping.
+- Demo and generic observations no longer expose a fabricated numeric score.
+- Evidence strength is independent from probability, win rate and expected return.
+- Formal prediction eligibility requires detached receipt verification, point-in-time input, frozen out-of-sample evidence, calibration, coverage, baseline comparison and post-cost utility.
+- `加入人工计划` remains disabled unless the four-layer readiness gate reaches `eligible_for_human_review`.
+- Announcements, news and sentiment show source confidence, publish/retrieval time, novelty, impact horizon and receipt state.
+- Financial-data tabs fail closed instead of presenting market metrics as financial statements.
+- TradingCopilot records human plans and reviews only; it does not connect to a broker or inherit Quant Core execution authority.
+
+## Interaction acceptance
+
+- Forecast is off by default; explicit reveal changes the accessible chart name and shows the uncalibrated research envelope disclaimer.
+- `继续观察` requires a reason, trigger, invalidation condition and optional risk before writing the human-intent ledger.
+- The decision ledger displays plan, trigger, invalidation, actual action and review note separately.
+- Funds and holdings page shows both demo holdings (`000400.SZ`, `601899.SH`) and does not reduce the portfolio to the currently open stock.
+- Mobile bottom navigation reaches watchlist, funds/holdings and decision records; `390 px` viewport has no document-level horizontal overflow.
+- Browser console and warning log were empty after the complete interaction path.
 
 ## Required fidelity surfaces
 
-- Fonts/typography: existing Inter/system CJK stack retained; compact sizes, optical weights and muted metadata hierarchy match the terminal reference. No actionable wrapping or truncation issue observed.
-- Spacing/layout rhythm: primary chart/right-rail proportion, tab spacing, divider cadence and above-the-fold density match the reference intent. The new research bar is a bounded product requirement and does not compress the chart at desktop width.
-- Colors/tokens: near-black background, low-contrast borders, teal system accent, amber preview boundary and A股 red-up/green-down semantics remain consistent.
-- Image/asset quality: the source contains no required product photography. Icons use the existing Lucide family; chart rendering uses the existing Recharts component, not placeholder art or a raster screenshot.
-- Copy/content: preview, source, calibration and human-intent copy explicitly distinguishes demo evidence, unavailable formal data, personal state and non-order actions.
+- Typography: existing Inter/system CJK stack; secondary text remains readable and semantic hierarchy is preserved.
+- Assets: existing Lucide icon family and Recharts chart implementation; no placeholder illustration or handcrafted fake asset.
+- Responsive behavior: desktop two-column terminal becomes a single-column stock workspace with fixed bottom navigation on mobile.
+- Accessibility: named tabs, buttons, chart images, form fields and regions were verified through the DOM snapshot.
 
-## Primary interactions tested
+## Acceptance boundary
 
-- Normal URL opens the full read-only research preview while account/watchlist/holdings remain zero.
-- Searching `000001.SZ 平安银行` opens its full terminal without adding it to the watchlist and fails closed to unavailable chart/events/analysis.
-- `查看界面预览` returns to `000400.SZ` preview.
-- `预测` tab exposes the prediction delivery gates.
-- Preview decision buttons are disabled and cannot write the personal decision ledger.
-- Fresh browser tab console: no warnings or errors.
-
-## Comparison history
-
-1. Earlier V5 normal entry showed only a large empty-account panel. This was a P1 product/fidelity failure because it hid every stock-detail capability that the reference was meant to surface.
-2. The fix separated transient research browsing from watchlist/holding authority, restored a full read-only preview on the normal entry, added stock search and explicit `加入关注`, and disabled preview decision writes.
-3. Post-fix browser capture at `1440 x 900` shows the full stock terminal above the fold; a fresh-tab console check is clean. No actionable P0/P1/P2 finding remains.
-
-## Residual boundary
-
-This passes repository/local-browser UI and interaction acceptance only. It does not prove production deployment, formal real-time stock projections, calibrated predictive accuracy, broker connectivity, real holdings or profitability.
+Repository, local-browser, interaction and visual acceptance are complete. Formal real-data recommendation remains intentionally fail-closed until an upstream TradingAgent projection and its detached receipt satisfy the published contract; this is the completed safety behavior, not a hidden demo fallback.

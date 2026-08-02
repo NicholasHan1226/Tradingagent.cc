@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradingagent.trading_copilot_stock_projection_receipt.v1",
+  "title": "Detached TradingCopilot stock projection receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractId", "symbol", "receiptId", "projectionSha256", "generatedAt", "validUntil", "verifierId", "verifierVersion", "sourceReceipts"],
+  "properties": {
+    "contractId": { "const": "tradingagent.trading_copilot_stock_projection_receipt.v1" },
+    "symbol": { "type": "string", "pattern": "^[0-9]{6}\\.(SH|SZ)$" },
+    "receiptId": { "type": "string", "minLength": 1 },
+    "projectionSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "validUntil": { "type": "string", "format": "date-time" },
+    "verifierId": { "type": "string", "minLength": 1 },
+    "verifierVersion": { "type": "string", "minLength": 1 },
+    "sourceReceipts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["receiptId", "receiptSha256"],
+        "properties": {
+          "receiptId": { "type": "string", "minLength": 1 },
+          "receiptSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  }
+}

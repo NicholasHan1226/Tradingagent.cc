@@ -15,7 +15,7 @@ describe('TradingCopilotPage', () => {
       symbol: '600519.SH', name: '贵州茅台', market: 'A-share', method: '冻结排名', status: 'pending',
       impact: '--', confidence: '86%', age: '2m', reason: '价格结构进入观察区', next: '等待量价确认', steps: 3,
     }, '2026-08-02T00:00:00.000Z')
-    expect(analysis).toMatchObject({ mode: 'tradingagent_observation', score: 86, verdict: '等待条件' })
+    expect(analysis).toMatchObject({ mode: 'tradingagent_observation', verdict: '等待条件', evidenceStrength: { value: null, semantics: 'unavailable' }, readiness: { evidence: 'unscored_observation', action: 'observe_only' } })
     expect(analysis.oppose[0]?.detail).toContain('不会把单向信号当成确定买入结论')
   })
 
@@ -37,9 +37,21 @@ describe('TradingCopilotPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存资金信息' }))
     expect(await screen.findByText('¥300,000')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '加入人工计划' }))
-    expect(await screen.findByText(/加入计划（未下单）/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '加入人工计划' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '继续观察' }))
+    fireEvent.change(screen.getByLabelText('决策理由'), { target: { value: '等待量价确认' } })
+    fireEvent.click(screen.getByRole('button', { name: '写入人工决策账本' }))
+    expect(await screen.findByText(/继续观察（未下单）/)).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText(/演示修改未保存/)).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: '决策记录' }))
+    expect(screen.getByText('等待量价确认')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '记录复盘' }))
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'not_executed' } })
+    fireEvent.change(screen.getByLabelText('实际动作'), { target: { value: '未交易' } })
+    fireEvent.change(screen.getByLabelText('复盘备注'), { target: { value: '正式数据门禁未满足' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存复盘' }))
+    expect(await screen.findByText('复盘：正式数据门禁未满足')).toBeInTheDocument()
     expect(window.localStorage.length).toBe(0)
   })
 
@@ -63,7 +75,7 @@ describe('TradingCopilotPage', () => {
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
     await screen.findByText('今天先看条件，再做决定')
 
-    expect(screen.getByRole('img', { name: '许继电气 1D 行情与预测图' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '许继电气 1D 行情图' })).toBeInTheDocument()
     expect(screen.getAllByText('演示公告：项目进展提示').length).toBeGreaterThan(0)
     fireEvent.click(screen.getByRole('tab', { name: '1M' }))
     expect(screen.getByRole('img', { name: '许继电气 1M 行情图' })).toBeInTheDocument()
@@ -73,6 +85,7 @@ describe('TradingCopilotPage', () => {
     const forecastToggle = screen.getByRole('button', { name: '显示预测' })
     fireEvent.click(forecastToggle)
     expect(screen.getByRole('button', { name: '预测已显示' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('img', { name: '许继电气 1D 行情与研究预测图' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: '预测' }))
     expect(screen.getByText('方向研究情景')).toBeInTheDocument()
@@ -120,7 +133,7 @@ describe('TradingCopilotPage', () => {
     expect(await screen.findByText('研究界面预览 · 个人状态仍为空')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '许继电气' })).toBeInTheDocument()
     expect(screen.getByText('当前是完整界面演示：不属于你的关注、持仓或决策记录')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: '许继电气 1D 行情与预测图' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '许继电气 1D 行情图' })).toBeInTheDocument()
     expect(screen.getAllByText('¥0').length).toBeGreaterThanOrEqual(3)
     expect(screen.getByLabelText('用户申报账户摘要')).toHaveTextContent('关注股票0 只')
     expect(screen.getByRole('button', { name: '加入人工计划' })).toBeDisabled()

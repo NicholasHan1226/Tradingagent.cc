@@ -1505,11 +1505,17 @@ entries:
       - TradingCopilot/AGENTS.md
       - TradingCopilot/README.md
       - TradingCopilot/contracts/trading_copilot_state.schema.json
+      - TradingCopilot/contracts/stock_projection_receipt.schema.json
+      - front/src/server/tradingCopilotStockIntelligence.test.ts
       - front/src/server/tradingCopilotState.test.ts
+      - front/src/copilot/forecastReadiness.test.ts
       - front/src/pages/TradingCopilotPage.test.tsx
     allowed_uses:
       - maintain_user_declared_funds_holdings_and_watchlist
       - present_source_labeled_ashare_decision_evidence
+      - fail_closed_on_unverified_projection_or_forecast_evidence
+      - preserve_etag_cas_and_append_only_human_state_integrity
+      - record_separate_human_plan_and_review
       - record_human_intent_only
     prohibited_uses:
       - claim_broker_verified_account_or_positions

@@ -21,13 +21,14 @@
 
 - 用户申报账户：总资金、可用现金和更新时间。
 - 用户申报持仓：代码、名称、数量、可卖数量、成本与更新时间。
-- 关注列表和人工决策：加入计划、继续观察、暂不交易。
+- 关注列表和人工决策：加入计划、继续观察、暂不交易；计划必须保存理由、触发、失效条件和可选风险上限，事后实际动作与复盘必须独立记录。
 - 上述状态只能写入 TradingCopilot 独立 namespace；不得写入 `shared/logs/capital/**`、execution lineage、outbox、SampleJournal、量化 Decision Ledger 或 `signals/`。
 
 ## 前端与执行边界
 
 - 唯一网页入口仍为 `../front/`；本目录定义领域合同和状态边界，不建立第二套生产看板。
-- 网页写操作只允许进入 TradingCopilot 状态接口。按钮产生人工意图记录，不代表已下单、已成交或已发送到券商。
+- 网页写操作只允许进入 TradingCopilot 状态接口。状态接口必须使用 `ETag/If-Match` 防止多标签覆盖，并在读取/写入前验证 append-only state/event hash 链。浏览器 fallback 必须明确标记为未同步草稿。按钮产生人工意图记录，不代表已下单、已成交或已发送到券商。
+- 正式个股投影必须同时存在独立 `stock_projection_receipt`，绑定 exact projection SHA、有效期、verifier 与上游 receipt；页面不得信任投影内自报的 ready/score。普通 TradingAgent confidence 只能显示为未评分观察。A股 T+1、一手、板块涨跌停、ST、停牌和复权口径缺失时，人工计划入口保持阻断。
 - 当前不连接券商、不发送邮件/消息、不操作同花顺。未来券商只读同步和执行适配必须分别立项、验证并由 Nicholas 明确授权。
 
 ## 账户与绩效隔离

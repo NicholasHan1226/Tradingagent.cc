@@ -1,6 +1,8 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 12:20 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 13:58 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 TradingCopilot V7 证据与人工决策完整性候选：** 当前开发分支已移除演示和普通 TradingAgent observation 的伪数值评分，使用独立证据强度与数据/证据/模型/人工决策四层就绪度；正式预测需十一项门禁及清单、PIT、OOS、校准、覆盖率、成本、基线证据ID/SHA绑定。正式个股投影改为投影文件加 detached receipt 双文件验签式读入，错配或篡改即失败关闭。个人状态新增 `ETag/If-Match`、进程锁和 append-only 状态/事件哈希链验证；人工决定与复盘分别记录理由、触发、失效、风险、实际动作和备注。个股页补齐A股交易约束及公告/新闻/舆论来源置信、发布/采集时间、新颖性、影响和回执状态；财务数据缺失时不再用行情指标冒充。桌面 `1660×770`、移动 `390×844` 和完整计划/复盘交互均通过真实浏览器验收，console warning/error 为零；前端 `52 files / 325 tests passed`，lint、client/API build、JSON合同和 diff check 通过。该候选仍只消费共享只读研究投影并写 TradingCopilot 独立 namespace，不连接券商，也不获得 Quant Core 资本、订单、样本或模型晋级 authority；生产文件、runtime 和正式个股投影数据尚未改变。
 
 > **2026-08-02 TradingCopilot V6 可见个股终端候选：** 普通 `/?product=copilot` 在个人资金、关注和持仓均为空时，不再用空账本遮挡个股能力；默认展示明确标记且只读的 `000400.SZ` 研究界面预览，完整保留七页签、行情/成交量、未校准预测门禁、公告新闻舆论、显著价格变化、多空证据、公司资料和证据共识。预览不进入个人关注、持仓或决策记录，三类决定按钮停用；决策台新增独立 A 股搜索，打开任意合法代码不会写个人状态，只有明确点击“加入关注”或录入持仓才写 TradingCopilot namespace。浏览器在 `1440×900`、`1024×768` 和 `390×844` 验证无横向溢出，fresh tab 无 console warning/error；该候选仍不连接券商、不改变 Quant Core 资本、订单、样本、模型或晋级 authority，生产文件与 runtime 尚未改变。
 

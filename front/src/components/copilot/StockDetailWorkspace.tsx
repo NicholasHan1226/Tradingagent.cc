@@ -44,6 +44,7 @@ export function StockDetailWorkspace({ analysis, intelligence, holding, latestDe
         <span><small>最近决定</small><strong>{latestDecision}</strong></span>
       </div>
     </header>
+    <MarketRulesStrip intelligence={intelligence} />
 
     <nav className="stock-detail-tabs" aria-label="个股详情" role="tablist">
       {tabs.map((tab) => <button aria-selected={activeTab === tab.key} className={activeTab === tab.key ? 'active' : ''} key={tab.key} onClick={() => setActiveTab(tab.key)} role="tab" type="button">{tab.label}</button>)}
@@ -70,7 +71,7 @@ export function StockDetailWorkspace({ analysis, intelligence, holding, latestDe
       <div><strong>你的决定</strong><span>{decisionDisabled ? '研究界面预览不会写入个人决策账本' : '只写入人工决策账本，不会触发任何订单'}</span></div>
       <button className="ghost-button" disabled={decisionDisabled} onClick={() => onRecordDecision('skipped')} type="button">暂不交易</button>
       <button className="secondary-button" disabled={decisionDisabled} onClick={() => onRecordDecision('observing')} type="button">继续观察</button>
-      <button className="primary-button" disabled={decisionDisabled || analysis.mode === 'analysis_unavailable'} onClick={() => onRecordDecision('planned')} type="button">加入人工计划</button>
+      <button className="primary-button" disabled={decisionDisabled || analysis.readiness.action !== 'eligible_for_human_review'} onClick={() => onRecordDecision('planned')} title={analysis.readiness.action !== 'eligible_for_human_review' ? '只有正式、定型且通过门禁的证据可进入人工计划' : undefined} type="button">加入人工计划</button>
     </div>
   </section>
 }
@@ -142,9 +143,10 @@ function ForecastPanel({ intelligence, range, showForecast, onRangeChange, onTog
 function HistoryPanel({ intelligence, range, onRangeChange }: { intelligence: StockIntelligence; range: StockRange; onRangeChange: (range: StockRange) => void }) {
   const rows = useMemo(() => intelligence.series[range].filter((point) => point.price !== null).slice(-12).reverse(), [intelligence.series, range])
   if (!rows.length) return <UnavailablePanel icon={<FileText size={22} />} title="历史数据暂不可用" detail="没有可验证的个股价格序列。" />
+  const dataType = intelligence.verification.status === 'verified' ? '正式投影' : intelligence.mode === 'demo_fixture' ? '演示数据' : '不可用'
   return <section className="history-table-panel panel">
     <div className="history-table-heading"><SectionHeading eyebrow="PRICE HISTORY" title="历史数据" /><select aria-label="历史数据周期" onChange={(event) => onRangeChange(event.target.value as StockRange)} value={range}>{(['1D', '5D', '1M', '6M', 'YTD', '1Y'] as StockRange[]).map((item) => <option key={item}>{item}</option>)}</select></div>
-    <div className="history-table-wrap"><table><thead><tr><th>时间</th><th>价格</th><th>成交量</th><th>数据类型</th></tr></thead><tbody>{rows.map((row) => <tr key={row.key}><td>{row.label}</td><td>¥{row.price?.toFixed(2)}</td><td>{row.volume?.toLocaleString('zh-CN') ?? '—'}</td><td><span className="demo-data-label">演示数据</span></td></tr>)}</tbody></table></div>
+    <div className="history-table-wrap"><table><thead><tr><th>时间</th><th>价格</th><th>成交量</th><th>数据类型</th></tr></thead><tbody>{rows.map((row) => <tr key={row.key}><td>{row.label}</td><td>¥{row.price?.toFixed(2)}</td><td>{row.volume?.toLocaleString('zh-CN') ?? '—'}</td><td><span className={intelligence.verification.status === 'verified' ? 'formal-data-label' : 'demo-data-label'}>{dataType}</span></td></tr>)}</tbody></table></div>
   </section>
 }
 
@@ -152,8 +154,9 @@ function AnalysisPanel({ analysis }: { analysis: CopilotAnalysis }) {
   return <>
     <section className="analysis-hero panel">
       <div><span className="eyebrow">FINAL VIEW</span><h3>{analysis.verdict}</h3><p>{analysis.summary}</p></div>
-      <div className="analysis-score"><Gauge size={19} /><strong>{analysis.score ?? '—'}</strong><small>/ 100</small></div>
+      <div className="analysis-score"><Gauge size={19} /><strong>{analysis.evidenceStrength.value ?? '—'}</strong><small>{analysis.evidenceStrength.value === null ? analysis.evidenceStrength.label : '/ 100'}</small></div>
     </section>
+    <DecisionReadiness analysis={analysis} />
     <div className="argument-grid"><EvidenceCard kind="support" title="支持买入的证据" items={analysis.support} /><EvidenceCard kind="oppose" title="反对买入的证据" items={analysis.oppose} /></div>
     <div className="condition-panel panel">
       <div className="panel-heading"><div><span className="eyebrow">DECISION GATE</span><h2>买入前必须同时满足</h2></div><CircleDollarSign size={20} /></div>
@@ -164,12 +167,7 @@ function AnalysisPanel({ analysis }: { analysis: CopilotAnalysis }) {
 }
 
 function FinancialPanel({ intelligence }: { intelligence: StockIntelligence }) {
-  if (!intelligence.quote) return <UnavailablePanel icon={<Building2 size={22} />} title="财务与估值数据暂不可用" detail="当前没有带来源与报告期的正式财务数据。" />
-  return <section className="financial-panel panel">
-    <SectionHeading eyebrow="MARKET SNAPSHOT" title="演示市场指标" />
-    <p className="panel-caveat"><AlertTriangle size={15} />这些指标来自 demo fixture，仅用于页面布局与交互验收，不是正式财务分析。</p>
-    <MetricGrid intelligence={intelligence} />
-  </section>
+  return <UnavailablePanel icon={<Building2 size={22} />} title="财务报表尚未接入" detail={`当前${intelligence.verification.status === 'verified' ? '正式个股投影仅含行情与事件' : '页面'}没有带报告期、披露日、修订链和来源回执的财务报表合同；行情指标不冒充财务数据。`} />
 }
 
 function MetricGrid({ intelligence }: { intelligence: StockIntelligence }) {
@@ -182,8 +180,8 @@ function MetricGrid({ intelligence }: { intelligence: StockIntelligence }) {
     <Metric label="成交量" value={`${(quote.volume / 10_000).toFixed(1)} 万`} />
     <Metric label="换手率" value={`${quote.turnoverRate.toFixed(2)}%`} />
     <Metric label="市盈率（TTM）" value={quote.peTtm?.toFixed(2) ?? '—'} />
-    <Metric label="演示市值" value={formatMarketCap(quote.marketCapCny)} />
-    <Metric label="行情来源" value="demo_fixture" />
+    <Metric label={intelligence.mode === 'demo_fixture' ? '演示市值' : '市值'} value={formatMarketCap(quote.marketCapCny)} />
+    <Metric label="行情来源" value={intelligence.source ? `${intelligence.source.datasetId}/${intelligence.source.freshness}` : intelligence.mode} />
   </dl>
 }
 
@@ -191,13 +189,13 @@ function EventTimeline({ events, intelligence, unavailable }: { events: StockEve
   if (!events.length) return <div className="event-empty"><MessageSquareText size={20} /><p>{unavailable ? '当前没有按股票代码验证通过的公告、新闻或舆情数据。' : '当前窗口没有关联事件。'}</p></div>
   return <div className="event-timeline">
     {intelligence.quote ? <article className="price-move-summary"><time>{formatDateTime(intelligence.updatedAt ?? '')}</time><i className={intelligence.quote.change >= 0 ? 'positive' : 'negative'} /><div><span>价格变化 · {intelligence.mode === 'demo_fixture' ? '演示行情' : '正式个股投影'}</span><strong>¥{intelligence.quote.price.toFixed(2)} · {signedPercent(intelligence.quote.changePct)}</strong><p>相对前收 ¥{intelligence.quote.previousClose.toFixed(2)}；以下事件仅作为关联解释，不单独形成交易理由。</p></div></article> : null}
-    {events.map((event) => <article key={event.id}><time>{formatDateTime(event.publishedAt)}</time><i className={event.sentiment} /><div><span>{eventKindLabel(event.kind)} · {event.source}</span><strong>{event.title}</strong><p>{event.summary}</p><small>关联：{event.relatedSymbols.join('、')} · {event.url ? '已绑定来源链接' : '演示无外链'}</small></div></article>)}
+    {events.map((event) => <article key={event.id}><time>{formatDateTime(event.publishedAt)}</time><i className={event.sentiment} /><div><span>{eventKindLabel(event.kind)} · {event.source} · 来源置信 {percent(event.sourceConfidence)}</span><strong>{event.title}</strong><p>{event.summary}</p><small>关联：{event.relatedSymbols.join('、')} · {noveltyLabel(event.novelty)} · {impactLabel(event)}</small><EventMeta event={event} /></div></article>)}
   </div>
 }
 
 function EventCards({ events, unavailable }: { events: StockEvent[]; unavailable: boolean }) {
   if (!events.length) return <div className="event-empty"><Newspaper size={20} /><p>{unavailable ? '事件数据未交付；公告标题和舆情结论不会由模型自动补写。' : '当前没有关联内容。'}</p></div>
-  return <div className="event-card-grid">{events.map((event) => <article key={event.id}><span className={`event-kind ${event.kind}`}>{eventKindLabel(event.kind)}</span><h3>{event.title}</h3><p>{event.summary}</p><small>{event.source} · {formatDateTime(event.publishedAt)}</small>{event.url ? <a href={event.url} rel="noreferrer" target="_blank">查看来源</a> : null}</article>)}</div>
+  return <div className="event-card-grid">{events.map((event) => <article key={event.id}><span className={`event-kind ${event.kind}`}>{eventKindLabel(event.kind)}</span><h3>{event.title}</h3><p>{event.summary}</p><small>{event.sourceClass} · 来源置信 {percent(event.sourceConfidence)} · 情绪置信 {percent(event.sentimentConfidence)}</small><EventMeta event={event} />{event.url ? <a href={event.url} rel="noreferrer" target="_blank">查看来源</a> : null}</article>)}</div>
 }
 
 function QuestionRows({ analysis }: { analysis: CopilotAnalysis }) {
@@ -216,6 +214,26 @@ function EvidenceCard({ kind, title, items }: { kind: 'support' | 'oppose'; titl
   return <section className={`panel evidence-card ${kind}`}><div className="panel-heading"><h2>{title}</h2><span>{items.length}</span></div>{items.length ? items.map((item) => <article key={`${item.title}-${item.detail}`}><i>{kind === 'support' ? '+' : '−'}</i><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>) : <div className="rail-empty">当前没有可验证证据。</div>}</section>
 }
 
+function DecisionReadiness({ analysis }: { analysis: CopilotAnalysis }) {
+  const items = [
+    ['数据', decisionReadinessLabel(analysis.readiness.data)],
+    ['证据', decisionReadinessLabel(analysis.readiness.evidence)],
+    ['模型', decisionReadinessLabel(analysis.readiness.model)],
+    ['人工决策', decisionReadinessLabel(analysis.readiness.action)],
+  ]
+  return <section className="decision-readiness panel"><SectionHeading eyebrow="DECISION READINESS" title="四层就绪度" /><div>{items.map(([label, value]) => <span key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>{analysis.readiness.reasons.length ? <ul>{analysis.readiness.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}</section>
+}
+
+function MarketRulesStrip({ intelligence }: { intelligence: StockIntelligence }) {
+  const rules = intelligence.marketRules
+  if (!rules) return <div className="market-rules-strip blocked"><ShieldAlert size={15} /><span>A 股交易规则未随正式投影交付，人工计划入口保持阻断。</span></div>
+  return <div className="market-rules-strip" aria-label="A股交易约束"><ShieldAlert size={15} /><span>{boardLabel(rules.board)}</span><span>T+1</span><span>{rules.lotSize} 股一手</span><span>{rules.priceLimitPct === null ? '涨跌停未知' : `涨跌停 ±${rules.priceLimitPct}%`}</span><span>{rules.stStatus === 'normal' ? '非 ST' : rules.stStatus.toUpperCase()}</span><span>{rules.tradingStatus === 'trading' ? '可交易' : rules.tradingStatus === 'suspended' ? '停牌' : '交易状态未知'}</span><span>{rules.corporateActionAdjusted === true ? '已复权' : rules.corporateActionAdjusted === false ? '未复权' : '复权口径未知'}</span></div>
+}
+
+function EventMeta({ event }: { event: StockEvent }) {
+  return <div className="event-meta"><span>发布 {formatDateTime(event.publishedAt)}</span><span>采集 {formatDateTime(event.retrievedAt)}</span>{event.revisedAt ? <span>修订 {formatDateTime(event.revisedAt)}</span> : null}<span>{event.url ? '已绑定来源链接' : '无外链'}</span>{event.sourceReceiptId ? <span title={event.sourceReceiptSha256 ?? undefined}>回执 {event.sourceReceiptId}</span> : <span>无正式回执</span>}</div>
+}
+
 function UnavailablePanel({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
   return <section className="unavailable-tab panel">{icon}<div><strong>{title}</strong><p>{detail}</p><small>状态：analysis_unavailable · 不生成替代数据</small></div></section>
 }
@@ -227,6 +245,14 @@ function analysisModeLabel(mode: CopilotAnalysis['mode']) { return mode === 'tra
 function formatMarketCap(value: number) { return value >= 100_000_000_000 ? `¥${(value / 100_000_000_000).toFixed(2)} 千亿` : `¥${(value / 100_000_000).toFixed(0)} 亿` }
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function signedPercent(value: number) { return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` }
+function percent(value: number | null | StockEvent['sourceConfidence']) {
+  if (typeof value === 'number') return `${Math.round(value * 100)}%`
+  return ({ high: '高', medium: '中', low: '低', demo: '演示' } as Record<string, string>)[value ?? ''] ?? '未知'
+}
+function impactLabel(event: StockEvent) { return `影响 ${({ positive: '偏正面', negative: '偏负面', neutral: '中性', uncertain: '不确定' } as Record<string, string>)[event.impactDirection]} · ${({ intraday: '日内', short_term: '短期', medium_term: '中期', unknown: '期限未知' } as Record<string, string>)[event.impactHorizon]}` }
+function noveltyLabel(value: StockEvent['novelty']) { return ({ new: '首次出现', updated: '内容更新', repeated: '重复信息' } as Record<string, string>)[value] }
+function boardLabel(board: NonNullable<StockIntelligence['marketRules']>['board']) { return ({ main: '主板', gem: '创业板', star: '科创板', beijing: '北交所', unknown: '板块未知' } as Record<string, string>)[board] }
+function decisionReadinessLabel(value: string) { return ({ verified: '已验证', demo: '演示', unavailable: '不可用', typed: '已定型', unscored_observation: '未评分观察', ready: '已就绪', blocked: '阻断', not_applicable: '不适用', eligible_for_human_review: '可供人工复核', observe_only: '仅观察' } as Record<string, string>)[value] ?? value }
 function readinessLabel(status: ForecastReadinessStatus) {
   return status === 'decision_support_ready' ? '预测门禁已通过' : status === 'illustrative_only' ? '研究演示 · 概率停显' : '预测已阻断'
 }

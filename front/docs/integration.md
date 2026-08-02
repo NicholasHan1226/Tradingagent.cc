@@ -14,9 +14,13 @@ TradingCopilot additionally exposes one symbol-scoped read-only projection:
 
 `GET /api/trading-copilot/stock-intelligence?symbol=000400.SZ`
 
-The API reads `runtime/tradingcopilot/stock-intelligence/<symbol>.json` by
-default. It rejects invalid A-share symbols, non-GET methods, demo payloads,
-symbol mismatch, events not explicitly bound to the symbol, malformed series,
+The API reads `runtime/tradingcopilot/stock-intelligence/<symbol>.json` plus a
+detached `<symbol>.receipt.json` by default. The receipt must bind the exact
+projection SHA-256, symbol, validity window, verifier version and at least one
+upstream source receipt. The projection must also carry a typed evidence-strength
+contract, four-layer decision readiness, A-share market rules and per-event
+source/content receipts. It rejects invalid symbols, non-GET methods, demo
+payloads, self-reported verification, symbol mismatch, unbound events, malformed series,
 and forecast readiness contradictions. It performs no provider request and has
 no fallback. A missing or rejected projection returns 404, after which the UI
 shows unavailable or an explicitly enabled demo preview.
@@ -25,7 +29,17 @@ Forecast readiness is recomputed from explicit gates in the projection. An
 uncalibrated forecast cannot expose probability or coverage labels. Kronos is
 represented only as `kronos_challenger` and is subject to the same PIT, frozen
 OOS, calibration, sample-count, interval-coverage and cost-policy gates as the
-linear baseline.
+linear baseline. Formal readiness also requires receipt-bound model manifest,
+PIT/revision evidence, frozen OOS, calibration, interval coverage, cost policy,
+same-input baseline comparison and positive post-cost utility. A model name never
+bypasses those gates.
+
+TradingCopilot personal state uses `GET/PUT /api/trading-copilot/state`. `GET`
+returns an `ETag`; every `PUT` must send that value as `If-Match`. The server
+serializes writes, rejects stale revisions with `409`, and verifies state hash,
+previous-state hash, sequence and event hash across the append-only JSONL before
+returning any state. Browser fallback is explicitly labelled as an unsynchronized
+local draft and never silently overwrites a newer server revision.
 
 ## Current TradingAgent Surfaces
 

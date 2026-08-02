@@ -1,4 +1,4 @@
-import type { CopilotAnalysisMode } from './types.ts'
+import type { CopilotAnalysis, CopilotAnalysisMode } from './types.ts'
 import { assessForecastReadiness, type ForecastEvidence, type ForecastHorizon, type ForecastModelId, type ForecastReadiness } from './forecastReadiness.ts'
 import { buildLinearBaseline } from './forecastBaseline.ts'
 
@@ -21,10 +21,51 @@ export type StockEvent = {
   title: string
   summary: string
   source: string
+  sourceClass: 'primary_disclosure' | 'professional_news' | 'aggregated_sentiment' | 'demo_fixture'
+  sourceConfidence: 'high' | 'medium' | 'low' | 'demo'
   publishedAt: string
+  retrievedAt: string
+  revisedAt: string | null
+  novelty: 'new' | 'updated' | 'repeated'
   sentiment: 'positive' | 'neutral' | 'negative'
+  sentimentConfidence: number | null
+  impactDirection: 'positive' | 'neutral' | 'negative' | 'uncertain'
+  impactHorizon: 'intraday' | 'short_term' | 'medium_term' | 'unknown'
   relatedSymbols: string[]
   url: string | null
+  sourceReceiptId: string | null
+  sourceReceiptSha256: string | null
+  contentSha256: string | null
+}
+
+export type StockProjectionSource = {
+  datasetId: string
+  receiptId: string
+  receiptSha256: string
+  dataThrough: string
+  retrievedAt: string
+  freshness: 'fresh' | 'stale' | 'degraded' | 'demo'
+  adjustment: 'none' | 'forward' | 'backward' | 'unknown'
+}
+
+export type AshareMarketRules = {
+  board: 'main' | 'gem' | 'star' | 'beijing' | 'unknown'
+  lotSize: 100
+  tPlusOne: true
+  priceLimitPct: number | null
+  stStatus: 'normal' | 'st' | 'star_st' | 'unknown'
+  tradingStatus: 'trading' | 'suspended' | 'unknown'
+  session: 'call_auction' | 'continuous' | 'midday_break' | 'closing_auction' | 'closed' | 'unknown'
+  corporateActionAdjusted: boolean | null
+}
+
+export type StockProjectionVerification = {
+  status: 'verified' | 'demo' | 'unavailable'
+  receiptId: string | null
+  projectionSha256: string | null
+  validUntil: string | null
+  verifiedAt: string | null
+  verifierId: string | null
 }
 
 export type StockSentimentSummary = {
@@ -41,6 +82,10 @@ export type StockIntelligence = {
   name: string
   mode: CopilotAnalysisMode
   updatedAt: string | null
+  analysis: CopilotAnalysis | null
+  source: StockProjectionSource | null
+  marketRules: AshareMarketRules | null
+  verification: StockProjectionVerification
   quote: {
     price: number
     previousClose: number
@@ -175,6 +220,16 @@ export function getDemoStockIntelligence(symbol: string): StockIntelligence | nu
     name: config.name,
     mode: 'demo_fixture',
     updatedAt: DEMO_TIME,
+    analysis: null,
+    verification: { status: 'demo', receiptId: null, projectionSha256: null, validUntil: null, verifiedAt: null, verifierId: null },
+    source: {
+      datasetId: 'demo_fixture', receiptId: 'demo_fixture', receiptSha256: 'demo_fixture',
+      dataThrough: DEMO_TIME, retrievedAt: DEMO_TIME, freshness: 'demo', adjustment: 'unknown',
+    },
+    marketRules: {
+      board: inferBoard(config.symbol), lotSize: 100, tPlusOne: true, priceLimitPct: 10,
+      stStatus: 'normal', tradingStatus: 'trading', session: 'closed', corporateActionAdjusted: null,
+    },
     quote: {
       price: config.price,
       previousClose: config.previousClose,
@@ -200,7 +255,8 @@ export function getDemoStockIntelligence(symbol: string): StockIntelligence | nu
 
 export function unavailableStockIntelligence(symbol: string, name: string): StockIntelligence {
   return {
-    symbol, name, mode: 'analysis_unavailable', updatedAt: null, quote: null, company: null,
+    symbol, name, mode: 'analysis_unavailable', updatedAt: null, analysis: null, source: null, marketRules: null,
+    verification: { status: 'unavailable', receiptId: null, projectionSha256: null, validUntil: null, verifiedAt: null, verifierId: null }, quote: null, company: null,
     series: { '1D': [], '5D': [], '1M': [], '6M': [], YTD: [], '1Y': [] },
     forecast: null, events: [],
   }
@@ -292,7 +348,12 @@ function rangeDefinition(range: StockRange) {
 }
 
 function demoEvent(id: string, kind: StockEvent['kind'], title: string, summary: string, source: string, publishedAt: string, sentiment: StockEvent['sentiment'], symbol: string): StockEvent {
-  return { id, kind, title, summary, source, publishedAt, sentiment, relatedSymbols: [symbol], url: null }
+  return {
+    id, kind, title, summary, source, sourceClass: 'demo_fixture', sourceConfidence: 'demo',
+    publishedAt, retrievedAt: publishedAt, revisedAt: null, novelty: 'new', sentiment,
+    sentimentConfidence: null, impactDirection: sentiment, impactHorizon: 'unknown',
+    relatedSymbols: [symbol], url: null, sourceReceiptId: null, sourceReceiptSha256: null, contentSha256: null,
+  }
 }
 
 function round(value: number) { return Math.round(value * 100) / 100 }
@@ -306,9 +367,22 @@ function demoTakeaway(view: '偏强' | '均衡' | '偏弱') {
 function illustrativeForecastGate(horizon: ForecastHorizon, modelId: ForecastModelId) {
   const evidence: ForecastEvidence = {
     sourceMode: 'demo_fixture', horizon, modelId,
-    modelManifestBound: true, pointInTimeVerified: false, frozenOosReceiptBound: false,
-    calibrationProofAccepted: false, effectiveIndependentSamples: 0,
-    intervalCoverageVerified: false, costPolicyBound: false,
+    modelManifestBound: true, modelManifestId: null, modelManifestSha256: null,
+    pointInTimeVerified: false, pointInTimeReceiptId: null, pointInTimeReceiptSha256: null,
+    frozenOosReceiptBound: false, frozenOosReceiptId: null, frozenOosReceiptSha256: null,
+    calibrationProofAccepted: false, calibrationReceiptId: null, calibrationReceiptSha256: null,
+    effectiveIndependentSamples: 0,
+    intervalCoverageVerified: false, intervalCoverageReceiptId: null, intervalCoverageReceiptSha256: null,
+    costPolicyBound: false, costPolicyId: null, costPolicySha256: null,
+    baselineComparisonAccepted: false, baselineComparisonReceiptId: null, baselineComparisonReceiptSha256: null,
+    postCostUtilityPositive: false,
   }
   return { evidence, readiness: assessForecastReadiness(evidence) }
+}
+
+function inferBoard(symbol: string): AshareMarketRules['board'] {
+  if (symbol.startsWith('300')) return 'gem'
+  if (symbol.startsWith('688')) return 'star'
+  if (symbol.endsWith('.SH') || symbol.endsWith('.SZ')) return 'main'
+  return 'unknown'
 }

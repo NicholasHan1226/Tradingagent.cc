@@ -9,7 +9,7 @@ import { analysisFromSignal } from '../copilot/analysis'
 import { getDemoStockIntelligence, summarizeStockSentiment, unavailableStockIntelligence, type StockIntelligence } from '../copilot/stockIntelligence'
 import { loadStockIntelligence } from '../copilot/stockIntelligenceClient'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
-import { isAshareSymbol, type CopilotAnalysis, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
+import { isAshareSymbol, type CopilotAnalysis, type CopilotDecision, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
 import { createTradingAgentSnapshotClient } from '../api/tradingAgentIntegration'
 import { StockDetailWorkspace } from '../components/copilot/StockDetailWorkspace'
 import '../styles/trading-copilot.css'
@@ -21,6 +21,7 @@ const researchPreviewStock: HoldingTarget = { symbol: '000400.SZ', name: '许继
 export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPreviewEnabled: boolean; onOpenQuant: () => void }) {
   const [state, setState] = useState<TradingCopilotState | null>(null)
   const [persistence, setPersistence] = useState<CopilotPersistence>('local_draft')
+  const [stateHeadSha256, setStateHeadSha256] = useState('empty')
   const [selectedSymbol, setSelectedSymbol] = useState('')
   const [browseTarget, setBrowseTarget] = useState<HoldingTarget | null>(null)
   const [researchPreview, setResearchPreview] = useState(false)
@@ -34,6 +35,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const [usingDemoSeed, setUsingDemoSeed] = useState(false)
   const [tradingAgentAnalyses, setTradingAgentAnalyses] = useState<Record<string, CopilotAnalysis>>({})
   const [formalStockIntelligence, setFormalStockIntelligence] = useState<Record<string, StockIntelligence>>({})
+  const [pendingDecisionAction, setPendingDecisionAction] = useState<CopilotDecisionAction | null>(null)
+  const [reviewTarget, setReviewTarget] = useState<CopilotDecision | null>(null)
 
   useEffect(() => {
     const previous = document.title
@@ -53,6 +56,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
       setSelectedSymbol(initial.symbol)
       setResearchPreview(!demoPreviewEnabled && next.watchlist.length === 0)
       setPersistence(loaded.persistence)
+      setStateHeadSha256(loaded.headSha256)
+      if (loaded.message) setNotice(loaded.message)
     })
     return () => { active = false }
   }, [demoPreviewEnabled])
@@ -91,7 +96,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     ?? state?.watchlist[0]
   const selectedFormalIntelligence = selected ? formalStockIntelligence[selected.symbol] : undefined
   const analysis = selected
-    ? tradingAgentAnalyses[selected.symbol]
+    ? selectedFormalIntelligence?.analysis
+      ?? tradingAgentAnalyses[selected.symbol]
       ?? (!selectedFormalIntelligence && (demoPreviewEnabled || researchPreview) ? copilotDemoAnalyses[selected.symbol] : undefined)
       ?? unavailableAnalysis(selected.symbol, selected.name)
     : unavailableAnalysis('------.--', '未选择股票')
@@ -110,9 +116,22 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     if (!state) return
     const now = new Date().toISOString()
     const next = { ...transform(state), updatedAt: now }
-    setState(next)
-    if (!usingDemoSeed) setPersistence(await saveTradingCopilotState(next))
-    setNotice(usingDemoSeed ? `${message}（演示修改未保存）` : message)
+    if (usingDemoSeed) {
+      setState(next)
+      setNotice(`${message}（演示修改未保存）`)
+      window.setTimeout(() => setNotice(''), 2800)
+      return
+    }
+    const result = await saveTradingCopilotState(next, stateHeadSha256)
+    setPersistence(result.persistence)
+    setStateHeadSha256(result.headSha256)
+    if (result.conflict) {
+      if (result.currentState) setState(ensureHoldingsWatched(result.currentState))
+      setNotice('检测到其他标签页已更新：已载入服务器最新版，请重新提交本次修改')
+    } else {
+      setState(next)
+      setNotice(result.persistence === 'local_draft' ? '服务器不可用：本次修改仅保存在此浏览器，尚未写入个人账本' : message)
+    }
     window.setTimeout(() => setNotice(''), 2800)
   }
 
@@ -223,16 +242,22 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  async function recordDecision(action: CopilotDecisionAction) {
+  async function recordDecision(action: CopilotDecisionAction, plan: NonNullable<CopilotDecision['plan']>) {
     if (!selected) return
     const recordedAt = new Date().toISOString()
     await commit((current) => ({
       ...current,
       decisions: [{
         id: window.crypto.randomUUID(), symbol: selected.symbol, action, recordedAt,
-        actor: current.ownerId, authority: 'human_intent_only' as const,
+        actor: current.ownerId, authority: 'human_intent_only' as const, plan, review: null,
       }, ...current.decisions].slice(0, 200),
     }), `已记录：${decisionLabel(action)}（未下单）`)
+    setPendingDecisionAction(null)
+  }
+
+  async function reviewDecision(id: string, review: NonNullable<CopilotDecision['review']>) {
+    await commit((current) => ({ ...current, decisions: current.decisions.map((item) => item.id === id ? { ...item, review } : item) }), '复盘结果已写入人工决策账本')
+    setReviewTarget(null)
   }
 
   if (!state) return <main className="copilot-loading"><Activity className="spin" />正在读取你的 Copilot 状态…</main>
@@ -261,7 +286,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
         <header className="copilot-topbar">
           <div><span className="eyebrow">PERSONAL A-SHARE DESK</span><h1>{viewTitle(view)}</h1></div>
           <div className="copilot-top-actions">
-            <span className={`persistence ${usingDemoSeed || researchPreview ? 'demo' : persistence}`}>{usingDemoSeed ? '独立演示样例 · 修改不会保存' : researchPreview ? '研究界面预览 · 个人状态仍为空' : hasDeclaredState ? persistence === 'server' ? '已保存到个人状态账本' : '本机草稿' : '尚未录入个人状态'}</span>
+            <span className={`persistence ${usingDemoSeed || researchPreview ? 'demo' : persistence}`}>{usingDemoSeed ? '独立演示样例 · 修改不会保存' : researchPreview ? '研究界面预览 · 个人状态仍为空' : persistence === 'local_draft' && hasDeclaredState ? '服务器不可用 · 仅保存在此浏览器' : hasDeclaredState ? '已保存到个人状态账本' : '尚未录入个人状态'}</span>
             <button aria-label="提醒功能尚未启用" className="round-button" disabled title="提醒功能尚未启用" type="button"><Bell size={17} /></button>
             <span className="avatar">N</span>
           </div>
@@ -277,7 +302,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
 
         {view === 'watchlist' && <WatchlistWorkspace analyses={tradingAgentAnalyses} demoPreviewEnabled={demoPreviewEnabled} holdings={state.holdings} onAdd={() => void addWatchItem()} onOpen={openStock} onRemove={(symbol) => void removeWatchItem(symbol)} query={query} setQuery={setQuery} watchlist={state.watchlist} />}
         {view === 'portfolio' && <PortfolioWorkspace account={state.account} holdings={state.holdings} investedCost={investedCost} holdingQuery={holdingQuery} onAdd={beginAddHolding} onEdit={(item) => setHoldingTarget(item)} onOpen={openStock} setHoldingQuery={setHoldingQuery} />}
-        {view === 'decisions' && <DecisionWorkspace decisions={state.decisions} onOpen={openStock} />}
+        {view === 'decisions' && <DecisionWorkspace decisions={state.decisions} onOpen={openStock} onReview={setReviewTarget} />}
 
         {view === 'desk' && !selected && <EmptyDesk deskQuery={deskQuery} onBrowse={browseStock} onPortfolio={() => setView('portfolio')} onWatchlist={() => setView('watchlist')} setDeskQuery={setDeskQuery} />}
         {view === 'desk' && selected && <>
@@ -296,21 +321,23 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
             holding={holding}
             intelligence={intelligence}
             latestDecision={latestDecision ? decisionLabel(latestDecision.action) : '尚未记录'}
-            onRecordDecision={(action) => void recordDecision(action)}
+            onRecordDecision={setPendingDecisionAction}
           />
 
           <aside className="copilot-rail">
             <CompanyProfileCard intelligence={intelligence} />
             <div className="panel recommendation-card">
               <span className="eyebrow">EVIDENCE CONSENSUS</span><h2>Copilot 证据共识</h2>
-              <div className="recommendation-value"><Gauge size={19} /><strong>{analysis.score ?? '—'}</strong><small>/100</small></div>
-              <div className="score-track" aria-label={`建议强度 ${analysis.score ?? '暂无'}`}><i style={{ width: `${analysis.score ?? 0}%` }} /></div>
+              <div className="recommendation-value"><Gauge size={19} /><strong>{analysis.evidenceStrength.value ?? '—'}</strong><small>{analysis.evidenceStrength.value === null ? '' : '/100'}</small></div>
+              <div className="score-track" aria-label={`证据强度 ${analysis.evidenceStrength.label}`}><i style={{ width: `${analysis.evidenceStrength.value ?? 0}%` }} /></div>
+              <small className="score-semantics">{analysis.evidenceStrength.label}</small>
               <div className="evidence-consensus" aria-label={`支持 ${analysis.support.length} 条，反对 ${analysis.oppose.length} 条`}>
                 <span><i className="support" />{analysis.support.length} 支持</span>
                 <span><i className="oppose" />{analysis.oppose.length} 反对</span>
               </div>
               <strong className="recommendation-verdict">{analysis.verdict}</strong>
               <p>这是可追溯证据的人工辅助评分，不是分析师共识、胜率、收益承诺或自动下单指令。</p>
+              <ReadinessGrid analysis={analysis} />
             </div>
             <SentimentPulseCard intelligence={intelligence} />
             <div className="panel holding-card">
@@ -339,6 +366,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
 
       {accountEditorOpen && <AccountEditor account={state.account} onClose={() => setAccountEditorOpen(false)} onSave={(account) => { void commit((current) => ({ ...current, account }), '资金信息已更新'); setAccountEditorOpen(false) }} />}
       {holdingTarget && <HoldingEditor holding={state.holdings.find((item) => item.symbol === holdingTarget.symbol)} symbol={holdingTarget.symbol} name={holdingTarget.name} onClose={() => setHoldingTarget(null)} onRemove={state.holdings.some((item) => item.symbol === holdingTarget.symbol) ? () => void removeHolding(holdingTarget.symbol) : undefined} onSave={(nextHolding) => void saveHolding(nextHolding)} />}
+      {pendingDecisionAction && selected && <DecisionPlanEditor action={pendingDecisionAction} analysis={analysis} symbol={selected.symbol} onClose={() => setPendingDecisionAction(null)} onSave={(plan) => void recordDecision(pendingDecisionAction, plan)} />}
+      {reviewTarget && <DecisionReviewEditor decision={reviewTarget} onClose={() => setReviewTarget(null)} onSave={(review) => void reviewDecision(reviewTarget.id, review)} />}
       {notice && <div className="copilot-toast" role="status">{notice}</div>}
     </main>
   )
@@ -374,7 +403,7 @@ function WatchlistWorkspace({ analyses, demoPreviewEnabled, holdings, onAdd, onO
           <button className="stock-cell" onClick={() => onOpen(item.symbol)} type="button"><strong>{item.name}</strong><small>{item.symbol}</small></button>
           <span><i className={held ? 'relation held' : 'relation'}>{held ? '持仓' : '仅关注'}</i></span>
           <span>{itemAnalysis.verdict}</span>
-          <strong className="management-score">{itemAnalysis.score ?? '—'}</strong>
+          <strong className="management-score" title={itemAnalysis.evidenceStrength.label}>{itemAnalysis.evidenceStrength.value ?? '—'}</strong>
           <span className="row-actions"><button onClick={() => onOpen(item.symbol)} type="button">打开个股</button><button disabled={held} onClick={() => onRemove(item.symbol)} title={held ? '持仓股票须保留关注' : '移除关注'} type="button">移除</button></span>
         </div>
       })}
@@ -425,15 +454,53 @@ function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onA
   </section>
 }
 
-function DecisionWorkspace({ decisions, onOpen }: { decisions: TradingCopilotState['decisions']; onOpen: (symbol: string) => void }) {
+function DecisionWorkspace({ decisions, onOpen, onReview }: { decisions: TradingCopilotState['decisions']; onOpen: (symbol: string) => void; onReview: (decision: CopilotDecision) => void }) {
   return <section className="management-workspace" aria-label="人工决策记录">
-    <div className="management-heading"><div><span className="eyebrow">HUMAN INTENT LEDGER</span><h2>决策记录</h2><p>这里只是人工意图账本，不是委托、成交或量化样本。</p></div><span className="management-count">{decisions.length} 条记录</span></div>
+    <div className="management-heading"><div><span className="eyebrow">HUMAN INTENT LEDGER</span><h2>决策记录与复盘</h2><p>计划、实际动作和结果分开记录；这里不是委托、成交回执或量化训练样本。</p></div><span className="management-count">{decisions.length} 条记录</span></div>
     <div className="management-table panel">
-      <div className="decision-table-head"><span>时间</span><span>股票</span><span>人工决定</span><span>权限</span><span>操作</span></div>
-      {decisions.map((item) => <div className="decision-row" key={item.id}><small>{formatTime(item.recordedAt)}</small><strong>{item.symbol}</strong><span>{decisionLabel(item.action)}</span><span>仅记录意图</span><button onClick={() => onOpen(item.symbol)} type="button">打开个股</button></div>)}
+      <div className="decision-table-head"><span>时间 / 股票</span><span>计划</span><span>触发 / 失效</span><span>复盘状态</span><span>操作</span></div>
+      {decisions.map((item) => <div className="decision-row" key={item.id}><span><small>{formatTime(item.recordedAt)}</small><strong>{item.symbol}</strong></span><span><strong>{decisionLabel(item.action)}</strong><small>{item.plan?.reason ?? '旧记录未包含计划理由'}</small></span><span><small>触发：{item.plan?.trigger ?? '未记录'}</small><small>失效：{item.plan?.invalidation ?? '未记录'}</small></span><span>{reviewLabel(item.review?.status)}<small>{item.review?.actualAction || '等待人工复盘'}</small>{item.review?.note ? <small>复盘：{item.review.note}</small> : null}</span><span className="row-actions"><button onClick={() => onOpen(item.symbol)} type="button">打开个股</button><button onClick={() => onReview(item)} type="button">{item.review ? '更新复盘' : '记录复盘'}</button></span></div>)}
       {!decisions.length && <div className="management-empty"><BookOpenCheck size={25} /><strong>还没有人工决策记录</strong><p>只有你在个股页明确记录后，这里才会出现；不会把系统建议当成你的决定。</p></div>}
     </div>
   </section>
+}
+
+function ReadinessGrid({ analysis }: { analysis: CopilotAnalysis }) {
+  const items = [
+    ['数据', readinessLabel(analysis.readiness.data)],
+    ['证据', readinessLabel(analysis.readiness.evidence)],
+    ['模型', readinessLabel(analysis.readiness.model)],
+    ['人工决策', readinessLabel(analysis.readiness.action)],
+  ]
+  return <div className="readiness-grid" aria-label="决策就绪度">{items.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+}
+
+function DecisionPlanEditor({ action, analysis, symbol, onClose, onSave }: { action: CopilotDecisionAction; analysis: CopilotAnalysis; symbol: string; onClose: () => void; onSave: (plan: NonNullable<CopilotDecision['plan']>) => void }) {
+  const [reason, setReason] = useState('')
+  const [trigger, setTrigger] = useState(analysis.buyConditions[0] ?? '')
+  const [invalidation, setInvalidation] = useState(analysis.invalidation[0] ?? '')
+  const [maxRisk, setMaxRisk] = useState('')
+  const actionEligible = action !== 'planned' || analysis.readiness.action === 'eligible_for_human_review'
+  return <EditorShell title={`记录${decisionLabel(action)} · ${symbol}`} subtitle="先写清理由、触发和失效条件；保存只写入人工意图账本，不会下单。" onClose={onClose}>
+    <label>决策理由<textarea autoFocus onChange={(event) => setReason(event.target.value)} placeholder="为什么现在选择这项动作？" value={reason} /></label>
+    <label>触发条件<textarea onChange={(event) => setTrigger(event.target.value)} placeholder="什么条件满足后才执行？" value={trigger} /></label>
+    <label>失效条件<textarea onChange={(event) => setInvalidation(event.target.value)} placeholder="出现什么情况后计划作废？" value={invalidation} /></label>
+    <label>最大可承受风险（元，可选）<input min="0" onChange={(event) => setMaxRisk(event.target.value)} type="number" value={maxRisk} /></label>
+    {!actionEligible && <p className="editor-warning">当前证据未达到“可供人工复核”门槛，不能记录“加入计划”；仍可选择继续观察或暂不交易。</p>}
+    <button className="primary-button" disabled={!actionEligible || !reason.trim() || !trigger.trim() || !invalidation.trim()} onClick={() => onSave({ reason: reason.trim(), trigger: trigger.trim(), invalidation: invalidation.trim(), maxRiskCny: maxRisk ? Number(maxRisk) : null })} type="button">写入人工决策账本</button>
+  </EditorShell>
+}
+
+function DecisionReviewEditor({ decision, onClose, onSave }: { decision: CopilotDecision; onClose: () => void; onSave: (review: NonNullable<CopilotDecision['review']>) => void }) {
+  const [status, setStatus] = useState<NonNullable<CopilotDecision['review']>['status']>(decision.review?.status ?? 'pending')
+  const [actualAction, setActualAction] = useState(decision.review?.actualAction ?? '')
+  const [note, setNote] = useState(decision.review?.note ?? '')
+  return <EditorShell title={`复盘 · ${decision.symbol}`} subtitle="记录真实发生了什么；这仍不是券商成交回执。" onClose={onClose}>
+    <label>状态<select onChange={(event) => setStatus(event.target.value as typeof status)} value={status}><option value="pending">待复盘</option><option value="executed">已执行</option><option value="not_executed">未执行</option><option value="expired">计划失效</option></select></label>
+    <label>实际动作<input onChange={(event) => setActualAction(event.target.value)} placeholder="例如：未交易 / 手工买入 100 股" value={actualAction} /></label>
+    <label>复盘备注<textarea onChange={(event) => setNote(event.target.value)} placeholder="触发是否满足、执行偏差、后续改进" value={note} /></label>
+    <button className="primary-button" disabled={!actualAction.trim() || !note.trim()} onClick={() => onSave({ status, actualAction: actualAction.trim(), note: note.trim(), reviewedAt: new Date().toISOString() })} type="button">保存复盘</button>
+  </EditorShell>
 }
 
 function EmptyDesk({ deskQuery, onBrowse, onPortfolio, onWatchlist, setDeskQuery }: { deskQuery: string; onBrowse: () => void; onPortfolio: () => void; onWatchlist: () => void; setDeskQuery: (value: string) => void }) {
@@ -515,5 +582,7 @@ function money(value: number) { return `¥${value.toLocaleString('zh-CN', { maxi
 function ratio(value: number, total: number) { return total ? `${Math.round((value / total) * 100)}%` : '0%' }
 function formatTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) }
 function decisionLabel(action: CopilotDecisionAction) { return ({ planned: '加入计划', observing: '继续观察', skipped: '暂不交易' })[action] }
+function reviewLabel(status: NonNullable<CopilotDecision['review']>['status'] | undefined) { return ({ pending: '待复盘', executed: '已执行', not_executed: '未执行', expired: '已失效' } as Record<string, string>)[status ?? 'pending'] }
+function readinessLabel(value: string) { return ({ verified: '已验证', demo: '演示', unavailable: '不可用', typed: '已定型', unscored_observation: '未评分观察', ready: '已就绪', blocked: '阻断', not_applicable: '不适用', eligible_for_human_review: '可供人工复核', observe_only: '仅观察' } as Record<string, string>)[value] ?? value }
 function viewTitle(view: CopilotView) { return ({ desk: '今天先看条件，再做决定', watchlist: '先分清关注与持仓', portfolio: '核对完整资金与持仓', decisions: '复盘你的人工决定' })[view] }
 function analysisModeLabel(mode: string) { return ({ demo_fixture: '演示分析', tradingagent_observation: 'TA 正式观察', analysis_unavailable: '暂无正式分析' } as Record<string, string>)[mode] ?? mode }

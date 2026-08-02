@@ -522,3 +522,65 @@
   .copilot-rail { display: grid; grid-template-columns: 1fr; padding: 12px; }
   .score-caption { padding-left: 0; }
 }
+
+/* TradingCopilot V7: readable evidence terminal, human-review boundaries */
+.copilot-shell { font-size: 12px; }
+.eyebrow, .persistence, .account-strip span, .stock-browser-actions > span, .management-count,
+.management-table-head, .portfolio-table-head, .decision-table-head, .stock-cell small, .relation,
+.source-badge, .stock-identity p, .stock-quick-state small, .quote-strip small, .chart-legend-row,
+.stock-metric-grid dt, .event-timeline time, .event-timeline article span, .event-timeline article small,
+.event-kind, .event-card-grid small, .event-card-grid a, .question-list section span,
+.forecast-disclaimer small, .driver-card > small, .model-boundary strong, .model-boundary p,
+.history-table-panel th, .history-table-panel td, .demo-data-label, .formal-data-label,
+.recommendation-card > p, .evidence-consensus, .company-profile-card dt, .company-profile-card dd,
+.company-profile-card > p, .sentiment-tone small, .sentiment-counts, .sentiment-pulse-card > p,
+.sentiment-pulse-card > small, .holding-card > p, .source-card > p, .rail-link, .history-row small,
+.editor-fields label, .management-footnote { font-size: 11px; }
+.management-row, .portfolio-row, .decision-row, .event-timeline article p, .event-card-grid p,
+.question-list p, .forecast-disclaimer p, .scenario-card > p, .driver-card li, .analysis-hero p,
+.unavailable-tab p, .stock-metric-grid dd, .stock-chart-tooltip span { font-size: 12px; }
+.primary-button, .secondary-button, .ghost-button, .danger-button, .row-actions button,
+.decision-row > button, .range-tabs button, .chart-tools button, .panel-heading button,
+.editor-close, .round-button, .rail-link { min-height: 40px; }
+.range-tabs button, .chart-tools button { height: 40px; min-width: 44px; font-size: 11px; }
+.stock-browser-search { height: 42px; }
+.stock-browser-search input, .stock-browser-search .primary-button { height: 40px; min-height: 40px; font-size: 12px; }
+.management-row, .portfolio-row, .decision-row { min-height: 78px; line-height: 1.45; }
+.decision-row > span { min-width: 0; display: grid; gap: 4px; }
+.decision-row small { color: #77858c; line-height: 1.45; }
+.decision-table-head, .decision-row { grid-template-columns: .9fr 1.2fr 1.5fr .9fr 150px; }
+.score-semantics { display: block; margin: -4px 0 10px; color: #77858c; font-size: 11px; }
+.readiness-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 12px; border: 1px solid var(--copilot-line); background: var(--copilot-line); }
+.readiness-grid > div { min-height: 48px; padding: 8px; display: grid; gap: 3px; background: #0c1218; }
+.readiness-grid span { color: #6f7d84; font-size: 10px; }
+.readiness-grid strong { color: #b8c2c6; font-size: 11px; }
+.decision-readiness { padding-bottom: 14px; }
+.decision-readiness > div { padding: 0 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.decision-readiness > div span { min-height: 56px; padding: 9px; display: grid; gap: 4px; border: 1px solid var(--copilot-line); }
+.decision-readiness small { color: #718087; font-size: 10px; }
+.decision-readiness strong { color: #c4ced1; font-size: 12px; }
+.decision-readiness ul { margin: 12px 14px 0; padding: 10px 10px 10px 27px; border: 1px solid rgba(215, 173, 97, .16); color: #9a927f; font-size: 11px; line-height: 1.6; }
+.market-rules-strip { min-height: 42px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid var(--copilot-line); border-top: 0; color: #839097; background: #0a1015; }
+.market-rules-strip svg { color: var(--copilot-teal); }
+.market-rules-strip span { padding: 4px 7px; border: 1px solid rgba(103, 212, 196, .14); font-size: 10px; }
+.market-rules-strip.blocked { color: #9b8d73; }
+.market-rules-strip.blocked svg { color: var(--copilot-amber); }
+.event-meta { margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap; }
+.event-meta span { padding: 3px 5px; border: 1px solid rgba(207, 222, 229, .08); color: #68767d !important; font-size: 10px !important; }
+.formal-data-label { padding: 3px 5px; border: 1px solid rgba(103, 212, 196, .25); color: var(--copilot-teal); font-size: 11px; }
+.demo-chart-watermark { position: absolute; right: 14px; bottom: 12px; padding: 5px 8px; border: 1px solid rgba(215, 173, 97, .22); color: #b59b68; background: rgba(7, 11, 15, .88); font-size: 10px; letter-spacing: .04em; pointer-events: none; }
+.editor-fields textarea, .editor-fields select { width: 100%; min-height: 42px; border: 1px solid var(--copilot-line); background: #080d12; color: var(--copilot-text); padding: 10px; font: inherit; resize: vertical; }
+.editor-fields textarea { min-height: 76px; line-height: 1.5; }
+.editor-warning { margin: 0 !important; padding: 9px 10px; border: 1px solid rgba(239, 119, 125, .2); color: #c08f94 !important; background: rgba(239, 119, 125, .04); font-size: 11px !important; }
+.copilot-toast { max-width: min(460px, calc(100vw - 28px)); font-size: 12px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .copilot-sidebar { height: 64px; }
+  .copilot-sidebar nav { height: 64px; }
+  .copilot-sidebar nav button { min-height: 52px; font-size: 11px; }
+  .quant-switch { min-height: 44px; font-size: 10px; }
+  .decision-readiness > div { grid-template-columns: 1fr 1fr; }
+  .decision-row { grid-template-columns: 1fr; }
+  .decision-row > span, .decision-row > .row-actions { grid-column: 1 / -1; }
+  .row-actions button { min-height: 44px; }
+}

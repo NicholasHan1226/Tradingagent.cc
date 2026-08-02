@@ -891,8 +891,8 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 - All Markets 不生成 combined monetary portfolio/performance；只可汇总非货币 counts/health。
 - `portfolio.ashareAccount` 只显示 A股账户事实；CNFutures 与 Crypto 使用各自 market summary 和原生币种。即使 A股与 CNFutures 同为 CNY，也属于不同 authority；不同 market/account 的 capital、equity、PnL、return、drawdown、utilization 禁止聚合。
 - Quant Core 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
-- TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。它使用独立 append-only 事件文件，不得写入量化 capital/execution/sample/decision namespace。
-- 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。演示数据不得冒充实时；无正式分析时不得自动形成人工计划。
+- TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。每次读取返回 `ETag`，写入必须使用 `If-Match`；服务端串行化写入并校验 state hash、previous hash、sequence 与 event hash 的 append-only 链。浏览器草稿只能标为未同步状态，不得静默覆盖新版本。人工决策的计划理由/触发/失效/风险上限与事后实际动作/复盘分离，二者都不得写入量化 capital/execution/sample/decision namespace。
+- 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。正式投影还必须附带 `tradingagent.trading_copilot_stock_projection_receipt.v1` 独立回执、定型证据强度、数据/证据/模型/人工行动四层就绪度、A股交易约束，以及逐事件来源和内容回执。普通 signal confidence 不等于证据强度。演示数据不得冒充实时；无正式定型分析时不得自动形成人工计划。
 - Quant Core 与 TradingCopilot 的能力归属以 `TradingCopilot/contracts/shared_capability_boundary.v1.json` 为机器合同：共享项只能作为 `evidence_only` 只读投影；Quant专属资本/订单/样本/晋级与Copilot专属申报账户/持仓/人工意图禁止双向写入或身份转换。正式预测、Kronos、OOS与校准由 learning/research plane 统一产生，前端计算不得成为正式预测证据。
 
 ## 版本与变更
