@@ -292,6 +292,7 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             + (
                 ("trade_date", "url"),
                 ("trade_date", "ts_code", "inst_csname", "title"),
+                ("trade_date", "title", "url"),
                 ("trade_date", "title", "author", "url"),
             ),
             event_time_candidates=("event_time", "trade_date"),
