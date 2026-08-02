@@ -1,6 +1,16 @@
 # TradingAgent 当前状态
 
-> 最后更新：2026-08-02 18:59 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+> 最后更新：2026-08-02 19:16 CST。本文只维护当前事实与下一停止线；历史候选和失败证据通过 Git 与服务器只读证据目录追溯。长期边界见 [AGENTS.md](AGENTS.md)，运行与回滚见 [docs/operations.md](docs/operations.md)。
+
+> **2026-08-02 TradingCopilot V8 当前主线服务器旁路验收：** 已合入主线的
+> `79abe00` 在独立 code/venv/output root 上通过 Python 136 项、前端 327 项、lint、
+> 双构建和一次 loopback-only `18790` snapshot canary；GET health/snapshot、
+> `Cache-Control: no-store`、POST=405、未知路由=404、退出后端口关闭均已读回。
+> 现役 `/opt/investment/current=2b7b52b...`、A股 timers 与禁用的 8787 front 均保持
+> 原状；没有 Copilot unit、数据 transport、资本、订单、训练、模型网络或交易变更。
+> r1 曾因 root-owned canary evidence 而不可验收，保留失败记录；r2 的干净证据目录为
+> `/opt/investment/release-evidence/tradingagent/20260802T111404Z-trading-copilot-79abe00-canary-r2/`。
+> 当前下一停止线仍是正式数据覆盖，不由候选通过推断为生产投影可用。
 
 > **2026-08-02 TradingCopilot V8 正式个股投影最终读回：** 候选 `fcc2ba1`
 > 通过正式 TradingDatas catalog/query 与既有只读 TA token 完成隔离 one-shot。
