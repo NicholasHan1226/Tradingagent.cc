@@ -62,8 +62,9 @@ OPTIONAL_DATASET_IDS = (
     "cn.dataset.report_rc",
     "cn.dataset.broker_recommend",
     "cn.dataset.stk_surv",
+    "cn.dataset.major_news",
 )
-PAUSED_DATASET_IDS = ("cn.dataset.major_news", "cn.dataset.news")
+PAUSED_DATASET_IDS = ("cn.dataset.news",)
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _SHA256_HEX = frozenset("0123456789abcdef")
@@ -285,6 +286,13 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             ),
             event_time_candidates=("event_time", "trade_date"),
             source_candidates=("source", "inst_csname"),
+        ),
+        "cn.dataset.major_news": _DatasetSpec(
+            identity_candidates=_GENERIC_IDENTITY + (("src", "pub_time", "title"),),
+            event_time_candidates=("event_time", "pub_time"),
+            source_candidates=("src", "source"),
+            default_entity="CN-MACRO",
+            naive_datetime_timezone="Asia/Shanghai",
         ),
         "cn.dataset.disclosure_date": _DatasetSpec(
             identity_candidates=_GENERIC_IDENTITY

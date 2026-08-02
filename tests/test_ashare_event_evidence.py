@@ -93,6 +93,7 @@ def _fixture_identity_fields(dataset_id: str, fields: list[str]) -> list[str]:
         ),
         "cn.dataset.broker_recommend": (("event_id",), ("month", "broker", "ts_code")),
         "cn.dataset.stk_surv": (("event_id",), ("ts_code", "surv_date", "rece_org")),
+        "cn.dataset.major_news": (("event_id",), ("src", "pub_time", "title")),
     }[dataset_id]
     return list(
         next(candidate for candidate in candidates if set(candidate) <= set(fields))
@@ -426,7 +427,9 @@ def test_first_profiles_accept_catalog_validated_provider_native_aliases() -> No
         for dataset_id, fields in native_fields.items()
     ]
     transport = _Transport(catalog_rows=rows)
-    port = TradingDatasAshareEvidencePort(_client(transport))
+    port = TradingDatasAshareEvidencePort(
+        _client(transport, configured_ids=frozenset(native_fields))
+    )
 
     profiles = port.freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
 
@@ -534,6 +537,35 @@ def test_anns_d_formal_identity_including_title_is_catalog_bound() -> None:
         "title",
         "url",
     )
+
+
+def test_major_news_formal_catalog_profile_is_optional_and_macro_scoped() -> None:
+    rows = _catalog_rows()
+    target_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row["dataset_id"] == "cn.dataset.major_news"
+    )
+    rows[target_index] = _catalog_row(
+        "cn.dataset.major_news",
+        fields=["title", "content", "pub_time", "src"],
+        identity_fields=["src", "pub_time", "title"],
+    )
+    transport = _Transport(catalog_rows=rows)
+
+    profiles = TradingDatasAshareEvidencePort(
+        _client(
+            transport,
+            configured_ids=frozenset((*PRIMARY_DATASET_IDS, *OPTIONAL_DATASET_IDS)),
+        )
+    ).freeze_profiles(audit_ledger=AshareEvidenceAuditLedger())
+    profile = profiles.by_dataset["cn.dataset.major_news"]
+
+    assert profile.identity_fields == ("src", "pub_time", "title")
+    assert profile.event_time_field == "pub_time"
+    assert profile.source_field == "src"
+    assert profile.default_entity == "CN-MACRO"
+    assert profile.optional_dataset is True
 
 
 @pytest.mark.parametrize(
