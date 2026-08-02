@@ -76,7 +76,8 @@ BTC、ETH、SOL、XRP、BNB、DOGE、ADA、TRX、LINK、AVAX 各自固定查询 
 ready/fresh/valid/non-degraded 元数据以及 receipt/lineage。输出只包含摘要与哈希，
 固定 `authority=none`、零 capital/order/model/promotion 权限；它不改变既有
 BTC/ETH profile、G5 epoch、timer、账本或模拟交易范围。首个 server one-shot/replay
-验证通过前，不安装独立定时器。
+验证通过前，不安装独立定时器。该观测是 current-health read，查询明确省略 `as_of`；
+它不能成为历史 PIT、训练或资本证据。
 
 `delayed_paper_runner.py` 的顺序为：
 

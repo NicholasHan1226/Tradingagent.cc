@@ -389,7 +389,9 @@ def collect_market_observation(
                         ]
                     },
                 },
-                as_of=_iso(window.observation_cutoff),
+                # This is a current health observation, not a historical/PIT
+                # read.  The formal ten-symbol 18083 contract supports the
+                # exact bounded current window with as_of omitted.
                 order=("symbol:asc", "open_time:asc"),
                 limit=BAR_COUNT,
             ),
