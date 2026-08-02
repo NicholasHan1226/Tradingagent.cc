@@ -142,7 +142,7 @@ daily_bars      -> cn.equity.daily
 
 这三个 dataset ID 是经过上游 catalog/handoff 审核的 TA 业务映射，不是由 provider
 名称、alias、返回行或 URL 猜测。builder 只依据 catalog 的 `fields`、
-`filter_operators`、`default_order`、`limits` 和 `schema_major` 生成查询合同；
+`filter_operators`（允许包含非默认返回但 catalog 明确声明为可过滤的字段）、`default_order`、`limits` 和 `schema_major` 生成查询合同；
 完整分页交易日历用于确定最近完成开市日，证券主数据和该日 daily 再分别执行
 `limit=1` 当前 metadata/source-proof 预检。三项任一不是
 `ACCEPT/weight=1.0` 就不发布 current manifest。其它 active dataset 无论 catalog

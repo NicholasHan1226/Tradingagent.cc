@@ -210,6 +210,21 @@ def test_dataset_fingerprint_golden_vector_is_cross_repository_stable() -> None:
     )
 
 
+def test_dataset_fingerprint_accepts_filterable_nondefault_field() -> None:
+    row = _catalog_row()
+    row["filter_operators"] = {
+        **row["filter_operators"],
+        "freq": ["eq", "in"],
+    }
+
+    material = dataset_contract_material(row)
+
+    assert material["filter_operators"]["freq"] == ["eq", "in"]
+    assert dataset_contract_fingerprint(row) != dataset_contract_fingerprint(
+        _catalog_row()
+    )
+
+
 @pytest.mark.parametrize(
     "field, value",
     [
@@ -237,10 +252,6 @@ def test_each_dataset_contract_field_changes_fingerprint(
         (
             lambda row: row.update({"identity_fields": ["missing"]}),
             "identity_fields must be default fields",
-        ),
-        (
-            lambda row: row.update({"filter_operators": {"missing": ["eq"]}}),
-            "filter_operators field must be a default field",
         ),
         (
             lambda row: row.update({"limits": {"max_page_size": 0}}),
