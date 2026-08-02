@@ -113,13 +113,37 @@ describe('TradingCopilotPage', () => {
     expect(screen.getAllByText('仅关注')).toHaveLength(2)
   })
 
-  it('does not inject demo holdings into the normal personal URL state', async () => {
+  it('shows the screenshot-aligned research preview without injecting demo account state', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled={false} onOpenQuant={() => undefined} />)
 
-    expect(await screen.findByText('先录入真实关注和持仓')).toBeInTheDocument()
-    expect(screen.getByText('尚未录入个人状态')).toBeInTheDocument()
-    expect(screen.queryByText('许继电气')).not.toBeInTheDocument()
+    expect(await screen.findByText('研究界面预览 · 个人状态仍为空')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '许继电气' })).toBeInTheDocument()
+    expect(screen.getByText('当前是完整界面演示：不属于你的关注、持仓或决策记录')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '许继电气 1D 行情与预测图' })).toBeInTheDocument()
+    expect(screen.getAllByText('¥0').length).toBeGreaterThanOrEqual(3)
+    expect(screen.getByLabelText('用户申报账户摘要')).toHaveTextContent('关注股票0 只')
+    expect(screen.getByRole('button', { name: '加入人工计划' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: '关注列表' }))
+    expect(screen.getByText('还没有关注股票')).toBeInTheDocument()
     expect(screen.queryByText('紫金矿业')).not.toBeInTheDocument()
+  })
+
+  it('opens an arbitrary A-share terminal before adding it to the personal watchlist', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    render(<TradingCopilotPage demoPreviewEnabled={false} onOpenQuant={() => undefined} />)
+    await screen.findByText('研究界面预览 · 个人状态仍为空')
+
+    fireEvent.change(screen.getByLabelText('搜索 A 股并打开个股终端'), { target: { value: '000001.SZ 平安银行' } })
+    fireEvent.click(screen.getByRole('button', { name: '打开个股' }))
+    expect(await screen.findByRole('heading', { name: '平安银行' })).toBeInTheDocument()
+    expect(screen.getAllByText('暂无正式分析').length).toBeGreaterThan(0)
+    expect(screen.getByText('行情图表暂不可用')).toBeInTheDocument()
+    expect(screen.getByLabelText('用户申报账户摘要')).toHaveTextContent('关注股票0 只')
+
+    fireEvent.click(screen.getByRole('button', { name: '加入关注' }))
+    await waitFor(() => expect(screen.getByLabelText('用户申报账户摘要')).toHaveTextContent('关注股票1 只'))
+    expect(screen.getByRole('button', { name: '已关注' })).toBeDisabled()
   })
 })

@@ -18,11 +18,12 @@ const tabs: Array<{ key: StockDetailTab; label: string }> = [
   { key: 'analysis', label: '分析' },
 ]
 
-export function StockDetailWorkspace({ analysis, intelligence, holding, latestDecision, onRecordDecision }: {
+export function StockDetailWorkspace({ analysis, intelligence, holding, latestDecision, decisionDisabled = false, onRecordDecision }: {
   analysis: CopilotAnalysis
   intelligence: StockIntelligence
   holding?: CopilotHolding
   latestDecision: string
+  decisionDisabled?: boolean
   onRecordDecision: (action: CopilotDecisionAction) => void
 }) {
   const [activeTab, setActiveTab] = useState<StockDetailTab>('overview')
@@ -66,10 +67,10 @@ export function StockDetailWorkspace({ analysis, intelligence, holding, latestDe
     </div>
 
     <div className="decision-bar">
-      <div><strong>你的决定</strong><span>只写入人工决策账本，不会触发任何订单</span></div>
-      <button className="ghost-button" onClick={() => onRecordDecision('skipped')} type="button">暂不交易</button>
-      <button className="secondary-button" onClick={() => onRecordDecision('observing')} type="button">继续观察</button>
-      <button className="primary-button" disabled={analysis.mode === 'analysis_unavailable'} onClick={() => onRecordDecision('planned')} type="button">加入人工计划</button>
+      <div><strong>你的决定</strong><span>{decisionDisabled ? '研究界面预览不会写入个人决策账本' : '只写入人工决策账本，不会触发任何订单'}</span></div>
+      <button className="ghost-button" disabled={decisionDisabled} onClick={() => onRecordDecision('skipped')} type="button">暂不交易</button>
+      <button className="secondary-button" disabled={decisionDisabled} onClick={() => onRecordDecision('observing')} type="button">继续观察</button>
+      <button className="primary-button" disabled={decisionDisabled || analysis.mode === 'analysis_unavailable'} onClick={() => onRecordDecision('planned')} type="button">加入人工计划</button>
     </div>
   </section>
 }
