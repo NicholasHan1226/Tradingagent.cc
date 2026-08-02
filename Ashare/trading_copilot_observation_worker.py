@@ -363,7 +363,11 @@ def build_projection_batch(
             "receiptSha256": latest.envelope_proof_sha256,
             "dataThrough": max(bar.data_through for bar in bars).isoformat(),
             "retrievedAt": max(bar.available_at for bar in bars).isoformat(),
-            "freshness": "fresh",
+            "freshness": (
+                "stale"
+                if latest.evidence_use is MinuteEvidenceUse.HISTORICAL_DISPLAY
+                else "fresh"
+            ),
             "adjustment": "none",
         }
         rules = _mapping(company.get("marketRules"), "copilot_company_rules_invalid")
@@ -480,6 +484,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
     parser.add_argument("--trading-date", required=True)
+    parser.add_argument(
+        "--evidence-use",
+        choices=(
+            MinuteEvidenceUse.DELAYED_PAPER.value,
+            MinuteEvidenceUse.HISTORICAL_DISPLAY.value,
+        ),
+        default=MinuteEvidenceUse.DELAYED_PAPER.value,
+    )
     parser.add_argument("--valid-until", required=True)
     parser.add_argument("--batch-output", type=Path, required=True)
     parser.add_argument("--projection-output-root", type=Path, required=True)
@@ -494,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
             decision_time=decision_time,
             trading_date=date.fromisoformat(arguments.trading_date),
             reference_facts=load_reference_facts(arguments.reference_facts.resolve()),
-            evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+            evidence_use=MinuteEvidenceUse(arguments.evidence_use),
         )
         if arguments.observation_manifest:
             if not arguments.observation_state_root:

@@ -218,6 +218,7 @@ class MinuteEvidenceUse(str, Enum):
 
     LOW_LATENCY_EXECUTION = "low_latency_execution"
     DELAYED_PAPER = "delayed_paper"
+    HISTORICAL_DISPLAY = "historical_display"
 
 
 @dataclass(frozen=True)
@@ -631,12 +632,12 @@ class MinuteBarEvidence:
             raise MinuteDataContractError("minute_evidence_time_order_invalid")
         if not isinstance(self.evidence_use, MinuteEvidenceUse):
             raise MinuteDataContractError("minute_evidence_use_invalid")
-        maximum_latency = (
-            MAX_MINUTE_DATA_LATENCY
-            if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION
-            else MAX_DELAYED_PAPER_LATENCY
-        )
-        if (
+        maximum_latency = None
+        if self.evidence_use is MinuteEvidenceUse.LOW_LATENCY_EXECUTION:
+            maximum_latency = MAX_MINUTE_DATA_LATENCY
+        elif self.evidence_use is MinuteEvidenceUse.DELAYED_PAPER:
+            maximum_latency = MAX_DELAYED_PAPER_LATENCY
+        if maximum_latency is not None and (
             available - bar_end > maximum_latency
             or decision - bar_end > maximum_latency
         ):
@@ -672,7 +673,10 @@ class MinuteBarEvidence:
 
     @property
     def delayed_paper_eligible(self) -> bool:
-        return self.available_at - self.bar_end <= MAX_DELAYED_PAPER_LATENCY
+        return bool(
+            self.evidence_use is MinuteEvidenceUse.DELAYED_PAPER
+            and self.available_at - self.bar_end <= MAX_DELAYED_PAPER_LATENCY
+        )
 
     def canonical_payload(self) -> dict[str, Any]:
         def stamp(value: datetime) -> str:

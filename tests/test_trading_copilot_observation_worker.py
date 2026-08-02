@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -13,6 +14,7 @@ from Ashare.minute_data import (
     MinuteBarEvidence,
     MinuteBarSnapshot,
     MinuteDatasetProfile,
+    MinuteEvidenceUse,
     MinuteTimestampSemantics,
 )
 from Ashare.trading_copilot_observation_worker import (
@@ -121,6 +123,28 @@ def test_builds_and_publishes_direct_observation_with_all_receipts(tmp_path: Pat
     assert {row["receiptId"] for row in receipt["sourceReceipts"]} == {
         "minute-receipt", "company-receipt", "event-receipt"
     }
+
+
+def test_historical_projection_marks_price_source_stale() -> None:
+    original = _snapshot()
+    historical = replace(
+        original,
+        bars=tuple(
+            replace(bar, evidence_use=MinuteEvidenceUse.HISTORICAL_DISPLAY)
+            for bar in original.bars
+        ),
+    )
+    generated = datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc)
+
+    batch = build_projection_batch(
+        snapshot=historical,
+        company_facts=_companies(),
+        events=(),
+        generated_at=generated,
+        valid_until=generated + timedelta(hours=1),
+    )
+
+    assert batch["items"][0]["source"]["freshness"] == "stale"
 
 
 def test_omits_event_without_verifiable_url_and_never_invents_sentiment() -> None:

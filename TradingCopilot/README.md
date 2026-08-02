@@ -112,7 +112,7 @@ V3 把“预测功能存在”和“预测可用于人工决策”拆成机器�
 
 ## V8 正式投影、组合复核与 Challenger 评估
 
-- `Ashare.trading_copilot_observation_worker` 复用现有分钟 Evidence Gate，行情仍只经 TradingDatas `GET /v1/catalog` 与 `POST /v1/query` 进入；证券主数据只能来自五项 committed current-observation bundle 或另一个带 TradingDatas 回执的显式输入。前端不接 token，也不直连数据源。
+- `Ashare.trading_copilot_observation_worker` 复用现有分钟 Evidence Gate，行情仍只经 TradingDatas `GET /v1/catalog` 与 `POST /v1/query` 进入；证券主数据只能来自五项 committed current-observation bundle 或另一个带 TradingDatas 回执的显式输入。休市日的 `historical_display` 只展示带当前查询回执的旧行情并标记 `stale`，不取得 historical-PIT 训练、延迟模拟或执行资格。前端不接 token，也不直连数据源。
 - 批量发布先验证完整批次，再原子写入每只股票的 projection/receipt；行情、证券主数据和每条事件的全部来源回执都进入 detached receipt。批内任一代码、时间、OHLC、来源、事件链接或双向证据不合格时，本批在写第一只股票前整体失败。
 - 公告、新闻和舆论必须包含代码绑定、来源类别、来源置信、发布/采集时间、URL、内容哈希和来源回执。没有正式分类回执时，事件只发布 `neutral/uncertain`，不由摘要文字猜测情绪或影响；没有可验证 URL 的事件不展示。
 - 组合页按用户申报成本分别复核资金算术、单股集中、已验证行业重叠、T+1可卖数量与人工计划风险上限。缺失行业不会被合并成一个虚构行业，最大风险也不会被当作计划投入或现金预约。
