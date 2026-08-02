@@ -81,10 +81,15 @@ The first catalog-validated profiles are:
   `cn.dataset.irm_qa_sh`, `cn.dataset.irm_qa_sz`, and
   `cn.dataset.research_report`;
 - optional, explicitly coverage-degrading: `cn.dataset.disclosure_date`,
-  `cn.dataset.report_rc`, `cn.dataset.broker_recommend`, and
-  `cn.dataset.stk_surv`;
-- forbidden fallbacks while paused: `cn.dataset.news` and
-  `cn.dataset.major_news`.
+  `cn.dataset.report_rc`, `cn.dataset.broker_recommend`, `cn.dataset.stk_surv`,
+  and receipt-bound `cn.dataset.major_news`;
+- forbidden fallback while paused: `cn.dataset.news`.
+
+`major_news` is macro-context event evidence only: its formal identity is
+`[src, pub_time, title]`, `pub_time` uses declared Asia/Shanghai semantics,
+and rows without a stock identity remain `CN-MACRO` context. It can lower or
+annotate a shadow assessment but cannot select a stock, create a candidate,
+train a model, alter risk, or authorize an order.
 
 Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
 identity must be present in the exact active catalog row. Each event profile
