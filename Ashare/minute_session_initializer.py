@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import sys
 from typing import Any
 
@@ -55,6 +56,7 @@ MINUTE_DATASET_ID = "cn.dataset.rt_min"
 MAX_SESSION_QUERY_LIMIT = 500
 MAX_QUERY_IN_VALUES = 100
 MAX_DAILY_PAGES_PER_BATCH = 5
+TRACKING_UNIVERSE_CONTRACT_ID = "tradingagent.trading_copilot_tracking_universe.v1"
 TransportFactory = Callable[..., HTTPTransport]
 
 
@@ -298,6 +300,71 @@ def _atomic_write(path: Path, payload: object) -> bytes:
     return encoded
 
 
+def _publish_tracking_universe(
+    *,
+    output: Path,
+    generated_at: datetime,
+    universe: Any,
+) -> int:
+    """Atomically publish the session's named research universe for Copilot.
+
+    This projection is deliberately not a quote, forecast, account, or trading
+    authority.  It only lets the separately read-only Copilot surface discover
+    the exact symbol/name set that this verified minute-session initializer used.
+    """
+
+    if not output.is_absolute() or output.is_symlink():
+        raise MinuteSessionInitializerError("tracking_universe_output_invalid")
+    parent = output.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise MinuteSessionInitializerError("tracking_universe_output_parent_invalid")
+    if output.exists():
+        metadata = output.stat(follow_symlinks=False)
+        if not output.is_file() or metadata.st_nlink != 1:
+            raise MinuteSessionInitializerError("tracking_universe_output_invalid")
+
+    items = [
+        {"symbol": symbol, "name": instrument.name}
+        for symbol, instrument in sorted(universe.instruments.items())
+        if not instrument.context_only
+    ]
+    if not items:
+        raise MinuteSessionInitializerError("tracking_universe_empty")
+    payload = {
+        "contractId": TRACKING_UNIVERSE_CONTRACT_ID,
+        "generatedAt": generated_at.isoformat(),
+        "items": items,
+    }
+    encoded = (_canonical_json(payload) + "\n").encode("utf-8")
+    temporary = output.with_name(
+        f".{output.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    )
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, output)
+        os.chmod(output, 0o600)
+        parent_descriptor = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+    except Exception:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return len(items)
+
+
 def _publish_day(
     *,
     state_root: Path,
@@ -363,6 +430,7 @@ def initialize_minute_session(
     transport_factory: TransportFactory = build_runtime_transport,
     universe_source: Path | str | None = None,
     bootstrap_manifest: Path | str | None = None,
+    tracking_universe_output: Path | str | None = None,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -669,6 +737,13 @@ def initialize_minute_session(
         references=references,
         universe=[dict(row) for row in universe_raw],
     )
+    tracking_universe_count = None
+    if tracking_universe_output is not None:
+        tracking_universe_count = _publish_tracking_universe(
+            output=Path(tracking_universe_output),
+            generated_at=now,
+            universe=universe,
+        )
     return {
         "status": "pass",
         "authority_tier": "non_production_fixture",
@@ -687,6 +762,8 @@ def initialize_minute_session(
         "universe_sha256": _sha256(universe_raw),
         "bootstrap": template_root is None,
         "reused": reused,
+        "tracking_universe_published": tracking_universe_count is not None,
+        "tracking_universe_symbol_count": tracking_universe_count,
         "state_bundle_created": False,
         "capital_authority": False,
         "execution_authority": False,
@@ -713,6 +790,11 @@ def main(argv: list[str] | None = None) -> int:
             "requires --universe-source and is rejected after initialization"
         ),
     )
+    parser.add_argument(
+        "--tracking-universe-output",
+        type=Path,
+        help="Optional absolute TradingCopilot symbol/name projection output",
+    )
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
     try:
@@ -723,6 +805,13 @@ def main(argv: list[str] | None = None) -> int:
             ).strip()
             if environment_source:
                 configured_universe_source = Path(environment_source)
+        configured_tracking_universe_output = args.tracking_universe_output
+        if configured_tracking_universe_output is None:
+            environment_output = os.environ.get(
+                "TRADING_COPILOT_TRACKING_UNIVERSE_PATH", ""
+            ).strip()
+            if environment_output:
+                configured_tracking_universe_output = Path(environment_output)
         now = (
             datetime.now(tz=SHANGHAI)
             if args.now is None
@@ -734,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
             now=now,
             universe_source=configured_universe_source,
             bootstrap_manifest=args.bootstrap_manifest,
+            tracking_universe_output=configured_tracking_universe_output,
         )
     except (
         MinuteSessionInitializerError,
