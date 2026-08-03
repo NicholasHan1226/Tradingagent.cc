@@ -8,6 +8,16 @@
 - 该系统仅供 Nicholas 个人内部使用。前端/API默认只绑定`127.0.0.1`；`tradingagent.cc`远程入口必须先通过Cloudflare Access或等价单用户认证，禁止匿名公网访问和API直出。DNS、Tunnel/Pages与Access policy分别验收。
 - TradingAgent 只消费显式配置的 TradingDatas `GET /v1/catalog` 与 `POST /v1/query` 契约；不读取 TradingDatas 数据库，不实现其服务端，不使用旧专用接口或数据商回退。
 - HTTP 成功不代表数据可用。每个 dataset 独立检查 `state`、`degraded`、`freshness`、`quality`、`lineage`、`receipt_id`、`data_through`、`observed_at` 和 `reasons`；impaired state 允许后四项为 null，TA 不补造。无完整 source proof 时固定 fail closed；只有证据完整且 policy 明确允许的 impaired evidence 才可降权。
+
+### 1.0.1 TradingDatas 能力分层：不降低真实性，不用稳定门禁阻塞开发
+
+| 层级 | 最小证据 | 允许范围 | 不允许推导 |
+|---|---|---|---|
+| `contract_ready` | capability/mapping、编译与失败测试 | fixture/mock、兼容测试、候选 PR、内部集成准备 | token 已发放、provider 可用、当前市场事实或生产切换 |
+| `observed` | 一次有界 `catalog/query` 回读，含完整 source proof | current-observation、non-authority 的内部研究/Copilot 试读 | 历史 PIT、连续健康、自动调度、模型/资金/订单 authority |
+| `stable` | 跨适用 cadence 连续成功且该消费者已 readback | 稳定消费与相应常规运行声明 | 全部无关 dataset/consumer 一并完成 |
+
+开发、合同和候选发布以 `contract_ready` 推进；一次真实试读以 `observed` 推进；只有需要声明稳定运行时才要求 `stable`。任何 dataset 的 source proof 失败仍只阻断该 dataset/窗口，记录 coverage debt 后继续其它独立能力；不得为绕过或降低等待成本新增数据集专用 route、UI、collector、timer、service、表或 provider fallback。
 - Crypto 的 runtime token 位于 tmpfs，重启后只允许使用
   `Crypto/systemd/tradingagent-crypto-read-token.tmpfiles.conf` 从发布侧既有
   root-owned canonical source 做 scoped copy。不得打印或读取 token，不得
