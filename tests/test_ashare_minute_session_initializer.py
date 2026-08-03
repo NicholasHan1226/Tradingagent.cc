@@ -821,6 +821,55 @@ def test_cli_logs_only_a_structured_initializer_failure_code(
     )
 
 
+@pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (
+            initializer_module.MinuteCanaryConfigurationError("private detail"),
+            "minute_session_canary_configuration_invalid",
+        ),
+        (
+            initializer_module.RuntimeGateConfigurationError("private detail"),
+            "minute_session_transport_configuration_invalid",
+        ),
+        (
+            initializer_module.SharedSignalsV1Error("private detail"),
+            "minute_session_dependency_failed",
+        ),
+        (OSError("private detail"), "minute_session_dependency_failed"),
+        (ValueError("private detail"), "minute_session_input_invalid"),
+    ],
+)
+def test_cli_classifies_non_initializer_failures_without_echoing_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+    expected_code: str,
+) -> None:
+    def fail_initialize(**kwargs: Any) -> dict[str, object]:
+        raise error
+
+    monkeypatch.setattr(initializer_module, "initialize_minute_session", fail_initialize)
+
+    assert (
+        initializer_module.main(
+            [
+                "--state-root",
+                str(tmp_path / "state"),
+                "--token-file",
+                "/run/private/token",
+                "--now",
+                "2026-07-29T09:20:00+08:00",
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().err == (
+        f"minute session initializer failed closed: {expected_code}\n"
+    )
+
+
 def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
     _template(tmp_path)
 

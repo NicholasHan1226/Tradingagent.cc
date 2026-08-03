@@ -83,6 +83,17 @@ def _sha256(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+def _runtime_failure_code(error: Exception) -> str:
+    """Return a safe, actionable CLI failure category without exception details."""
+    if isinstance(error, MinuteCanaryConfigurationError):
+        return "minute_session_canary_configuration_invalid"
+    if isinstance(error, RuntimeGateConfigurationError):
+        return "minute_session_transport_configuration_invalid"
+    if isinstance(error, (SharedSignalsV1Error, OSError)):
+        return "minute_session_dependency_failed"
+    return "minute_session_input_invalid"
+
+
 def _metadata_payload(envelope: QueryEnvelope) -> dict[str, object]:
     return {
         "state": envelope.metadata.state,
@@ -836,8 +847,12 @@ def main(argv: list[str] | None = None) -> int:
         UnicodeDecodeError,
         json.JSONDecodeError,
         ValueError,
-    ):
-        print("minute session initializer failed closed", file=sys.stderr)
+    ) as exc:
+        print(
+            "minute session initializer failed closed: "
+            f"{_runtime_failure_code(exc)}",
+            file=sys.stderr,
+        )
         return 2
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
