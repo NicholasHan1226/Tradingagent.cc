@@ -97,6 +97,27 @@ Active catalog entries and contract tests remain `contract_ready` only:
 same-window receipt, TD query, and consumer readback are still coverage debt
 before an `observed` or `stable` claim.
 
+`holder_evidence.py` separately maps the active `cn.dataset.stk_holdernumber`
+and `cn.dataset.stk_holdertrade` datasets through explicit, caller-invoked
+`load_holder_snapshots`. It freezes the exact active catalog row, requires the
+published strict row identity and a bounded `ts_code in` frozen cohort, then
+replays the fixed `POST /v1/query` read before returning raw receipt-bound
+facts. Every envelope must be `ready`, fresh, valid, non-degraded, complete in
+provider-neutral lineage, and contain a receipt, `data_through`, and
+timezone-aware `observed_at`; a catalog, symbol, date, proof, pagination, or
+same-observation mismatch fails closed into the audit ledger. This adapter does
+not infer top holders, concentration, ownership, analyst conclusions,
+candidates, risk, positions, orders, provider availability, or UI state. It
+has no default client, timer, persistence, or runtime call site. As with the
+other mappings, local contract tests are `contract_ready` only; a real
+receipt → TD query → authenticated consumer readback remains coverage debt for
+`observed`, and repeated successful windows are required for `stable`.
+Both current holder catalog contracts declare no `as_of` field, so their frozen
+profiles bind an omitted-`as_of` policy and never send that query parameter;
+point-in-time causality remains enforced locally from receipt metadata
+`data_through` and timezone-aware `observed_at` against the caller decision
+time.
+
 `major_news` is macro-context event evidence only: its formal identity is
 `[src, pub_time, title]`, `pub_time` uses declared Asia/Shanghai semantics,
 and rows without a stock identity remain `CN-MACRO` context. It can lower or
