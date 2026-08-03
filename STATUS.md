@@ -8,7 +8,7 @@
 
 | 层级 | 当前事实 | 证据边界 |
 | --- | --- | --- |
-| 本地主工作树 | 当前为 `codex/copilot-event-timeline`，不作为本地主线同步断言 | 该工作树有独立在途范围；不能为了同步状态页切换、合并或覆盖它。 |
+| 本地主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较；当前检出的是独立在途分支 | 该工作树不能为了同步状态页切换、合并或覆盖；比较结果不等同于“本地 main 已同步”。 |
 | GitHub 主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 合入记录、CI 与精确 commit 以 GitHub 和 Git 历史为准；不是生产切换。 |
 | A股 market lane | 与 `origin/main` 同 head（`5631302`），`ahead=0`、`behind=0` | 本轮已在专用 worktree 通过 lane 校验；它不是独立生产 release。 |
 | CNFutures / Crypto lane | 未在本轮当前 worktree 清单中核验 | 开始对应市场开发前必须重新建立/定位专用 worktree，并通过各自 lane 校验；不能由 A股结果代替。 |
