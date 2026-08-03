@@ -9,6 +9,14 @@
 - MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
 - 当前目标是验证工程闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。
 
+## TradingDatas 消费分层
+
+- `contract_ready`：TD registry/capability 与 TA mapping/client 的字段、主键、cadence、as-of 与失败测试兼容。允许 fixture/mock、候选 PR 与内部集成准备；不需要真实 token、receipt 或服务切换，也不得渲染为当前市场事实。
+- `observed`：一次受控 `catalog/query` 真实回读同时带齐 freshness、quality、receipt、lineage、`data_through` 与 `observed_at`。它可进入明确标注为 current-observation、non-authority 的内部研究/Copilot 试读；不能成为历史 PIT、自动调度、模型晋级、资金或订单 authority。
+- `stable`：跨各自适用 cadence 连续成功，且对应消费者已经 readback。它才允许称为稳定消费能力；不要求其它无关 dataset、消费者或不适用 cadence 一起完成。
+
+缺少 `stable` 只能阻止稳定运行声明和相应自动化，不得阻止普通 dataset 的配置、兼容测试、候选发布或其它已分层能力继续推进。相反，某次 observation 缺 source proof 时只阻断该 dataset/该窗口，不回退数据库、provider 或旧专用接口；不为此新增 dataset-specific route、UI、collector、timer、service 或表。
+
 ## 当前唯一资本事实
 
 - A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`。generation 1 只是历史 fresh-start 基线；消费者每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
