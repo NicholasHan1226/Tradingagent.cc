@@ -373,6 +373,48 @@ def test_round_trip_runtime_recovers_missed_closed_slots_after_timer_outage(
     checkpoint = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
     assert checkpoint["latest_market_slot"] == "2026-07-19T01:10:00Z"
 
+    drained = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_factory(_shifted_transport(15)),
+    )
+
+    assert drained["status"] == "completed"
+    assert drained["recovery_mode"] == "backlog_recovery"
+    assert drained["requested_window_consumed"] is True
+    assert drained["backlog_remaining"] is False
+    assert drained["backlog_recovery_cycle_count"] == 1
+    assert [item["cycle_kind"] for item in drained["cycle_results"]] == [
+        "backlog_recovery"
+    ]
+    assert [item["target_window_end"] for item in drained["cycle_results"]] == [
+        "2026-07-19T01:20:00Z"
+    ]
+    checkpoint = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
+    assert checkpoint == {
+        "pending": None,
+        "latest_market_slot": "2026-07-19T01:15:00Z",
+        "observation_count": 4,
+        "completion_count": 4,
+    }
+
+    replay = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=lambda *_args, **_kwargs: pytest.fail("unexpected query"),
+    )
+
+    assert replay["status"] == "completed"
+    assert replay["core_result"]["idempotent_replay"] is True
+    assert replay["processed_cycle_count"] == 0
+    assert replay["cycle_results"] == []
+    assert replay["market_data_access_attempt_count"] == 0
+    assert CryptoDelayedPaperObservationStore(output).runtime_checkpoint() == checkpoint
+
 
 def test_round_trip_runtime_rejects_noncanonical_epoch_or_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
