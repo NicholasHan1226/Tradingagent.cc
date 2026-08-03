@@ -10,6 +10,7 @@ import { getDemoStockIntelligence, summarizeStockSentiment, unavailableStockInte
 import { loadStockIntelligence } from '../copilot/stockIntelligenceClient'
 import { loadTrackingUniverse, type TrackingUniverse } from '../copilot/trackingUniverse'
 import { buildPortfolioAssistantReport } from '../copilot/portfolioAssistant'
+import { resolveCoverageStatus, type CoverageStatusOutcome } from '../copilot/coverageStatus'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
 import { isAshareSymbol, type CopilotAnalysis, type CopilotDecision, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
 import { createTradingAgentSnapshotClient } from '../api/tradingAgentIntegration'
@@ -134,6 +135,14 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
     ...tradingAgentAnalyses,
     ...Object.fromEntries(Object.entries(formalStockIntelligence).flatMap(([symbol, item]) => item.analysis ? [[symbol, item.analysis]] : [])),
   }), [formalStockIntelligence, tradingAgentAnalyses])
+  const coverageBySymbol = useMemo(() => Object.fromEntries([...new Set([
+    ...trackedItems.map((item) => item.symbol),
+    ...(state?.watchlist ?? []).map((item) => item.symbol),
+    ...(state?.holdings ?? []).map((item) => item.symbol),
+  ])].map((symbol) => [symbol, resolveCoverageStatus({
+    analysis: visibleAnalyses[symbol],
+    intelligence: formalStockIntelligence[symbol],
+  })])), [formalStockIntelligence, state, trackedItems, visibleAnalyses])
   const portfolioReport = useMemo(() => state ? buildPortfolioAssistantReport(state, formalStockIntelligence) : null, [formalStockIntelligence, state])
 
   async function commit(transform: (current: TradingCopilotState) => TradingCopilotState, message: string) {
@@ -309,7 +318,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
           <button className="quant-switch inline" onClick={onOpenQuant} type="button"><ArrowLeftRight size={14} />量化运行台</button>
         </nav>
 
-        <TrackingRibbon items={trackedItems} selectedSymbol={selectedSymbol} generatedAt={trackingUniverse?.generatedAt ?? null} onOpen={openStock} />
+        <TrackingRibbon coverageBySymbol={coverageBySymbol} items={trackedItems} selectedSymbol={selectedSymbol} generatedAt={trackingUniverse?.generatedAt ?? null} onOpen={openStock} />
 
         <section className="account-strip" aria-label="用户申报账户摘要">
           <div><span>申报总资金</span><strong>{money(state.account.declaredCapitalCny)}</strong><small>用户手工维护 · 非券商确认</small></div>
@@ -319,8 +328,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
           <button className="secondary-button" onClick={() => setAccountEditorOpen(true)} type="button"><Pencil size={15} />调整资金</button>
         </section>
 
-        {view === 'watchlist' && <WatchlistWorkspace analyses={visibleAnalyses} demoPreviewEnabled={demoPreviewEnabled} holdings={state.holdings} onAdd={() => void addWatchItem()} onOpen={openStock} onRemove={(symbol) => void removeWatchItem(symbol)} query={query} setQuery={setQuery} watchlist={state.watchlist} />}
-        {view === 'portfolio' && portfolioReport && <PortfolioWorkspace account={state.account} holdings={state.holdings} investedCost={investedCost} holdingQuery={holdingQuery} onAdd={beginAddHolding} onEdit={(item) => setHoldingTarget(item)} onOpen={openStock} report={portfolioReport} setHoldingQuery={setHoldingQuery} />}
+        {view === 'watchlist' && <WatchlistWorkspace analyses={visibleAnalyses} coverageBySymbol={coverageBySymbol} demoPreviewEnabled={demoPreviewEnabled} holdings={state.holdings} onAdd={() => void addWatchItem()} onOpen={openStock} onRemove={(symbol) => void removeWatchItem(symbol)} query={query} setQuery={setQuery} watchlist={state.watchlist} />}
+        {view === 'portfolio' && portfolioReport && <PortfolioWorkspace account={state.account} coverageBySymbol={coverageBySymbol} holdings={state.holdings} investedCost={investedCost} holdingQuery={holdingQuery} onAdd={beginAddHolding} onEdit={(item) => setHoldingTarget(item)} onOpen={openStock} report={portfolioReport} setHoldingQuery={setHoldingQuery} />}
         {view === 'decisions' && <DecisionWorkspace decisions={state.decisions} onOpen={openStock} onReview={setReviewTarget} />}
 
         {view === 'desk' && !selected && <EmptyDesk deskQuery={deskQuery} onBrowse={browseStock} onPortfolio={() => setView('portfolio')} onWatchlist={() => setView('watchlist')} setDeskQuery={setDeskQuery} />}
@@ -393,8 +402,9 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   )
 }
 
-function WatchlistWorkspace({ analyses, demoPreviewEnabled, holdings, onAdd, onOpen, onRemove, query, setQuery, watchlist }: {
+function WatchlistWorkspace({ analyses, coverageBySymbol, demoPreviewEnabled, holdings, onAdd, onOpen, onRemove, query, setQuery, watchlist }: {
   analyses: Record<string, CopilotAnalysis>
+  coverageBySymbol: Record<string, CoverageStatusOutcome>
   demoPreviewEnabled: boolean
   holdings: CopilotHolding[]
   onAdd: () => void
@@ -415,13 +425,14 @@ function WatchlistWorkspace({ analyses, demoPreviewEnabled, holdings, onAdd, onO
       <button className="primary-button" onClick={onAdd} type="button"><Plus size={15} />加入关注</button>
     </div>
     <div className="management-table panel">
-      <div className="management-table-head"><span>股票</span><span>账户关系</span><span>证据判断</span><span>强度</span><span>操作</span></div>
+      <div className="management-table-head"><span>股票</span><span>账户关系</span><span>覆盖</span><span>证据判断</span><span>强度</span><span>操作</span></div>
       {watchlist.map((item) => {
         const itemAnalysis = analyses[item.symbol] ?? (demoPreviewEnabled ? copilotDemoAnalyses[item.symbol] : undefined) ?? unavailableAnalysis(item.symbol, item.name)
         const held = holdings.some((holdingItem) => holdingItem.symbol === item.symbol)
         return <div className="management-row" key={item.symbol}>
           <button className="stock-cell" onClick={() => onOpen(item.symbol)} type="button"><strong>{item.name}</strong><small>{item.symbol}</small></button>
           <span><i className={held ? 'relation held' : 'relation'}>{held ? '持仓' : '仅关注'}</i></span>
+          <CoverageStatusBadge outcome={coverageBySymbol[item.symbol]} />
           <span>{itemAnalysis.verdict}</span>
           <strong className="management-score" title={itemAnalysis.evidenceStrength.label}>{itemAnalysis.evidenceStrength.value ?? '—'}</strong>
           <span className="row-actions"><button onClick={() => onOpen(item.symbol)} type="button">打开个股</button><button disabled={held} onClick={() => onRemove(item.symbol)} title={held ? '持仓股票须保留关注' : '移除关注'} type="button">移除</button></span>
@@ -432,7 +443,8 @@ function WatchlistWorkspace({ analyses, demoPreviewEnabled, holdings, onAdd, onO
   </section>
 }
 
-function TrackingRibbon({ generatedAt, items, onOpen, selectedSymbol }: {
+function TrackingRibbon({ coverageBySymbol, generatedAt, items, onOpen, selectedSymbol }: {
+  coverageBySymbol: Record<string, CoverageStatusOutcome>
   generatedAt: string | null
   items: Array<{ symbol: string; name: string }>
   onOpen: (symbol: string) => void
@@ -440,12 +452,13 @@ function TrackingRibbon({ generatedAt, items, onOpen, selectedSymbol }: {
 }) {
   return <section className="tracking-ribbon" aria-label="A股跟踪池">
     <div className="tracking-ribbon-title"><span className="eyebrow">TRACKING UNIVERSE</span><strong>{items.length ? `${items.length} 只已映射` : '等待现役清单投影'}</strong><small>{generatedAt ? `更新 ${formatTime(generatedAt)}` : '不会以演示股票填充正式跟踪池'}</small></div>
-    {items.length ? <div className="tracking-ribbon-list">{items.map((item) => <button className={item.symbol === selectedSymbol ? 'active' : ''} key={item.symbol} onClick={() => onOpen(item.symbol)} type="button"><strong>{item.name}</strong><small>{item.symbol}</small></button>)}</div> : <p>现役 30 股会话清单尚未输出到 Copilot 的只读投影；投影到位后，这里会自动建立跟踪并逐只读取正式分析回执。</p>}
+    {items.length ? <div className="tracking-ribbon-list">{items.map((item) => <button className={item.symbol === selectedSymbol ? 'active' : ''} key={item.symbol} onClick={() => onOpen(item.symbol)} type="button"><strong>{item.name}</strong><small>{item.symbol}</small><CoverageStatusBadge outcome={coverageBySymbol[item.symbol]} /></button>)}</div> : <p>现役 30 股会话清单尚未输出到 Copilot 的只读投影；投影到位后，这里会自动建立跟踪并逐只读取正式分析回执。</p>}
   </section>
 }
 
-function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onAdd, onEdit, onOpen, report, setHoldingQuery }: {
+function PortfolioWorkspace({ account, coverageBySymbol, holdings, investedCost, holdingQuery, onAdd, onEdit, onOpen, report, setHoldingQuery }: {
   account: TradingCopilotState['account']
+  coverageBySymbol: Record<string, CoverageStatusOutcome>
   holdings: CopilotHolding[]
   investedCost: number
   holdingQuery: string
@@ -484,9 +497,10 @@ function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onA
       <button className="primary-button" onClick={onAdd} type="button"><Plus size={15} />新增持仓</button>
     </div>
     <div className="management-table panel">
-      <div className="portfolio-table-head"><span>股票</span><span>持有 / 可卖</span><span>平均成本</span><span>成本金额</span><span>更新时间</span><span>操作</span></div>
+      <div className="portfolio-table-head"><span>股票</span><span>覆盖</span><span>持有 / 可卖</span><span>平均成本</span><span>成本金额</span><span>更新时间</span><span>操作</span></div>
       {holdings.map((item) => <div className="portfolio-row" key={item.symbol}>
         <button className="stock-cell" onClick={() => onOpen(item.symbol)} type="button"><strong>{item.name}</strong><small>{item.symbol}</small></button>
+        <CoverageStatusBadge outcome={coverageBySymbol[item.symbol]} />
         <span>{item.quantity.toLocaleString('zh-CN')} / {item.sellableQuantity.toLocaleString('zh-CN')} 股</span>
         <span>¥{item.averageCost.toFixed(2)}</span>
         <strong>{money(item.quantity * item.averageCost)}</strong>
@@ -497,6 +511,11 @@ function PortfolioWorkspace({ account, holdings, investedCost, holdingQuery, onA
     </div>
     <p className="management-footnote">A 股 T+1 的可卖数量由你申报；数量和成本仍需与券商账户人工核对。申报总资金不与持仓成本强行勾稽，因为缺少实时市值时两者不可直接比较。新增持仓会自动加入关注列表，移除持仓不会自动取消关注。</p>
   </section>
+}
+
+function CoverageStatusBadge({ outcome }: { outcome?: CoverageStatusOutcome }) {
+  const resolved = outcome ?? resolveCoverageStatus({})
+  return <span className={`coverage-status ${resolved.status}`} title={resolved.detail}>{resolved.label}</span>
 }
 
 function DecisionWorkspace({ decisions, onOpen, onReview }: { decisions: TradingCopilotState['decisions']; onOpen: (symbol: string) => void; onReview: (decision: CopilotDecision) => void }) {

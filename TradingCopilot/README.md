@@ -128,6 +128,7 @@ V3 把“预测功能存在”和“预测可用于人工决策”拆成机器�
 个股页的“研究建议与条件”不是新的模型或数据源：它是现有正式个股投影中 verdict、支持/反对证据、事件、建仓条件与失效条件的固定阅读层。它在右侧研究栏按以下顺序呈现：当前研究姿态、近期关注、建仓前条件、减仓/退出条件和人工决策边界。
 
 - 没有同股票、同批次的正式 projection/receipt，或行情来源不是 `fresh` 时，固定显示“等待正式覆盖”；不生成买入、卖出、目标价或概率结论，也不把演示 fixture 的建仓、退出或舆情条件伪装成正式研究。
+- 跟踪池、关注列表和用户申报持仓复用同一个只读客户端 coverage status：仅在 `tradingagent_observation`、`verification.status=verified` 且 `source.freshness=fresh` 同时成立时显示 `formal_fresh`（“正式且新鲜”）；已验证的 stale/degraded 投影或 TA 快照只读观察显示 `observation_only`（“仅观察”）；演示 fixture、不可用、未知或未验证结果均为 `coverage_gap`。该徽标不推断新鲜度、不等同于 live/stable，也不新增请求或改变个人账户/决策合同。
 - 只有 `eligible_for_human_review` 的正式投影才能进入“可进入人工复核”。这仍是 Nicholas 的研究清单，不是订单、成交、自动交易或投资承诺。
 - 舆情温度仅统计逐条绑定的公告、新闻和舆情事件。没有事件回执时显示“事件覆盖未到位”，不从标题、热度或摘要推断情绪。
 - 个股页按每个已消费 `datasetId` 独立显示 activity state；只有该数据集同时交付 `market`、`timezone`、`calendar`、`session` 与可解析的 `dataThrough` authority 时，才可显示“活跃”或“已收市”。现有 projection 未交付这组 authority 时固定显示“时钟覆盖缺口”，不得借用 A 股个股 `marketRules.session`，也不得以一个市场的时钟推断 Crypto 或 CN futures 数据集状态。

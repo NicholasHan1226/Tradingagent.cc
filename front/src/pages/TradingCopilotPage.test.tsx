@@ -135,6 +135,7 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByText('4 只关注 · 2 只持仓')).toBeInTheDocument()
     expect(screen.getAllByText('持仓')).toHaveLength(2)
     expect(screen.getAllByText('仅关注')).toHaveLength(2)
+    expect(screen.getAllByText('覆盖缺口')).toHaveLength(4)
   })
 
   it('shows the screenshot-aligned research preview without injecting demo account state', async () => {
