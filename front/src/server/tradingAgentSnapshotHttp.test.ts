@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel'
-import { createTradingAgentSnapshotHttpServer, resolveSnapshotListenHost } from './tradingAgentSnapshotHttp'
+import { createTradingAgentSnapshotHttpServer, isMainModule, resolveSnapshotListenHost } from './tradingAgentSnapshotHttp'
 
 const snapshot: TradingAgentReadModelSnapshot = {
   mode: 'simulated',
@@ -59,6 +59,15 @@ describe('TradingAgent cloud snapshot API server', () => {
     expect(() => resolveSnapshotListenHost('0.0.0.0')).toThrowError(
       'TRADING_AGENT_SNAPSHOT_HOST must be a loopback host',
     )
+  })
+
+  it('recognizes an immutable-release symlink as the main module entry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'snapshot-entry-'))
+    const target = join(root, 'release.js')
+    const launchPath = join(root, 'current.js')
+    await writeFile(target, '')
+    await symlink(target, launchPath)
+    expect(isMainModule(launchPath, target)).toBe(true)
   })
 
   it('serves both /healthz and /health for operational probes', async () => {

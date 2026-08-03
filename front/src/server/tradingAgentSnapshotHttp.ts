@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TRADING_AGENT_SNAPSHOT_ROUTE, getTradingAgentSnapshotResponse } from '../api/tradingAgentIntegration.ts'
@@ -156,8 +157,11 @@ if (isMainModule()) {
   })
 }
 
-function isMainModule() {
-  const entry = process.argv[1]
+export function isMainModule(entry = process.argv[1], modulePath = fileURLToPath(import.meta.url)) {
   if (!entry) return false
-  return fileURLToPath(import.meta.url) === entry
+  try {
+    return realpathSync(modulePath) === realpathSync(entry)
+  } catch {
+    return modulePath === entry
+  }
 }
