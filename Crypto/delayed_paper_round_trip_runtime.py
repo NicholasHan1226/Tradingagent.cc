@@ -25,11 +25,29 @@ from Crypto.delayed_paper_runtime import (
     load_crypto_delayed_paper_runtime_manifest,
 )
 from Crypto.fixture_sim.contracts import _assert_simulation_only
+from Crypto.five_minute_data import CryptoFiveMinuteWindowRequest
 from shared.data.sharedsignals_v1 import HTTPTransport
 from shared.data.tradingdatas_transport import build_runtime_transport
 
 
 ROUND_TRIP_RUNTIME_CONTRACT = "tradingagent.crypto.round_trip_server_runtime.v1"
+ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
+
+
+def crypto_round_trip_window_request(now: datetime) -> CryptoFiveMinuteWindowRequest:
+    """Observe one fully settled bar without relaxing the PIT cutoff.
+
+    The Crypto collector and this paper runtime are deliberately independent.
+    Consuming the prior closed bar gives the collector a full five-minute
+    interval to publish its receipt, while retaining the current cycle's fixed
+    observation cutoff for the historical query.
+    """
+
+    current = crypto_runtime_window_request(now)
+    return CryptoFiveMinuteWindowRequest(
+        window_end=current.window_end - ROUND_TRIP_SETTLED_BAR_DELAY,
+        observation_cutoff=current.observation_cutoff,
+    )
 
 
 def run_crypto_delayed_paper_round_trip_server_once(
@@ -40,7 +58,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] = build_runtime_transport,
 ) -> dict[str, Any]:
-    """Run exactly one new/pending closed-bar cycle in the isolated g3 root."""
+    """Run exactly one new/pending closed-bar cycle in the isolated epoch."""
 
     _assert_simulation_only()
     manifest_path = Path(epoch_manifest)
@@ -55,7 +73,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
     prepared = prepare_round_trip_epoch_candidate(context)
     identity_before = prepared.identity_path.read_bytes()
     manifest = load_crypto_delayed_paper_runtime_manifest(runtime_manifest)
-    request = crypto_runtime_window_request(now)
+    request = crypto_round_trip_window_request(now)
     port = _LazyCryptoFiveMinutePort(
         manifest=manifest,
         token_file=RUNTIME_TOKEN_FILE,
@@ -102,6 +120,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
         "requested_observation_cutoff": request.observation_cutoff.isoformat().replace(
             "+00:00", "Z"
         ),
+        "settled_bar_delay_seconds": int(ROUND_TRIP_SETTLED_BAR_DELAY.total_seconds()),
         "runtime_manifest_sha256": manifest.sha256,
         "fresh_query_catalog_version": manifest.catalog_version,
         "fresh_query_profile_sha256": manifest.profile.sha256,
@@ -171,6 +190,8 @@ if __name__ == "__main__":
 
 __all__ = [
     "ROUND_TRIP_RUNTIME_CONTRACT",
+    "ROUND_TRIP_SETTLED_BAR_DELAY",
+    "crypto_round_trip_window_request",
     "main",
     "run_crypto_delayed_paper_round_trip_server_once",
 ]

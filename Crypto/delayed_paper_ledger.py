@@ -1170,6 +1170,16 @@ class CryptoDelayedPaperObservationStore:
         ]
         return [self._verify_indexed_event(row) for row in rows]
 
+    def data_reject_events(self) -> list[dict[str, Any]]:
+        """Return checksum/index/ledger-bound rejected data requests in sequence."""
+
+        rows = [
+            row
+            for row in self._read_ledger()
+            if row.get("event_type") == "data_reject"
+        ]
+        return [self._verify_indexed_event(row) for row in rows]
+
     @staticmethod
     def _ledger_state_payload(
         *,

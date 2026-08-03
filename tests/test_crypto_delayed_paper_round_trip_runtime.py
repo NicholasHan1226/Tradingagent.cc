@@ -13,6 +13,7 @@ import pytest
 import Crypto.delayed_paper_round_trip_epoch as epoch_module
 import Crypto.delayed_paper_round_trip_runtime as runtime_module
 from Crypto.delayed_paper_round_trip_runtime import (
+    crypto_round_trip_window_request,
     run_crypto_delayed_paper_round_trip_server_once,
 )
 from tests.test_crypto_5m_support import FixtureTradingDatasTransport, WINDOW_END
@@ -36,6 +37,15 @@ def test_module_invocation_reaches_round_trip_cli_parser() -> None:
     assert completed.returncode == 0
     assert "Run one Crypto round-trip simulated cycle" in completed.stdout
     assert "--epoch-manifest" in completed.stdout
+
+
+def test_round_trip_request_uses_one_closed_bar_settlement_delay() -> None:
+    request = crypto_round_trip_window_request(
+        WINDOW_END + timedelta(seconds=55)
+    )
+
+    assert request.window_end == WINDOW_END - timedelta(minutes=5)
+    assert request.observation_cutoff == WINDOW_END + timedelta(seconds=55)
 
 
 def _canonical(value: object) -> bytes:
@@ -133,7 +143,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
         epoch_manifest=epoch,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     before_replay = _tree(output)
@@ -141,7 +151,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
         epoch_manifest=epoch,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     assert _tree(output) == before_replay
@@ -149,7 +159,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
         epoch_manifest=epoch,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        now=WINDOW_END + timedelta(minutes=10, seconds=55),
         transport_factory=_factory(_shifted_transport(5)),
     )
     assert _tree(archived) == archived_before
@@ -157,6 +167,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
     assert replay["core_result"]["idempotent_replay"] is True
     assert replay["market_data_access_attempt_count"] == 0
     assert first["capital_authority_id"] == "crypto-round-trip-capital-v1"
+    assert first["settled_bar_delay_seconds"] == 300
     assert first["real_trading_enabled"] is False
     assert adjacent["core_result"]["capital"]["balanced"] is True
 
@@ -205,7 +216,7 @@ def test_round_trip_runtime_accepts_only_prepared_versioned_migration(
         epoch_manifest=context.manifest_path,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     assert legacy.exists()
@@ -255,7 +266,7 @@ def test_round_trip_runtime_accepts_explicit_g4_successor(
         epoch_manifest=g4.manifest_path,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     assert receipt["status"] == "completed"

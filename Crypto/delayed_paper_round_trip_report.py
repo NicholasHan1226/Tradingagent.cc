@@ -142,7 +142,11 @@ def _slot_summary(slots: list[datetime]) -> dict[str, Any]:
     }
 
 
-def _continuity_segments(slots: list[datetime]) -> dict[str, Any]:
+def _continuity_segments(
+    slots: list[datetime],
+    *,
+    runtime_rejects: Mapping[datetime, tuple[str, ...]] | None = None,
+) -> dict[str, Any]:
     """Describe observed gaps without inventing their external cause.
 
     A completion gap is an audit fact. This report deliberately cannot label it
@@ -167,19 +171,31 @@ def _continuity_segments(slots: list[datetime]) -> dict[str, Any]:
         missing = int((current - previous).total_seconds() // 300) - 1
         if missing <= 0:
             raise CryptoRoundTripReportError("round_trip_report_gap_invalid")
-        gaps.append(
-            {
-                "previous_completed_market_slot": previous.isoformat().replace(
-                    "+00:00", "Z"
-                ),
-                "next_completed_market_slot": current.isoformat().replace(
-                    "+00:00", "Z"
-                ),
-                "missing_completion_count": missing,
-                "gap_minutes": missing * 5,
-                "cause": "unclassified_completion_gap",
-            }
-        )
+        gap = {
+            "previous_completed_market_slot": previous.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "next_completed_market_slot": current.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "missing_completion_count": missing,
+            "gap_minutes": missing * 5,
+            "cause": "unclassified_completion_gap",
+        }
+        reject_evidence = []
+        for offset in range(1, missing + 1):
+            market_slot = previous + FIVE_MINUTES * offset
+            reason_codes = (runtime_rejects or {}).get(market_slot, ())
+            if reason_codes:
+                reject_evidence.append(
+                    {
+                        "market_slot": market_slot.isoformat().replace("+00:00", "Z"),
+                        "reason_codes": list(reason_codes),
+                    }
+                )
+        if reject_evidence:
+            gap["runtime_rejects"] = reject_evidence
+        gaps.append(gap)
         segments.append([current])
     return {
         "continuous_segment_count": len(segments),
@@ -266,6 +282,34 @@ def _outcomes(events: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _runtime_rejects_by_slot(
+    store: CryptoDelayedPaperObservationStore,
+) -> dict[datetime, tuple[str, ...]]:
+    """Bind recorded local data rejects to slots without attributing a cause.
+
+    Older append-only receipts did not record the request window and stay
+    intentionally unclassified. A reject is local runtime evidence, not proof
+    of an upstream collector, transport, timer, or ledger fault.
+    """
+
+    grouped: dict[datetime, set[str]] = {}
+    for event in store.data_reject_events():
+        raw_window_end = event.get("request_window_end")
+        reason_code = event.get("reason_code")
+        if not isinstance(raw_window_end, str) or not isinstance(reason_code, str):
+            continue
+        try:
+            window_end = _market_slot(raw_window_end)
+        except (CryptoDelayedPaperLedgerError, ValueError):
+            continue
+        market_slot = window_end - FIVE_MINUTES
+        grouped.setdefault(market_slot, set()).add(reason_code)
+    return {
+        market_slot: tuple(sorted(reason_codes))
+        for market_slot, reason_codes in sorted(grouped.items())
+    }
+
+
 def build_crypto_delayed_paper_round_trip_report(
     *, output_root: Path | str, now: datetime | None = None
 ) -> dict[str, Any]:
@@ -278,6 +322,7 @@ def build_crypto_delayed_paper_round_trip_report(
         health = build_crypto_delayed_paper_round_trip_health(output_root=root, now=now)
         store = CryptoDelayedPaperObservationStore(root)
         slots = _completed_slots(store)
+        runtime_rejects = _runtime_rejects_by_slot(store)
         capital_events = RoundTripCapitalLedger(
             root / "round_trip_capital"
         ).events_read_only()
@@ -298,7 +343,9 @@ def build_crypto_delayed_paper_round_trip_report(
             "pending": health["core"]["pending"],
             "completion_freshness": health["freshness"],
             **slot_summary,
-            "continuity_segments": _continuity_segments(slots),
+            "continuity_segments": _continuity_segments(
+                slots, runtime_rejects=runtime_rejects
+            ),
         },
         "audited_samples": {
             "verified_decision_events": health["sample_kpis"][
