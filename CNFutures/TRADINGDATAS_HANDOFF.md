@@ -71,6 +71,12 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 当前接受的 receipt snapshot 固定保留 `state=stale`、`degraded=true` 和唯一 reason `freshness_sla_exceeded`，而不是把它降格为 ready/fresh/valid。价格限制和保证金率只作为 receipt-bound raw facts；输出固定 `stable=false`、PIT/numeric-tick/session/rollover authority 为 `false`，以及 `simulation_ready=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false`。它不解释交易所市场规则，不是模拟成交、shadow、broker 或真实交易授权。
 
+## `fut_daily` 当前分区原始快照
+
+`CNFutures.fut_daily_current_snapshot.load_fut_daily_current_snapshot` 是 caller-invoked、注入既有 `SharedSignalsV1Client` 的只读消费者。它固定消费 `cn.dataset.fut_daily` schema major `1`：catalog identity 必须为 `[trade_date,ts_code]`，默认顺序必须为 `[trade_date:asc,ts_code:asc]`；query 只使用精确 `trade_date` filter、无 `as_of`，并对限定分页做一次同观察 replay。它不使用 `exchange` 或 `ts_code` 复合 TD filter。
+
+调用方还必须注入同一交易日、receipt/lineage 内部一致的 `FutMappingCurrentSnapshot`；consumer 仅取其唯一 `M.DCE` 原始 `mapping_ts_code`，再在完整 `fut_daily` 日分区内本地选择唯一匹配行。输出只保留该合约的 OHLC、`settle`、`vol` 与 `oi` 原始事实，分别绑定 daily receipt/lineage，并保留 mapping receipt/lineage provenance。缺 catalog/metadata/receipt/lineage/分区/分页/replay 或 mapping identity 漂移均 fail closed。当前输出固定 `stable=false`、PIT/session/simulation/runtime/execution/trading authority 均为 `false`；它不是日线解释、有效换月区间、模拟成交、shadow、broker 或真实交易授权。
+
 ## M 合约 simulation-readiness 覆盖投影
 
 `CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、实际 `FutLimitCurrentSnapshot`、已验证的当前日 `fut_mapping` snapshot，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
