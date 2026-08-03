@@ -118,6 +118,17 @@ point-in-time causality remains enforced locally from receipt metadata
 `data_through` and timezone-aware `observed_at` against the caller decision
 time.
 
+`industry_flow_evidence.py` separately maps active post-close daily
+`cn.dataset.moneyflow_ind_dc` and `cn.dataset.moneyflow_ind_ths` through an
+explicit caller-invoked context read. Each frozen profile binds its exact active
+catalog identity, schema, selected fields, `trade_date` source-time semantics,
+Asia/Shanghai timezone, bounded replay, receipt and complete lineage. It emits
+only raw industry-flow context facts: it has no automatic candidate, sentiment,
+risk, position, order, UI, timer, persistence, or runtime effect. Local tests
+are `contract_ready` only; a fresh real receipt → TD catalog/query → consumer
+readback remains coverage debt before `observed`, and cadence repeats are needed
+for `stable`.
+
 `major_news` is macro-context event evidence only: its formal identity is
 `[src, pub_time, title]`, `pub_time` uses declared Asia/Shanghai semantics,
 and rows without a stock identity remain `CN-MACRO` context. It can lower or
