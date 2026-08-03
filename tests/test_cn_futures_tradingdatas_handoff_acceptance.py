@@ -68,6 +68,7 @@ def _catalog_contract(role: str, dataset_id: str) -> dict[str, object]:
             "session_kind",
             "session_id",
             "session_windows",
+            "authority",
         ]
         filter_operators = {"symbol": ["eq"], "trade_date": ["eq"]}
         default_order = ["trade_date:asc"]
@@ -200,6 +201,17 @@ def _fixture() -> dict[str, object]:
                                 "end": "2026-07-31T15:00:00+08:00",
                             },
                         ],
+                        "authority": {
+                            "product": "M",
+                            "exchange": "DCE",
+                            "timezone": "Asia/Shanghai",
+                            "effective_windows": [
+                                {
+                                    "effective_from": "2026-07-01T00:00:00+08:00",
+                                    "effective_until": "2026-08-01T00:00:00+08:00",
+                                }
+                            ],
+                        },
                     }
                 ],
             },
@@ -275,6 +287,64 @@ def _rollover_cohort_fixture() -> dict[str, object]:
     return fixture
 
 
+def _night_fixture() -> dict[str, object]:
+    fixture = _fixture()
+    fixture["decision_time"] = "2026-08-01T00:56:05+08:00"
+    for query in fixture["queries"].values():
+        query["metadata"].update(
+            {
+                "data_through": "2026-08-01T00:55:00+08:00",
+                "observed_at": "2026-08-01T00:56:00+08:00",
+            }
+        )
+    contract = fixture["queries"]["contract_master"]["data"][0]
+    contract["tradeability"].update(
+        {
+            "trade_date": "20260801",
+            "effective_until": "2026-08-02T00:00:00+08:00",
+        }
+    )
+    calendar = fixture["queries"]["calendar_session"]["data"][0]
+    calendar.update(
+        {
+            "trade_date": "20260801",
+            "session_kind": "night",
+            "session_id": "fixture-dce-m-night-session",
+            "session_windows": [
+                {
+                    "start": "2026-07-31T21:00:00+08:00",
+                    "end": "2026-08-01T01:00:00+08:00",
+                }
+            ],
+            "authority": {
+                "product": "M",
+                "exchange": "DCE",
+                "timezone": "Asia/Shanghai",
+                "effective_windows": [
+                    {
+                        "effective_from": "2026-07-01T00:00:00+08:00",
+                        "effective_until": "2026-08-02T00:00:00+08:00",
+                    }
+                ],
+            },
+        }
+    )
+    bars = fixture["queries"]["bars_5min"]["data"]
+    for row, bar_time in zip(
+        bars,
+        ("2026-08-01T00:50:00+08:00", "2026-08-01T00:55:00+08:00"),
+    ):
+        row.update(
+            {
+                "trade_date": "20260801",
+                "session_id": "fixture-dce-m-night-session",
+                "bar_time": bar_time,
+                "available_at": bar_time.replace(":00+", ":01+"),
+            }
+        )
+    return fixture
+
+
 def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
     result = evaluate_handoff_fixture(_fixture())
 
@@ -310,7 +380,141 @@ def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
     )
 
 
-def test_receipt_bound_rollover_cohort_selects_one_active_contract_offline_only() -> None:
+def test_receipt_bound_m_night_session_rolls_trade_date_across_midnight_offline_only(
+) -> None:
+    result = evaluate_handoff_fixture(_night_fixture())
+
+    assert result["disposition"] == "observation"
+    assert result["evidence"]["trade_date"] == "20260801"
+    assert result["evidence"]["session_kind"] == "night"
+    assert result["evidence"]["session_windows"] == [
+        {
+            "start": "2026-07-31T21:00:00+08:00",
+            "end": "2026-08-01T01:00:00+08:00",
+        }
+    ]
+    assert result["evidence"]["session_authority"] == {
+        "product": "M",
+        "exchange": "DCE",
+        "timezone": "Asia/Shanghai",
+        "effective_from": "2026-07-01T00:00:00+08:00",
+        "effective_until": "2026-08-02T00:00:00+08:00",
+    }
+    assert result["execution_eligible"] is False
+    assert result["delayed_paper_eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0].pop(
+                "authority"
+            ),
+            "mapping_required:calendar.authority",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0][
+                "authority"
+            ].update({"product": "RB"}),
+            "calendar_authority_product_m_required",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0][
+                "authority"
+            ].update({"exchange": "SHFE"}),
+            "calendar_authority_exchange_dce_required",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0][
+                "authority"
+            ].update({"timezone": "UTC"}),
+            "calendar_authority_timezone_required",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0][
+                "authority"
+            ].update(
+                {
+                    "effective_windows": [
+                        {
+                            "effective_from": "2026-07-01T00:00:00+08:00",
+                            "effective_until": "2026-07-15T00:00:00+08:00",
+                        },
+                        {
+                            "effective_from": "2026-07-14T00:00:00+08:00",
+                            "effective_until": "2026-08-01T00:00:00+08:00",
+                        },
+                    ]
+                }
+            ),
+            "calendar_authority_effective_windows_overlap",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["data"][0][
+                "authority"
+            ].update(
+                {
+                    "effective_windows": [
+                        {
+                            "effective_from": "2026-07-01T00:00:00+08:00",
+                            "effective_until": "2026-07-15T00:00:00+08:00",
+                        },
+                        {
+                            "effective_from": "2026-07-16T00:00:00+08:00",
+                            "effective_until": "2026-08-01T00:00:00+08:00",
+                        },
+                    ]
+                }
+            ),
+            "calendar_authority_effective_windows_gap",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["metadata"].update(
+                {"receipt_id": ""}
+            ),
+            "text_required:calendar_session.receipt_id",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["metadata"].update(
+                {"lineage": {"complete": False, "provider_neutral": True}}
+            ),
+            "query_evidence_not_eligible:calendar_session",
+        ),
+        (
+            lambda fixture: fixture["queries"]["calendar_session"]["metadata"].update(
+                {"observed_at": "2026-07-31T09:40:06+08:00"}
+            ),
+            "query_pit_order_invalid:calendar_session",
+        ),
+    ],
+    ids=(
+        "missing-authority",
+        "wrong-product",
+        "wrong-exchange",
+        "wrong-timezone",
+        "authority-overlap",
+        "authority-gap",
+        "missing-receipt",
+        "incomplete-lineage",
+        "pit-ineligible",
+    ),
+)
+def test_calendar_session_authority_fails_closed(
+    mutate: object, reason: str
+) -> None:
+    fixture = _fixture()
+    assert callable(mutate)
+    mutate(fixture)
+
+    result = evaluate_handoff_fixture(fixture)
+
+    assert result["disposition"] == "hold"
+    assert result["reason"] == reason
+
+
+def test_receipt_bound_rollover_cohort_selects_one_active_contract_offline_only(
+) -> None:
     result = evaluate_handoff_fixture(_rollover_cohort_fixture())
 
     assert result["disposition"] == "observation"

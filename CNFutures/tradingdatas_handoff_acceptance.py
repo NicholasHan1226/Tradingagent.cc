@@ -64,7 +64,10 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
             decision_time,
         )
         calendar = _calendar(
-            calendar_query["data"], contract["symbol"], calendar_query["observed_at"]
+            calendar_query["data"],
+            contract["symbol"],
+            calendar_query["observed_at"],
+            decision_time,
         )
         if contract["tradeable_on"] != calendar["trade_date"]:
             raise HandoffAcceptanceError("contract_tradeability_trade_date_mismatch")
@@ -139,7 +142,10 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 "symbol": contract["symbol"],
                 "rollover_cohort": contract["rollover_cohort"],
                 "trade_date": calendar["trade_date"],
+                "session_kind": calendar["session_kind"],
                 "session_id": calendar["session_id"],
+                "session_windows": calendar["session_windows"],
+                "session_authority": calendar["authority"],
                 "bar_ends": [bar["bar_time"] for bar in bars],
             },
             readiness=readiness,
@@ -397,7 +403,9 @@ def _rollover_effective_time(
     return _timestamp(value, f"contract[{index}].tradeability.{key}")
 
 
-def _calendar(rows: list[Any], symbol: str, observed_at: datetime) -> dict[str, Any]:
+def _calendar(
+    rows: list[Any], symbol: str, observed_at: datetime, decision_time: datetime
+) -> dict[str, Any]:
     if len(rows) != 1 or not isinstance(rows[0], Mapping):
         raise HandoffAcceptanceError("calendar_requires_one_session_row")
     row = rows[0]
@@ -406,13 +414,17 @@ def _calendar(rows: list[Any], symbol: str, observed_at: datetime) -> dict[str, 
     trade_date = _trade_date(row.get("trade_date"))
     if row.get("calendar_eligible") is not True:
         raise HandoffAcceptanceError("calendar_not_eligible")
-    if _text(row.get("session_kind"), "calendar.session_kind") != "day":
-        raise HandoffAcceptanceError("calendar_day_session_required")
-    windows = _session_windows(row, trade_date)
+    session_kind = _text(row.get("session_kind"), "calendar.session_kind")
+    if session_kind not in {"day", "night"}:
+        raise HandoffAcceptanceError("calendar_day_or_night_session_required")
+    authority = _calendar_authority(row, observed_at, decision_time)
+    windows = _session_windows(row, trade_date, session_kind)
     return {
         "trade_date": trade_date,
+        "session_kind": session_kind,
         "session_id": _text(row.get("session_id"), "calendar.session_id"),
         "session_windows": windows,
+        "authority": authority,
         "observed_at": observed_at.isoformat(),
     }
 
@@ -455,7 +467,7 @@ def _bars(
             raise HandoffAcceptanceError("bar_pit_order_invalid")
         if not _in_session_windows(bar_time, windows):
             raise HandoffAcceptanceError("bar_outside_calendar_session")
-        if local_bar_time.strftime("%Y%m%d") != calendar["trade_date"]:
+        if not _bar_matches_calendar_trade_date(local_bar_time, calendar):
             raise HandoffAcceptanceError("bar_shanghai_trade_date_mismatch")
         open_ = _positive(row.get("open"), f"bars[{index}].open")
         high = _positive(row.get("high"), f"bars[{index}].high")
@@ -657,7 +669,79 @@ def _text_list(value: Any, name: str) -> list[str]:
     return [_text(item, name) for item in value]
 
 
-def _session_windows(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, str]]:
+def _calendar_authority(
+    raw: Mapping[str, Any], observed_at: datetime, decision_time: datetime
+) -> dict[str, str]:
+    authority_value = raw.get("authority")
+    if not isinstance(authority_value, Mapping):
+        raise HandoffAcceptanceError("mapping_required:calendar.authority")
+    authority = authority_value
+    if _text(authority.get("product"), "calendar.authority.product").upper() != "M":
+        raise HandoffAcceptanceError("calendar_authority_product_m_required")
+    if _text(authority.get("exchange"), "calendar.authority.exchange").upper() != "DCE":
+        raise HandoffAcceptanceError("calendar_authority_exchange_dce_required")
+    if (
+        _text(authority.get("timezone"), "calendar.authority.timezone")
+        != "Asia/Shanghai"
+    ):
+        raise HandoffAcceptanceError("calendar_authority_timezone_required")
+    source = authority.get("effective_windows")
+    if not isinstance(source, list) or not source:
+        raise HandoffAcceptanceError("calendar_authority_effective_windows_required")
+    windows: list[dict[str, datetime]] = []
+    previous_until: datetime | None = None
+    for index, item in enumerate(source):
+        if not isinstance(item, Mapping) or set(item) != {
+            "effective_from",
+            "effective_until",
+        }:
+            raise HandoffAcceptanceError("calendar_authority_effective_window_invalid")
+        effective_from = _timestamp(
+            item.get("effective_from"),
+            f"calendar.authority.effective_windows[{index}].effective_from",
+        )
+        effective_until = _timestamp(
+            item.get("effective_until"),
+            f"calendar.authority.effective_windows[{index}].effective_until",
+        )
+        if effective_from >= effective_until:
+            raise HandoffAcceptanceError("calendar_authority_effective_window_invalid")
+        if previous_until is not None:
+            if effective_from < previous_until:
+                raise HandoffAcceptanceError(
+                    "calendar_authority_effective_windows_overlap"
+                )
+            if effective_from > previous_until:
+                raise HandoffAcceptanceError("calendar_authority_effective_windows_gap")
+        windows.append(
+            {
+                "effective_from": effective_from,
+                "effective_until": effective_until,
+            }
+        )
+        previous_until = effective_until
+    active = [
+        item
+        for item in windows
+        if item["effective_from"] <= decision_time < item["effective_until"]
+    ]
+    if len(active) != 1:
+        raise HandoffAcceptanceError("calendar_authority_no_active_effective_window")
+    selected = active[0]
+    if selected["effective_from"] > observed_at:
+        raise HandoffAcceptanceError("calendar_authority_effective_time_pit_ineligible")
+    return {
+        "product": "M",
+        "exchange": "DCE",
+        "timezone": "Asia/Shanghai",
+        "effective_from": selected["effective_from"].isoformat(),
+        "effective_until": selected["effective_until"].isoformat(),
+    }
+
+
+def _session_windows(
+    raw: Mapping[str, Any], trade_date: str, session_kind: str
+) -> list[dict[str, str]]:
     source = raw.get("session_windows")
     if not isinstance(source, list) or not source:
         raise HandoffAcceptanceError("calendar_session_windows_required")
@@ -670,16 +754,38 @@ def _session_windows(raw: Mapping[str, Any], trade_date: str) -> list[dict[str, 
             item.get("start"), f"calendar.session_windows[{index}].start"
         )
         end = _timestamp(item.get("end"), f"calendar.session_windows[{index}].end")
-        if (
-            start >= end
-            or start.astimezone(_SHANGHAI).strftime("%Y%m%d") != trade_date
-            or end.astimezone(_SHANGHAI).strftime("%Y%m%d") != trade_date
-            or (previous_end is not None and start <= previous_end)
-        ):
+        if start >= end or (previous_end is not None and start <= previous_end):
+            raise HandoffAcceptanceError("calendar_session_window_invalid")
+        start_date = start.astimezone(_SHANGHAI).strftime("%Y%m%d")
+        end_date = end.astimezone(_SHANGHAI).strftime("%Y%m%d")
+        if session_kind == "day":
+            date_valid = start_date == trade_date and end_date == trade_date
+        else:
+            trade_day = datetime.strptime(trade_date, "%Y%m%d").date()
+            previous_day = trade_day.fromordinal(trade_day.toordinal() - 1).strftime(
+                "%Y%m%d"
+            )
+            date_valid = start_date in {previous_day, trade_date} and end_date in {
+                previous_day,
+                trade_date,
+            }
+        if not date_valid:
             raise HandoffAcceptanceError("calendar_session_window_invalid")
         windows.append({"start": start.isoformat(), "end": end.isoformat()})
         previous_end = end
     return windows
+
+
+def _bar_matches_calendar_trade_date(
+    local_bar_time: datetime, calendar: Mapping[str, Any]
+) -> bool:
+    trade_date = str(calendar["trade_date"])
+    local_date = local_bar_time.strftime("%Y%m%d")
+    if calendar["session_kind"] == "day":
+        return local_date == trade_date
+    trade_day = datetime.strptime(trade_date, "%Y%m%d").date()
+    previous_day = trade_day.fromordinal(trade_day.toordinal() - 1).strftime("%Y%m%d")
+    return local_date in {previous_day, trade_date}
 
 
 def _in_session_windows(value: datetime, windows: list[Any]) -> bool:
