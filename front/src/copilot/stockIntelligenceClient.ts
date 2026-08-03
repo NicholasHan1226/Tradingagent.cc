@@ -44,7 +44,16 @@ export function assertStockIntelligenceProjection(payload: unknown, expectedSymb
 }
 
 function assertProjectionSource(source: StockIntelligence['source'] | undefined) {
-  if (!source || !source.datasetId || !source.receiptId || !isSha256(source.receiptSha256) || !isTimestamp(source.dataThrough) || !isTimestamp(source.retrievedAt) || !['fresh', 'stale', 'degraded'].includes(source.freshness)) throw new Error('stock_intelligence_source_invalid')
+  if (!source || source.transportContract !== 'tradingdatas_v1_catalog_query' || !source.datasetId || !source.receiptId || !isTimestamp(source.dataThrough) || !isTimestamp(source.retrievedAt) || !['fresh', 'stale', 'degraded'].includes(source.freshness)) throw new Error('stock_intelligence_source_invalid')
+  if (!isSha256(source.receiptSha256) || !isSha256(source.lineageSha256)) throw new Error('stock_intelligence_source_receipt_binding_invalid')
+  const binding = {
+    datasetId: source.datasetId,
+    dataThrough: source.dataThrough,
+    receiptId: source.receiptId,
+    receiptSha256: source.receiptSha256,
+    lineageSha256: source.lineageSha256,
+  }
+  if (!hasVerifiedActivityAuthority(source.activityAuthority, binding)) throw new Error('stock_intelligence_source_activity_authority_invalid')
 }
 
 function hasVerifiedEventCapability(event: StockIntelligence['events'][number]) {
@@ -63,7 +72,36 @@ function hasVerifiedEventCapability(event: StockIntelligence['events'][number]) 
     && capability.receiptSha256 === event.sourceReceiptSha256
     && isSha256(capability.receiptSha256)
     && isSha256(capability.lineageSha256)
+    && hasVerifiedActivityAuthority(capability.activityAuthority, capability)
   )
+}
+
+function hasVerifiedActivityAuthority(authority: unknown, binding: { datasetId: string; dataThrough: string; receiptId: string; receiptSha256: string; lineageSha256: string }): boolean {
+  if (!authority || typeof authority !== 'object') return false
+  const value = authority as Record<string, unknown>
+  const calendar = value.calendar
+  const session = value.session
+  const source = value.source
+  if (!calendar || typeof calendar !== 'object' || !session || typeof session !== 'object' || !source || typeof source !== 'object') return false
+  const calendarValue = calendar as Record<string, unknown>
+  const sessionValue = session as Record<string, unknown>
+  const sourceValue = source as Record<string, unknown>
+  return value.datasetId === binding.datasetId
+    && value.market === 'ashare'
+    && value.timezone === 'Asia/Shanghai'
+    && typeof calendarValue.id === 'string' && Boolean(calendarValue.id.trim())
+    && typeof calendarValue.version === 'string' && Boolean(calendarValue.version.trim())
+    && calendarValue.sourceDatasetId === 'cn.market.trade_calendar'
+    && typeof calendarValue.receiptId === 'string' && Boolean(calendarValue.receiptId.trim())
+    && isSha256(calendarValue.receiptSha256)
+    && isSha256(calendarValue.lineageSha256)
+    && isSha256(calendarValue.calendarSha256)
+    && ['open', 'closed', 'halted'].includes(String(sessionValue.state))
+    && isTimezoneAwareTimestamp(sessionValue.asOf)
+    && value.dataThrough === binding.dataThrough
+    && sourceValue.receiptId === binding.receiptId
+    && sourceValue.receiptSha256 === binding.receiptSha256
+    && sourceValue.lineageSha256 === binding.lineageSha256
 }
 
 function assertMarketRules(rules: StockIntelligence['marketRules'] | undefined) {
@@ -104,6 +142,10 @@ function assertSeriesPoint(point: unknown) {
 
 function isTimestamp(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function isTimezoneAwareTimestamp(value: unknown): value is string {
+  return isTimestamp(value) && /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
 }
 
 function isSha256(value: unknown): value is string {

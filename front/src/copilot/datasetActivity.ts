@@ -1,16 +1,11 @@
-import type { StockIntelligence } from './stockIntelligence.ts'
+import type { DatasetActivityAuthority, StockIntelligence } from './stockIntelligence.ts'
 
 /**
  * A dataset clock is evidence supplied by that dataset, not an application-wide
- * market session.  The current projection contract does not yet supply this
- * authority, so consumers must keep the result as a coverage gap.
+ * market session.  Consumers only use the receipt-bound authority that the
+ * formal projection validator has accepted; every other case is a coverage gap.
  */
-export type DatasetActivityAuthority = {
-  market: string
-  timezone: string
-  calendar: string
-  session: 'open' | 'closed' | 'halted' | 'unknown'
-}
+export type { DatasetActivityAuthority } from './stockIntelligence.ts'
 
 export type DatasetActivityState = 'live' | 'closed' | 'stale' | 'coverage_gap'
 
@@ -32,14 +27,14 @@ export type DatasetActivityInput = {
 export function resolveDatasetActivity(input: DatasetActivityInput): DatasetActivity {
   const base = { datasetId: input.datasetId, dataThrough: input.dataThrough }
   if (!input.authority) return { ...base, state: 'coverage_gap', reason: 'dataset_activity_authority_missing', clockKey: null }
-  if (!hasCompleteAuthority(input.authority)) return { ...base, state: 'coverage_gap', reason: 'dataset_activity_authority_incomplete', clockKey: null }
+  if (!hasCompleteAuthority(input.authority, input.datasetId, input.dataThrough)) return { ...base, state: 'coverage_gap', reason: 'dataset_activity_authority_incomplete', clockKey: null }
   if (!isTimestamp(input.dataThrough)) return { ...base, state: 'coverage_gap', reason: 'dataset_activity_data_through_invalid', clockKey: null }
 
-  const clockKey = `${input.authority.market}/${input.authority.timezone}/${input.authority.calendar}`
+  const clockKey = `${input.authority.market}/${input.authority.timezone}/${input.authority.calendar.id}`
   if (input.freshness !== 'fresh') return { ...base, state: 'stale', reason: 'dataset_not_fresh', clockKey }
   return {
     ...base,
-    state: input.authority.session === 'open' ? 'live' : 'closed',
+    state: input.authority.session.state === 'open' ? 'live' : 'closed',
     reason: null,
     clockKey,
   }
@@ -52,10 +47,7 @@ export function collectDatasetActivities(intelligence: StockIntelligence): Datas
       datasetId: intelligence.source.datasetId,
       dataThrough: intelligence.source.dataThrough,
       freshness: intelligence.source.freshness,
-      // The current shared projection contract intentionally has no activity
-      // authority. Do not consume an undocumented extension before Controller
-      // approves the cross-domain contract change.
-      authority: null,
+      authority: intelligence.source.activityAuthority ?? null,
     })
   }
   for (const event of intelligence.events) {
@@ -64,7 +56,7 @@ export function collectDatasetActivities(intelligence: StockIntelligence): Datas
       datasetId: event.dataCapability.datasetId,
       dataThrough: event.dataCapability.dataThrough,
       freshness: event.dataCapability.freshness,
-      authority: null,
+      authority: event.dataCapability.activityAuthority ?? null,
     })
   }
   return [...inputs
@@ -77,11 +69,36 @@ export function collectDatasetActivities(intelligence: StockIntelligence): Datas
     .map(resolveDatasetActivity)
 }
 
-function hasCompleteAuthority(authority: DatasetActivityAuthority) {
-  return Boolean(authority.market.trim() && authority.timezone.trim() && authority.calendar.trim())
-    && ['open', 'closed', 'halted'].includes(authority.session)
+function hasCompleteAuthority(authority: DatasetActivityAuthority, datasetId: string, dataThrough: string) {
+  return Boolean(
+    authority.datasetId === datasetId
+    && authority.market === 'ashare'
+    && authority.timezone === 'Asia/Shanghai'
+    && authority.calendar.id.trim()
+    && authority.calendar.version.trim()
+    && authority.calendar.sourceDatasetId === 'cn.market.trade_calendar'
+    && authority.calendar.receiptId.trim()
+    && isSha256(authority.calendar.receiptSha256)
+    && isSha256(authority.calendar.lineageSha256)
+    && isSha256(authority.calendar.calendarSha256)
+    && authority.source.receiptId.trim()
+    && isSha256(authority.source.receiptSha256)
+    && isSha256(authority.source.lineageSha256)
+    && ['open', 'closed', 'halted'].includes(authority.session.state)
+    && isTimezoneAwareTimestamp(authority.session.asOf)
+    && authority.dataThrough === dataThrough
+    && isTimestamp(authority.dataThrough),
+  )
 }
 
 function isTimestamp(value: string) {
   return Number.isFinite(Date.parse(value))
+}
+
+function isTimezoneAwareTimestamp(value: string) {
+  return isTimestamp(value) && /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+}
+
+function isSha256(value: string) {
+  return /^[a-f0-9]{64}$/.test(value)
 }
