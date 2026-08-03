@@ -186,6 +186,7 @@ def _query_contract(
     dataset_id: str,
     required_fields: tuple[str, ...],
     required_filters: tuple[str, ...],
+    required_identity_fields: tuple[str, ...],
 ) -> tuple[int, tuple[str, ...], int]:
     schema_major = row.get("schema_major")
     if type(schema_major) is not int or schema_major <= 0:
@@ -196,6 +197,15 @@ def _query_contract(
     if not isinstance(defaults, list) or not set(required_fields).issubset(defaults):
         raise MinuteSessionInitializerError(
             f"minute_session_fields_invalid:{dataset_id}"
+        )
+    raw_identity = row.get("identity_fields")
+    if (
+        not isinstance(raw_identity, list)
+        or tuple(raw_identity) != required_identity_fields
+        or not set(required_identity_fields).issubset(defaults)
+    ):
+        raise MinuteSessionInitializerError(
+            f"minute_session_identity_invalid:{dataset_id}"
         )
     operators = row.get("filter_operators")
     if not isinstance(operators, Mapping):
@@ -543,12 +553,14 @@ def initialize_minute_session(
         dataset_id=CALENDAR_DATASET_ID,
         required_fields=("exchange", "cal_date", "is_open", "pretrade_date"),
         required_filters=("exchange", "cal_date"),
+        required_identity_fields=("exchange", "cal_date"),
     )
     daily_contract = _query_contract(
         daily_row,
         dataset_id=DAILY_DATASET_ID,
         required_fields=("ts_code", "trade_date", "close"),
         required_filters=("trade_date",),
+        required_identity_fields=("ts_code", "trade_date"),
     )
     daily_filter_operators = daily_row.get("filter_operators")
     if (

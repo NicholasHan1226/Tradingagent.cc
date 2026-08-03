@@ -36,17 +36,28 @@ def _catalog_row(
     dataset_id: str,
     *,
     fields: list[str],
+    identity_fields: list[str] | None = None,
     schema_major: int = 2,
     activation_state: str = "active",
     runtime_state: str = "success",
     degraded: bool = False,
 ) -> dict[str, Any]:
+    expected_identity = {
+        "cn.market.trade_calendar": ["exchange", "cal_date"],
+        "cn.equity.security_master": ["ts_code"],
+        "cn.equity.daily": ["ts_code", "trade_date"],
+    }
     return {
         "dataset_id": dataset_id,
         "schema_major": schema_major,
         "default_fields": list(fields),
         "default_order": [f"{fields[0]}:asc"],
         "fields": [_field(name) for name in fields],
+        "identity_fields": list(
+            expected_identity.get(dataset_id, [fields[0]])
+            if identity_fields is None
+            else identity_fields
+        ),
         "filter_operators": {
             name: ["eq", "in", "gte", "lte", "between"] for name in fields
         },
@@ -353,6 +364,25 @@ def test_paused_core_dataset_blocks_before_any_query(tmp_path: Path) -> None:
     with pytest.raises(
         AshareObservationManifestBlocked,
         match="core_dataset_not_active:cn.equity.daily",
+    ):
+        build_ashare_observation_manifest(
+            _config(tmp_path),
+            transport=transport,
+        )
+
+    assert [call["method"] for call in transport.calls] == ["GET"]
+
+
+def test_daily_catalog_identity_must_match_the_declared_capability(
+    tmp_path: Path,
+) -> None:
+    rows = _catalog_rows()
+    rows[2]["identity_fields"] = ["ts_code"]
+    transport = FixtureTransport(catalog_rows=rows)
+
+    with pytest.raises(
+        AshareObservationManifestBlocked,
+        match="core_dataset_identity_invalid:cn.equity.daily",
     ):
         build_ashare_observation_manifest(
             _config(tmp_path),

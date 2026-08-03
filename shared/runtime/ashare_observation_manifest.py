@@ -292,6 +292,7 @@ def _catalog_inventory(
                     "default_fields",
                     "default_order",
                     "fields",
+                    "identity_fields",
                     "filter_operators",
                     "limits",
                     "availability",
@@ -340,6 +341,16 @@ def _catalog_row_contract(
     if set(required_fields).difference(selectable):
         raise AshareObservationManifestBlocked(
             f"core_dataset_fields_missing:{dataset_id}"
+        )
+    raw_identity = row.get("identity_fields")
+    expected_identity = _IDENTITY_FIELDS[role]
+    if (
+        not isinstance(raw_identity, list)
+        or tuple(raw_identity) != expected_identity
+        or not set(expected_identity).issubset(selectable)
+    ):
+        raise AshareObservationManifestBlocked(
+            f"core_dataset_identity_invalid:{dataset_id}"
         )
     filter_operators = row.get("filter_operators")
     needed_filter = {

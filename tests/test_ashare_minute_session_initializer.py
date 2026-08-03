@@ -36,13 +36,16 @@ def _catalog_row(
     fields: list[str],
     *,
     max_page_size: int = 500,
+    identity_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "dataset_id": dataset_id,
         "schema_major": 2,
         "default_fields": list(fields),
         "default_order": [f"{fields[0]}:asc"],
-        "identity_fields": list(fields[:2]),
+        "identity_fields": list(
+            fields[:2] if identity_fields is None else identity_fields
+        ),
         "fields": [_field(name) for name in fields],
         "filter_operators": {
             name: ["eq", "in", "gte", "lte", "between"] for name in fields
@@ -55,7 +58,11 @@ def _catalog_row(
     }
 
 
-def _catalog_rows(*, daily_max_page_size: int = 500) -> list[dict[str, Any]]:
+def _catalog_rows(
+    *,
+    daily_max_page_size: int = 500,
+    daily_identity_fields: list[str] | None = None,
+) -> list[dict[str, Any]]:
     return [
         _catalog_row(
             "cn.market.trade_calendar",
@@ -65,6 +72,11 @@ def _catalog_rows(*, daily_max_page_size: int = 500) -> list[dict[str, Any]]:
             "cn.equity.daily",
             ["ts_code", "trade_date", "close"],
             max_page_size=daily_max_page_size,
+            identity_fields=(
+                daily_identity_fields
+                if daily_identity_fields is not None
+                else ["ts_code", "trade_date"]
+            ),
         ),
         _catalog_row(
             "cn.dataset.rt_min",
@@ -111,6 +123,7 @@ class FixtureTransport:
         daily_http_status: int | None = None,
         daily_timeout: bool = False,
         daily_catalog_drift: bool = False,
+        daily_catalog_identity_fields: list[str] | None = None,
         daily_duplicate: bool = False,
         daily_replay_change: bool = False,
         daily_wrong_trade_date: bool = False,
@@ -125,6 +138,7 @@ class FixtureTransport:
         self.daily_http_status = daily_http_status
         self.daily_timeout = daily_timeout
         self.daily_catalog_drift = daily_catalog_drift
+        self.daily_catalog_identity_fields = daily_catalog_identity_fields
         self.daily_duplicate = daily_duplicate
         self.daily_replay_change = daily_replay_change
         self.daily_wrong_trade_date = daily_wrong_trade_date
@@ -162,7 +176,10 @@ class FixtureTransport:
                     "api_version": "v1",
                     "catalog_version": CATALOG_VERSION,
                     "request_id": f"catalog-{len(self.calls)}",
-                    "data": _catalog_rows(daily_max_page_size=self.daily_max_page_size),
+                    "data": _catalog_rows(
+                        daily_max_page_size=self.daily_max_page_size,
+                        daily_identity_fields=self.daily_catalog_identity_fields,
+                    ),
                 },
             )
         assert json_body is not None
@@ -923,6 +940,25 @@ def test_degraded_daily_fails_closed(tmp_path: Path) -> None:
             transport_factory=_factory(FixtureTransport(daily_degraded=True)),
         )
 
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_daily_catalog_identity_mismatch_fails_before_any_query(tmp_path: Path) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_catalog_identity_fields=["ts_code"])
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_identity_invalid:cn.equity.daily",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            transport_factory=_factory(transport),
+        )
+
+    assert [call["method"] for call in transport.calls] == ["GET"]
     assert not (tmp_path / "20260729").exists()
 
 
