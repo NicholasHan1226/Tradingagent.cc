@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from Ashare.event_evidence import (
+    ANALYST_EXPECTATION_DATASET_IDS,
     FIXED_CATALOG_ROUTE,
     FIXED_QUERY_ROUTE,
     OPTIONAL_DATASET_IDS,
@@ -21,6 +22,7 @@ from Ashare.event_evidence import (
     bind_shadow_decision,
     build_llm_shadow_request,
     build_sentiment_snapshot,
+    load_analyst_expectation_snapshots,
 )
 from shared.data.sharedsignals_v1 import (
     CatalogEnvelope,
@@ -377,6 +379,67 @@ def test_missing_optional_profiles_are_explicit_degradation_not_fallback() -> No
     assert profiles.missing_optional == tuple(sorted(OPTIONAL_DATASET_IDS))
     assert profiles.complete_optional_coverage is False
     assert profiles.candidate_eligible is False
+
+
+def test_active_analyst_expectation_profiles_use_the_existing_receipt_bound_port() -> None:
+    transport = _Transport()
+    port = TradingDatasAshareEvidencePort(_client(transport))
+    audit = AshareEvidenceAuditLedger()
+    profiles = port.freeze_profiles(audit_ledger=audit)
+
+    snapshots = load_analyst_expectation_snapshots(
+        port=port,
+        profiles=profiles,
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+        allowed_symbols=("600000.SH",),
+    )
+
+    assert ANALYST_EXPECTATION_DATASET_IDS == (
+        "cn.dataset.broker_recommend",
+        "cn.dataset.report_rc",
+    )
+    assert [snapshot.profile.dataset_id for snapshot in snapshots] == list(
+        ANALYST_EXPECTATION_DATASET_IDS
+    )
+    assert all(snapshot.same_observation for snapshot in snapshots)
+    assert all(snapshot.events[0].symbol == "600000.SH" for snapshot in snapshots)
+    assert audit.records() == ()
+
+
+@pytest.mark.parametrize(
+    ("metadata", "reason"),
+    [
+        (
+            _metadata(freshness={"state": "stale", "stale": True}),
+            "ashare_evidence_metadata_not_fresh",
+        ),
+        (
+            _metadata(receipt_id=None),
+            "ashare_evidence_query_failed",
+        ),
+    ],
+)
+def test_analyst_expectation_mapping_fails_closed_without_fresh_receipt(
+    metadata: dict[str, Any],
+    reason: str,
+) -> None:
+    transport = _Transport(metadata=metadata)
+    port = TradingDatasAshareEvidencePort(_client(transport))
+    audit = AshareEvidenceAuditLedger()
+    profiles = port.freeze_profiles(audit_ledger=audit)
+
+    with pytest.raises(AshareEvidenceContractError, match=reason):
+        load_analyst_expectation_snapshots(
+            port=port,
+            profiles=profiles,
+            decision_time=DECISION_TIME,
+            audit_ledger=audit,
+            allowed_symbols=("600000.SH",),
+        )
+
+    assert [record.reason_code for record in audit.records()] == [reason]
+    assert audit.records()[0].dataset_id == "cn.dataset.broker_recommend"
 
 
 def test_first_profiles_accept_catalog_validated_provider_native_aliases() -> None:

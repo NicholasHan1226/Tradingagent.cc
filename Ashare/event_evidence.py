@@ -64,6 +64,13 @@ OPTIONAL_DATASET_IDS = (
     "cn.dataset.stk_surv",
     "cn.dataset.major_news",
 )
+# These are catalog-active optional datasets.  They are selected only by the
+# explicit analyst-expectation adapter below; optional status never makes them
+# part of the automatic event pass.
+ANALYST_EXPECTATION_DATASET_IDS = (
+    "cn.dataset.broker_recommend",
+    "cn.dataset.report_rc",
+)
 PAUSED_DATASET_IDS = ("cn.dataset.news",)
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -1685,6 +1692,72 @@ class TradingDatasAshareEvidencePort:
         raise AshareEvidenceContractError(reason)
 
 
+def _analyst_expectation_profiles(
+    profiles: EvidenceProfileSet,
+) -> tuple[EvidenceDatasetProfile, ...]:
+    if not isinstance(profiles, EvidenceProfileSet):
+        raise TypeError("profiles must be EvidenceProfileSet")
+    selected: list[EvidenceDatasetProfile] = []
+    for dataset_id in ANALYST_EXPECTATION_DATASET_IDS:
+        profile = profiles.by_dataset.get(dataset_id)
+        if profile is None:
+            raise AshareEvidenceContractError(
+                "ashare_evidence_analyst_expectation_profile_missing"
+            )
+        filter_operators = dict(profile.filter_operators)
+        if (
+            not profile.optional_dataset
+            or profile.omit_as_of
+            or profile.symbol_field is None
+            or "in" not in filter_operators.get(profile.symbol_field, ())
+        ):
+            raise AshareEvidenceContractError(
+                "ashare_evidence_analyst_expectation_profile_incompatible"
+            )
+        selected.append(profile)
+    return tuple(selected)
+
+
+def load_analyst_expectation_snapshots(
+    *,
+    port: AshareEventEvidencePort,
+    profiles: EvidenceProfileSet,
+    decision_time: datetime,
+    audit_ledger: AshareEvidenceAuditLedger,
+    allowed_symbols: tuple[str, ...],
+) -> tuple[EventEvidenceSnapshotBatch, ...]:
+    """Read the two explicit analyst datasets through the generic event port.
+
+    This is a caller-invoked, receipt-bound mapping only.  It has no default
+    transport, scheduling, projection, candidate, sentiment, or order effect.
+    Every source uses the existing catalog/query replay and metadata checks;
+    one rejected source fails the requested analyst read closed.
+    """
+
+    if not isinstance(audit_ledger, AshareEvidenceAuditLedger):
+        raise TypeError("audit_ledger must be AshareEvidenceAuditLedger")
+    decision = _aware(
+        decision_time,
+        "ashare_evidence_decision_time_timezone_required",
+    )
+    symbols = tuple(sorted(_mainboard_symbol_allowlist(allowed_symbols)))
+    if not symbols:
+        raise AshareEvidenceContractError("ashare_evidence_allowed_symbols_invalid")
+    snapshots: list[EventEvidenceSnapshotBatch] = []
+    for profile in _analyst_expectation_profiles(profiles):
+        assert profile.symbol_field is not None
+        snapshots.append(
+            port.load_event_snapshot(
+                profile=profile,
+                filters={profile.symbol_field: {"in": list(symbols)}},
+                decision_time=decision,
+                audit_ledger=audit_ledger,
+                allowed_symbols=symbols,
+            )
+        )
+    return tuple(snapshots)
+
+
 def _validate_query_filters(
     *,
     profile: EvidenceDatasetProfile,
@@ -2065,6 +2138,7 @@ def build_llm_shadow_request(
 
 
 __all__ = [
+    "ANALYST_EXPECTATION_DATASET_IDS",
     "FIXED_CATALOG_ROUTE",
     "FIXED_QUERY_ROUTE",
     "OPTIONAL_DATASET_IDS",
@@ -2083,5 +2157,6 @@ __all__ = [
     "bind_shadow_decision",
     "build_llm_shadow_request",
     "build_sentiment_snapshot",
+    "load_analyst_expectation_snapshots",
     "snapshot_from_runs",
 ]
