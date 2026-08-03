@@ -58,7 +58,11 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
             queries, "calendar_session", profile, catalog, decision_time
         )
         bars_query = _query(queries, "bars_5min", profile, catalog, decision_time)
-        contract = _contract(contract_query["data"], contract_query["observed_at"])
+        contract = _contract(
+            contract_query["data"],
+            contract_query["observed_at"],
+            decision_time,
+        )
         calendar = _calendar(
             calendar_query["data"], contract["symbol"], calendar_query["observed_at"]
         )
@@ -133,6 +137,7 @@ def evaluate_handoff_fixture(fixture: Mapping[str, Any]) -> dict[str, Any]:
                 },
                 "availability_source": "query_envelope.metadata.observed_at",
                 "symbol": contract["symbol"],
+                "rollover_cohort": contract["rollover_cohort"],
                 "trade_date": calendar["trade_date"],
                 "session_id": calendar["session_id"],
                 "bar_ends": [bar["bar_time"] for bar in bars],
@@ -297,34 +302,99 @@ def _query(
     }
 
 
-def _contract(rows: list[Any], observed_at: datetime) -> dict[str, Any]:
-    if len(rows) != 1 or not isinstance(rows[0], Mapping):
-        raise HandoffAcceptanceError("contract_master_requires_one_explicit_m_contract")
-    row = rows[0]
-    symbol = _text(row.get("symbol"), "contract.symbol").upper()
-    if not _M_SYMBOL.fullmatch(symbol):
-        raise HandoffAcceptanceError("contract_m_dce_symbol_required")
-    if _text(row.get("product"), "contract.product").lower() != "m":
-        raise HandoffAcceptanceError("contract_product_m_required")
-    if _text(row.get("exchange"), "contract.exchange").upper() != "DCE":
-        raise HandoffAcceptanceError("contract_exchange_dce_required")
-    tradeability = _mapping(row, "tradeability")
-    if tradeability.get("state") != "tradeable":
-        raise HandoffAcceptanceError("contract_tradeability_required")
-    if _positive_or_none(row.get("multiplier")) is None:
-        raise _RiskReject("contract_multiplier_missing_or_invalid")
-    if _positive_or_none(row.get("tick_size")) is None:
-        raise _RiskReject("contract_tick_size_missing_or_invalid")
-    if _positive_or_none(row.get("price_limit")) is None:
-        raise _RiskReject("contract_price_limit_missing_or_invalid")
+def _contract(
+    rows: list[Any], observed_at: datetime, decision_time: datetime
+) -> dict[str, Any]:
+    if not rows:
+        raise HandoffAcceptanceError("contract_rollover_cohort_required")
+
+    cohort: list[dict[str, Any]] = []
+    seen_symbols: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise HandoffAcceptanceError("contract_rollover_cohort_row_required")
+        symbol = _text(row.get("symbol"), f"contract[{index}].symbol").upper()
+        if not _M_SYMBOL.fullmatch(symbol):
+            raise HandoffAcceptanceError("contract_m_dce_symbol_required")
+        if symbol in seen_symbols:
+            raise HandoffAcceptanceError("contract_rollover_cohort_symbol_duplicate")
+        seen_symbols.add(symbol)
+        if _text(row.get("product"), f"contract[{index}].product").lower() != "m":
+            raise HandoffAcceptanceError("contract_product_m_required")
+        if _text(row.get("exchange"), f"contract[{index}].exchange").upper() != "DCE":
+            raise HandoffAcceptanceError("contract_exchange_dce_required")
+        tradeability = _mapping(row, "tradeability")
+        if tradeability.get("state") != "tradeable":
+            raise HandoffAcceptanceError("contract_tradeability_required")
+        effective_from = _rollover_effective_time(
+            tradeability, "effective_from", index
+        )
+        effective_until = _rollover_effective_time(
+            tradeability, "effective_until", index
+        )
+        if effective_from >= effective_until:
+            raise HandoffAcceptanceError("contract_rollover_effective_window_invalid")
+        if _positive_or_none(row.get("multiplier")) is None:
+            raise _RiskReject("contract_multiplier_missing_or_invalid")
+        if _positive_or_none(row.get("tick_size")) is None:
+            raise _RiskReject("contract_tick_size_missing_or_invalid")
+        if _positive_or_none(row.get("price_limit")) is None:
+            raise _RiskReject("contract_price_limit_missing_or_invalid")
+        cohort.append(
+            {
+                "symbol": symbol,
+                "tradeable_on": _trade_date(tradeability.get("trade_date")),
+                "effective_from": effective_from,
+                "effective_until": effective_until,
+                "multiplier": _positive_or_none(row["multiplier"]),
+                "tick_size": _positive_or_none(row["tick_size"]),
+                "price_limit": _positive_or_none(row["price_limit"]),
+            }
+        )
+
+    cohort.sort(key=lambda item: (item["effective_from"], item["symbol"]))
+    active = [
+        item
+        for item in cohort
+        if item["effective_from"] <= decision_time < item["effective_until"]
+    ]
+    if not active:
+        raise HandoffAcceptanceError("contract_rollover_no_active_contract")
+    if len(active) != 1:
+        raise HandoffAcceptanceError("contract_rollover_cohort_overlap")
+    selected = active[0]
+    if selected["effective_from"] > observed_at:
+        raise HandoffAcceptanceError("contract_rollover_effective_time_pit_ineligible")
+    for previous, current in zip(cohort, cohort[1:]):
+        if current["effective_from"] < previous["effective_until"]:
+            raise HandoffAcceptanceError("contract_rollover_cohort_overlap")
+        if current["effective_from"] > previous["effective_until"]:
+            raise HandoffAcceptanceError("contract_rollover_cohort_gap")
     return {
-        "symbol": symbol,
-        "multiplier": _positive_or_none(row["multiplier"]),
-        "tick_size": _positive_or_none(row["tick_size"]),
-        "price_limit": _positive_or_none(row["price_limit"]),
-        "tradeable_on": _trade_date(tradeability.get("trade_date")),
+        "symbol": selected["symbol"],
+        "multiplier": selected["multiplier"],
+        "tick_size": selected["tick_size"],
+        "price_limit": selected["price_limit"],
+        "tradeable_on": selected["tradeable_on"],
         "observed_at": observed_at.isoformat(),
+        "rollover_cohort": [
+            {
+                "symbol": item["symbol"],
+                "effective_from": item["effective_from"].isoformat(),
+                "effective_until": item["effective_until"].isoformat(),
+            }
+            for item in cohort
+        ],
     }
+
+
+def _rollover_effective_time(
+    tradeability: Mapping[str, Any], key: str, index: int
+) -> datetime:
+    value = tradeability.get(key)
+    if value is None:
+        raise HandoffAcceptanceError(f"contract_rollover_{key}_required")
+    return _timestamp(value, f"contract[{index}].tradeability.{key}")
 
 
 def _calendar(rows: list[Any], symbol: str, observed_at: datetime) -> dict[str, Any]:

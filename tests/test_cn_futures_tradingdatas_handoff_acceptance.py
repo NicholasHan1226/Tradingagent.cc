@@ -57,7 +57,7 @@ def _catalog_contract(role: str, dataset_id: str) -> dict[str, object]:
             "tick_size",
             "price_limit",
         ]
-        filter_operators = {"symbol": ["eq"]}
+        filter_operators = {"product": ["eq"]}
         default_order = ["symbol:asc"]
         identity_fields = ["symbol"]
     elif role == "calendar_session":
@@ -144,7 +144,7 @@ def _fixture() -> dict[str, object]:
                 "catalog_version": "fixture-catalog-v1",
                 "next_cursor": None,
                 "query_identity": _query_identity(
-                    filters={"symbol": "M2609.DCE"},
+                    filters={"product": "M"},
                     sort_field="symbol",
                     identity_fields=["symbol"],
                 ),
@@ -157,6 +157,8 @@ def _fixture() -> dict[str, object]:
                         "tradeability": {
                             "state": "tradeable",
                             "trade_date": "20260731",
+                            "effective_from": "2026-07-01T00:00:00+08:00",
+                            "effective_until": "2026-08-01T00:00:00+08:00",
                         },
                         "multiplier": 10,
                         "tick_size": 1,
@@ -247,6 +249,32 @@ def _fixture() -> dict[str, object]:
     }
 
 
+def _rollover_cohort_fixture() -> dict[str, object]:
+    fixture = _fixture()
+    current = fixture["queries"]["contract_master"]["data"][0]
+    assert isinstance(current, dict)
+
+    def contract(
+        symbol: str, effective_from: str, effective_until: str
+    ) -> dict[str, object]:
+        row = copy.deepcopy(current)
+        row["symbol"] = symbol
+        row["tradeability"] = {
+            "state": "tradeable",
+            "trade_date": "20260731",
+            "effective_from": effective_from,
+            "effective_until": effective_until,
+        }
+        return row
+
+    fixture["queries"]["contract_master"]["data"] = [
+        contract("M2607.DCE", "2026-06-01T00:00:00+08:00", "2026-07-01T00:00:00+08:00"),
+        contract("M2609.DCE", "2026-07-01T00:00:00+08:00", "2026-08-01T00:00:00+08:00"),
+        contract("M2611.DCE", "2026-08-01T00:00:00+08:00", "2026-09-01T00:00:00+08:00"),
+    ]
+    return fixture
+
+
 def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
     result = evaluate_handoff_fixture(_fixture())
 
@@ -280,6 +308,88 @@ def test_valid_injected_catalog_query_projection_is_observation_only() -> None:
             _catalog_contract("bars_5min", "fixture.td.m.bars-5min")
         )
     )
+
+
+def test_receipt_bound_rollover_cohort_selects_one_active_contract_offline_only() -> None:
+    result = evaluate_handoff_fixture(_rollover_cohort_fixture())
+
+    assert result["disposition"] == "observation"
+    assert result["evidence"]["symbol"] == "M2609.DCE"
+    assert result["evidence"]["rollover_cohort"] == [
+        {
+            "symbol": "M2607.DCE",
+            "effective_from": "2026-06-01T00:00:00+08:00",
+            "effective_until": "2026-07-01T00:00:00+08:00",
+        },
+        {
+            "symbol": "M2609.DCE",
+            "effective_from": "2026-07-01T00:00:00+08:00",
+            "effective_until": "2026-08-01T00:00:00+08:00",
+        },
+        {
+            "symbol": "M2611.DCE",
+            "effective_from": "2026-08-01T00:00:00+08:00",
+            "effective_until": "2026-09-01T00:00:00+08:00",
+        },
+    ]
+    assert result["execution_eligible"] is False
+    assert result["delayed_paper_eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (
+            lambda fixture: fixture["queries"]["contract_master"]["data"][1][
+                "tradeability"
+            ].update({"effective_until": "2026-07-31T09:40:00+08:00"}),
+            "contract_rollover_no_active_contract",
+        ),
+        (
+            lambda fixture: fixture["queries"]["contract_master"]["data"][-1][
+                "tradeability"
+            ].update({"effective_from": "2026-07-15T00:00:00+08:00"}),
+            "contract_rollover_cohort_overlap",
+        ),
+        (
+            lambda fixture: fixture["queries"]["contract_master"]["data"][-1][
+                "tradeability"
+            ].update({"effective_from": "2026-08-02T00:00:00+08:00"}),
+            "contract_rollover_cohort_gap",
+        ),
+        (
+            lambda fixture: fixture["queries"]["contract_master"]["data"][1][
+                "tradeability"
+            ].pop("effective_until"),
+            "contract_rollover_effective_until_required",
+        ),
+        (
+            lambda fixture: (
+                fixture["queries"]["contract_master"]["data"][0][
+                    "tradeability"
+                ].update({"effective_until": "2026-07-31T09:40:03+08:00"}),
+                fixture["queries"]["contract_master"]["data"][1][
+                    "tradeability"
+                ].update({"effective_from": "2026-07-31T09:40:03+08:00"}),
+            ),
+            "contract_rollover_effective_time_pit_ineligible",
+        ),
+    ],
+    ids=("no-active", "overlap", "gap", "missing-effective-time", "pit-ineligible"),
+)
+def test_rollover_cohort_fails_closed_on_unusable_effective_tradeability(
+    mutate: object, reason: str
+) -> None:
+    fixture = _rollover_cohort_fixture()
+    assert callable(mutate)
+    mutate(fixture)
+
+    result = evaluate_handoff_fixture(fixture)
+
+    assert result["disposition"] == "hold"
+    assert result["reason"] == reason
+    assert result["execution_eligible"] is False
+    assert result["delayed_paper_eligible"] is False
 
 
 def test_missing_multiplier_is_risk_reject_not_a_fallback_spec() -> None:
