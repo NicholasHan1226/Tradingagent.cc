@@ -28,7 +28,7 @@ export function assertStockIntelligenceProjection(payload: unknown, expectedSymb
   assertQuote(value.quote)
   assertAnalysis(value.analysis, value.symbol)
   if (!Object.values(value.series).every((points) => Array.isArray(points) && points.every(assertSeriesPoint))) throw new Error('stock_intelligence_series_invalid')
-  if (value.events.some((event) => !event.relatedSymbols.includes(value.symbol!) || !isTimestamp(event.publishedAt) || !isTimestamp(event.retrievedAt) || !event.url || !isSha256(event.sourceReceiptSha256) || !event.sourceReceiptId || !isSha256(event.contentSha256))) throw new Error('stock_intelligence_event_binding_invalid')
+  if (value.events.some((event) => !event.relatedSymbols.includes(value.symbol!) || !isTimestamp(event.publishedAt) || !isTimestamp(event.retrievedAt) || !event.url || !isSha256(event.sourceReceiptSha256) || !event.sourceReceiptId || !isSha256(event.contentSha256) || !hasVerifiedEventCapability(event))) throw new Error('stock_intelligence_event_binding_invalid')
   if (value.forecast) {
     const readiness = value.forecast.readiness
     const recomputed = assessForecastReadiness(value.forecast.evidence)
@@ -45,6 +45,25 @@ export function assertStockIntelligenceProjection(payload: unknown, expectedSymb
 
 function assertProjectionSource(source: StockIntelligence['source'] | undefined) {
   if (!source || !source.datasetId || !source.receiptId || !isSha256(source.receiptSha256) || !isTimestamp(source.dataThrough) || !isTimestamp(source.retrievedAt) || !['fresh', 'stale', 'degraded'].includes(source.freshness)) throw new Error('stock_intelligence_source_invalid')
+}
+
+function hasVerifiedEventCapability(event: StockIntelligence['events'][number]) {
+  const capability = event.dataCapability
+  return Boolean(
+    capability
+    && capability.inputContract === 'tradingagent.trading_copilot_projection_batch_input.v2'
+    && capability.transportContract === 'tradingdatas_v1_catalog_query'
+    && capability.datasetId.trim()
+    && capability.catalogVersion.trim()
+    && isTimestamp(capability.asOf)
+    && isTimestamp(capability.dataThrough)
+    && Date.parse(capability.dataThrough) <= Date.parse(capability.asOf)
+    && capability.freshness === 'fresh'
+    && capability.receiptId === event.sourceReceiptId
+    && capability.receiptSha256 === event.sourceReceiptSha256
+    && isSha256(capability.receiptSha256)
+    && isSha256(capability.lineageSha256)
+  )
 }
 
 function assertMarketRules(rules: StockIntelligence['marketRules'] | undefined) {

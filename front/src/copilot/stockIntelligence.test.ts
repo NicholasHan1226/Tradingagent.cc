@@ -23,6 +23,7 @@ function event(id: string, sentiment: StockEvent['sentiment'], publishedAt: stri
     sourceReceiptId: null,
     sourceReceiptSha256: null,
     contentSha256: null,
+    dataCapability: null,
   }
 }
 

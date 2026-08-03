@@ -14,16 +14,10 @@ afterEach(() => { servers.splice(0).forEach((server) => server.close()) })
 async function serveTimeline(timeline: Record<string, unknown>, receipt: Record<string, unknown>) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'copilot-event-timeline-'))
   const projectionDir = join(workspaceRoot, 'projection')
-  const path = join(projectionDir, `${symbol}.json`)
-  const receiptPath = join(projectionDir, `${symbol}.receipt.json`)
   await mkdir(projectionDir)
-  await writeFile(path, JSON.stringify(timeline))
-  await writeFile(receiptPath, JSON.stringify(receipt))
-  const handler = createTradingCopilotEventTimelineHandler({
-    workspaceRoot,
-    projectionDir,
-    now: () => new Date('2026-08-03T02:00:00.000Z'),
-  })
+  await writeFile(join(projectionDir, `${symbol}.json`), JSON.stringify(timeline))
+  await writeFile(join(projectionDir, `${symbol}.receipt.json`), JSON.stringify(receipt))
+  const handler = createTradingCopilotEventTimelineHandler({ workspaceRoot, projectionDir, now: () => new Date('2026-08-03T02:00:00.000Z') })
   const server = createServer((req, res) => { void handler(req, res) })
   servers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -34,11 +28,16 @@ async function serveTimeline(timeline: Record<string, unknown>, receipt: Record<
 
 function timeline() {
   return {
-    contractId: 'tradingagent.trading_copilot_event_timeline.v1',
-    symbol,
-    generatedAt: '2026-08-03T01:00:00.000Z',
-    validUntil: '2026-08-04T01:00:00.000Z',
-    events: [{ sourceReceiptId: 'source-1', sourceReceiptSha256: 'a'.repeat(64) }],
+    contractId: 'tradingagent.trading_copilot_event_timeline.v1', symbol,
+    generatedAt: '2026-08-03T01:00:00.000Z', validUntil: '2026-08-04T01:00:00.000Z',
+    events: [{
+      sourceReceiptId: 'source-1', sourceReceiptSha256: 'a'.repeat(64),
+      dataCapability: {
+        inputContract: 'tradingagent.trading_copilot_projection_batch_input.v2', transportContract: 'tradingdatas_v1_catalog_query', datasetId: 'cn.dataset.anns_d', catalogVersion: 'catalog-v1',
+        asOf: '2026-08-03T01:00:00.000Z', dataThrough: '2026-08-03T00:59:00.000Z', freshness: 'fresh',
+        receiptId: 'source-1', receiptSha256: 'a'.repeat(64), lineageSha256: 'b'.repeat(64),
+      },
+    }],
     coverage: { acceptedEventCount: 1, acceptedReceiptIds: ['source-1'], blockedDatasetIds: [], blockedDatasetReasons: {}, sentimentLabelsInvented: false },
   }
 }
@@ -46,11 +45,8 @@ function timeline() {
 function receiptFor(value: Record<string, unknown>) {
   const bytes = Buffer.from(JSON.stringify(value))
   return {
-    contractId: 'tradingagent.trading_copilot_event_timeline_receipt.v1',
-    symbol,
-    timelineSha256: createHash('sha256').update(bytes).digest('hex'),
-    generatedAt: value.generatedAt,
-    validUntil: value.validUntil,
+    contractId: 'tradingagent.trading_copilot_event_timeline_receipt.v1', symbol,
+    timelineSha256: createHash('sha256').update(bytes).digest('hex'), generatedAt: value.generatedAt, validUntil: value.validUntil,
     sourceReceipts: [{ receiptId: 'source-1', receiptSha256: 'a'.repeat(64) }],
   }
 }
@@ -59,7 +55,6 @@ describe('TradingCopilot event timeline projection', () => {
   it('serves only a current, receipt-bound event timeline', async () => {
     const value = timeline()
     const base = await serveTimeline(value, receiptFor(value))
-
     expect((await fetch(`${base}/api/trading-copilot/event-timeline?symbol=${symbol}`)).status).toBe(200)
     expect((await fetch(`${base}/api/trading-copilot/event-timeline?symbol=../../secret`)).status).toBe(400)
     expect((await fetch(`${base}/api/trading-copilot/event-timeline?symbol=${symbol}`, { method: 'POST' })).status).toBe(405)
@@ -70,9 +65,29 @@ describe('TradingCopilot event timeline projection', () => {
     const expired = { ...receiptFor(value), validUntil: '2020-01-01T00:00:00.000Z' }
     const expiredBase = await serveTimeline(value, expired)
     expect((await fetch(`${expiredBase}/api/trading-copilot/event-timeline?symbol=${symbol}`)).status).toBe(404)
-
     const mismatched = { ...receiptFor(value), sourceReceipts: [{ receiptId: 'other', receiptSha256: 'b'.repeat(64) }] }
     const mismatchedBase = await serveTimeline(value, mismatched)
     expect((await fetch(`${mismatchedBase}/api/trading-copilot/event-timeline?symbol=${symbol}`)).status).toBe(404)
+  })
+
+  it('rejects timelines whose events omit required catalog/query capability provenance', async () => {
+    const value = timeline()
+    const event = value.events[0] as Record<string, unknown>
+    delete event.dataCapability
+    const base = await serveTimeline(value, receiptFor(value))
+    expect((await fetch(`${base}/api/trading-copilot/event-timeline?symbol=${symbol}`)).status).toBe(404)
+  })
+
+  it('rejects stale, unordered, or receipt-divergent event capabilities', async () => {
+    for (const capability of [
+      { ...timeline().events[0].dataCapability, freshness: 'stale' },
+      { ...timeline().events[0].dataCapability, dataThrough: '2026-08-03T01:01:00.000Z' },
+      { ...timeline().events[0].dataCapability, receiptId: 'other' },
+    ]) {
+      const value = timeline()
+      value.events[0].dataCapability = capability
+      const base = await serveTimeline(value, receiptFor(value))
+      expect((await fetch(`${base}/api/trading-copilot/event-timeline?symbol=${symbol}`)).status).toBe(404)
+    }
   })
 })

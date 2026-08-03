@@ -231,7 +231,7 @@ function MarketRulesStrip({ intelligence }: { intelligence: StockIntelligence })
 }
 
 function EventMeta({ event }: { event: StockEvent }) {
-  return <div className="event-meta"><span>发布 {formatDateTime(event.publishedAt)}</span><span>采集 {formatDateTime(event.retrievedAt)}</span>{event.revisedAt ? <span>修订 {formatDateTime(event.revisedAt)}</span> : null}<span>{event.url ? '已绑定来源链接' : '无外链'}</span>{event.sourceReceiptId ? <span title={event.sourceReceiptSha256 ?? undefined}>回执 {event.sourceReceiptId}</span> : <span>无正式回执</span>}</div>
+  return <div className="event-meta"><span>发布 {formatDateTime(event.publishedAt)}</span><span>采集 {formatDateTime(event.retrievedAt)}</span>{event.revisedAt ? <span>修订 {formatDateTime(event.revisedAt)}</span> : null}<span>{event.url ? '已绑定来源链接' : '无外链'}</span>{event.sourceReceiptId ? <span title={event.sourceReceiptSha256 ?? undefined}>回执 {event.sourceReceiptId}</span> : <span>无正式回执</span>}{event.dataCapability ? <span title={`as_of ${event.dataCapability.asOf} · lineage ${event.dataCapability.lineageSha256}`}>{event.dataCapability.datasetId} · {event.dataCapability.freshness}</span> : null}</div>
 }
 
 function UnavailablePanel({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
