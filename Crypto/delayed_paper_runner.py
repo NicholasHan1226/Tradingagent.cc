@@ -700,6 +700,10 @@ def _data_reject(
         "market_session": "24x7",
         "reason_code": reason_code,
         "request_sha256": _sha256(material["request"]),
+        "request_window_end": material["request"].get("window_end"),
+        "request_observation_cutoff": material["request"].get(
+            "observation_cutoff"
+        ),
         "profile_sha256": (
             getattr(profile, "sha256", None) or _sha256(material["profile"])
         ),

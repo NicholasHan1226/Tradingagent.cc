@@ -15,6 +15,7 @@ from Crypto.delayed_paper_round_trip_report import (
     main,
     _continuity_segments,
     _manifest_path,
+    _runtime_rejects_by_slot,
     _slot_summary,
     run_crypto_delayed_paper_round_trip_acceptance_once,
 )
@@ -149,6 +150,43 @@ def test_continuity_segments_expose_gaps_without_attributing_external_cause() ->
             "cause": "unclassified_completion_gap",
         }
     ]
+
+
+def test_continuity_segments_preserve_runtime_reject_evidence_without_claiming_cause() -> None:
+    slots = [WINDOW_END - timedelta(minutes=10), WINDOW_END]
+
+    result = _continuity_segments(
+        slots,
+        runtime_rejects={
+            WINDOW_END - timedelta(minutes=5): ("crypto_5m_metadata_not_ready",)
+        },
+    )
+
+    assert result["gaps"][0]["cause"] == "unclassified_completion_gap"
+    assert result["gaps"][0]["runtime_rejects"] == [
+        {
+            "market_slot": (WINDOW_END - timedelta(minutes=5))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "reason_codes": ["crypto_5m_metadata_not_ready"],
+        }
+    ]
+
+
+def test_runtime_rejects_bind_only_new_receipts_to_a_missing_slot() -> None:
+    store = SimpleNamespace(
+        data_reject_events=lambda: [
+            {
+                "request_window_end": WINDOW_END.isoformat().replace("+00:00", "Z"),
+                "reason_code": "crypto_5m_metadata_not_ready",
+            },
+            {"reason_code": "legacy_receipt_without_window"},
+        ]
+    )
+
+    assert _runtime_rejects_by_slot(store) == {
+        WINDOW_END - timedelta(minutes=5): ("crypto_5m_metadata_not_ready",)
+    }
 
 
 def test_acceptance_can_be_eligible_without_using_pnl_as_a_gate(tmp_path: Path) -> None:

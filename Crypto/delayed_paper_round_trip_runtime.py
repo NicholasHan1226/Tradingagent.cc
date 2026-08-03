@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
@@ -25,11 +25,83 @@ from Crypto.delayed_paper_runtime import (
     load_crypto_delayed_paper_runtime_manifest,
 )
 from Crypto.fixture_sim.contracts import _assert_simulation_only
+from Crypto.five_minute_data import CryptoFiveMinuteWindowRequest
 from shared.data.sharedsignals_v1 import HTTPTransport
 from shared.data.tradingdatas_transport import build_runtime_transport
 
 
 ROUND_TRIP_RUNTIME_CONTRACT = "tradingagent.crypto.round_trip_server_runtime.v1"
+ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_journal.v1"
+ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
+
+
+def crypto_round_trip_window_request(now: datetime) -> CryptoFiveMinuteWindowRequest:
+    """Observe one fully settled bar without relaxing the PIT cutoff.
+
+    The Crypto collector and this paper runtime are deliberately independent.
+    Consuming the prior closed bar gives the collector a full five-minute
+    interval to publish its receipt, while retaining the current cycle's fixed
+    observation cutoff for the historical query.
+    """
+
+    current = crypto_runtime_window_request(now)
+    return CryptoFiveMinuteWindowRequest(
+        window_end=current.window_end - ROUND_TRIP_SETTLED_BAR_DELAY,
+        observation_cutoff=current.observation_cutoff,
+    )
+
+
+def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the bounded systemd-journal projection of one runtime receipt.
+
+    The complete nested core result remains in the Crypto audit ledger.  The
+    process journal contains only the fields needed to identify a cycle, its
+    data contract, and its simulation-only boundary.
+    """
+
+    core_result = receipt.get("core_result")
+    if not isinstance(core_result, Mapping):
+        raise RuntimeError("round_trip_runtime_core_result_invalid")
+    return {
+        "contract": ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT,
+        "runtime_contract": receipt.get("contract"),
+        "status": receipt.get("status"),
+        "market_slot": core_result.get("market_slot"),
+        "recovered_pending": core_result.get("recovered_pending"),
+        "idempotent_replay": core_result.get("idempotent_replay"),
+        "replay_mode": core_result.get("replay_mode"),
+        "requested_window_end": receipt.get("requested_window_end"),
+        "requested_observation_cutoff": receipt.get("requested_observation_cutoff"),
+        "settled_bar_delay_seconds": receipt.get("settled_bar_delay_seconds"),
+        "runtime_manifest_sha256": receipt.get("runtime_manifest_sha256"),
+        "fresh_query_catalog_version": receipt.get("fresh_query_catalog_version"),
+        "fresh_query_profile_sha256": receipt.get("fresh_query_profile_sha256"),
+        "epoch_id": receipt.get("epoch_id"),
+        "epoch_generation": receipt.get("epoch_generation"),
+        "market_data_access_attempt_count": receipt.get(
+            "market_data_access_attempt_count"
+        ),
+        "market_data_network_used": receipt.get("market_data_network_used"),
+        "learning_mode": receipt.get("learning_mode"),
+        "learning_authority": receipt.get("learning_authority"),
+        "learning_invoked": receipt.get("learning_invoked"),
+        "real_trading_enabled": receipt.get("real_trading_enabled"),
+        "execution_eligible": receipt.get("execution_eligible"),
+        "execution_authority": receipt.get("execution_authority"),
+        "production_eligible": receipt.get("production_eligible"),
+        "testnet_used": receipt.get("testnet_used"),
+        "live_broker_used": receipt.get("live_broker_used"),
+        "model_network_used": receipt.get("model_network_used"),
+        "promotion_authorized": receipt.get("promotion_authorized"),
+        "automatic_promotion_enabled": receipt.get(
+            "automatic_promotion_enabled"
+        ),
+        "automatic_risk_expansion_enabled": receipt.get(
+            "automatic_risk_expansion_enabled"
+        ),
+        "outbox_id": receipt.get("outbox_id"),
+        "capital_commit_id": receipt.get("capital_commit_id"),
+    }
 
 
 def run_crypto_delayed_paper_round_trip_server_once(
@@ -40,7 +112,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] = build_runtime_transport,
 ) -> dict[str, Any]:
-    """Run exactly one new/pending closed-bar cycle in the isolated g3 root."""
+    """Run exactly one new/pending closed-bar cycle in the isolated epoch."""
 
     _assert_simulation_only()
     manifest_path = Path(epoch_manifest)
@@ -55,7 +127,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
     prepared = prepare_round_trip_epoch_candidate(context)
     identity_before = prepared.identity_path.read_bytes()
     manifest = load_crypto_delayed_paper_runtime_manifest(runtime_manifest)
-    request = crypto_runtime_window_request(now)
+    request = crypto_round_trip_window_request(now)
     port = _LazyCryptoFiveMinutePort(
         manifest=manifest,
         token_file=RUNTIME_TOKEN_FILE,
@@ -102,6 +174,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
         "requested_observation_cutoff": request.observation_cutoff.isoformat().replace(
             "+00:00", "Z"
         ),
+        "settled_bar_delay_seconds": int(ROUND_TRIP_SETTLED_BAR_DELAY.total_seconds()),
         "runtime_manifest_sha256": manifest.sha256,
         "fresh_query_catalog_version": manifest.catalog_version,
         "fresh_query_profile_sha256": manifest.profile.sha256,
@@ -153,15 +226,18 @@ def main(argv: list[str] | None = None) -> int:
     if code:
         print("crypto round-trip runtime failed closed", file=sys.stderr)
         return code
-    print(
-        json.dumps(
-            receipt,
+    try:
+        rendered = json.dumps(
+            round_trip_runtime_journal_summary(receipt),
             ensure_ascii=True,
             allow_nan=False,
             separators=(",", ":"),
             sort_keys=True,
         )
-    )
+    except Exception:
+        print("crypto round-trip runtime failed closed", file=sys.stderr)
+        return 2
+    print(rendered)
     return 0
 
 
@@ -171,6 +247,10 @@ if __name__ == "__main__":
 
 __all__ = [
     "ROUND_TRIP_RUNTIME_CONTRACT",
+    "ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT",
+    "ROUND_TRIP_SETTLED_BAR_DELAY",
+    "crypto_round_trip_window_request",
     "main",
+    "round_trip_runtime_journal_summary",
     "run_crypto_delayed_paper_round_trip_server_once",
 ]

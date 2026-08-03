@@ -255,6 +255,12 @@ def test_bad_data_writes_one_idempotent_data_reject_and_never_touches_capital(
     assert len(events) == 1
     event = json.loads(events[0])
     assert event["event_type"] == "data_reject"
+    assert event["request_window_end"] == request.window_end.isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert event["request_observation_cutoff"] == (
+        request.observation_cutoff.isoformat().replace("+00:00", "Z")
+    )
     assert event["execution_eligible"] is False
     assert event["capital_commit_id"] is None
 

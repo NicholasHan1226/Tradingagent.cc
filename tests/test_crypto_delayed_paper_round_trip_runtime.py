@@ -13,6 +13,7 @@ import pytest
 import Crypto.delayed_paper_round_trip_epoch as epoch_module
 import Crypto.delayed_paper_round_trip_runtime as runtime_module
 from Crypto.delayed_paper_round_trip_runtime import (
+    crypto_round_trip_window_request,
     run_crypto_delayed_paper_round_trip_server_once,
 )
 from tests.test_crypto_5m_support import FixtureTradingDatasTransport, WINDOW_END
@@ -36,6 +37,135 @@ def test_module_invocation_reaches_round_trip_cli_parser() -> None:
     assert completed.returncode == 0
     assert "Run one Crypto round-trip simulated cycle" in completed.stdout
     assert "--epoch-manifest" in completed.stdout
+
+
+def test_round_trip_request_uses_one_closed_bar_settlement_delay() -> None:
+    request = crypto_round_trip_window_request(
+        WINDOW_END + timedelta(seconds=55)
+    )
+
+    assert request.window_end == WINDOW_END - timedelta(minutes=5)
+    assert request.observation_cutoff == WINDOW_END + timedelta(seconds=55)
+
+
+def test_round_trip_runtime_journal_summary_excludes_full_core_payload() -> None:
+    receipt = {
+        "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
+        "status": "completed",
+        "core_result": {
+            "market_slot": "2026-08-03T15:05:00Z",
+            "idempotent_replay": False,
+            "orders": {"simulated-order": {"quantity": "0.1"}},
+            "capital": {"cash": "9999"},
+        },
+        "requested_window_end": "2026-08-03T15:05:00Z",
+        "requested_observation_cutoff": "2026-08-03T15:05:55Z",
+        "settled_bar_delay_seconds": 300,
+        "runtime_manifest_sha256": "a" * 64,
+        "fresh_query_catalog_version": "v1-example",
+        "fresh_query_profile_sha256": "b" * 64,
+        "epoch_id": "crypto-delayed-paper-round-trip-epoch-g5",
+        "epoch_generation": 5,
+        "market_data_access_attempt_count": 1,
+        "market_data_network_used": True,
+        "learning_mode": "detached_offline_worker",
+        "learning_authority": False,
+        "learning_invoked": False,
+        "real_trading_enabled": False,
+        "execution_eligible": False,
+        "execution_authority": False,
+        "production_eligible": False,
+        "testnet_used": False,
+        "live_broker_used": False,
+        "model_network_used": False,
+        "promotion_authorized": False,
+        "automatic_promotion_enabled": False,
+        "automatic_risk_expansion_enabled": False,
+        "outbox_id": None,
+        "capital_commit_id": None,
+    }
+
+    summary = runtime_module.round_trip_runtime_journal_summary(receipt)
+
+    assert summary["contract"] == "tradingagent.crypto.round_trip_server_journal.v1"
+    assert summary["runtime_contract"] == runtime_module.ROUND_TRIP_RUNTIME_CONTRACT
+    assert summary["status"] == "completed"
+    assert summary["market_slot"] == "2026-08-03T15:05:00Z"
+    assert summary["idempotent_replay"] is False
+    assert summary["real_trading_enabled"] is False
+    assert "core_result" not in summary
+    encoded = json.dumps(summary, sort_keys=True)
+    assert "simulated-order" not in encoded
+    assert '"orders"' not in encoded
+    assert '"capital"' not in encoded
+
+
+def test_round_trip_runtime_cli_emits_only_bounded_journal_summary(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipt = {
+        "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
+        "status": "completed",
+        "core_result": {
+            "market_slot": "2026-08-03T15:05:00Z",
+            "idempotent_replay": False,
+            "orders": {"simulated-order": {"quantity": "0.1"}},
+        },
+        "real_trading_enabled": False,
+        "execution_authority": False,
+    }
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: receipt,
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    rendered = capsys.readouterr().out
+    payload = json.loads(rendered)
+    assert exit_code == 0
+    assert payload["status"] == "completed"
+    assert "core_result" not in payload
+    assert "simulated-order" not in rendered
+
+
+def test_round_trip_runtime_cli_fails_closed_when_journal_summary_is_invalid(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: {
+            "status": "completed",
+            "core_result": None,
+        },
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert captured.err == "crypto round-trip runtime failed closed\n"
 
 
 def _canonical(value: object) -> bytes:
@@ -133,7 +263,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
         epoch_manifest=epoch,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     before_replay = _tree(output)
@@ -141,7 +271,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
         epoch_manifest=epoch,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     assert _tree(output) == before_replay
@@ -149,7 +279,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
         epoch_manifest=epoch,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        now=WINDOW_END + timedelta(minutes=10, seconds=55),
         transport_factory=_factory(_shifted_transport(5)),
     )
     assert _tree(archived) == archived_before
@@ -157,6 +287,7 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
     assert replay["core_result"]["idempotent_replay"] is True
     assert replay["market_data_access_attempt_count"] == 0
     assert first["capital_authority_id"] == "crypto-round-trip-capital-v1"
+    assert first["settled_bar_delay_seconds"] == 300
     assert first["real_trading_enabled"] is False
     assert adjacent["core_result"]["capital"]["balanced"] is True
 
@@ -205,7 +336,7 @@ def test_round_trip_runtime_accepts_only_prepared_versioned_migration(
         epoch_manifest=context.manifest_path,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     assert legacy.exists()
@@ -255,7 +386,7 @@ def test_round_trip_runtime_accepts_explicit_g4_successor(
         epoch_manifest=g4.manifest_path,
         runtime_manifest=runtime_manifest,
         token_file=token,
-        now=WINDOW_END + timedelta(seconds=55),
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
         transport_factory=_factory(FixtureTradingDatasTransport()),
     )
     assert receipt["status"] == "completed"
