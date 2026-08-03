@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
