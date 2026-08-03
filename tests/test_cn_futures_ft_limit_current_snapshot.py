@@ -100,7 +100,7 @@ def _metadata(**overrides: object) -> dict[str, object]:
         "state": "stale",
         "degraded": True,
         "freshness": {"state": "stale", "stale": True},
-        "quality": {"state": "degraded_invalid", "valid": False},
+        "quality": {"state": "degraded", "valid": False},
         "lineage": copy.deepcopy(LINEAGE),
         "receipt_id": RECEIPT_ID,
         "data_through": "2026-08-03T00:00:00+08:00",
@@ -292,7 +292,7 @@ def test_rejects_nonterminal_pagination_and_replay_drift() -> None:
         )
 
 
-def test_rejects_receipt_lineage_and_stale_metadata_drift() -> None:
+def test_rejects_receipt_and_lineage_drift() -> None:
     with pytest.raises(FutLimitCurrentSnapshotConsumerError, match="receipt_mismatch"):
         load_ft_limit_current_snapshot(
             client=_client(FixtureTransport()),
@@ -309,8 +309,23 @@ def test_rejects_receipt_lineage_and_stale_metadata_drift() -> None:
             expected_receipt_id=RECEIPT_ID,
             expected_lineage_sha256="0" * 64,
         )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    (
+        _metadata(state="ready", degraded=False),
+        _metadata(freshness={"state": "fresh", "stale": False}),
+        _metadata(quality={"state": "valid", "valid": True}),
+        _metadata(reasons=["freshness_sla_exceeded", "extra_reason"]),
+        _metadata(reasons=["different_reason"]),
+    ),
+)
+def test_rejects_ready_fresh_valid_or_noncanonical_reason(
+    metadata: dict[str, object],
+) -> None:
     with pytest.raises(FutLimitCurrentSnapshotConsumerError, match="metadata_stale_contract_invalid"):
-        _load(FixtureTransport(metadata=_metadata(state="ready", degraded=False)))
+        _load(FixtureTransport(metadata=metadata))
 
 
 @pytest.mark.parametrize(
