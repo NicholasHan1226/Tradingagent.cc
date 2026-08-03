@@ -1,17 +1,18 @@
 # TradingAgent 当前状态
 
 > 综合核验：2026-08-02 CST；A股/TradingCopilot 发布与运行态增量读回：2026-08-03
-> 19:18 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
+> 19:36 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
 > 候选、历史事故与旧读回通过 Git 历史及仓外 release-evidence 追溯，不在此重复。
 
 ## 当前版本与运行面
 
 | 层级 | 当前事实 | 证据边界 |
 | --- | --- | --- |
-| 本地主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 本地 `main` 必须与远端主线同 head；状态页不固定会被自身提交淘汰的 SHA。 |
+| 本地主工作树 | 当前为 `codex/copilot-event-timeline`，不作为本地主线同步断言 | 该工作树有独立在途范围；不能为了同步状态页切换、合并或覆盖它。 |
 | GitHub 主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 合入记录、CI 与精确 commit 以 GitHub 和 Git 历史为准；不是生产切换。 |
-| 三条市场 lane | A股、Crypto、CNFutures 均与 `origin/main` 同 head，`ahead=0`、`behind=0` | 三个长期 worktree 均干净；它们不是独立生产 release。 |
-| TA production current | `64f7b73ba8df580dad064046ffaab7c4b204960b` | 2026-08-03 已由 immutable release 原子切换；running front process、`current` symlink 与 effective release 三层读回一致。 |
+| A股 market lane | 与 `origin/main` 同 head（`5631302`），`ahead=0`、`behind=0` | 本轮已在专用 worktree 通过 lane 校验；它不是独立生产 release。 |
+| CNFutures / Crypto lane | 未在本轮当前 worktree 清单中核验 | 开始对应市场开发前必须重新建立/定位专用 worktree，并通过各自 lane 校验；不能由 A股结果代替。 |
+| TA production current | `56313025af24b645efba0d87e0805d17b9e080ca` | 2026-08-03 已由 immutable release 原子切换；running front process、`current` symlink 与 effective release 三层读回一致。 |
 | TradingDatas current | `2cd289db369ffebdb7b475ce71d45c9d5993eb48` | 18082 仅内部监听，generic collector timer active。 |
 | TradingDatas Crypto current | `557a2967bc9582ffef26bc412d702767e0ef5c17` | 18083 独立内部监听。 |
 
@@ -25,9 +26,10 @@ broker、Testnet、Live、模型网络、公开交易入口或真实交易权限
 ## A股
 
 - 30 股分钟 session timer 仍是 simulation-only，最近一次于 2026-08-03 09:18 CST
-  fail-closed；该失败发生在新 release 前，旧日志未输出分类原因。2026-08-03 19:18 CST 已
-  安装新 initializer、session/bootstrap unit 与 `trading-copilot` 0700 runtime root；它们均经
-  byte-level readback 与 `systemd-analyze verify` 核验。未手动触发 session，下一次 timer 为
+  fail-closed；该失败发生在新 release 前，旧日志未输出分类原因。2026-08-03 19:36 CST
+  的 current release 已包含新 initializer 的安全分类失败码；session/bootstrap unit 与
+  `trading-copilot` 0700 runtime root 均经 byte-level readback 与 `systemd-analyze verify`
+  核验。未手动触发 session，下一次 timer 为
   2026-08-04 09:18 CST。只有下一次自动 session 产生真实 symbol/name 投影及 session receipt，
   才能表述 30 股分钟链已恢复或 Copilot 已有真实跟踪名单。
 - 500 股 scale500 session/paper timer 均为 `disabled/inactive`。它需要 TradingDatas
