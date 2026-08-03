@@ -59,6 +59,14 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 每行都必须是 `exchange=DCE`、`fut_code=M` 且 `ts_code` 唯一；缺 identity 或任一单位字段、receipt/lineage 漂移、非 DCE/M 行、非终页或 replay 漂移均 fail closed。它仅将 multiplier、trade-unit、per-unit 和 quote-unit 字段原样保留为 receipt-bound raw contract facts，不推导数字 tick、会话、PIT、换月或可执行规格。当前唯一接受的 metadata 状态是 `partial`/`degraded=true` 且唯一原因 `response_completeness_unverified`：输出强制 `coverage_complete=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false` 和 `as_of=null`。因此它记录显式 coverage debt，不产生 stable、PIT、runtime、模拟成交或真实交易授权。
 
+## M 合约 simulation-readiness 覆盖投影
+
+`CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、receipt/lineage 绑定的 `ft_limit` evidence，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
+
+投影按 `M####.DCE` identity 排序，逐项记录 raw-unit、raw-rule、price-limit raw fact 是否有对应 receipt-bound 行。它不解释任何 raw 值：`multiplier`、`quote_unit(_desc)`、fixture session window 与当前快照都不能生成 numeric tick、实时 receipt-bound session 或 PIT rollover authority。当前 ledger 固定保留 `fut_basic_coverage_incomplete`（其明细仍为 `response_completeness_unverified`）、`ft_limit_stale_or_degraded`、`numeric_tick_authority_missing`、`receipt_bound_live_session_authority_missing` 和 `pit_rollover_authority_missing`。只要存在任一缺口，projection 及每个 contract 的 `simulation_ready`、`runtime_eligible`、`execution_eligible` 与 `trading_eligible` 都为 `false`。
+
+day/night 输入必须仍为 `fixture_only=true`；任何声称已具备 numeric tick、live session 或 PIT rollover receipt authority 的正向标记都会被拒绝，而不是在此投影中提升资格。因此该模块只形成 contract-ready 离线 coverage debt，不是 stable/PIT、simulation runtime、simulated fill、broker 或真实交易授权。
+
 ## 当前只读发现（2026-07-30）
 
 已查到 registry 中 `cn.dataset.fut_basic` 可执行，候选分钟数据 `cn.dataset.ft_mins` 仍为 paused/blocked（缺基础 seed receipt），`cn.dataset.rt_fut_min` 仍为 paused/locked。它们不是本合同指定的最终 dataset ID，也不满足上述验收。因此当前结果为 **NO-GO：不启动 CNFutures runtime、模拟成交或 scheduler**。
