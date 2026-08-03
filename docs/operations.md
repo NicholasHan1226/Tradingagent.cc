@@ -1015,6 +1015,14 @@ python3 -m Ashare.trading_copilot_observation_worker \
   --result-output /absolute/private-staging/worker-result.json
 ```
 
+事件数据集由 `TradingCopilot/contracts/td_event_consumer_profile.v1.json` 声明：
+公告、央视新闻、沪深互动问答和研报只经固定 catalog/query transport 读取，并逐数据集要求
+freshness、receipt 与完整 lineage。`cn.dataset.major_news` 固定为 `on_demand` 宏观上下文；
+它不会被上述 one-shot 自动读取，只有在同一次受控 TD 读取中显式追加
+`--on-demand-event-dataset cn.dataset.major_news` 才可请求。其公开查询不支持 `as_of`，因此仍仅是
+当前观察，不是历史 PIT、自动实时能力或交易 authority。`--event-bundle` 不可作为正式事件入口，
+因为本地 JSON 不能替代 TradingDatas capability 与 runtime evidence。
+
 首次启用分钟 session root 时，不能靠“已启用 timer”假定存在历史模板。必须由发布侧准备一个
 仓外、已审核的 minute manifest 和 universe artifact，并仅在空 root 的第一次 session 初始化时
 显式传入 `--bootstrap-manifest` 与 `--universe-source`。bootstrap 不会跳过 catalog、日历、

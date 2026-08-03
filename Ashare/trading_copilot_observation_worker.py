@@ -23,7 +23,6 @@ from Ashare.event_evidence import (
     AshareEvidenceAuditLedger,
     AshareEvidenceContractError,
     EventEvidenceSnapshot,
-    PRIMARY_DATASET_IDS,
     TradingDatasAshareEvidencePort,
 )
 from Ashare.minute_canary import (
@@ -39,6 +38,11 @@ from Ashare.trading_copilot_projection import (
     _source,
     publish_projection_batch,
 )
+from Ashare.trading_copilot_event_consumer_profile import (
+    TradingCopilotEventConsumerProfileError,
+    load_event_consumer_profiles,
+    select_event_consumer_profiles,
+)
 from shared.runtime.ashare_runtime_ports import (
     AshareRuntimeAuthorityLoadBlocked,
     load_verified_ashare_runtime_authority_bundle,
@@ -53,7 +57,6 @@ from shared.data.tradingdatas_transport import build_runtime_transport
 
 
 COMPANY_FACTS_CONTRACT = "tradingagent.trading_copilot_company_facts.v1"
-EVENT_BUNDLE_CONTRACT = "tradingagent.ashare_event_evidence_bundle.v1"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
@@ -195,24 +198,9 @@ def company_facts_from_verified_observation(
 def load_event_bundle(path: Path | str | None) -> tuple[EventEvidenceSnapshot, ...]:
     if path is None:
         return ()
-    raw = _load_json(Path(path), "copilot_event_bundle_invalid")
-    if raw.get("contractId") != EVENT_BUNDLE_CONTRACT:
-        raise TradingCopilotObservationError("copilot_event_bundle_contract_invalid")
-    values = raw.get("items")
-    if not isinstance(values, list):
-        raise TradingCopilotObservationError("copilot_event_bundle_items_invalid")
-    result: list[EventEvidenceSnapshot] = []
-    for value in values:
-        item = dict(_mapping(value, "copilot_event_item_invalid"))
-        try:
-            for field in ("as_of", "data_through", "available_at"):
-                item[field] = datetime.fromisoformat(
-                    _text(item.get(field), f"copilot_event_{field}_invalid").replace("Z", "+00:00")
-                )
-            result.append(EventEvidenceSnapshot(**item))
-        except (TypeError, ValueError) as exc:
-            raise TradingCopilotObservationError("copilot_event_item_invalid") from exc
-    return tuple(result)
+    raise TradingCopilotObservationError(
+        "copilot_event_bundle_runtime_evidence_required"
+    )
 
 
 def load_current_event_snapshots(
@@ -221,6 +209,7 @@ def load_current_event_snapshots(
     token_file: Path | str,
     decision_time: datetime,
     symbols: Sequence[str],
+    requested_on_demand_dataset_ids: Sequence[str] = (),
 ) -> tuple[
     tuple[EventEvidenceSnapshot, ...],
     tuple[str, ...],
@@ -232,6 +221,14 @@ def load_current_event_snapshots(
     causes the worker to synthesize an event or sentiment label.
     """
 
+    try:
+        consumer_profiles = select_event_consumer_profiles(
+            load_event_consumer_profiles(),
+            requested_on_demand_dataset_ids=requested_on_demand_dataset_ids,
+        )
+    except TradingCopilotEventConsumerProfileError as exc:
+        raise TradingCopilotObservationError(str(exc)) from exc
+    dataset_ids = tuple(profile.dataset_id for profile in consumer_profiles)
     transport = build_runtime_transport(
         minute_config.transport_id,
         token_file=token_file,
@@ -241,7 +238,7 @@ def load_current_event_snapshots(
         SharedSignalsV1Config(
             base_url=minute_config.base_url,
             expected_catalog_version=minute_config.expected_catalog_version,
-            dataset_ids=frozenset(PRIMARY_DATASET_IDS),
+            dataset_ids=frozenset(dataset_ids),
             access_policy_id=minute_config.access_policy_id,
             catalog_version_policy="evidence_only",
             timeout_seconds=float(minute_config.timeout_seconds),
@@ -257,14 +254,15 @@ def load_current_event_snapshots(
     except AshareEvidenceContractError as exc:
         return (
             (),
-            tuple(PRIMARY_DATASET_IDS),
-            {dataset_id: exc.reason_code for dataset_id in PRIMARY_DATASET_IDS},
+            dataset_ids,
+            {dataset_id: exc.reason_code for dataset_id in dataset_ids},
         )
     accepted: list[EventEvidenceSnapshot] = []
     blocked: list[str] = []
     blocked_reasons: dict[str, str] = {}
     allowed = tuple(sorted(set(symbols)))
-    for dataset_id in PRIMARY_DATASET_IDS:
+    for consumer_profile in consumer_profiles:
+        dataset_id = consumer_profile.dataset_id
         profile = profiles.by_dataset.get(dataset_id)
         if profile is None:
             blocked.append(dataset_id)
@@ -272,18 +270,25 @@ def load_current_event_snapshots(
             continue
         filter_contract = dict(profile.filter_operators)
         filters: dict[str, Any] = {}
-        if (
+        supports_symbol_filter = (
             profile.symbol_field is not None
             and "in" in filter_contract.get(profile.symbol_field, ())
-        ):
+        )
+        if consumer_profile.symbol_binding == "required" and not supports_symbol_filter:
+            blocked.append(dataset_id)
+            blocked_reasons[dataset_id] = "copilot_event_symbol_query_mapping_unavailable"
+            continue
+        if supports_symbol_filter:
+            assert profile.symbol_field is not None
             filters[profile.symbol_field] = {"in": list(allowed)}
+        allowed_symbols = allowed if supports_symbol_filter else None
         try:
             snapshot = port.load_event_snapshot(
                 profile=profile,
                 filters=filters,
                 decision_time=decision_time,
                 audit_ledger=audit,
-                allowed_symbols=allowed,
+                allowed_symbols=allowed_symbols,
             )
         except AshareEvidenceContractError as exc:
             blocked.append(dataset_id)
@@ -527,6 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     event_group = parser.add_mutually_exclusive_group()
     event_group.add_argument("--event-bundle", type=Path)
     event_group.add_argument("--load-current-events", action="store_true")
+    parser.add_argument("--on-demand-event-dataset", action="append", default=[])
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
     parser.add_argument("--trading-date", required=True)
@@ -572,8 +578,13 @@ def main(argv: list[str] | None = None) -> int:
                 token_file=arguments.token_file.resolve(),
                 decision_time=decision_time,
                 symbols=tuple(bar.symbol for bar in snapshot.bars),
+                requested_on_demand_dataset_ids=arguments.on_demand_event_dataset,
             )
         else:
+            if arguments.on_demand_event_dataset:
+                raise TradingCopilotObservationError(
+                    "copilot_event_on_demand_requires_current_td_read"
+                )
             events = load_event_bundle(arguments.event_bundle.resolve() if arguments.event_bundle else None)
             blocked_event_datasets = ()
             blocked_event_reasons = {}

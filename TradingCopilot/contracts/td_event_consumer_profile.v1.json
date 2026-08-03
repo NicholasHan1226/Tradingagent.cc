@@ -1,0 +1,12 @@
+{
+  "contractId": "tradingagent.trading_copilot_td_event_consumer_profile.v1",
+  "transportContract": "tradingdatas_v1_catalog_query",
+  "profiles": [
+    {"datasetId": "cn.dataset.anns_d", "category": "announcement", "cadence": "session_bounded", "symbolBinding": "required", "explicitRequestRequired": false, "requiresFreshReceiptLineage": true},
+    {"datasetId": "cn.dataset.cctv_news", "category": "news", "cadence": "session_bounded", "symbolBinding": "optional", "explicitRequestRequired": false, "requiresFreshReceiptLineage": true},
+    {"datasetId": "cn.dataset.irm_qa_sh", "category": "interaction", "cadence": "session_bounded", "symbolBinding": "required", "explicitRequestRequired": false, "requiresFreshReceiptLineage": true},
+    {"datasetId": "cn.dataset.irm_qa_sz", "category": "interaction", "cadence": "session_bounded", "symbolBinding": "required", "explicitRequestRequired": false, "requiresFreshReceiptLineage": true},
+    {"datasetId": "cn.dataset.research_report", "category": "research", "cadence": "session_bounded", "symbolBinding": "required", "explicitRequestRequired": false, "requiresFreshReceiptLineage": true},
+    {"datasetId": "cn.dataset.major_news", "category": "macro_news", "cadence": "on_demand", "symbolBinding": "optional", "explicitRequestRequired": true, "requiresFreshReceiptLineage": true}
+  ]
+}

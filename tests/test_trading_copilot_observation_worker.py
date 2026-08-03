@@ -25,6 +25,7 @@ from Ashare.trading_copilot_observation_worker import (
     TradingCopilotObservationError,
     build_projection_batch,
     company_facts_from_verified_observation,
+    load_event_bundle,
     load_company_facts,
     load_current_event_snapshots,
 )
@@ -226,7 +227,15 @@ def test_event_catalog_failure_returns_explicit_full_coverage_debt(monkeypatch) 
 def test_event_loader_pushes_allowed_symbols_into_query(monkeypatch) -> None:
     dataset_id = "cn.dataset.research_report"
     seen: dict[str, object] = {}
-    monkeypatch.setattr(observation_worker, "PRIMARY_DATASET_IDS", (dataset_id,))
+    monkeypatch.setattr(
+        observation_worker,
+        "load_event_consumer_profiles",
+        lambda: (SimpleNamespace(
+            dataset_id=dataset_id,
+            explicit_request_required=False,
+            symbol_binding="required",
+        ),),
+    )
     monkeypatch.setattr(
         observation_worker,
         "build_runtime_transport",
@@ -283,6 +292,69 @@ def test_event_loader_pushes_allowed_symbols_into_query(monkeypatch) -> None:
     }
 
 
+def test_event_loader_only_queries_major_news_after_explicit_on_demand_request(monkeypatch) -> None:
+    seen: dict[str, object] = {"calls": []}
+    monkeypatch.setattr(observation_worker, "build_runtime_transport", lambda *args, **kwargs: object())
+
+    class Client:
+        def __init__(self, config, *, transport) -> None:
+            seen["dataset_ids"] = config.dataset_ids
+
+    monkeypatch.setattr(observation_worker, "SharedSignalsV1Client", Client)
+
+    class ProfiledPort:
+        def __init__(self, client) -> None:
+            pass
+
+        def freeze_profiles(self, *, audit_ledger):
+            return SimpleNamespace(by_dataset={
+                "cn.dataset.anns_d": SimpleNamespace(symbol_field="ts_code", filter_operators=(("ts_code", ("in",)),)),
+                "cn.dataset.cctv_news": SimpleNamespace(symbol_field="ts_code", filter_operators=(("ts_code", ("in",)),)),
+                "cn.dataset.irm_qa_sh": SimpleNamespace(symbol_field="ts_code", filter_operators=(("ts_code", ("in",)),)),
+                "cn.dataset.irm_qa_sz": SimpleNamespace(symbol_field="ts_code", filter_operators=(("ts_code", ("in",)),)),
+                "cn.dataset.research_report": SimpleNamespace(symbol_field="ts_code", filter_operators=(("ts_code", ("in",)),)),
+                "cn.dataset.major_news": SimpleNamespace(symbol_field=None, filter_operators=()),
+            })
+
+        def load_event_snapshot(self, **kwargs):
+            seen["calls"].append((kwargs["profile"], kwargs["filters"], kwargs["allowed_symbols"]))
+            return SimpleNamespace(events=())
+
+    monkeypatch.setattr(observation_worker, "TradingDatasAshareEvidencePort", ProfiledPort)
+
+    events, blocked, reasons = load_current_event_snapshots(
+        minute_config=SimpleNamespace(
+            transport_id="http-json-v1", base_url="http://127.0.0.1:18082",
+            expected_catalog_version="catalog-v1", access_policy_id="test-read-v1", timeout_seconds=1,
+        ),
+        token_file=Path("/not-read-by-test"),
+        decision_time=datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc),
+        symbols=("000333.SZ",),
+        requested_on_demand_dataset_ids=("cn.dataset.major_news",),
+    )
+
+    assert events == () and blocked == () and reasons == {}
+    assert seen["dataset_ids"] == frozenset({
+        "cn.dataset.anns_d", "cn.dataset.cctv_news", "cn.dataset.irm_qa_sh",
+        "cn.dataset.irm_qa_sz", "cn.dataset.research_report", "cn.dataset.major_news",
+    })
+    assert seen["calls"][-1][1:] == ({}, None)
+
+
+def test_event_bundle_cannot_substitute_for_verified_td_runtime_evidence(tmp_path: Path) -> None:
+    path = (tmp_path / "events.json").resolve()
+    path.write_text(json.dumps({
+        "contractId": "tradingagent.ashare_event_evidence_bundle.v1",
+        "items": [],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_event_bundle_runtime_evidence_required",
+    ):
+        load_event_bundle(path)
+
+
 def test_omits_event_without_verifiable_url_and_never_invents_sentiment() -> None:
     generated = datetime(2026, 8, 1, 1, 40, 10, tzinfo=timezone.utc)
     batch = build_projection_batch(
@@ -305,6 +377,18 @@ def test_event_timeline_publishes_accepted_events_with_independent_coverage_debt
     assert timeline["events"][0]["sentiment"] == "neutral"
     assert timeline["coverage"]["blockedDatasetIds"] == ["cn.dataset.irm_qa_sh"]
     assert (tmp_path / "timeline" / "000001.SZ.receipt.json").is_file()
+
+
+def test_event_timeline_accepts_declared_on_demand_major_news_coverage_debt() -> None:
+    generated = datetime(2026, 8, 1, 1, 40, tzinfo=timezone.utc)
+
+    batch = build_event_timeline_batch(
+        symbols=("600000.SH",), events=(),
+        blocked_dataset_reasons={"cn.dataset.major_news": "ashare_evidence_metadata_not_ready"},
+        generated_at=generated, valid_until=generated + timedelta(hours=2),
+    )
+
+    assert batch["items"][0]["coverage"]["blockedDatasetIds"] == ["cn.dataset.major_news"]
 
 
 def test_blocks_symbol_without_verified_company_facts() -> None:

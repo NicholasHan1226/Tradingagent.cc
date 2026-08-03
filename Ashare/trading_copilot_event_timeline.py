@@ -16,7 +16,11 @@ import re
 import tempfile
 from typing import Any, Mapping, Sequence
 
-from Ashare.event_evidence import EventEvidenceSnapshot, PRIMARY_DATASET_IDS
+from Ashare.event_evidence import EventEvidenceSnapshot
+from Ashare.trading_copilot_event_consumer_profile import (
+    TradingCopilotEventConsumerProfileError,
+    load_event_consumer_profiles,
+)
 from Ashare.trading_copilot_observation_worker import (
     TradingCopilotObservationError,
     _aware,
@@ -66,7 +70,15 @@ def build_event_timeline_batch(
     if not normalized_symbols or any(not _SYMBOL.fullmatch(symbol) for symbol in normalized_symbols):
         raise TradingCopilotObservationError("event_timeline_symbols_invalid")
     blocked = {dataset_id: str(reason) for dataset_id, reason in blocked_dataset_reasons.items()}
-    if set(blocked).difference(PRIMARY_DATASET_IDS) or any(not reason for reason in blocked.values()):
+    try:
+        declared_dataset_ids = {
+            profile.dataset_id for profile in load_event_consumer_profiles()
+        }
+    except TradingCopilotEventConsumerProfileError as exc:
+        raise TradingCopilotObservationError(
+            "event_timeline_consumer_profile_invalid"
+        ) from exc
+    if set(blocked).difference(declared_dataset_ids) or any(not reason for reason in blocked.values()):
         raise TradingCopilotObservationError("event_timeline_coverage_invalid")
     by_symbol: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in normalized_symbols}
     for event in events:
