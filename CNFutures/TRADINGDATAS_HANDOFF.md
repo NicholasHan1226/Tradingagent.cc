@@ -47,6 +47,12 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 通过时仅产生 `observation`，并只在现有共享 `tradingagent.evidence_readiness.v1` 对应六项 envelope/contract/identity/receipt/lineage/quality 证明均成立时映射 `readiness.observation_ready=true`；它不意味着历史 PIT 或模拟执行可用。缺 `observed_at`/`data_through`/receipt/lineage、PIT 倒序、陈旧/降级/截断页、calendar/session 或 bar 证据时产生 `hold`；缺 multiplier、tick 或 price limit 时产生 `risk_reject`。三种结果均固定为 `historical_pit_ready=false`、`delayed_paper_ready=false`、`execution_eligible=false`、`learning_evidence_eligible=false`、无 durable capital/outbox。测试中的 `fixture.*` dataset ID 仅是 mock 标签，绝不是 TradingDatas authority 或未来 dataset ID。
 
+## `fut_settle` 原始市场规则映射
+
+`CNFutures.fut_settle_market_rules.load_fut_settle_raw_market_rules` 是独立、调用方触发的只读映射，不注册 runtime、timer、route 或持久化。调用方注入既有 `SharedSignalsV1Client`，并提供精确 `catalog_version`、`receipt_id` 与 lineage SHA-256。它只通过固定 `GET /v1/catalog` 和 `POST /v1/query` 读取 `cn.dataset.fut_settle`：catalog 必须为 schema major `2`、identity `[trade_date, ts_code]`，query 固定为单个 `trade_date`、`as_of=null`、`trade_date:asc,ts_code:asc`，并在受限分页内完成终页和同观察 replay。
+
+映射仅保留 `M####.DCE` 行，且所有查询行的 `trade_date` 必须与请求完全一致。输出的 `settle`、交易费率/交易费、交割费和多空/套保保证金字段只是同一 receipt/lineage 绑定的原始事实；不推断 exchange rule、费率含义、保证金可用性或仓位。缺 identity、分区漂移、receipt/lineage/replay 漂移，或 metadata 不是 `ready/fresh/valid/non-degraded` 时 fail closed。该合同明确输出 `as_of=null`、`pit_authority=false`、`execution_eligible=false`，因此不构成稳定、PIT、shadow、模拟成交或真实交易授权。
+
 ## 当前只读发现（2026-07-30）
 
 已查到 registry 中 `cn.dataset.fut_basic` 可执行，候选分钟数据 `cn.dataset.ft_mins` 仍为 paused/blocked（缺基础 seed receipt），`cn.dataset.rt_fut_min` 仍为 paused/locked。它们不是本合同指定的最终 dataset ID，也不满足上述验收。因此当前结果为 **NO-GO：不启动 CNFutures runtime、模拟成交或 scheduler**。
