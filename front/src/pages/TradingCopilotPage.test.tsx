@@ -31,6 +31,10 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByText('Copilot 证据共识')).toBeInTheDocument()
     expect(screen.getByText('舆论与事件温度')).toBeInTheDocument()
     expect(screen.getByText('偏积极')).toBeInTheDocument()
+    expect(screen.getByText('等待正式覆盖')).toBeInTheDocument()
+    expect(screen.getByText('正式研究条件未覆盖')).toBeInTheDocument()
+    expect(screen.getByText('正式失效条件未覆盖，不能进入人工计划。')).toBeInTheDocument()
+    expect(screen.queryByText('收盘站上人工观察位并有量能确认')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /调整资金/ }))
     const capital = screen.getByLabelText('申报总资金（元）')
@@ -69,6 +73,10 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByText('行情图表暂不可用')).toBeInTheDocument()
     expect(screen.getByText('当前没有按股票代码验证通过的公告、新闻或舆情数据。')).toBeInTheDocument()
     expect(screen.getByText('暂无舆论')).toBeInTheDocument()
+    expect(screen.getByText('研究建议与条件')).toBeInTheDocument()
+    expect(screen.getByText('等待正式覆盖')).toBeInTheDocument()
+    expect(screen.getByText(/当前不生成买入或卖出建议/)).toBeInTheDocument()
+    expect(screen.getByText('事件覆盖未到位')).toBeInTheDocument()
   })
 
   it('switches chart ranges, forecast views, and stock-linked event content', async () => {

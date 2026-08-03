@@ -366,6 +366,19 @@
 .company-profile-card, .sentiment-pulse-card { overflow: hidden; }
 .rail-card-title { min-height: 42px; padding: 0 13px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--copilot-line); color: #cbd2d5; font-size: 11px; font-weight: 650; }
 .rail-card-title svg { color: #76838a; }
+.research-focus-card { overflow: hidden; }
+.research-posture { padding: 12px 13px; border-bottom: 1px solid var(--copilot-line); }
+.research-posture span { display: block; color: #728087; font-size: 9px; }
+.research-posture strong { display: block; margin-top: 4px; color: var(--copilot-teal); font-size: 13px; }
+.research-posture.blocked strong { color: var(--copilot-amber); }
+.research-posture p { margin-top: 6px; color: #839097; font-size: 10px; line-height: 1.55; }
+.research-focus-list { margin: 0; padding: 0 13px; }
+.research-focus-list > div { padding: 10px 0; border-bottom: 1px solid rgba(207, 222, 229, .08); }
+.research-focus-list > div:last-child { border-bottom: 0; }
+.research-focus-list dt { color: #728087; font-size: 9px; }
+.research-focus-list dd { margin: 4px 0 0; color: #bac4c8; font-size: 10px; line-height: 1.5; }
+.research-focus-list > div:last-child dd { color: #c7969a; }
+.research-focus-note { margin: 0; padding: 10px 13px 12px; border-top: 1px solid var(--copilot-line); color: #66747c; font-size: 9px; line-height: 1.55; }
 .company-profile-card dl { margin: 0; padding: 5px 13px; }
 .company-profile-card dl > div { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid rgba(207, 222, 229, .07); }
 .company-profile-card dt { color: #727e84; font-size: 8px; }
@@ -547,7 +560,7 @@
 .history-table-panel th, .history-table-panel td, .demo-data-label, .formal-data-label,
 .recommendation-card > p, .evidence-consensus, .company-profile-card dt, .company-profile-card dd,
 .company-profile-card > p, .sentiment-tone small, .sentiment-counts, .sentiment-pulse-card > p,
-.sentiment-pulse-card > small, .holding-card > p, .source-card > p, .rail-link, .history-row small,
+.sentiment-pulse-card > small, .research-focus-card, .holding-card > p, .source-card > p, .rail-link, .history-row small,
 .editor-fields label, .management-footnote { font-size: 11px; }
 .management-row, .portfolio-row, .decision-row, .event-timeline article p, .event-card-grid p,
 .question-list p, .forecast-disclaimer p, .scenario-card > p, .driver-card li, .analysis-hero p,

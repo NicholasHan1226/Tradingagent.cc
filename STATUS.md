@@ -1,7 +1,7 @@
 # TradingAgent 当前状态
 
 > 综合核验：2026-08-02 CST；A股/TradingCopilot 发布与运行态增量读回：2026-08-03
-> 19:36 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
+> 22:50 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
 > 候选、历史事故与旧读回通过 Git 历史及仓外 release-evidence 追溯，不在此重复。
 
 ## 当前版本与运行面
@@ -13,7 +13,7 @@
 | A股 market lane | 与 `origin/main` 同 head（`5631302`），`ahead=0`、`behind=0` | 本轮已在专用 worktree 通过 lane 校验；它不是独立生产 release。 |
 | CNFutures / Crypto lane | 未在本轮当前 worktree 清单中核验 | 开始对应市场开发前必须重新建立/定位专用 worktree，并通过各自 lane 校验；不能由 A股结果代替。 |
 | TA production current | `56313025af24b645efba0d87e0805d17b9e080ca` | 2026-08-03 已由 immutable release 原子切换；running front process、`current` symlink 与 effective release 三层读回一致。 |
-| TradingDatas current | `2cd289db369ffebdb7b475ce71d45c9d5993eb48` | 18082 仅内部监听，generic collector timer active。 |
+| TradingDatas current | `83573f617341f75c978b944f203938bbc53cf1ae` | 2026-08-03 22:50 CST 由 root-only runtime readback 确认；18082 仅内部监听，generic collector timer active。这个版本事实不等同于 30 股的新鲜 receipt/API consumer readback。 |
 | TradingDatas Crypto current | `557a2967bc9582ffef26bc412d702767e0ef5c17` | 18083 独立内部监听。 |
 
 `tradingagent-front-api.service` 为 `active`，仅监听 `127.0.0.1:8787`；`/healthz`
@@ -25,13 +25,11 @@ broker、Testnet、Live、模型网络、公开交易入口或真实交易权限
 
 ## A股
 
-- 30 股分钟 session timer 仍是 simulation-only，最近一次于 2026-08-03 09:18 CST
-  fail-closed；该失败发生在新 release 前，旧日志未输出分类原因。2026-08-03 19:36 CST
-  的 current release 已包含新 initializer 的安全分类失败码；session/bootstrap unit 与
-  `trading-copilot` 0700 runtime root 均经 byte-level readback 与 `systemd-analyze verify`
-  核验。未手动触发 session，下一次 timer 为
-  2026-08-04 09:18 CST。只有下一次自动 session 产生真实 symbol/name 投影及 session receipt，
-  才能表述 30 股分钟链已恢复或 Copilot 已有真实跟踪名单。
+- 30 股分钟 session timer 仍是 simulation-only，2026-08-03 22:50 CST 的 root-only
+  readback 显示 `tradingagent-ashare-minute-session.timer` 为 `enabled/active/waiting`，下一次为
+  2026-08-04 09:18:08 CST；最近一次 09:18 初始化退出码为 `2`，日志仅输出
+  `minute session initializer failed closed`。不人工补触发或补写 session。只有下一次自动 session
+  产生真实 symbol/name 投影及 session receipt，才可表述 30 股分钟链已恢复或 Copilot 已有真实跟踪名单。
 - 500 股 scale500 session/paper timer 均为 `disabled/inactive`。它需要 TradingDatas
   正式连续两根 500/500、同一 bar time、完整 receipt/lineage、terminal pagination
   replay 的证据；周末或候选 loopback 不能替代。
