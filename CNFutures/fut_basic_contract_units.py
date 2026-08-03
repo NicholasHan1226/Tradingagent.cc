@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import re
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -46,6 +47,7 @@ MAX_PAGES = 3
 EXACT_ROW_COUNT = 207
 _SHA256_LENGTH = 64
 _ALLOWED_DEGRADED_REASON = "response_completeness_unverified"
+_M_DCE_TS_CODE = re.compile(r"^M[0-9]{3,4}\.DCE$")
 
 
 class FutBasicContractUnitConsumerError(ValueError):
@@ -275,6 +277,8 @@ def _map_rows(
             raise FutBasicContractUnitConsumerError("row_exchange_invalid")
         if row.get("fut_code") != PRODUCT_CODE:
             raise FutBasicContractUnitConsumerError("row_fut_code_invalid")
+        if not _M_DCE_TS_CODE.fullmatch(ts_code):
+            raise FutBasicContractUnitConsumerError("row_ts_code_invalid")
         missing = [field for field in RAW_CONTRACT_UNIT_FIELDS if field not in row]
         if missing:
             raise FutBasicContractUnitConsumerError("raw_field_missing")

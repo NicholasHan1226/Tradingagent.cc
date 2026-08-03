@@ -253,6 +253,8 @@ def test_rejects_any_degraded_state_except_the_explicit_coverage_debt(
         ([{key: value for key, value in _row(index).items() if key != "quote_unit"} for index in range(207)], "raw_field_missing"),
         ([{**_row(index), "exchange": "SHFE"} for index in range(207)], "row_exchange_invalid"),
         ([{**_row(index), "fut_code": "RB"} for index in range(207)], "row_fut_code_invalid"),
+        ([{**_row(0), "ts_code": "RB2601.SHFE"}] + [_row(index) for index in range(1, 207)], "row_ts_code_invalid"),
+        ([{**_row(0), "ts_code": "M-2601.DCE"}] + [_row(index) for index in range(1, 207)], "row_ts_code_invalid"),
     ),
 )
 def test_rejects_count_identity_unit_and_dce_m_scope_drift(
