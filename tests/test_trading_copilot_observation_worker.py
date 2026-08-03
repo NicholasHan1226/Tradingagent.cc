@@ -11,6 +11,7 @@ import pytest
 
 from Ashare.event_evidence import (
     AshareEvidenceContractError,
+    EvidenceDatasetProfile,
     EventEvidenceSnapshot,
     PRIMARY_DATASET_IDS,
 )
@@ -108,6 +109,39 @@ def _event(*, url: str | None = "https://example.invalid/disclosure") -> EventEv
         evidence_ref=f"td-v1:cn.dataset.anns_d:event-receipt:{_sha('event-row')[:16]}",
         evidence_confidence=0.9, event_time_instant_proven=False, historical_known_time_proven=False,
         pit_feature_eligible=False,
+    )
+
+
+def _event_evidence_profile(dataset_id: str) -> EvidenceDatasetProfile:
+    is_macro = dataset_id == "cn.dataset.major_news"
+    fields = ("event_id", "ts_code", "event_time", "title", "content")
+    return EvidenceDatasetProfile(
+        expected_catalog_version="catalog-v1",
+        observed_catalog_version="catalog-v1",
+        dataset_id=dataset_id,
+        schema_major=1,
+        default_fields=fields,
+        default_order=("event_id:asc",),
+        filter_operators=(
+            ("event_id", ("eq",)),
+            ("ts_code", ("eq", "in")),
+        ),
+        dataset_contract_fingerprint=_sha(f"{dataset_id}:catalog"),
+        consumer_profile_sha256=_sha(f"{dataset_id}:profile"),
+        identity_fields=("event_id",),
+        event_time_field="event_time",
+        symbol_field=None if is_macro else "ts_code",
+        entity_field=None,
+        title_field="title",
+        content_field="content",
+        url_field=None,
+        source_field=None,
+        default_entity="CN-MACRO" if is_macro else None,
+        optional_dataset=is_macro,
+        max_pages=1,
+        max_rows=100,
+        page_limit=100,
+        omit_as_of=is_macro,
     )
 
 
@@ -224,6 +258,60 @@ def test_event_catalog_failure_returns_explicit_full_coverage_debt(monkeypatch) 
     }
 
 
+def test_event_loader_rejects_missing_formal_runtime_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        observation_worker,
+        "build_runtime_transport",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        observation_worker,
+        "SharedSignalsV1Client",
+        lambda *args, **kwargs: object(),
+    )
+
+    class MissingRuntimeEvidencePort:
+        def __init__(self, client) -> None:
+            pass
+
+        def freeze_profiles(self, *, audit_ledger):
+            return SimpleNamespace(
+                by_dataset={
+                    dataset_id: _event_evidence_profile(dataset_id)
+                    for dataset_id in PRIMARY_DATASET_IDS
+                }
+            )
+
+        def load_event_snapshot(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        observation_worker,
+        "TradingDatasAshareEvidencePort",
+        MissingRuntimeEvidencePort,
+    )
+
+    events, blocked, reasons = load_current_event_snapshots(
+        minute_config=SimpleNamespace(
+            transport_id="http-json-v1",
+            base_url="http://127.0.0.1:18082",
+            expected_catalog_version="catalog-v1",
+            access_policy_id="test-read-v1",
+            timeout_seconds=1,
+        ),
+        token_file=Path("/not-read-by-test"),
+        decision_time=datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc),
+        symbols=("600000.SH",),
+    )
+
+    assert events == ()
+    assert blocked == tuple(PRIMARY_DATASET_IDS)
+    assert reasons == {
+        dataset_id: "copilot_event_consumer_runtime_evidence_missing"
+        for dataset_id in PRIMARY_DATASET_IDS
+    }
+
+
 def test_event_loader_pushes_allowed_symbols_into_query(monkeypatch) -> None:
     dataset_id = "cn.dataset.research_report"
     seen: dict[str, object] = {}
@@ -245,6 +333,18 @@ def test_event_loader_pushes_allowed_symbols_into_query(monkeypatch) -> None:
         observation_worker,
         "SharedSignalsV1Client",
         lambda *args, **kwargs: object(),
+    )
+    # This unit test isolates query shaping.  Cross-contract and runtime
+    # evidence validation are covered with typed local catalog fixtures.
+    monkeypatch.setattr(
+        observation_worker,
+        "validate_event_consumer_profile_contract",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        observation_worker,
+        "validate_event_consumer_runtime_evidence",
+        lambda **kwargs: None,
     )
 
     class FilteredPort:
@@ -301,6 +401,18 @@ def test_event_loader_only_queries_major_news_after_explicit_on_demand_request(m
             seen["dataset_ids"] = config.dataset_ids
 
     monkeypatch.setattr(observation_worker, "SharedSignalsV1Client", Client)
+    # This unit test isolates selection and on-demand query routing.  It does
+    # not model a formal catalog/query evidence snapshot.
+    monkeypatch.setattr(
+        observation_worker,
+        "validate_event_consumer_profile_contract",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        observation_worker,
+        "validate_event_consumer_runtime_evidence",
+        lambda **kwargs: None,
+    )
 
     class ProfiledPort:
         def __init__(self, client) -> None:

@@ -7,6 +7,14 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from Ashare.event_evidence import (
+    EvidenceDatasetProfile,
+    EventEvidenceSnapshot,
+    EventEvidenceSnapshotBatch,
+    FIXED_CATALOG_ROUTE,
+    FIXED_QUERY_ROUTE,
+)
+
 
 EVENT_CONSUMER_PROFILE_CONTRACT = (
     "tradingagent.trading_copilot_td_event_consumer_profile.v1"
@@ -20,6 +28,14 @@ REVIEWED_DATASET_IDS = frozenset({
     "cn.dataset.research_report",
     "cn.dataset.major_news",
 })
+_EXPECTED_CATEGORY_BY_DATASET = {
+    "cn.dataset.anns_d": "announcement",
+    "cn.dataset.cctv_news": "news",
+    "cn.dataset.irm_qa_sh": "interaction",
+    "cn.dataset.irm_qa_sz": "interaction",
+    "cn.dataset.research_report": "research",
+    "cn.dataset.major_news": "macro_news",
+}
 _DEFAULT_PROFILE_PATH = (
     Path(__file__).resolve().parents[1]
     / "TradingCopilot/contracts/td_event_consumer_profile.v1.json"
@@ -175,3 +191,115 @@ def select_event_consumer_profiles(
         for profile in profiles
         if not profile.explicit_request_required or profile.dataset_id in requested
     )
+
+
+def validate_event_consumer_profile_contract(
+    *,
+    consumer_profile: TradingCopilotEventConsumerProfile,
+    evidence_profile: object,
+) -> None:
+    """Bind one declaration to the catalog-frozen evidence interpretation.
+
+    The declaration is intentionally not a second schema or a permission to
+    query arbitrary TradingDatas datasets.  It is usable only when the
+    existing fixed catalog/query evidence port froze a compatible active row.
+    """
+
+    if not isinstance(consumer_profile, TradingCopilotEventConsumerProfile):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_profile_invalid"
+        )
+    if not isinstance(evidence_profile, EvidenceDatasetProfile):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_catalog_evidence_missing"
+        )
+    if (
+        consumer_profile.dataset_id not in REVIEWED_DATASET_IDS
+        or evidence_profile.dataset_id != consumer_profile.dataset_id
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_catalog_dataset_incompatible"
+        )
+    if (
+        _EXPECTED_CATEGORY_BY_DATASET[consumer_profile.dataset_id]
+        != consumer_profile.category
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_category_dataset_incompatible"
+        )
+    if (
+        evidence_profile.catalog_route != FIXED_CATALOG_ROUTE
+        or evidence_profile.query_route != FIXED_QUERY_ROUTE
+        or evidence_profile.schema_major <= 0
+        or not evidence_profile.default_fields
+        or not evidence_profile.identity_fields
+        or evidence_profile.event_time_field not in evidence_profile.default_fields
+        or not set(evidence_profile.identity_fields).issubset(
+            evidence_profile.default_fields
+        )
+        or not evidence_profile.dataset_contract_fingerprint
+        or not evidence_profile.consumer_profile_sha256
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_catalog_fields_identity_incompatible"
+        )
+    if (
+        consumer_profile.cadence == "on_demand"
+        and evidence_profile.omit_as_of is not True
+    ) or (
+        consumer_profile.cadence == "session_bounded"
+        and evidence_profile.omit_as_of is not False
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_catalog_cadence_incompatible"
+        )
+    filter_operators = dict(evidence_profile.filter_operators)
+    if consumer_profile.symbol_binding == "required" and (
+        evidence_profile.symbol_field is None
+        or "in" not in filter_operators.get(evidence_profile.symbol_field, ())
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_catalog_symbol_binding_incompatible"
+        )
+
+
+def validate_event_consumer_runtime_evidence(
+    *,
+    consumer_profile: TradingCopilotEventConsumerProfile,
+    evidence_profile: object,
+    snapshot: object,
+) -> None:
+    """Require the actual catalog/query snapshot before Copilot consumes it."""
+
+    validate_event_consumer_profile_contract(
+        consumer_profile=consumer_profile,
+        evidence_profile=evidence_profile,
+    )
+    if snapshot is None:
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_runtime_evidence_missing"
+        )
+    if not isinstance(snapshot, EventEvidenceSnapshotBatch):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_runtime_evidence_unbound"
+        )
+    if snapshot.profile != evidence_profile or (
+        snapshot.profile.dataset_id != consumer_profile.dataset_id
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_runtime_evidence_profile_mismatch"
+        )
+    if (
+        snapshot.query_route != FIXED_QUERY_ROUTE
+        or not snapshot.events
+        or snapshot.row_count != len(snapshot.events)
+        or any(
+            not isinstance(event, EventEvidenceSnapshot)
+            or event.dataset_id != consumer_profile.dataset_id
+            or event.catalog_version != snapshot.observed_catalog_version
+            for event in snapshot.events
+        )
+    ):
+        raise TradingCopilotEventConsumerProfileError(
+            "copilot_event_consumer_runtime_evidence_invalid"
+        )
