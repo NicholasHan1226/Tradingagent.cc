@@ -44,7 +44,7 @@ export function createTradingCopilotStockIntelligenceHandler({ projectionDir, wo
           validUntil: receipt.validUntil, verifiedAt: now().toISOString(), verifierId: `${receipt.verifierId}@${receipt.verifierVersion}`,
         },
       }
-      assertStockIntelligenceProjection(verifiedPayload, symbol)
+      assertStockIntelligenceProjection(verifiedPayload, symbol, now().getTime())
       return sendJson(res, 200, verifiedPayload)
     } catch {
       return sendJson(res, 404, { error: 'Verified stock intelligence projection unavailable.' })
