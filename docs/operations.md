@@ -1020,6 +1020,11 @@ python3 -m Ashare.trading_copilot_observation_worker \
 后读回当日目录的三份输入和 service journal，再由既有 session/paper timer 在后续交易日运行；
 不得把 bootstrap service 安装成周期性 timer。
 
+minute session 与 bootstrap 都会把已验证 session 实际使用的 symbol/name 集合原子投影到
+`/var/lib/tradingagent/trading-copilot/tracking-universe.json`。该目录由受控 tmpfiles 阶段以
+`tradingagent:tradingagent`、`0700` 创建；前端 API 只读此路径，文件缺失或合同无效时返回
+unavailable，绝不以静态名单、报价或预测替代。
+
 退出 `0` 只证明本批 projection/receipt 已原子发布。`delayed_paper` 仍要求一个 bar cadence 加 jitter；休市日显式使用 `historical_display` 时只允许展示带当前查询回执的旧行情并固定标记 `stale`，它不证明历史 first-seen/revision 链，不取得 historical-PIT 训练、延迟模拟或执行资格。stdout 的 `symbolCount` 是本批真实覆盖；`eventCoverage.blockedDatasetIds` 非空表示相应事件数据集失败关闭，不能用摘要、缓存或演示事件补位。输出中的 `forecast=null` 是正常停止线，只有另行通过冻结OOS、校准、覆盖率、费用与基线门禁后才可发布正式预测。
 
 Kronos/基线评估只消费外部冻结的同样本预测，不下载权重、不训练、不晋级：

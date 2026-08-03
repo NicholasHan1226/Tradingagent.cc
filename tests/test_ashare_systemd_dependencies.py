@@ -13,6 +13,10 @@ ASHARE_DATA_UNITS = (
 )
 
 BOOTSTRAP = ROOT / "deploy/systemd/tradingagent-ashare-minute-bootstrap.service"
+MINUTE_SESSION = ROOT / "deploy/systemd/tradingagent-ashare-minute-session.service"
+TRACKING_UNIVERSE_PATH = (
+    "/var/lib/tradingagent/trading-copilot/tracking-universe.json"
+)
 
 
 def test_ashare_data_units_order_after_the_formal_tradingdatas_api() -> None:
@@ -33,7 +37,16 @@ def test_first_session_bootstrap_is_manual_simulation_only_and_loopback_bound() 
     assert "--bootstrap-manifest /etc/tradingagent/ashare-minute-bootstrap-manifest.json" in text
     assert "--universe-source /etc/tradingagent/ashare-minute-bootstrap-universe.json" in text
     assert "--token-file /run/secrets/tradingagent/tradingdatas-read.token" in text
+    assert f"--tracking-universe-output {TRACKING_UNIVERSE_PATH}" in text
     assert "IPAddressDeny=any" in text
     assert "IPAddressAllow=localhost" in text
     assert "ReadWritePaths=/var/lib/tradingagent/ashare-minute-paper" in text
+    assert "ReadWritePaths=/var/lib/tradingagent/trading-copilot" in text
     assert "[Install]" not in text
+
+
+def test_minute_session_projects_the_verified_named_universe_for_copilot() -> None:
+    text = MINUTE_SESSION.read_text(encoding="utf-8")
+
+    assert f"--tracking-universe-output {TRACKING_UNIVERSE_PATH}" in text
+    assert "ReadWritePaths=/var/lib/tradingagent/trading-copilot" in text

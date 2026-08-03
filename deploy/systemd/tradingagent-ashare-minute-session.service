@@ -15,7 +15,7 @@ WorkingDirectory=/opt/investment/releases/tradingagent/current
 EnvironmentFile=/etc/tradingagent/ashare-minute-paper.env
 Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
-ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_session_initializer --state-root ${ASHARE_MINUTE_PAPER_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_session_initializer --state-root ${ASHARE_MINUTE_PAPER_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token --tracking-universe-output /var/lib/tradingagent/trading-copilot/tracking-universe.json
 TimeoutStartSec=90s
 UMask=0077
 StateDirectory=tradingagent/ashare-minute-paper
@@ -42,5 +42,6 @@ ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml6
 ReadOnlyPaths=/etc/tradingagent
 ReadOnlyPaths=/run/secrets/tradingagent
 ReadWritePaths=/var/lib/tradingagent/ashare-minute-paper
+ReadWritePaths=/var/lib/tradingagent/trading-copilot
 StandardOutput=journal
 StandardError=journal

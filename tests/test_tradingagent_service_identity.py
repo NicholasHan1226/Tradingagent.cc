@@ -47,6 +47,10 @@ def test_front_api_uses_dedicated_primary_identity_and_read_only_release() -> No
         "Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent",
         "Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1",
         "Environment=TRADING_AGENT_SNAPSHOT_PORT=8787",
+        (
+            "Environment=TRADING_COPILOT_TRACKING_UNIVERSE_PATH="
+            "/var/lib/tradingagent/trading-copilot/tracking-universe.json"
+        ),
         "Environment=REAL_TRADING_ENABLED=false",
         "Environment=TRADINGDATAS_API_URL=",
         "Environment=MARKETGRAPH_API_URL=",
@@ -65,6 +69,7 @@ def test_front_api_uses_dedicated_primary_identity_and_read_only_release() -> No
         "InaccessiblePaths=/run/secrets/tradingagent",
         "ReadOnlyPaths=/opt/investment/releases/tradingagent",
         "ReadOnlyPaths=/opt/investment/tradingagent",
+        "ReadOnlyPaths=/var/lib/tradingagent/trading-copilot",
     ):
         assert required in text
 
