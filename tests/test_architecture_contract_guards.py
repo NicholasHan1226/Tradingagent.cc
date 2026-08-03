@@ -1442,6 +1442,13 @@ def test_status_main_readback_cannot_pin_a_self_invalidating_commit_sha() -> Non
         assert stale_count.search(stale_example) is not None
 
 
+def test_front_lockfile_excludes_vulnerable_postcss_source_map_loader() -> None:
+    lockfile = json.loads((ROOT / "front" / "package-lock.json").read_text())
+    package = lockfile["packages"]["node_modules/postcss"]
+    version = package["version"]
+    assert tuple(int(part) for part in version.split(".")) >= (8, 5, 18)
+
+
 def test_machine_state_test_evidence_is_closed_by_candidate_manifest() -> None:
     matrix = load_system_state_matrix()
     manifest = ROOT / "tests" / "ta_v1_candidate_manifest.txt"
