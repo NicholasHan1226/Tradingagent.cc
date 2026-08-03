@@ -18,7 +18,8 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
   const summaryId = useId()
   const points = intelligence.series[range]
   const forecastMatchesRange = range === '1D' && intelligence.forecast?.horizon === 'm30'
-  const forecastVisible = showForecast && forecastMatchesRange
+  const forecastBlocked = intelligence.forecast?.readiness.usableFor === 'none'
+  const forecastVisible = showForecast && forecastMatchesRange && !forecastBlocked
   const chartData = useMemo(() => forecastVisible ? points : points.filter((point) => point.price !== null), [points, forecastVisible])
   const lastHistorical = points.findLast((point) => point.price !== null)
   const isDemo = intelligence.mode === 'demo_fixture'
@@ -45,7 +46,7 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
       <div className={`forecast-quote-state ${forecastVisible ? 'visible' : ''}`}>
         <span>行情线预测</span>
         <strong>{intelligence.forecast ? forecastStatusLabel(intelligence.forecast.readiness.status) : '暂无正式预测'}</strong>
-        <small>{intelligence.forecast ? `${intelligence.forecast.horizonLabel} · ${forecastVisible ? '研究图层已展开' : '手工展开后查看情景'}` : '不以当前行情临时生成曲线'}</small>
+        <small>{intelligence.forecast ? `${intelligence.forecast.horizonLabel} · ${forecastBlocked ? '未达到可视化使用条件' : forecastVisible ? '研究图层已展开' : '手工展开后查看情景'}` : '不以当前行情临时生成曲线'}</small>
       </div>
     </div>
     <div className="chart-toolbar">
@@ -53,8 +54,8 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
         {rangeOptions.map((option) => <button aria-selected={range === option} className={range === option ? 'active' : ''} key={option} onClick={() => onRangeChange(option)} role="tab" type="button">{option}</button>)}
       </div>
       <div className="chart-tools">
-        <button aria-pressed={forecastVisible} disabled={!forecastMatchesRange} onClick={onToggleForecast} type="button">
-          {forecastVisible ? <Eye size={15} /> : <EyeOff size={15} />}{!forecastMatchesRange ? '该周期无预测' : forecastVisible ? '预测已显示' : '显示预测'}
+        <button aria-pressed={forecastVisible} disabled={!forecastMatchesRange || forecastBlocked} onClick={onToggleForecast} type="button">
+          {forecastVisible ? <Eye size={15} /> : <EyeOff size={15} />}{!forecastMatchesRange ? '该周期无预测' : forecastBlocked ? '预测已阻断' : forecastVisible ? '预测已显示' : '显示预测'}
         </button>
         <button aria-label="图表指标说明" title="价格、成交量与预测区间" type="button"><SlidersHorizontal size={15} /></button>
       </div>
@@ -84,7 +85,7 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
       <span><i className="history" />历史/盘中价格</span>
       {forecastVisible ? <span><i className="median" />预测中位线</span> : null}
       {forecastVisible ? <span><i className="band" />窄幅 / 宽幅研究包络</span> : null}
-      <em>{forecastVisible ? '未校准包络不使用概率或置信度标签' : '预测图层默认关闭，需手工展开'}</em>
+      <em>{forecastVisible ? '未校准包络不使用概率或置信度标签' : forecastBlocked ? '预测未达到可视化使用条件' : '预测图层默认关闭，需手工展开'}</em>
     </div>
   </section>
 }
