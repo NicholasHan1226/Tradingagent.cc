@@ -271,7 +271,7 @@ def _validate_metadata(
         or metadata.degraded is not True
         or freshness.get("state") != "stale"
         or freshness.get("stale") is not True
-        or quality.get("state") != "degraded_invalid"
+        or quality.get("state") != "degraded"
         or quality.get("valid") is not False
         or tuple(metadata.reasons) != ("freshness_sla_exceeded",)
     ):
