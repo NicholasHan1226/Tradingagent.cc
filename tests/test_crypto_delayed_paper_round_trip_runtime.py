@@ -12,6 +12,7 @@ import pytest
 
 import Crypto.delayed_paper_round_trip_epoch as epoch_module
 import Crypto.delayed_paper_round_trip_runtime as runtime_module
+from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
 from Crypto.delayed_paper_round_trip_runtime import (
     crypto_round_trip_window_request,
     run_crypto_delayed_paper_round_trip_server_once,
@@ -20,6 +21,7 @@ from tests.test_crypto_5m_support import FixtureTradingDatasTransport, WINDOW_EN
 from tests.test_crypto_delayed_paper_runtime import (
     _factory,
     _manifest_payload,
+    _sequence_factory,
     _shifted_transport,
     _write_manifest,
 )
@@ -168,6 +170,43 @@ def test_round_trip_runtime_cli_fails_closed_when_journal_summary_is_invalid(
     assert captured.err == "crypto round-trip runtime failed closed\n"
 
 
+def test_round_trip_runtime_cli_records_bounded_backlog_receipt_before_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: {
+            "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
+            "status": "backlog_pending",
+            "core_result": {"market_slot": "2026-08-03T15:05:00Z"},
+            "recovery_mode": "backlog_recovery",
+            "backlog_remaining": True,
+            "real_trading_enabled": False,
+            "execution_authority": False,
+        },
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["status"] == "backlog_pending"
+    assert payload["recovery_mode"] == "backlog_recovery"
+    assert payload["backlog_remaining"] is True
+    assert captured.err == "crypto round-trip runtime failed closed\n"
+
+
 def _canonical(value: object) -> bytes:
     return (
         json.dumps(
@@ -290,6 +329,49 @@ def test_round_trip_runtime_preserves_g2_and_replays_same_slot(
     assert first["settled_bar_delay_seconds"] == 300
     assert first["real_trading_enabled"] is False
     assert adjacent["core_result"]["capital"]["balanced"] is True
+
+
+def test_round_trip_runtime_recovers_missed_closed_slots_after_timer_outage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A Persistent=false timer must not silently advance past closed slots."""
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    first = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+
+    recovered = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_sequence_factory(
+            [_shifted_transport(5), _shifted_transport(10)]
+        ),
+    )
+
+    assert recovered["status"] == "backlog_pending"
+    assert recovered["recovery_mode"] == "backlog_recovery"
+    assert recovered["backlog_remaining"] is True
+    assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
+        "backlog_recovery",
+        "backlog_recovery",
+    ]
+    assert [item["target_window_end"] for item in recovered["cycle_results"]] == [
+        "2026-07-19T01:10:00Z",
+        "2026-07-19T01:15:00Z",
+    ]
+    checkpoint = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
+    assert checkpoint["latest_market_slot"] == "2026-07-19T01:10:00Z"
 
 
 def test_round_trip_runtime_rejects_noncanonical_epoch_or_token(

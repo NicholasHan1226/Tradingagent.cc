@@ -378,7 +378,11 @@ core、capital、order、Champion 或现有 `round_trip_learning/`，也不使�
 `delayed_paper_round_trip_runtime.py` 是隔离 round-trip epoch 的唯一 closed-5m
 server wrapper。
 它仅复用已冻结的 TradingDatas manifest、token-file transport 与 13-bar 门禁，
-每次先后校验 epoch identity 与旧 g2 archive，再运行一个新/待恢复 observation。
+每次先后校验 epoch identity 与旧 g2 archive。若 G5 的 `Persistent=false` timer
+因主机停机漏过已闭合 slot，runtime 从 checkpoint 的最早缺口按顺序补处理，单次最多
+两个 cycle；未追平时返回 receipt-bound `backlog_pending`（非零退出），下轮继续，
+绝不跳到最新 slot。receipt 的 `recovery_mode`、`cycle_results` 与
+`backlog_remaining` 区分正常轮、pending recovery 与 outage backlog recovery。
 `tradingagent-crypto-round-trip-delayed-paper.service/.timer` 与不会改写 G3 选择
 文件的 `tradingagent-crypto-round-trip-g4-delayed-paper.service/.timer` 都是独立候选；
 仓库默认不启用，且旧 g2 root 始终为只读路径。只有发布侧完成 one-shot、同槽幂等、
@@ -457,10 +461,10 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 G5 acceptance 仍只报告 `not_ready` 或 `eligible`，并沿用 288 根连续 closed-5m
 completion 的 learning maturity 门槛；它不因 epoch generation 改变而放宽门禁。
 
-为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽 PIT 校验。这带来 5 分钟的模拟延迟，但给采集独立完成和落库留出了一个完整周期，而非用直接 service 依赖进行耦合。新的 `data_reject` receipt 记录请求的 window/cutoff，只读报告会将它作为 gap 证据展示；没有这些 receipt 的缺口仍标为未分类，不伪造外部原因。
+为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽 PIT 校验。这带来 5 分钟的模拟延迟，但给采集独立完成和落库留出了一个完整周期，而非用直接 service 依赖进行耦合。若主机停机造成 timer 漏触发，runtime 用 checkpoint 从最早缺失 slot 开始补处理；每次最多两根，未追平的 `backlog_pending` receipt 会让该轮失败并保留缺口，不把它伪装成最新成功。新的 `data_reject` receipt 记录请求的 window/cutoff，只读报告会将它作为 gap 证据展示；没有这些 receipt 的缺口仍标为未分类，不伪造外部原因。
 核心单请求超时固定为 8 秒：该值覆盖正式 18083 已验证的冷路径 catalog 尾延迟，且两轮
 最坏分页预算仍低于 systemd 的 180 秒停止线；超时不重试、不回退，也不放宽 freshness。
-G5 runtime 成功时写入 systemd journal 的仅是有界的
+G5 runtime 成功或已分类的非零 backlog 时写入 systemd journal 的仅是有界的
 `tradingagent.crypto.round_trip_server_journal.v1` 摘要：slot、请求窗口、runtime/profile
 指纹、数据访问计数与 simulation-only flags。完整 `core_result`、订单和资本对象不写入
 journal；它们继续只在受控的 Crypto audit ledger 中审计。该日志投影不改变 receipt、资本、
