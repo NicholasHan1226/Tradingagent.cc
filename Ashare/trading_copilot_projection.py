@@ -124,6 +124,71 @@ def _sha_text(value: object, reason: str) -> str:
     return raw
 
 
+def _activity_authority(
+    value: object,
+    *,
+    dataset_id: str,
+    data_through: str,
+    receipt_id: str,
+    receipt_sha256: str,
+    lineage_sha256: str,
+) -> dict[str, Any]:
+    """Validate the receipt-bound activity state for one consumed dataset."""
+
+    authority = _mapping(value, "projection_activity_authority_required")
+    if _text(authority.get("datasetId"), "projection_activity_authority_invalid") != dataset_id:
+        raise TradingCopilotProjectionError("projection_activity_authority_dataset_mismatch")
+    if _text(authority.get("market"), "projection_activity_authority_invalid") != "ashare":
+        raise TradingCopilotProjectionError("projection_activity_authority_market_invalid")
+    if _text(authority.get("timezone"), "projection_activity_authority_invalid") != "Asia/Shanghai":
+        raise TradingCopilotProjectionError("projection_activity_authority_timezone_invalid")
+    calendar = _mapping(authority.get("calendar"), "projection_activity_authority_calendar_invalid")
+    calendar_id = _text(calendar.get("id"), "projection_activity_authority_calendar_invalid")
+    calendar_version = _text(calendar.get("version"), "projection_activity_authority_calendar_invalid")
+    if _text(calendar.get("sourceDatasetId"), "projection_activity_authority_calendar_invalid") != "cn.market.trade_calendar":
+        raise TradingCopilotProjectionError("projection_activity_authority_calendar_dataset_invalid")
+    calendar_receipt_id = _text(calendar.get("receiptId"), "projection_activity_authority_calendar_invalid")
+    calendar_receipt_sha = _sha_text(calendar.get("receiptSha256"), "projection_activity_authority_calendar_invalid")
+    calendar_lineage_sha = _sha_text(calendar.get("lineageSha256"), "projection_activity_authority_calendar_invalid")
+    calendar_sha = _sha_text(calendar.get("calendarSha256"), "projection_activity_authority_calendar_invalid")
+    session = _mapping(authority.get("session"), "projection_activity_authority_session_invalid")
+    state = _text(session.get("state"), "projection_activity_authority_session_invalid")
+    if state not in {"open", "closed", "halted"}:
+        raise TradingCopilotProjectionError("projection_activity_authority_session_invalid")
+    session_as_of = _timestamp(session.get("asOf"), "projection_activity_authority_session_invalid")
+    authority_data_through = _timestamp(authority.get("dataThrough"), "projection_activity_authority_time_invalid")
+    if authority_data_through != data_through:
+        raise TradingCopilotProjectionError("projection_activity_authority_data_through_mismatch")
+    source = _mapping(authority.get("source"), "projection_activity_authority_source_invalid")
+    if (
+        _text(source.get("receiptId"), "projection_activity_authority_source_invalid") != receipt_id
+        or _sha_text(source.get("receiptSha256"), "projection_activity_authority_source_invalid") != receipt_sha256
+        or _sha_text(source.get("lineageSha256"), "projection_activity_authority_source_invalid") != lineage_sha256
+    ):
+        raise TradingCopilotProjectionError("projection_activity_authority_source_mismatch")
+    return {
+        "datasetId": dataset_id,
+        "market": "ashare",
+        "timezone": "Asia/Shanghai",
+        "calendar": {
+            "id": calendar_id,
+            "version": calendar_version,
+            "sourceDatasetId": "cn.market.trade_calendar",
+            "receiptId": calendar_receipt_id,
+            "receiptSha256": calendar_receipt_sha,
+            "lineageSha256": calendar_lineage_sha,
+            "calendarSha256": calendar_sha,
+        },
+        "session": {"state": state, "asOf": session_as_of},
+        "dataThrough": authority_data_through,
+        "source": {
+            "receiptId": receipt_id,
+            "receiptSha256": receipt_sha256,
+            "lineageSha256": lineage_sha256,
+        },
+    }
+
+
 def _load_batch(path: Path) -> Mapping[str, Any]:
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise TradingCopilotProjectionError("projection_input_path_invalid")
@@ -144,15 +209,29 @@ def _source(value: object) -> dict[str, Any]:
     adjustment = _text(source.get("adjustment"), "projection_source_adjustment_invalid")
     if adjustment not in {"none", "forward", "backward", "unknown"}:
         raise TradingCopilotProjectionError("projection_source_adjustment_invalid")
+    dataset_id = _text(source.get("datasetId"), "projection_source_dataset_invalid")
+    receipt_id = _text(source.get("receiptId"), "projection_source_receipt_invalid")
+    receipt_sha256 = _sha_text(source.get("receiptSha256"), "projection_source_receipt_sha_invalid")
+    lineage_sha256 = _sha_text(source.get("lineageSha256"), "projection_source_lineage_invalid")
+    data_through = _timestamp(source.get("dataThrough"), "projection_source_time_invalid")
     return {
         "transportContract": FIXED_SOURCE_TRANSPORT,
-        "datasetId": _text(source.get("datasetId"), "projection_source_dataset_invalid"),
-        "receiptId": _text(source.get("receiptId"), "projection_source_receipt_invalid"),
-        "receiptSha256": _sha_text(source.get("receiptSha256"), "projection_source_receipt_sha_invalid"),
-        "dataThrough": _timestamp(source.get("dataThrough"), "projection_source_time_invalid"),
+        "datasetId": dataset_id,
+        "receiptId": receipt_id,
+        "receiptSha256": receipt_sha256,
+        "lineageSha256": lineage_sha256,
+        "dataThrough": data_through,
         "retrievedAt": _timestamp(source.get("retrievedAt"), "projection_source_time_invalid"),
         "freshness": freshness,
         "adjustment": adjustment,
+        "activityAuthority": _activity_authority(
+            source.get("activityAuthority"),
+            dataset_id=dataset_id,
+            data_through=data_through,
+            receipt_id=receipt_id,
+            receipt_sha256=receipt_sha256,
+            lineage_sha256=lineage_sha256,
+        ),
     }
 
 
@@ -350,6 +429,14 @@ def _event(value: object, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
         > datetime.fromisoformat(normalized_capability["asOf"].replace("Z", "+00:00"))
     ):
         raise TradingCopilotProjectionError("projection_event_capability_time_order_invalid")
+    normalized_capability["activityAuthority"] = _activity_authority(
+        capability.get("activityAuthority"),
+        dataset_id=normalized_capability["datasetId"],
+        data_through=normalized_capability["dataThrough"],
+        receipt_id=capability_receipt_id,
+        receipt_sha256=capability_receipt_sha,
+        lineage_sha256=normalized_capability["lineageSha256"],
+    )
     normalized = {
         "id": _text(event.get("id"), "projection_event_id_invalid"),
         "kind": kind,
@@ -390,6 +477,20 @@ def _evidence_items(value: object, *, direction: str) -> list[dict[str, Any]]:
             "knownAt": _timestamp(row.get("knownAt"), f"projection_{direction}_known_at_invalid"),
         })
     return result
+
+
+def _calendar_receipt(authority: Mapping[str, Any]) -> dict[str, str]:
+    calendar = _mapping(
+        authority.get("calendar"), "projection_activity_authority_calendar_invalid"
+    )
+    return {
+        "receiptId": _text(
+            calendar.get("receiptId"), "projection_activity_authority_calendar_invalid"
+        ),
+        "receiptSha256": _sha_text(
+            calendar.get("receiptSha256"), "projection_activity_authority_calendar_invalid"
+        ),
+    }
 
 
 def _normalize_item(raw: object, generated_at: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -459,9 +560,12 @@ def _normalize_item(raw: object, generated_at: str) -> tuple[dict[str, Any], lis
     }
     receipts = [
         {"receiptId": source["receiptId"], "receiptSha256": source["receiptSha256"]},
+        _calendar_receipt(source["activityAuthority"]),
         company_receipt,
+        _calendar_receipt(_source(_mapping(item.get("company"), "projection_company_invalid").get("source"))["activityAuthority"]),
         *(_receipt(value) for value in _sequence(item.get("sourceReceipts", []), "projection_source_receipts_invalid")),
         *(value[1] for value in events_and_receipts),
+        *(_calendar_receipt(value[0]["dataCapability"]["activityAuthority"]) for value in events_and_receipts),
     ]
     unique = {(entry["receiptId"], entry["receiptSha256"]): entry for entry in receipts}
     return projection, [unique[key] for key in sorted(unique)]
