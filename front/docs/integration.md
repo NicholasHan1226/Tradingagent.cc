@@ -34,6 +34,18 @@ PIT/revision evidence, frozen OOS, calibration, interval coverage, cost policy,
 same-input baseline comparison and positive post-cost utility. A model name never
 bypasses those gates.
 
+The research terminal also reads its current A-share tracking list through
+`GET /api/trading-copilot/tracking-universe`. The endpoint reads the regular,
+non-symlinked server-local file `runtime/tradingcopilot/tracking-universe.json`
+by default (or an explicitly configured absolute path), validates
+`tradingagent.trading_copilot_tracking_universe.v1`, and serves GET only. Each
+item is only a `symbol`/`name` mapping for the session's active universe; it is
+not an account holding, investment recommendation, quote, or prediction. A
+missing, malformed, or untrusted file returns 404 and the UI deliberately shows
+“waiting for current list projection” instead of filling the list with demo
+stocks. The A-share session writer is responsible for producing this artifact;
+the frontend never creates or edits it.
+
 TradingCopilot personal state uses `GET/PUT /api/trading-copilot/state`. `GET`
 returns an `ETag`; every `PUT` must send that value as `If-Match`. The server
 serializes writes, rejects stale revisions with `409`, and verifies state hash,

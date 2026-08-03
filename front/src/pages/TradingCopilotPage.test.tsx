@@ -23,9 +23,10 @@ describe('TradingCopilotPage', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
 
-    expect(await screen.findByText('今天先看条件，再做决定')).toBeInTheDocument()
+    expect(await screen.findByText('等待现役清单投影')).toBeInTheDocument()
+    expect(document.querySelector('.copilot-sidebar')).toBeNull()
     expect(screen.getAllByText('演示分析').length).toBeGreaterThan(0)
-    expect(screen.getByText('Copilot 只记录计划，不连接券商、不自动下单。')).toBeInTheDocument()
+    expect(screen.getByText('仅人工研究，不连接券商')).toBeInTheDocument()
     expect(screen.getByText('公司资料')).toBeInTheDocument()
     expect(screen.getByText('Copilot 证据共识')).toBeInTheDocument()
     expect(screen.getByText('舆论与事件温度')).toBeInTheDocument()
@@ -58,7 +59,7 @@ describe('TradingCopilotPage', () => {
   it('adds an uncovered A-share and fails closed to no formal analysis', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
-    await screen.findByText('今天先看条件，再做决定')
+    await screen.findByText('等待现役清单投影')
     fireEvent.click(screen.getByRole('button', { name: '关注列表' }))
     fireEvent.change(screen.getByLabelText('输入股票代码和名称'), { target: { value: '000001.SZ 平安银行' } })
     fireEvent.click(screen.getByRole('button', { name: '加入关注' }))
@@ -73,7 +74,7 @@ describe('TradingCopilotPage', () => {
   it('switches chart ranges, forecast views, and stock-linked event content', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
-    await screen.findByText('今天先看条件，再做决定')
+    await screen.findByText('等待现役清单投影')
 
     expect(screen.getByRole('img', { name: '许继电气 1D 行情图' })).toBeInTheDocument()
     expect(screen.getAllByText('演示公告：项目进展提示').length).toBeGreaterThan(0)
@@ -83,6 +84,7 @@ describe('TradingCopilotPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: '1D' }))
 
     const forecastToggle = screen.getByRole('button', { name: '显示预测' })
+    expect(screen.getAllByText('研究演示 · 概率停显').length).toBeGreaterThan(0)
     fireEvent.click(forecastToggle)
     expect(screen.getByRole('button', { name: '预测已显示' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('img', { name: '许继电气 1D 行情与研究预测图' })).toBeInTheDocument()
@@ -90,7 +92,7 @@ describe('TradingCopilotPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: '预测' }))
     expect(screen.getByText('方向研究情景')).toBeInTheDocument()
     expect(screen.getByText('预测交付门禁')).toBeInTheDocument()
-    expect(screen.getByText('研究演示 · 概率停显')).toBeInTheDocument()
+    expect(screen.getAllByText('研究演示 · 概率停显').length).toBeGreaterThan(1)
     expect(screen.queryByText(/50%|80%|向上 \d+%|向下 \d+%/)).not.toBeInTheDocument()
     expect(screen.getByText('Challenger · 同门禁对照')).toBeInTheDocument()
 
@@ -104,7 +106,7 @@ describe('TradingCopilotPage', () => {
   it('separates the complete portfolio from the selected stock relationship', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
-    await screen.findByText('今天先看条件，再做决定')
+    await screen.findByText('等待现役清单投影')
 
     expect(screen.getByText('当前个股持仓')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /查看全部 2 只持仓/ })).toBeInTheDocument()
@@ -118,7 +120,7 @@ describe('TradingCopilotPage', () => {
   it('distinguishes holdings from watch-only stocks in the watchlist', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     render(<TradingCopilotPage demoPreviewEnabled onOpenQuant={() => undefined} />)
-    await screen.findByText('今天先看条件，再做决定')
+    await screen.findByText('等待现役清单投影')
     fireEvent.click(screen.getByRole('button', { name: '关注列表' }))
 
     expect(screen.getByText('4 只关注 · 2 只持仓')).toBeInTheDocument()

@@ -8,6 +8,7 @@ import { copilotDemoAnalyses, createCopilotDemoState, unavailableAnalysis } from
 import { analysisFromSignal } from '../copilot/analysis'
 import { getDemoStockIntelligence, summarizeStockSentiment, unavailableStockIntelligence, type StockIntelligence } from '../copilot/stockIntelligence'
 import { loadStockIntelligence } from '../copilot/stockIntelligenceClient'
+import { loadTrackingUniverse, type TrackingUniverse } from '../copilot/trackingUniverse'
 import { buildPortfolioAssistantReport } from '../copilot/portfolioAssistant'
 import { loadTradingCopilotState, saveTradingCopilotState, type CopilotPersistence } from '../copilot/tradingCopilotClient'
 import { isAshareSymbol, type CopilotAnalysis, type CopilotDecision, type CopilotDecisionAction, type CopilotHolding, type TradingCopilotState } from '../copilot/types'
@@ -36,6 +37,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const [usingDemoSeed, setUsingDemoSeed] = useState(false)
   const [tradingAgentAnalyses, setTradingAgentAnalyses] = useState<Record<string, CopilotAnalysis>>({})
   const [formalStockIntelligence, setFormalStockIntelligence] = useState<Record<string, StockIntelligence>>({})
+  const [trackingUniverse, setTrackingUniverse] = useState<TrackingUniverse | null>(null)
   const attemptedFormalSymbols = useRef(new Set<string>())
   const [pendingDecisionAction, setPendingDecisionAction] = useState<CopilotDecisionAction | null>(null)
   const [reviewTarget, setReviewTarget] = useState<CopilotDecision | null>(null)
@@ -66,6 +68,12 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
 
   useEffect(() => {
     let active = true
+    void loadTrackingUniverse().then((universe) => { if (active) setTrackingUniverse(universe) })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    let active = true
     const client = createTradingAgentSnapshotClient({ timeoutMs: 4000 })
     async function refreshAnalyses() {
       try {
@@ -86,7 +94,8 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   useEffect(() => {
     if (!state && !selectedSymbol) return
     const stateSymbols = state ? [...state.watchlist, ...state.holdings].map((item) => item.symbol) : []
-    const symbols = [...new Set([selectedSymbol, ...stateSymbols])]
+    const trackedSymbols = trackingUniverse?.items.map((item) => item.symbol) ?? []
+    const symbols = [...new Set([selectedSymbol, ...stateSymbols, ...trackedSymbols])]
       .filter(Boolean)
       .filter((symbol) => !formalStockIntelligence[symbol] && !attemptedFormalSymbols.current.has(symbol))
     if (!symbols.length) return
@@ -98,7 +107,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
       if (verified.length) setFormalStockIntelligence((current) => ({ ...current, ...Object.fromEntries(verified) }))
     })
     return () => { active = false }
-  }, [selectedSymbol, state, formalStockIntelligence])
+  }, [selectedSymbol, state, formalStockIntelligence, trackingUniverse])
 
   const selected = state?.watchlist.find((item) => item.symbol === selectedSymbol)
     ?? (browseTarget?.symbol === selectedSymbol ? browseTarget : undefined)
@@ -120,6 +129,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   const investedCost = useMemo(() => state?.holdings.reduce((sum, item) => sum + item.quantity * item.averageCost, 0) ?? 0, [state?.holdings])
   const hasDeclaredState = Boolean(state && (state.account.declaredCapitalCny > 0 || state.account.availableCashCny > 0 || state.holdings.length > 0 || state.watchlist.length > 0 || state.decisions.length > 0))
   const selectedIsWatched = Boolean(selected && state?.watchlist.some((item) => item.symbol === selected.symbol))
+  const trackedItems = useMemo(() => trackingUniverse?.items ?? [], [trackingUniverse])
   const visibleAnalyses = useMemo(() => ({
     ...tradingAgentAnalyses,
     ...Object.fromEntries(Object.entries(formalStockIntelligence).flatMap(([symbol, item]) => item.analysis ? [[symbol, item.analysis]] : [])),
@@ -248,6 +258,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
   function openStock(symbol: string) {
     const target = state?.watchlist.find((item) => item.symbol === symbol)
       ?? state?.holdings.find((item) => item.symbol === symbol)
+      ?? trackedItems.find((item) => item.symbol === symbol)
       ?? { symbol, name: symbol.slice(0, 6) }
     setBrowseTarget(target)
     setSelectedSymbol(symbol)
@@ -278,33 +289,27 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
 
   return (
     <main className="copilot-shell">
-      <aside className="copilot-sidebar">
-        <button className="copilot-brand" onClick={() => setView('desk')} type="button" aria-label="TradingCopilot 首页">
-          <span className="brand-mark"><Sparkles size={17} /></span>
-          <span><strong>Trading</strong><b>Copilot</b><small>A 股人工决策台</small></span>
-        </button>
-        <nav aria-label="TradingCopilot 导航">
-          <button className={view === 'desk' ? 'active' : ''} onClick={() => setView('desk')} type="button"><LayoutDashboard size={17} />决策台</button>
-          <button className={view === 'watchlist' ? 'active' : ''} onClick={() => setView('watchlist')} type="button"><Eye size={17} />关注列表</button>
-          <button className={view === 'portfolio' ? 'active' : ''} onClick={() => setView('portfolio')} type="button"><WalletCards size={17} />资金与持仓</button>
-          <button className={view === 'decisions' ? 'active' : ''} onClick={() => setView('decisions')} type="button"><BookOpenCheck size={17} />决策记录</button>
-        </nav>
-        <div className="copilot-boundary">
-          <ShieldCheck size={18} />
-          <div><strong>人工确认边界</strong><p>Copilot 只记录计划，不连接券商、不自动下单。</p></div>
-        </div>
-        <button className="quant-switch" onClick={onOpenQuant} type="button"><ArrowLeftRight size={16} />打开量化运行台</button>
-      </aside>
-
       <section className="copilot-main">
         <header className="copilot-topbar">
-          <div><span className="eyebrow">PERSONAL A-SHARE DESK</span><h1>{viewTitle(view)}</h1></div>
+          <button className="copilot-brand inline" onClick={() => setView('desk')} type="button" aria-label="TradingCopilot 首页"><span className="brand-mark"><Sparkles size={17} /></span><span><strong>Trading</strong><b>Copilot</b><small>A 股研究终端</small></span></button>
+          <div className="top-search"><Search size={15} /><input aria-label="顶部搜索 A 股" onChange={(event) => setDeskQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') browseStock() }} placeholder="搜索 A 股代码或名称" value={deskQuery} /></div>
           <div className="copilot-top-actions">
             <span className={`persistence ${usingDemoSeed || researchPreview ? 'demo' : persistence}`}>{usingDemoSeed ? '独立演示样例 · 修改不会保存' : researchPreview ? '研究界面预览 · 个人状态仍为空' : persistence === 'local_draft' && hasDeclaredState ? '服务器不可用 · 仅保存在此浏览器' : hasDeclaredState ? '已保存到个人状态账本' : '尚未录入个人状态'}</span>
             <button aria-label="提醒功能尚未启用" className="round-button" disabled title="提醒功能尚未启用" type="button"><Bell size={17} /></button>
             <span className="avatar">N</span>
           </div>
         </header>
+
+        <nav className="copilot-navline" aria-label="TradingCopilot 导航">
+          <button className={view === 'desk' ? 'active' : ''} onClick={() => setView('desk')} type="button"><LayoutDashboard size={15} />研究终端</button>
+          <button className={view === 'watchlist' ? 'active' : ''} onClick={() => setView('watchlist')} type="button"><Eye size={15} />关注列表</button>
+          <button className={view === 'portfolio' ? 'active' : ''} onClick={() => setView('portfolio')} type="button"><WalletCards size={15} />资金与持仓</button>
+          <button className={view === 'decisions' ? 'active' : ''} onClick={() => setView('decisions')} type="button"><BookOpenCheck size={15} />决策记录</button>
+          <span className="copilot-boundary-inline"><ShieldCheck size={14} />仅人工研究，不连接券商</span>
+          <button className="quant-switch inline" onClick={onOpenQuant} type="button"><ArrowLeftRight size={14} />量化运行台</button>
+        </nav>
+
+        <TrackingRibbon items={trackedItems} selectedSymbol={selectedSymbol} generatedAt={trackingUniverse?.generatedAt ?? null} onOpen={openStock} />
 
         <section className="account-strip" aria-label="用户申报账户摘要">
           <div><span>申报总资金</span><strong>{money(state.account.declaredCapitalCny)}</strong><small>用户手工维护 · 非券商确认</small></div>
@@ -423,6 +428,18 @@ function WatchlistWorkspace({ analyses, demoPreviewEnabled, holdings, onAdd, onO
       })}
       {!watchlist.length && <div className="management-empty"><ListPlus size={25} /><strong>还没有关注股票</strong><p>先输入一只 A 股；系统不会自动把演示股票当成你的关注。</p></div>}
     </div>
+  </section>
+}
+
+function TrackingRibbon({ generatedAt, items, onOpen, selectedSymbol }: {
+  generatedAt: string | null
+  items: Array<{ symbol: string; name: string }>
+  onOpen: (symbol: string) => void
+  selectedSymbol: string
+}) {
+  return <section className="tracking-ribbon" aria-label="A股跟踪池">
+    <div className="tracking-ribbon-title"><span className="eyebrow">TRACKING UNIVERSE</span><strong>{items.length ? `${items.length} 只已映射` : '等待现役清单投影'}</strong><small>{generatedAt ? `更新 ${formatTime(generatedAt)}` : '不会以演示股票填充正式跟踪池'}</small></div>
+    {items.length ? <div className="tracking-ribbon-list">{items.map((item) => <button className={item.symbol === selectedSymbol ? 'active' : ''} key={item.symbol} onClick={() => onOpen(item.symbol)} type="button"><strong>{item.name}</strong><small>{item.symbol}</small></button>)}</div> : <p>现役 30 股会话清单尚未输出到 Copilot 的只读投影；投影到位后，这里会自动建立跟踪并逐只读取正式分析回执。</p>}
   </section>
 }
 
@@ -611,5 +628,4 @@ function formatTime(value: string) { return new Intl.DateTimeFormat('zh-CN', { m
 function decisionLabel(action: CopilotDecisionAction) { return ({ planned: '加入计划', observing: '继续观察', skipped: '暂不交易' })[action] }
 function reviewLabel(status: NonNullable<CopilotDecision['review']>['status'] | undefined) { return ({ pending: '待复盘', executed: '已执行', not_executed: '未执行', expired: '已失效' } as Record<string, string>)[status ?? 'pending'] }
 function readinessLabel(value: string) { return ({ verified: '已验证', demo: '演示', unavailable: '不可用', typed: '已定型', unscored_observation: '未评分观察', ready: '已就绪', blocked: '阻断', not_applicable: '不适用', eligible_for_human_review: '可供人工复核', observe_only: '仅观察' } as Record<string, string>)[value] ?? value }
-function viewTitle(view: CopilotView) { return ({ desk: '今天先看条件，再做决定', watchlist: '先分清关注与持仓', portfolio: '核对完整资金与持仓', decisions: '复盘你的人工决定' })[view] }
 function analysisModeLabel(mode: string) { return ({ demo_fixture: '演示分析', tradingagent_observation: 'TA 正式观察', analysis_unavailable: '暂无正式分析' } as Record<string, string>)[mode] ?? mode }
