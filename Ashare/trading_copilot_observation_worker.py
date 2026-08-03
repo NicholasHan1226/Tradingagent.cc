@@ -42,6 +42,8 @@ from Ashare.trading_copilot_event_consumer_profile import (
     TradingCopilotEventConsumerProfileError,
     load_event_consumer_profiles,
     select_event_consumer_profiles,
+    validate_event_consumer_profile_contract,
+    validate_event_consumer_runtime_evidence,
 )
 from shared.runtime.ashare_runtime_ports import (
     AshareRuntimeAuthorityLoadBlocked,
@@ -268,6 +270,15 @@ def load_current_event_snapshots(
             blocked.append(dataset_id)
             blocked_reasons[dataset_id] = "ashare_evidence_profile_missing"
             continue
+        try:
+            validate_event_consumer_profile_contract(
+                consumer_profile=consumer_profile,
+                evidence_profile=profile,
+            )
+        except TradingCopilotEventConsumerProfileError as exc:
+            blocked.append(dataset_id)
+            blocked_reasons[dataset_id] = str(exc)
+            continue
         filter_contract = dict(profile.filter_operators)
         filters: dict[str, Any] = {}
         supports_symbol_filter = (
@@ -293,6 +304,16 @@ def load_current_event_snapshots(
         except AshareEvidenceContractError as exc:
             blocked.append(dataset_id)
             blocked_reasons[dataset_id] = exc.reason_code
+            continue
+        try:
+            validate_event_consumer_runtime_evidence(
+                consumer_profile=consumer_profile,
+                evidence_profile=profile,
+                snapshot=snapshot,
+            )
+        except TradingCopilotEventConsumerProfileError as exc:
+            blocked.append(dataset_id)
+            blocked_reasons[dataset_id] = str(exc)
             continue
         accepted.extend(snapshot.events)
     return tuple(accepted), tuple(blocked), blocked_reasons
