@@ -48,6 +48,126 @@ def test_round_trip_request_uses_one_closed_bar_settlement_delay() -> None:
     assert request.observation_cutoff == WINDOW_END + timedelta(seconds=55)
 
 
+def test_round_trip_runtime_journal_summary_excludes_full_core_payload() -> None:
+    receipt = {
+        "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
+        "status": "completed",
+        "core_result": {
+            "market_slot": "2026-08-03T15:05:00Z",
+            "idempotent_replay": False,
+            "orders": {"simulated-order": {"quantity": "0.1"}},
+            "capital": {"cash": "9999"},
+        },
+        "requested_window_end": "2026-08-03T15:05:00Z",
+        "requested_observation_cutoff": "2026-08-03T15:05:55Z",
+        "settled_bar_delay_seconds": 300,
+        "runtime_manifest_sha256": "a" * 64,
+        "fresh_query_catalog_version": "v1-example",
+        "fresh_query_profile_sha256": "b" * 64,
+        "epoch_id": "crypto-delayed-paper-round-trip-epoch-g5",
+        "epoch_generation": 5,
+        "market_data_access_attempt_count": 1,
+        "market_data_network_used": True,
+        "learning_mode": "detached_offline_worker",
+        "learning_authority": False,
+        "learning_invoked": False,
+        "real_trading_enabled": False,
+        "execution_eligible": False,
+        "execution_authority": False,
+        "production_eligible": False,
+        "testnet_used": False,
+        "live_broker_used": False,
+        "model_network_used": False,
+        "promotion_authorized": False,
+        "automatic_promotion_enabled": False,
+        "automatic_risk_expansion_enabled": False,
+        "outbox_id": None,
+        "capital_commit_id": None,
+    }
+
+    summary = runtime_module.round_trip_runtime_journal_summary(receipt)
+
+    assert summary["contract"] == "tradingagent.crypto.round_trip_server_journal.v1"
+    assert summary["runtime_contract"] == runtime_module.ROUND_TRIP_RUNTIME_CONTRACT
+    assert summary["status"] == "completed"
+    assert summary["market_slot"] == "2026-08-03T15:05:00Z"
+    assert summary["idempotent_replay"] is False
+    assert summary["real_trading_enabled"] is False
+    assert "core_result" not in summary
+    encoded = json.dumps(summary, sort_keys=True)
+    assert "simulated-order" not in encoded
+    assert '"orders"' not in encoded
+    assert '"capital"' not in encoded
+
+
+def test_round_trip_runtime_cli_emits_only_bounded_journal_summary(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipt = {
+        "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
+        "status": "completed",
+        "core_result": {
+            "market_slot": "2026-08-03T15:05:00Z",
+            "idempotent_replay": False,
+            "orders": {"simulated-order": {"quantity": "0.1"}},
+        },
+        "real_trading_enabled": False,
+        "execution_authority": False,
+    }
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: receipt,
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    rendered = capsys.readouterr().out
+    payload = json.loads(rendered)
+    assert exit_code == 0
+    assert payload["status"] == "completed"
+    assert "core_result" not in payload
+    assert "simulated-order" not in rendered
+
+
+def test_round_trip_runtime_cli_fails_closed_when_journal_summary_is_invalid(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: {
+            "status": "completed",
+            "core_result": None,
+        },
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert captured.err == "crypto round-trip runtime failed closed\n"
+
+
 def _canonical(value: object) -> bytes:
     return (
         json.dumps(

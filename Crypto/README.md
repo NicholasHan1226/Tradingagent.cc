@@ -460,6 +460,11 @@ completion 的 learning maturity 门槛；它不因 epoch generation 改变而�
 为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽 PIT 校验。这带来 5 分钟的模拟延迟，但给采集独立完成和落库留出了一个完整周期，而非用直接 service 依赖进行耦合。新的 `data_reject` receipt 记录请求的 window/cutoff，只读报告会将它作为 gap 证据展示；没有这些 receipt 的缺口仍标为未分类，不伪造外部原因。
 核心单请求超时固定为 8 秒：该值覆盖正式 18083 已验证的冷路径 catalog 尾延迟，且两轮
 最坏分页预算仍低于 systemd 的 180 秒停止线；超时不重试、不回退，也不放宽 freshness。
+G5 runtime 成功时写入 systemd journal 的仅是有界的
+`tradingagent.crypto.round_trip_server_journal.v1` 摘要：slot、请求窗口、runtime/profile
+指纹、数据访问计数与 simulation-only flags。完整 `core_result`、订单和资本对象不写入
+journal；它们继续只在受控的 Crypto audit ledger 中审计。该日志投影不改变 receipt、资本、
+timer 或任何执行权限。
 
 ## Outage epoch restart 候选
 
