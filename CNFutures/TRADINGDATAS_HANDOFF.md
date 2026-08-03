@@ -65,6 +65,12 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 即使当前快照完整，该数据集仍没有 as-of、effective interval 或 rollover PIT authority。输出固定 `stable=false`、`pit_rollover_authority=false`、`simulation_ready=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false`；它不是模拟成交、shadow、broker 或真实交易授权。
 
+## `ft_limit` 当前日价格限制快照
+
+`CNFutures.ft_limit_current_snapshot.load_ft_limit_current_snapshot` 是 caller-invoked、注入既有 `SharedSignalsV1Client` 的只读消费者。它固定消费 `cn.dataset.ft_limit` schema major `1`，要求 catalog identity `[trade_date,ts_code]`、默认顺序 `[trade_date:asc,ts_code:asc]`，并以 `trade_date=20260803`、无 `as_of`、每页 100 行、最多 9 页的 bounded query 做同观察 replay。该 reader 绑定显式 receipt 和完整 provider-neutral lineage，只保留八个唯一 DCE/M 合约的原始 `up_limit`、`down_limit` 与 `m_ratio`。
+
+当前接受的 receipt snapshot 固定保留 `state=stale`、`degraded=true` 和唯一 reason `freshness_sla_exceeded`，而不是把它降格为 ready/fresh/valid。价格限制和保证金率只作为 receipt-bound raw facts；输出固定 `stable=false`、PIT/numeric-tick/session/rollover authority 为 `false`，以及 `simulation_ready=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false`。它不解释交易所市场规则，不是模拟成交、shadow、broker 或真实交易授权。
+
 ## M 合约 simulation-readiness 覆盖投影
 
 `CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、receipt/lineage 绑定的 `ft_limit` evidence、已验证的当前日 `fut_mapping` snapshot，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
