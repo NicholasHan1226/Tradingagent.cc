@@ -8,6 +8,7 @@ import { readTradingAgentSnapshot } from './tradingAgentSnapshot.ts'
 import { createTradingCopilotStateHandler } from './tradingCopilotState.ts'
 import { createTradingCopilotStockIntelligenceHandler } from './tradingCopilotStockIntelligence.ts'
 import { createTradingCopilotTrackingUniverseHandler } from './tradingCopilotTrackingUniverse.ts'
+import { createTradingCopilotEventTimelineHandler } from './tradingCopilotEventTimeline.ts'
 
 type SnapshotHttpServerOptions = {
   allowedOrigins?: string[]
@@ -18,6 +19,8 @@ type SnapshotHttpServerOptions = {
   trackingUniversePath?: string
   copilotProjectionDir?: string
   copilotProjectionNow?: () => Date
+  copilotEventTimelineDir?: string
+  copilotEventTimelineNow?: () => Date
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -38,6 +41,8 @@ export function createSnapshotRequestHandler({
   trackingUniversePath,
   copilotProjectionDir = process.env.TRADING_COPILOT_PROJECTION_DIR,
   copilotProjectionNow,
+  copilotEventTimelineDir,
+  copilotEventTimelineNow,
   readSnapshot = () => readTradingAgentSnapshot({ workspaceRoot }),
 }: SnapshotHttpServerOptions = {}) {
   assertRestrictedCorsOrigins(allowedOrigins)
@@ -48,6 +53,7 @@ export function createSnapshotRequestHandler({
     now: copilotProjectionNow,
   })
   const handleTrackingUniverse = createTradingCopilotTrackingUniverseHandler({ trackingUniversePath, workspaceRoot })
+  const handleEventTimeline = createTradingCopilotEventTimelineHandler({ projectionDir: copilotEventTimelineDir, workspaceRoot, now: copilotEventTimelineNow })
 
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -65,7 +71,7 @@ export function createSnapshotRequestHandler({
       return
     }
 
-    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state' && url.pathname !== '/api/trading-copilot/stock-intelligence' && url.pathname !== '/api/trading-copilot/tracking-universe') {
+    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state' && url.pathname !== '/api/trading-copilot/stock-intelligence' && url.pathname !== '/api/trading-copilot/tracking-universe' && url.pathname !== '/api/trading-copilot/event-timeline') {
       sendJson(res, 404, { error: 'Not found' })
       return
     }
@@ -79,6 +85,7 @@ export function createSnapshotRequestHandler({
     if (await handleTradingCopilotState(req, res)) return
     if (await handleStockIntelligence(req, res)) return
     if (await handleTrackingUniverse(req, res)) return
+    if (await handleEventTimeline(req, res)) return
 
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'TradingAgent snapshot API is read-only. Use GET.' })

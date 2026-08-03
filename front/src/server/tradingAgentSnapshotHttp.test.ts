@@ -199,4 +199,19 @@ describe('TradingAgent cloud snapshot API server', () => {
     await expect(authorized.json()).resolves.toMatchObject({ items: [{ symbol: '000400.SZ' }] })
     await rm(workspaceRoot, { force: true, recursive: true })
   })
+
+  it('keeps the event timeline behind the same authenticated read-only API', async () => {
+    const baseUrl = await listen(createTradingAgentSnapshotHttpServer({
+      apiToken: 'secret-token',
+      readSnapshot: async () => snapshot,
+    }))
+
+    const unauthorized = await fetch(`${baseUrl}/api/trading-copilot/event-timeline?symbol=000400.SZ`)
+    const authorized = await fetch(`${baseUrl}/api/trading-copilot/event-timeline?symbol=000400.SZ`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    })
+
+    expect(unauthorized.status).toBe(401)
+    expect(authorized.status).toBe(404)
+  })
 })
