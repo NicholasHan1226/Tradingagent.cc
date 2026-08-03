@@ -3,6 +3,7 @@ import {
   Area, Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { ChartNoAxesCombined, Eye, EyeOff, SlidersHorizontal } from 'lucide-react'
+import type { ForecastReadinessStatus } from '../../copilot/forecastReadiness'
 import type { StockIntelligence, StockRange, StockSeriesPoint } from '../../copilot/stockIntelligence'
 
 const rangeOptions: StockRange[] = ['1D', '5D', '1M', '6M', 'YTD', '1Y']
@@ -40,6 +41,11 @@ export function StockMarketChart({ intelligence, range, showForecast, onRangeCha
       <div>
         <span>前收 ¥{intelligence.quote.previousClose.toFixed(2)}</span>
         <small>{isDemo ? '只用于交互验收，不是实时行情' : `数据截至 ${formatTime(intelligence.source?.dataThrough ?? null)}`}</small>
+      </div>
+      <div className={`forecast-quote-state ${forecastVisible ? 'visible' : ''}`}>
+        <span>行情线预测</span>
+        <strong>{intelligence.forecast ? forecastStatusLabel(intelligence.forecast.readiness.status) : '暂无正式预测'}</strong>
+        <small>{intelligence.forecast ? `${intelligence.forecast.horizonLabel} · ${forecastVisible ? '研究图层已展开' : '手工展开后查看情景'}` : '不以当前行情临时生成曲线'}</small>
       </div>
     </div>
     <div className="chart-toolbar">
@@ -101,3 +107,6 @@ function StockChartTooltip({ active, payload, label, isDemo }: { active?: boolea
 function signed(value: number) { return `${value >= 0 ? '+' : ''}${value.toFixed(2)}` }
 function formatTime(value: string | null) { return value ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '无时间' }
 function formatVolume(value: number) { return value >= 10_000 ? `${(value / 10_000).toFixed(1)} 万` : value.toLocaleString('zh-CN') }
+function forecastStatusLabel(status: ForecastReadinessStatus) {
+  return status === 'decision_support_ready' ? '预测门禁已通过' : status === 'illustrative_only' ? '研究演示 · 概率停显' : '预测已阻断'
+}

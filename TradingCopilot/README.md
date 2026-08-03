@@ -73,6 +73,7 @@ V3 把“预测功能存在”和“预测可用于人工决策”拆成机器�
 - 只有 `assessForecastReadiness()` 的十一项门禁全部通过，状态才可成为 `decision_support_ready`，并允许概率和覆盖率标签。门禁包括正式观察、明确期限、模型清单、PIT/修订链、冻结OOS、独立校准证明、至少40个有效独立样本、区间覆盖率、费用/滑点口径、同一PIT基线对照和扣除成本后的正净效用；正式投影中的清单、PIT、OOS、校准、覆盖率、成本和基线证据都必须绑定可验证ID与SHA-256；
 - `kronos_challenger` 与最后值、线性/岭回归基线使用完全相同的门禁。模型名称不能放行概率；Kronos 只有在同一冻结样本、期限、成本与指标上证明稳定增量后，才可进入人工评审；
 - 前端通过只读 `GET /api/trading-copilot/stock-intelligence?symbol=<A股代码>` 读取正式个股投影。默认文件入口为 `runtime/tradingcopilot/stock-intelligence/<symbol>.json`；只接受 `tradingagent_observation`、股票代码绑定、事件逐项绑定和预测readiness自洽的投影，失败返回不可用且不回退provider或生成曲线。
+- 首屏的现役跟踪池通过只读 `GET /api/trading-copilot/tracking-universe` 读取。其文件合同为 [`contracts/tracking_universe.schema.json`](contracts/tracking_universe.schema.json)，默认入口是 `runtime/tradingcopilot/tracking-universe.json`。它只映射当前 A 股会话的 `symbol/name`，不是用户关注/持仓，也不构成行情、推荐或预测证据；会话侧尚未产出时，页面必须显示等待状态，不能把演示股票扩充为“30只跟踪”。
 
 本阶段的必须交付是：门禁合同、正式投影读侧、误导性概率停显、期限显示、Kronos Challenger 边界和自动化负例全部可运行。Kronos 权重下载、常驻推理和模型合并不在该交付边界内；它们属于M2模型竞赛，开始条件仍是A股至少20个交易日模拟且历史PIT可用。提前安装模型不能替代这些输入条件。
 

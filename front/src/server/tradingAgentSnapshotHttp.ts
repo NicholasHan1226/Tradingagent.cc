@@ -7,6 +7,7 @@ import type { TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel
 import { readTradingAgentSnapshot } from './tradingAgentSnapshot.ts'
 import { createTradingCopilotStateHandler } from './tradingCopilotState.ts'
 import { createTradingCopilotStockIntelligenceHandler } from './tradingCopilotStockIntelligence.ts'
+import { createTradingCopilotTrackingUniverseHandler } from './tradingCopilotTrackingUniverse.ts'
 
 type SnapshotHttpServerOptions = {
   allowedOrigins?: string[]
@@ -14,6 +15,7 @@ type SnapshotHttpServerOptions = {
   readSnapshot?: () => Promise<TradingAgentReadModelSnapshot>
   workspaceRoot?: string
   copilotStatePath?: string
+  trackingUniversePath?: string
   copilotProjectionDir?: string
   copilotProjectionNow?: () => Date
 }
@@ -33,6 +35,7 @@ export function createSnapshotRequestHandler({
   apiToken = process.env.TRADING_AGENT_SNAPSHOT_API_TOKEN,
   workspaceRoot = process.env.FINANCE_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
   copilotStatePath,
+  trackingUniversePath,
   copilotProjectionDir = process.env.TRADING_COPILOT_PROJECTION_DIR,
   copilotProjectionNow,
   readSnapshot = () => readTradingAgentSnapshot({ workspaceRoot }),
@@ -44,6 +47,7 @@ export function createSnapshotRequestHandler({
     projectionDir: copilotProjectionDir,
     now: copilotProjectionNow,
   })
+  const handleTrackingUniverse = createTradingCopilotTrackingUniverseHandler({ trackingUniversePath, workspaceRoot })
 
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -61,7 +65,7 @@ export function createSnapshotRequestHandler({
       return
     }
 
-    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state' && url.pathname !== '/api/trading-copilot/stock-intelligence') {
+    if (url.pathname !== TRADING_AGENT_SNAPSHOT_ROUTE && url.pathname !== '/api/trading-copilot/state' && url.pathname !== '/api/trading-copilot/stock-intelligence' && url.pathname !== '/api/trading-copilot/tracking-universe') {
       sendJson(res, 404, { error: 'Not found' })
       return
     }
@@ -74,6 +78,7 @@ export function createSnapshotRequestHandler({
 
     if (await handleTradingCopilotState(req, res)) return
     if (await handleStockIntelligence(req, res)) return
+    if (await handleTrackingUniverse(req, res)) return
 
     if (req.method !== 'GET') {
       sendJson(res, 405, { error: 'TradingAgent snapshot API is read-only. Use GET.' })

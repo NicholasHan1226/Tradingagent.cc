@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from '../api/tradingAgentReadModel'
 import { createTradingAgentSnapshotHttpServer, isMainModule, resolveSnapshotListenHost } from './tradingAgentSnapshotHttp'
 
@@ -175,5 +175,28 @@ describe('TradingAgent cloud snapshot API server', () => {
     })
 
     expect(response.status).toBe(403)
+  })
+
+  it('routes the verified tracking universe through the same authenticated read-only API', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'snapshot-universe-'))
+    const trackingUniversePath = join(workspaceRoot, 'tracking-universe.json')
+    await writeFile(trackingUniversePath, JSON.stringify({
+      contractId: 'tradingagent.trading_copilot_tracking_universe.v1',
+      generatedAt: '2026-08-03T01:00:00.000Z',
+      items: [{ symbol: '000400.SZ', name: '许继电气' }],
+    }))
+    const baseUrl = await listen(
+      createTradingAgentSnapshotHttpServer({ apiToken: 'secret-token', trackingUniversePath, workspaceRoot }),
+    )
+
+    const unauthorized = await fetch(`${baseUrl}/api/trading-copilot/tracking-universe`)
+    const authorized = await fetch(`${baseUrl}/api/trading-copilot/tracking-universe`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    })
+
+    expect(unauthorized.status).toBe(401)
+    expect(authorized.status).toBe(200)
+    await expect(authorized.json()).resolves.toMatchObject({ items: [{ symbol: '000400.SZ' }] })
+    await rm(workspaceRoot, { force: true, recursive: true })
   })
 })

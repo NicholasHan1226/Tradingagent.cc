@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradingagent.trading_copilot_tracking_universe.v1",
+  "title": "TradingCopilot read-only A-share tracking universe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractId", "generatedAt", "items"],
+  "properties": {
+    "contractId": { "const": "tradingagent.trading_copilot_tracking_universe.v1" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/item" }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "name"],
+      "properties": {
+        "symbol": { "type": "string", "pattern": "^(0|3|6)[0-9]{5}\\.(SH|SZ)$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    }
+  }
+}

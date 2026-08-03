@@ -1,69 +1,75 @@
-# Terminal Grid Design QA
+# TradingCopilot Research Terminal — Design QA
 
-Date: 2026-07-11
+Date: 2026-08-03
 
-Reference: current Hyperliquid trade screen captured at 1440×900.
+## Comparison evidence
 
-Implementation states inspected:
+- Source visual truth: `conversation://browser-comment-1` — Nicholas-provided
+  Perplexity Finance AMZN screenshot, 1026×994 px. The annotated left navigation
+  rail is explicitly out of scope and was not used as a target.
+- Implementation: browser-rendered `http://127.0.0.1:5173/?product=copilot&demo=1`,
+  captured at 1026×994 CSS px in the dark demo-research state.
+- Density normalization: the source and implementation use the same 1026×994
+  viewport; no device frame, browser chrome, or density scaling was included in
+  the comparison.
+- Focused regions compared: compact masthead/search, current-stock header and
+  chart, and the fixed right-side company/evidence rail. A separate focused crop
+  was unnecessary because the source and implementation kept those regions
+  visible in the same full-view capture.
 
-- overview at 1440×900;
-- returns, process, holdings, risk and review at 1440×900;
-- all six navigation states at 1280×720;
-- risk chart and ledger at both desktop viewports.
-- terminal operations layer at 1440×900 and 1280×720, including market/evidence tape, process event ledger, sourced holdings, evidence-domain risk rows and review controls;
-- evidence-adaptive overview, quiet returns and empty holdings at 1440×900, plus all six routes at 1280×720.
+## Findings
 
-## Visual comparison
+- No actionable P0/P1/P2 differences remain for the requested translation.
+  The implementation intentionally uses a 30-stock tracking ribbon and a
+  personal-state strip where the reference has product-specific cards; those are
+  required TradingCopilot functions rather than copied Perplexity features.
+- Typography: compact sans-serif hierarchy, small terminal labels, tabular quote
+  treatment, and restrained weights match the reference's dense research rhythm.
+  The product name and Chinese copy are intentionally original.
+- Spacing and layout rhythm: the old left rail is absent; the header and
+  navigation are compact, the chart owns the broad left region, and one fixed
+  research rail owns the right region. At 1026 px `scrollWidth === clientWidth`.
+- Colors and visual tokens: near-black surfaces, hairline dividers, muted gray
+  metadata, teal navigation/state accents, red price direction, and amber
+  forecast state retain the reference's visual grammar without reproducing its
+  branding.
+- Image and icon fidelity: no source logo, illustration, or raster asset was
+  copied. The interface uses the existing product mark and Lucide icons; this is
+  an intentional original-brand deviation, not a substitute for a required
+  source asset.
+- Copy and state: the tracking ribbon says `等待现役清单投影` until a verified
+  session list exists. The chart exposes `研究演示 · 概率停显` and its 30-minute
+  horizon before the user opens the research overlay; it does not present a
+  probability, target price, or recommendation as market fact.
 
-The Hyperliquid reference and final returns-terminal screenshot were inspected together at the same 1440×900 viewport. The implementation matches the intended structural grammar: compact top navigation and market strip, one continuous divided canvas, large primary data surface, fixed right inspector, dense bottom/history surfaces, tabular numbers and restrained cyan/red/amber semantics. TradingAgent intentionally replaces the reference order form with a read-only Automation Inspector and does not reproduce trading controls.
+## Iteration history
 
-Quantitative design gate: **94/100**. Visual hierarchy 19/20, typography 14/15, color semantics 15/15, spacing rhythm 14/15, interaction feedback 9/10, accessibility baseline 9/10, originality/brand fit 9/10, desktop responsive integrity 5/5. The remaining gap from the reference is intentional product translation: TradingAgent uses line/evidence views instead of candlesticks/order entry and does not fabricate market microstructure or trading controls.
-
-## Issues found and resolved
-
-- Replaced secondary-page hero summaries and stacked cards with `TerminalPageShell`.
-- Replaced the empty running-process panel with Process Book and completed-result fallback.
-- Removed blocked terminal states from the running Process Book.
-- Replaced the holdings donut with exposure bars and a currency-aware Portfolio Ledger.
-- Suppressed duplicate ticker/name labels and prevented false mixed-currency totals.
-- Added explicit 5% warning and 7% risk-limit context plus a Risk Ledger.
-- Renamed the user-facing review field from `下次规则` to `自动校准`.
-- Made header, terminal-strip, inspector and chart-derived return/drawdown values use one consistent display result.
-- Increased the returns chart surface to remove the unexplained blank lower region.
-- Compacted the review ledger so `自动校准` remains visible beside the inspector.
-- Added a six-market tape and five-domain evidence-health layer without introducing floating cards.
-- Added Process Event Ledger source/latency/reason columns and sourced portfolio cost/mark/quantity fields.
-- Added compact search, sorting and native column visibility controls to process, event, portfolio, risk and review ledgers.
-- Fixed a real-browser `/` shortcut issue found during QA: focus now occurs on key-up so the slash never pollutes the search query.
-- Replaced the fixed top-level “自动化运行中” claim with one shared live/idle/stale/degraded heartbeat.
-- Compressed a flat return series to a 300px quiet chart with a four-field evidence strip; meaningful movement retains the 520px chart.
-- Replaced the large empty holdings table with a 390px sourced evidence surface and removed the leaked `empty` value.
-- Grouped explicit funnel events into opportunity cycles while retaining the raw event ledger below.
-- Translated `buy`, `sell`, `empty`, `signal_queue`, `sim_ledger` and `opportunity_log` before they reach user-facing affected surfaces.
-- Removed decorative canvas gradients to match the reference's flatter continuous terminal surface.
+1. **P1 — legacy side navigation competed with the terminal composition.**
+   Removed the sidebar markup and stale CSS. Post-fix browser evidence found
+   `legacySidebarNodes: 0` and one fixed right research rail.
+2. **P2 — forecast state was discoverable only after opening the chart control.**
+   Added the third quote summary with the horizon, readiness state, and visible/
+   hidden overlay state. Post-fix browser evidence shows the forecast summary in
+   the chart header; page tests verify the forecast control and the probability
+   stop gate.
+3. **P2 — mobile regression risk after adding a third quote summary.**
+   Collapsed the quote summary to one column below 760 px. At 390×844,
+   `scrollWidth === clientWidth` and no legacy sidebar is present.
 
 ## Runtime checks
 
-- No document or workspace horizontal overflow on any of the six pages at 1280×720.
-- No document horizontal overflow at 1440×900.
-- Process Book shows one genuinely pending row in the demo state; blocked records stay in risk/review surfaces.
-- Review ledger exposes `自动校准` and contains no `下次规则` header.
-- Browser console produced no errors or warnings during the six-page navigation pass.
-- URL state restored `page=收益&range=7d` on back and `page=过程&range=7d` on forward; `Alt+1…6`, editable-control guards and `/` search focus were verified.
-- All six pages reported `documentElement.scrollWidth === clientWidth` at 1280×720; returns, process, holdings, risk and review also passed at 1440×900.
-- Process, portfolio, risk and review ledgers exposed a visible local search and accurate result count; portfolio wide columns remained inside the ledger scroll container rather than widening the document.
-- No order, buy/sell, queue-write, capital-control or strategy-edit control was introduced.
-- Build marker `20260711-evidence-adaptive-terminal` rendered at both desktop viewports.
-- At 1440×900, quiet returns rendered with `data-density=quiet` and a 300px chart; empty holdings rendered with `data-density=empty` and a 390px primary grid.
-- All six routes at 1280×720 had `scrollWidth === clientWidth`, no app/state error surface and no browser console warnings/errors.
-- User-visible leak scan returned no raw `buy`, `sell`, `empty`, `signal_queue`, `sim_ledger` or `opportunity_log` text.
-- Historical pre-retirement QA build `20260711-evidence-adaptive-terminal` loaded 31 legacy funnel rows into 4 display cycles at 1440×900. That visual/layout evidence is retained only as history; those rows are now classified `legacy_frozen_opportunity_log` and cannot prove current readiness or drive heartbeat.
+- Browser-rendered desktop capture at 1026×994: no horizontal overflow; one
+  `.copilot-rail`, one `.tracking-ribbon`, and zero `.copilot-sidebar` nodes.
+- Browser-rendered mobile capture at 390×844: no horizontal overflow.
+- Browser console: no warnings or errors observed in the inspected demo state.
+- Primary interactions checked: top navigation visible, stock search entry
+  visible, forecast control visible, read-only tracking-pool empty state visible.
 
-## Next iteration
+## Follow-up polish
 
-1. Add sourced mini-sparklines to the market tape after TradingDatas provides a fresh handoff with stable price-series fields.
-2. Add cycle-to-return cross-highlighting when event and equity timestamps share a reliable identifier.
-3. Add saved desktop column presets only after real operators demonstrate repeated table customization.
+- P3: when the A-share session writer publishes the verified 30-stock file,
+  capture a populated tracking-ribbon state and review its horizontal scrolling
+  density at desktop and mobile widths.
 
 ## Final result
 
