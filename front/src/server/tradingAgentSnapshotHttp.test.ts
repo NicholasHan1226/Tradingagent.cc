@@ -141,7 +141,15 @@ describe('TradingAgent cloud snapshot API server', () => {
     const projection = {
       symbol: '000400.SZ', name: '许继电气', mode: 'tradingagent_observation', updatedAt: '2026-08-02T01:00:00.000Z',
       analysis: { symbol: '000400.SZ', name: '许继电气', mode: 'tradingagent_observation', generatedAt: '2026-08-02T01:00:00.000Z', evidenceStrength: { value: 72, label: '正式证据强度', semantics: 'typed_evidence_strength_v1', contractVersion: 'v1', sourceRefs: ['source-1'], asOf: '2026-08-02T01:00:00.000Z' }, readiness: { data: 'verified', evidence: 'typed', model: 'ready', action: 'eligible_for_human_review', reasons: ['测试门禁通过'] }, verdict: '等待条件', summary: '正式投影', support: [], oppose: [], buyConditions: ['量价确认'], invalidation: ['结构失效'] },
-      source: { datasetId: 'daily', receiptId: 'source-1', receiptSha256: 'b'.repeat(64), dataThrough: '2026-08-02T01:00:00.000Z', retrievedAt: '2026-08-02T01:00:10.000Z', freshness: 'fresh', adjustment: 'forward' },
+      source: {
+        transportContract: 'tradingdatas_v1_catalog_query', datasetId: 'daily', receiptId: 'source-1', receiptSha256: 'b'.repeat(64), lineageSha256: 'c'.repeat(64), dataThrough: '2026-08-02T01:00:00.000Z', retrievedAt: '2026-08-02T01:00:10.000Z', freshness: 'fresh', adjustment: 'forward',
+        activityAuthority: {
+          datasetId: 'daily', market: 'ashare', timezone: 'Asia/Shanghai', dataThrough: '2026-08-02T01:00:00.000Z',
+          calendar: { id: 'sse', version: 'v1', sourceDatasetId: 'cn.market.trade_calendar', receiptId: 'calendar-1', receiptSha256: 'd'.repeat(64), lineageSha256: 'e'.repeat(64), calendarSha256: 'f'.repeat(64) },
+          session: { state: 'open', asOf: '2026-08-02T01:00:10.000Z' },
+          source: { receiptId: 'source-1', receiptSha256: 'b'.repeat(64), lineageSha256: 'c'.repeat(64) },
+        },
+      },
       marketRules: { board: 'main', lotSize: 100, tPlusOne: true, priceLimitPct: 10, stStatus: 'normal', tradingStatus: 'trading', session: 'closed', corporateActionAdjusted: true },
       quote: { price: 31, previousClose: 30, change: 1, changePct: 3.33, open: 30.5, high: 31.2, low: 30.2, volume: 100, turnoverRate: 1, peTtm: 20, marketCapCny: 1_000_000 },
       company: { exchange: 'SZ', industry: '电网设备', area: '河南', listingDate: '1997-04-18', description: '正式投影' },
@@ -152,7 +160,7 @@ describe('TradingAgent cloud snapshot API server', () => {
     await writeFile(join(projectionDir, '000400.SZ.receipt.json'), JSON.stringify({
       contractId: 'tradingagent.trading_copilot_stock_projection_receipt.v1', symbol: '000400.SZ', receiptId: 'projection-1',
       projectionSha256: createHash('sha256').update(bytes).digest('hex'), generatedAt: '2026-08-02T01:00:00.000Z', validUntil: '2026-08-03T01:00:00.000Z', verifierId: 'test-verifier', verifierVersion: 'v1',
-      sourceReceipts: [{ receiptId: 'source-1', receiptSha256: 'b'.repeat(64) }],
+      sourceReceipts: [{ receiptId: 'source-1', receiptSha256: 'b'.repeat(64) }, { receiptId: 'calendar-1', receiptSha256: 'd'.repeat(64) }],
     }))
     const baseUrl = await listen(createTradingAgentSnapshotHttpServer({
       readSnapshot: async () => snapshot,

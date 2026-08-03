@@ -47,17 +47,46 @@ export type StockEvent = {
     receiptId: string
     receiptSha256: string
     lineageSha256: string
+    activityAuthority?: DatasetActivityAuthority
   } | null
 }
 
+export type DatasetActivityAuthority = {
+  datasetId: string
+  market: 'ashare'
+  timezone: 'Asia/Shanghai'
+  calendar: {
+    id: string
+    version: string
+    sourceDatasetId: 'cn.market.trade_calendar'
+    receiptId: string
+    receiptSha256: string
+    lineageSha256: string
+    calendarSha256: string
+  }
+  session: {
+    state: 'open' | 'closed' | 'halted'
+    asOf: string
+  }
+  dataThrough: string
+  source: {
+    receiptId: string
+    receiptSha256: string
+    lineageSha256: string
+  }
+}
+
 export type StockProjectionSource = {
+  transportContract: 'tradingdatas_v1_catalog_query'
   datasetId: string
   receiptId: string
   receiptSha256: string
+  lineageSha256: string
   dataThrough: string
   retrievedAt: string
   freshness: 'fresh' | 'stale' | 'degraded' | 'demo'
   adjustment: 'none' | 'forward' | 'backward' | 'unknown'
+  activityAuthority?: DatasetActivityAuthority
 }
 
 export type AshareMarketRules = {
@@ -235,7 +264,7 @@ export function getDemoStockIntelligence(symbol: string): StockIntelligence | nu
     analysis: null,
     verification: { status: 'demo', receiptId: null, projectionSha256: null, validUntil: null, verifiedAt: null, verifierId: null },
     source: {
-      datasetId: 'demo_fixture', receiptId: 'demo_fixture', receiptSha256: 'demo_fixture',
+      transportContract: 'tradingdatas_v1_catalog_query', datasetId: 'demo_fixture', receiptId: 'demo_fixture', receiptSha256: 'demo_fixture', lineageSha256: 'demo_fixture',
       dataThrough: DEMO_TIME, retrievedAt: DEMO_TIME, freshness: 'demo', adjustment: 'unknown',
     },
     marketRules: {
