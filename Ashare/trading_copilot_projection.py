@@ -26,7 +26,7 @@ import tempfile
 from typing import Any, Iterator, Mapping, Sequence
 
 
-BATCH_INPUT_CONTRACT = "tradingagent.trading_copilot_projection_batch_input.v1"
+BATCH_INPUT_CONTRACT = "tradingagent.trading_copilot_projection_batch_input.v2"
 BATCH_RECEIPT_CONTRACT = "tradingagent.trading_copilot_projection_batch_receipt.v1"
 PROJECTION_RECEIPT_CONTRACT = "tradingagent.trading_copilot_stock_projection_receipt.v1"
 VERIFIER_ID = "tradingagent.trading_copilot_projection_publisher"
@@ -301,6 +301,55 @@ def _event(value: object, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
     if not url.startswith(("https://", "http://")):
         raise TradingCopilotProjectionError("projection_event_url_invalid")
     content_sha = _sha_text(event.get("contentSha256"), "projection_event_content_sha_invalid")
+    capability = _mapping(
+        event.get("dataCapability"), "projection_event_capability_invalid"
+    )
+    if capability.get("transportContract") != FIXED_SOURCE_TRANSPORT:
+        raise TradingCopilotProjectionError("projection_event_capability_transport_invalid")
+    freshness = _text(
+        capability.get("freshness"), "projection_event_capability_freshness_invalid"
+    )
+    if freshness != "fresh":
+        raise TradingCopilotProjectionError("projection_event_capability_freshness_invalid")
+    capability_receipt_id = _text(
+        capability.get("receiptId"), "projection_event_capability_receipt_invalid"
+    )
+    capability_receipt_sha = _sha_text(
+        capability.get("receiptSha256"), "projection_event_capability_receipt_sha_invalid"
+    )
+    if capability_receipt_id != receipt_id or capability_receipt_sha != receipt_sha:
+        raise TradingCopilotProjectionError("projection_event_capability_receipt_binding_invalid")
+    normalized_capability = {
+        "inputContract": _text(
+            capability.get("inputContract"), "projection_event_capability_input_contract_invalid"
+        ),
+        "transportContract": FIXED_SOURCE_TRANSPORT,
+        "datasetId": _text(
+            capability.get("datasetId"), "projection_event_capability_dataset_invalid"
+        ),
+        "catalogVersion": _text(
+            capability.get("catalogVersion"), "projection_event_capability_catalog_invalid"
+        ),
+        "asOf": _timestamp(
+            capability.get("asOf"), "projection_event_capability_as_of_invalid"
+        ),
+        "dataThrough": _timestamp(
+            capability.get("dataThrough"), "projection_event_capability_data_through_invalid"
+        ),
+        "freshness": freshness,
+        "receiptId": capability_receipt_id,
+        "receiptSha256": capability_receipt_sha,
+        "lineageSha256": _sha_text(
+            capability.get("lineageSha256"), "projection_event_capability_lineage_invalid"
+        ),
+    }
+    if normalized_capability["inputContract"] != BATCH_INPUT_CONTRACT:
+        raise TradingCopilotProjectionError("projection_event_capability_input_contract_invalid")
+    if (
+        datetime.fromisoformat(normalized_capability["dataThrough"].replace("Z", "+00:00"))
+        > datetime.fromisoformat(normalized_capability["asOf"].replace("Z", "+00:00"))
+    ):
+        raise TradingCopilotProjectionError("projection_event_capability_time_order_invalid")
     normalized = {
         "id": _text(event.get("id"), "projection_event_id_invalid"),
         "kind": kind,
@@ -322,6 +371,7 @@ def _event(value: object, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
         "sourceReceiptId": receipt_id,
         "sourceReceiptSha256": receipt_sha,
         "contentSha256": content_sha,
+        "dataCapability": normalized_capability,
     }
     score = normalized["sentimentConfidence"]
     if score is not None and not 0 <= score <= 1:

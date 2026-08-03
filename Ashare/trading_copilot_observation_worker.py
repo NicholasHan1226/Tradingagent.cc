@@ -205,9 +205,10 @@ def load_event_bundle(path: Path | str | None) -> tuple[EventEvidenceSnapshot, .
     for value in values:
         item = dict(_mapping(value, "copilot_event_item_invalid"))
         try:
-            item["available_at"] = datetime.fromisoformat(
-                _text(item.get("available_at"), "copilot_event_available_at_invalid").replace("Z", "+00:00")
-            )
+            for field in ("as_of", "data_through", "available_at"):
+                item[field] = datetime.fromisoformat(
+                    _text(item.get(field), f"copilot_event_{field}_invalid").replace("Z", "+00:00")
+                )
             result.append(EventEvidenceSnapshot(**item))
         except (TypeError, ValueError) as exc:
             raise TradingCopilotObservationError("copilot_event_item_invalid") from exc
@@ -337,6 +338,18 @@ def _event_for_projection(event: EventEvidenceSnapshot, generated_at: datetime) 
         "sourceReceiptId": event.receipt_id,
         "sourceReceiptSha256": event.envelope_proof_sha256,
         "contentSha256": event.source_row_sha256,
+        "dataCapability": {
+            "inputContract": BATCH_INPUT_CONTRACT,
+            "transportContract": FIXED_SOURCE_TRANSPORT,
+            "datasetId": event.dataset_id,
+            "catalogVersion": event.catalog_version,
+            "asOf": event.as_of.isoformat(),
+            "dataThrough": event.data_through.isoformat(),
+            "freshness": "fresh",
+            "receiptId": event.receipt_id,
+            "receiptSha256": event.envelope_proof_sha256,
+            "lineageSha256": event.source_lineage_sha256,
+        },
     }
 
 

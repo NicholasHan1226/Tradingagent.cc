@@ -36,6 +36,18 @@ export type StockEvent = {
   sourceReceiptId: string | null
   sourceReceiptSha256: string | null
   contentSha256: string | null
+  dataCapability: {
+    inputContract: 'tradingagent.trading_copilot_projection_batch_input.v2'
+    transportContract: 'tradingdatas_v1_catalog_query'
+    datasetId: string
+    catalogVersion: string
+    asOf: string
+    dataThrough: string
+    freshness: 'fresh'
+    receiptId: string
+    receiptSha256: string
+    lineageSha256: string
+  } | null
 }
 
 export type StockProjectionSource = {
@@ -353,6 +365,7 @@ function demoEvent(id: string, kind: StockEvent['kind'], title: string, summary:
     publishedAt, retrievedAt: publishedAt, revisedAt: null, novelty: 'new', sentiment,
     sentimentConfidence: null, impactDirection: sentiment, impactHorizon: 'unknown',
     relatedSymbols: [symbol], url: null, sourceReceiptId: null, sourceReceiptSha256: null, contentSha256: null,
+    dataCapability: null,
   }
 }
 

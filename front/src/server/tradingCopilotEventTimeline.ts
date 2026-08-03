@@ -46,8 +46,21 @@ function sourcesFromEvents(value: unknown) {
   return canonicalSources(value.map((item) => {
     if (!item || typeof item !== 'object') throw new Error('event')
     const event = item as Record<string, unknown>
+    assertEventDataCapability(event)
     return { receiptId: event.sourceReceiptId, receiptSha256: event.sourceReceiptSha256 }
   }))
+}
+
+function assertEventDataCapability(event: Record<string, unknown>) {
+  if (typeof event.sourceReceiptId !== 'string' || !event.sourceReceiptId.trim() || !isSha256(event.sourceReceiptSha256)) throw new Error('event_source')
+  const capability = event.dataCapability
+  if (!capability || typeof capability !== 'object' || Array.isArray(capability)) throw new Error('event_capability')
+  const value = capability as Record<string, unknown>
+  const required = ['inputContract', 'transportContract', 'datasetId', 'catalogVersion', 'asOf', 'dataThrough', 'freshness', 'receiptId', 'receiptSha256', 'lineageSha256']
+  if (Object.keys(value).length !== required.length || required.some((key) => !(key in value))) throw new Error('event_capability_shape')
+  if (value.inputContract !== 'tradingagent.trading_copilot_projection_batch_input.v2' || value.transportContract !== 'tradingdatas_v1_catalog_query' || typeof value.datasetId !== 'string' || !value.datasetId.trim() || typeof value.catalogVersion !== 'string' || !value.catalogVersion.trim()) throw new Error('event_capability_identity')
+  if (!isTimestamp(value.asOf) || !isTimestamp(value.dataThrough) || Date.parse(value.dataThrough) > Date.parse(value.asOf) || value.freshness !== 'fresh') throw new Error('event_capability_time')
+  if (value.receiptId !== event.sourceReceiptId || value.receiptSha256 !== event.sourceReceiptSha256 || !isSha256(value.receiptSha256) || !isSha256(value.lineageSha256)) throw new Error('event_capability_binding')
 }
 
 function sourcesFromReceipt(value: unknown) {

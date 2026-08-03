@@ -816,6 +816,8 @@ class EventEvidenceSnapshot:
     catalog_version: str
     event_time: str
     event_time_precision: str
+    as_of: datetime
+    data_through: datetime
     available_at: datetime
     available_at_source: str
     entity: str
@@ -866,10 +868,19 @@ class EventEvidenceSnapshot:
             or self.dataset_id in PAUSED_DATASET_IDS
         ):
             raise AshareEvidenceContractError("ashare_evidence_event_dataset_invalid")
-        _aware(
+        as_of = _aware(self.as_of, "ashare_evidence_event_as_of_invalid")
+        data_through = _aware(
+            self.data_through,
+            "ashare_evidence_event_data_through_invalid",
+        )
+        available_at = _aware(
             self.available_at,
             "ashare_evidence_event_available_at_invalid",
         )
+        if data_through > available_at or available_at > as_of:
+            raise AshareEvidenceContractError(
+                "ashare_evidence_event_time_order_invalid"
+            )
         for field_name in (
             "source_lineage_sha256",
             "source_row_sha256",
@@ -1296,6 +1307,8 @@ def _map_run(
             catalog_version=envelope.catalog_version,
             event_time=event_time,
             event_time_precision=precision,
+            as_of=decision,
+            data_through=data_through,
             available_at=observed,
             available_at_source="query_envelope.metadata.observed_at",
             entity=entity,

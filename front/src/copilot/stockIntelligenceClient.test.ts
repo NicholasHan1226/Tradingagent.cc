@@ -43,4 +43,12 @@ describe('stock intelligence client', () => {
     const fetcher = vi.fn(async () => Response.json(forged)) as unknown as typeof fetch
     await expect(loadStockIntelligence('000400.SZ', fetcher)).resolves.toBeNull()
   })
+
+  it('rejects formal events without their catalog/query capability provenance', async () => {
+    const event = {
+      id: 'news-1', kind: 'news', title: '已绑定新闻', summary: 'test', source: 'test', sourceClass: 'professional_news', sourceConfidence: 'medium', publishedAt: '2026-08-02T01:00:00.000Z', retrievedAt: '2026-08-02T01:01:00.000Z', revisedAt: null, novelty: 'new', sentiment: 'neutral', sentimentConfidence: null, impactDirection: 'uncertain', impactHorizon: 'short_term', relatedSymbols: ['000400.SZ'], url: 'https://example.com/news', sourceReceiptId: 'event-receipt', sourceReceiptSha256: 'c'.repeat(64), contentSha256: 'd'.repeat(64), dataCapability: null,
+    }
+    const fetcher = vi.fn(async () => Response.json({ ...projection, events: [event] })) as unknown as typeof fetch
+    await expect(loadStockIntelligence('000400.SZ', fetcher)).resolves.toBeNull()
+  })
 })

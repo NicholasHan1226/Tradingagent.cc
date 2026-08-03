@@ -70,6 +70,18 @@ def _item(symbol: str = "000400.SZ") -> dict:
             "relatedSymbols": [symbol], "url": "https://example.invalid/announcement",
             "sourceReceiptId": f"event-receipt-{symbol}", "sourceReceiptSha256": sha,
             "contentSha256": hashlib.sha256(f"event-{symbol}".encode()).hexdigest(),
+            "dataCapability": {
+                "inputContract": "tradingagent.trading_copilot_projection_batch_input.v2",
+                "transportContract": "tradingdatas_v1_catalog_query",
+                "datasetId": "cn.dataset.anns_d",
+                "catalogVersion": "catalog-v1",
+                "asOf": NOW.isoformat(),
+                "dataThrough": stamp,
+                "freshness": "fresh",
+                "receiptId": f"event-receipt-{symbol}",
+                "receiptSha256": sha,
+                "lineageSha256": hashlib.sha256(f"event-lineage-{symbol}".encode()).hexdigest(),
+            },
         }],
         "summary": "正式行情与双向证据可读；仍需人工等待触发条件。",
         "support": [{"title": "趋势结构", "detail": "收盘高于前收。", "sourceRef": f"td:{symbol}:price", "knownAt": stamp}],
@@ -81,7 +93,7 @@ def _item(symbol: str = "000400.SZ") -> dict:
 
 def _batch(items: list[dict]) -> dict:
     return {
-        "contractId": "tradingagent.trading_copilot_projection_batch_input.v1",
+        "contractId": "tradingagent.trading_copilot_projection_batch_input.v2",
         "generatedAt": "2026-08-02T03:55:00+00:00",
         "validUntil": "2026-08-03T08:00:00+00:00",
         "items": items,

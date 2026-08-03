@@ -98,7 +98,8 @@ def _companies() -> dict[str, dict]:
 def _event(*, url: str | None = "https://example.invalid/disclosure") -> EventEvidenceSnapshot:
     return EventEvidenceSnapshot(
         dataset_id="cn.dataset.anns_d", catalog_version="catalog-v1", event_time="20260731",
-        event_time_precision="date", available_at=datetime(2026, 8, 1, 1, 20, tzinfo=timezone.utc),
+        event_time_precision="date", as_of=datetime(2026, 8, 1, 1, 40, tzinfo=timezone.utc),
+        data_through=datetime(2026, 8, 1, 1, 19, tzinfo=timezone.utc), available_at=datetime(2026, 8, 1, 1, 20, tzinfo=timezone.utc),
         available_at_source="query_envelope.metadata.observed_at", entity="浦发银行", symbol="600000.SH",
         title="业绩公告", content="正式公告内容摘要。", url=url, source="交易所",
         receipt_id="event-receipt", source_lineage_sha256=_sha("event-lineage"),
@@ -129,6 +130,28 @@ def test_builds_and_publishes_direct_observation_with_all_receipts(tmp_path: Pat
     assert result["symbolCount"] == 1
     assert {row["receiptId"] for row in receipt["sourceReceipts"]} == {
         "minute-receipt", "company-receipt", "event-receipt"
+    }
+
+
+def test_event_projection_preserves_the_verified_data_capability() -> None:
+    generated = datetime(2026, 8, 1, 1, 40, 10, tzinfo=timezone.utc)
+    batch = build_projection_batch(
+        snapshot=_snapshot(), company_facts=_companies(), events=(_event(),),
+        generated_at=generated, valid_until=generated + timedelta(days=2),
+    )
+
+    capability = batch["items"][0]["events"][0]["dataCapability"]
+    assert capability == {
+        "inputContract": "tradingagent.trading_copilot_projection_batch_input.v2",
+        "transportContract": "tradingdatas_v1_catalog_query",
+        "datasetId": "cn.dataset.anns_d",
+        "catalogVersion": "catalog-v1",
+        "asOf": "2026-08-01T01:40:00+00:00",
+        "dataThrough": "2026-08-01T01:19:00+00:00",
+        "freshness": "fresh",
+        "receiptId": "event-receipt",
+        "receiptSha256": _sha("event-envelope"),
+        "lineageSha256": _sha("event-lineage"),
     }
 
 
