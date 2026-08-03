@@ -18,6 +18,7 @@ Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1
 Environment=TRADING_AGENT_SNAPSHOT_PORT=8787
 Environment=TRADING_AGENT_SNAPSHOT_CORS_ORIGINS=https://tradingagent.cc
 Environment=TRADING_COPILOT_PROJECTION_DIR=/var/lib/tradingagent/trading-copilot/stock-intelligence
+Environment=TRADING_COPILOT_TRACKING_UNIVERSE_PATH=/var/lib/tradingagent/trading-copilot/tracking-universe.json
 Environment=REAL_TRADING_ENABLED=false
 Environment=TRADINGDATAS_API_URL=
 Environment=TRADINGDATAS_CATALOG_VERSION=
@@ -49,7 +50,7 @@ IPAddressAllow=localhost
 InaccessiblePaths=/run/secrets/tradingagent
 ReadOnlyPaths=/opt/investment/releases/tradingagent
 ReadOnlyPaths=/opt/investment/tradingagent
-ReadOnlyPaths=/var/lib/tradingagent/trading-copilot/stock-intelligence
+ReadOnlyPaths=/var/lib/tradingagent/trading-copilot
 
 [Install]
 WantedBy=multi-user.target

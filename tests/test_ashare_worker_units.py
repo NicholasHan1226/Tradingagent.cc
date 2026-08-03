@@ -202,6 +202,7 @@ def test_tmpfiles_keep_state_runtime_log_and_secret_parent_separate() -> None:
 
     assert lines == {
         "d /var/lib/tradingagent/ashare-observation 0700 tradingagent tradingagent -",
+        "d /var/lib/tradingagent/trading-copilot 0700 tradingagent tradingagent -",
         "d /run/tradingagent/ashare-observation 0700 tradingagent tradingagent -",
         "d /var/log/tradingagent/ashare-observation 0700 tradingagent tradingagent -",
         "d /run/secrets/tradingagent 0710 root tradingagent -",
