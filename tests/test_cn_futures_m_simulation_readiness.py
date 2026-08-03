@@ -13,6 +13,10 @@ from CNFutures.fut_settle_market_rules import (
     FutSettleRawMarketRuleFact,
     FutSettleRawMarketRuleSnapshot,
 )
+from CNFutures.fut_mapping_current_snapshot import (
+    FutMappingCurrentSnapshot,
+    FutMappingRawCurrentSnapshotFact,
+)
 from CNFutures.m_simulation_readiness import (
     DayNightFixtureAuthority,
     FtLimitCoverageEvidence,
@@ -98,6 +102,34 @@ def _ft_limit() -> FtLimitCoverageEvidence:
     )
 
 
+def _fut_mapping() -> FutMappingCurrentSnapshot:
+    receipt_id = "receipt:358a36f5891f9b2a604c4942906da8e4c9170c714229a9a519944ef80ece1d06"
+    lineage_sha256 = "df4e14bf0a16a28d8b6a030ff637588f5dc315d525282cbecd16011e40c1f172"
+    return FutMappingCurrentSnapshot(
+        dataset_id="cn.dataset.fut_mapping",
+        schema_major=1,
+        catalog_version="v1-ae7d554642b6ae72",
+        trade_date="20260803",
+        receipt_id=receipt_id,
+        lineage_sha256=lineage_sha256,
+        page_count=1,
+        row_count=202,
+        terminal_pagination=True,
+        replay_verified=True,
+        semantic_sha256=_sha256("fut-mapping-semantic"),
+        pagination_trace_sha256=_sha256("fut-mapping-pagination"),
+        facts=(
+            FutMappingRawCurrentSnapshotFact(
+                trade_date="20260803",
+                ts_code="M.DCE",
+                receipt_id=receipt_id,
+                lineage_sha256=lineage_sha256,
+                raw_values={"mapping_ts_code": "M2609.DCE"},
+            ),
+        ),
+    )
+
+
 def _fixture_authority(**overrides: object) -> DayNightFixtureAuthority:
     values: dict[str, object] = {
         "fixture_only": True,
@@ -116,6 +148,7 @@ def _project(**overrides: object):
     values = {
         "fut_basic": _fut_basic(),
         "fut_settle": _fut_settle(),
+        "fut_mapping": _fut_mapping(),
         "ft_limit": _ft_limit(),
         "day_night_fixture_authority": _fixture_authority(),
     }
@@ -130,6 +163,16 @@ def test_emits_deterministic_per_contract_fail_closed_coverage_ledger() -> None:
     assert result.fixture_only is True
     assert result.fut_basic_receipt_id == "receipt:fut-basic"
     assert result.fut_settle_receipt_id == "receipt:fut-settle"
+    assert result.fut_mapping_dataset_id == "cn.dataset.fut_mapping"
+    assert result.fut_mapping_catalog_version == "v1-ae7d554642b6ae72"
+    assert result.fut_mapping_trade_date == "20260803"
+    assert result.fut_mapping_receipt_id == (
+        "receipt:358a36f5891f9b2a604c4942906da8e4c9170c714229a9a519944ef80ece1d06"
+    )
+    assert result.fut_mapping_lineage_sha256 == (
+        "df4e14bf0a16a28d8b6a030ff637588f5dc315d525282cbecd16011e40c1f172"
+    )
+    assert result.current_mapping_observed_non_pit is True
     assert result.ft_limit_receipt_id == "receipt:ft-limit"
     assert len(result.contracts) == 207
     assert [item.ts_code for item in result.contracts] == sorted(
@@ -152,6 +195,7 @@ def test_emits_deterministic_per_contract_fail_closed_coverage_ledger() -> None:
     assert result.ft_limit_state == "stale"
     assert result.ft_limit_degraded is True
     assert result.simulation_ready is False
+    assert result.stable is False
     assert result.runtime_eligible is False
     assert result.execution_eligible is False
     assert result.trading_eligible is False
@@ -260,3 +304,26 @@ def test_rejects_fut_settle_fact_trade_date_drift() -> None:
 
     with pytest.raises(MSimulationReadinessProjectionError, match="fut_settle_fact_trade_date_mismatch"):
         _project(fut_settle=drifted)
+
+
+@pytest.mark.parametrize(
+    ("snapshot_update", "fact_update", "reason"),
+    [
+        ({"dataset_id": "cn.dataset.other"}, {}, "fut_mapping_dataset_invalid"),
+        ({"trade_date": "20260804"}, {}, "fut_mapping_trade_date_invalid"),
+        ({"receipt_id": "receipt:other"}, {}, "fut_mapping_fact_receipt_mismatch"),
+        ({"lineage_sha256": _sha256("other-lineage")}, {}, "fut_mapping_fact_lineage_mismatch"),
+        ({}, {"ts_code": "RB.DCE"}, "fut_mapping_fact_identity_invalid"),
+    ],
+)
+def test_rejects_current_mapping_snapshot_binding_drift(
+    snapshot_update: dict[str, object], fact_update: dict[str, object], reason: str
+) -> None:
+    snapshot = _fut_mapping()
+    fact = replace(snapshot.facts[0], **fact_update)
+    object.__setattr__(snapshot, "facts", (fact,))
+    for field, value in snapshot_update.items():
+        object.__setattr__(snapshot, field, value)
+
+    with pytest.raises(MSimulationReadinessProjectionError, match=reason):
+        _project(fut_mapping=snapshot)

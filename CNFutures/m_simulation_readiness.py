@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import re
 
 from CNFutures.fut_basic_contract_units import FutBasicRawContractUnitSnapshot
+from CNFutures.fut_mapping_current_snapshot import FutMappingCurrentSnapshot
 from CNFutures.fut_settle_market_rules import FutSettleRawMarketRuleSnapshot
 
 
@@ -91,6 +92,12 @@ class MSimulationReadinessProjection:
     fixture_only: bool
     fut_basic_receipt_id: str
     fut_basic_lineage_sha256: str
+    fut_mapping_dataset_id: str
+    fut_mapping_catalog_version: str
+    fut_mapping_trade_date: str
+    fut_mapping_receipt_id: str
+    fut_mapping_lineage_sha256: str
+    current_mapping_observed_non_pit: bool
     fut_settle_receipt_id: str
     fut_settle_lineage_sha256: str
     ft_limit_receipt_id: str
@@ -99,6 +106,7 @@ class MSimulationReadinessProjection:
     ft_limit_state: str
     ft_limit_degraded: bool
     contracts: tuple[MContractCoverageLedger, ...]
+    stable: bool = False
     simulation_ready: bool = False
     runtime_eligible: bool = False
     execution_eligible: bool = False
@@ -109,6 +117,7 @@ class MSimulationReadinessProjection:
             self.mode != "m_contract_simulation_readiness_projection"
             or not self.fixture_only
             or not self.contracts
+            or self.stable
             or self.simulation_ready
             or self.runtime_eligible
             or self.execution_eligible
@@ -122,6 +131,7 @@ class MSimulationReadinessProjection:
 def project_m_simulation_readiness(
     *,
     fut_basic: FutBasicRawContractUnitSnapshot,
+    fut_mapping: FutMappingCurrentSnapshot,
     fut_settle: FutSettleRawMarketRuleSnapshot,
     ft_limit: FtLimitCoverageEvidence,
     day_night_fixture_authority: DayNightFixtureAuthority,
@@ -137,6 +147,8 @@ def project_m_simulation_readiness(
 
     if not isinstance(fut_basic, FutBasicRawContractUnitSnapshot):
         raise TypeError("fut_basic must be FutBasicRawContractUnitSnapshot")
+    if not isinstance(fut_mapping, FutMappingCurrentSnapshot):
+        raise TypeError("fut_mapping must be FutMappingCurrentSnapshot")
     if not isinstance(fut_settle, FutSettleRawMarketRuleSnapshot):
         raise TypeError("fut_settle must be FutSettleRawMarketRuleSnapshot")
     if not isinstance(ft_limit, FtLimitCoverageEvidence):
@@ -146,6 +158,7 @@ def project_m_simulation_readiness(
 
     _validate_fut_basic(fut_basic)
     _validate_fut_settle(fut_settle)
+    _validate_fut_mapping(fut_mapping, expected_trade_date=fut_settle.trade_date)
     _validate_ft_limit(ft_limit)
     _validate_fixture_authority(day_night_fixture_authority)
 
@@ -169,6 +182,12 @@ def project_m_simulation_readiness(
         fixture_only=True,
         fut_basic_receipt_id=fut_basic.receipt_id,
         fut_basic_lineage_sha256=fut_basic.lineage_sha256,
+        fut_mapping_dataset_id=fut_mapping.dataset_id,
+        fut_mapping_catalog_version=fut_mapping.catalog_version,
+        fut_mapping_trade_date=fut_mapping.trade_date,
+        fut_mapping_receipt_id=fut_mapping.receipt_id,
+        fut_mapping_lineage_sha256=fut_mapping.lineage_sha256,
+        current_mapping_observed_non_pit=True,
         fut_settle_receipt_id=fut_settle.receipt_id,
         fut_settle_lineage_sha256=fut_settle.lineage_sha256,
         ft_limit_receipt_id=ft_limit.receipt_id,
@@ -219,6 +238,55 @@ def _validate_fut_settle(snapshot: FutSettleRawMarketRuleSnapshot) -> None:
             raise MSimulationReadinessProjectionError("fut_settle_fact_lineage_mismatch")
         if fact.trade_date != snapshot.trade_date:
             raise MSimulationReadinessProjectionError("fut_settle_fact_trade_date_mismatch")
+
+
+def _validate_fut_mapping(
+    snapshot: FutMappingCurrentSnapshot,
+    *,
+    expected_trade_date: str,
+) -> None:
+    if snapshot.dataset_id != "cn.dataset.fut_mapping":
+        raise MSimulationReadinessProjectionError("fut_mapping_dataset_invalid")
+    if snapshot.schema_major != 1 or not snapshot.catalog_version:
+        raise MSimulationReadinessProjectionError("fut_mapping_catalog_invalid")
+    if snapshot.trade_date != expected_trade_date:
+        raise MSimulationReadinessProjectionError("fut_mapping_trade_date_invalid")
+    if (
+        snapshot.page_count != 1
+        or snapshot.row_count != 202
+        or not snapshot.terminal_pagination
+        or not snapshot.replay_verified
+        or snapshot.as_of is not None
+        or snapshot.stable
+        or snapshot.pit_rollover_authority
+        or snapshot.simulation_ready
+        or snapshot.runtime_eligible
+        or snapshot.execution_eligible
+        or snapshot.trading_eligible
+    ):
+        raise MSimulationReadinessProjectionError("fut_mapping_snapshot_authority_invalid")
+    _receipt_binding(snapshot.receipt_id, snapshot.lineage_sha256, "fut_mapping")
+    if len(snapshot.facts) != 1:
+        raise MSimulationReadinessProjectionError("fut_mapping_fact_count_invalid")
+
+    fact = snapshot.facts[0]
+    if fact.ts_code != "M.DCE" or fact.trade_date != snapshot.trade_date:
+        raise MSimulationReadinessProjectionError("fut_mapping_fact_identity_invalid")
+    if fact.receipt_id != snapshot.receipt_id:
+        raise MSimulationReadinessProjectionError("fut_mapping_fact_receipt_mismatch")
+    if fact.lineage_sha256 != snapshot.lineage_sha256:
+        raise MSimulationReadinessProjectionError("fut_mapping_fact_lineage_mismatch")
+    if (
+        fact.stable
+        or fact.pit_rollover_authority
+        or fact.simulation_ready
+        or fact.runtime_eligible
+        or fact.execution_eligible
+        or fact.trading_eligible
+        or not isinstance(fact.raw_values.get("mapping_ts_code"), str)
+        or not fact.raw_values["mapping_ts_code"]
+    ):
+        raise MSimulationReadinessProjectionError("fut_mapping_raw_fact_invalid")
 
 
 def _validate_ft_limit(evidence: FtLimitCoverageEvidence) -> None:

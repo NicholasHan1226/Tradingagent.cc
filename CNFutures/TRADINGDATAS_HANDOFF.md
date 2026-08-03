@@ -67,9 +67,9 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 ## M 合约 simulation-readiness 覆盖投影
 
-`CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、receipt/lineage 绑定的 `ft_limit` evidence，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
+`CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、receipt/lineage 绑定的 `ft_limit` evidence、已验证的当前日 `fut_mapping` snapshot，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
 
-投影按 `M####.DCE` identity 排序，逐项记录 raw-unit、raw-rule、price-limit raw fact 是否有对应 receipt-bound 行。它不解释任何 raw 值：`multiplier`、`quote_unit(_desc)`、fixture session window 与当前快照都不能生成 numeric tick、实时 receipt-bound session 或 PIT rollover authority。当前 ledger 固定保留 `fut_basic_coverage_incomplete`（其明细仍为 `response_completeness_unverified`）、`ft_limit_stale_or_degraded`、`numeric_tick_authority_missing`、`receipt_bound_live_session_authority_missing` 和 `pit_rollover_authority_missing`。只要存在任一缺口，projection 及每个 contract 的 `simulation_ready`、`runtime_eligible`、`execution_eligible` 与 `trading_eligible` 都为 `false`。
+投影会绑定当前 `fut_mapping` 的 dataset、catalog、交易日、receipt/lineage 和唯一 `M.DCE` raw mapping fact，并记录 `current_mapping_observed_non_pit=true`；该标记不产生 effective contract 或 rollover interval。它按 `M####.DCE` identity 排序，逐项记录 raw-unit、raw-rule、price-limit raw fact 是否有对应 receipt-bound 行。它不解释任何 raw 值：`multiplier`、`quote_unit(_desc)`、fixture session window 与当前快照都不能生成 numeric tick、实时 receipt-bound session 或 PIT rollover authority。当前 ledger 固定保留 `fut_basic_coverage_incomplete`（其明细仍为 `response_completeness_unverified`）、`ft_limit_stale_or_degraded`、`numeric_tick_authority_missing`、`receipt_bound_live_session_authority_missing` 和 `pit_rollover_authority_missing`。只要存在任一缺口，projection 及每个 contract 的 `stable`、`simulation_ready`、`runtime_eligible`、`execution_eligible` 与 `trading_eligible` 都为 `false`。
 
 day/night 输入必须仍为 `fixture_only=true`；任何声称已具备 numeric tick、live session 或 PIT rollover receipt authority 的正向标记都会被拒绝，而不是在此投影中提升资格。因此该模块只形成 contract-ready 离线 coverage debt，不是 stable/PIT、simulation runtime、simulated fill、broker 或真实交易授权。
 
