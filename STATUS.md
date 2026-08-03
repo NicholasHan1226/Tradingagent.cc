@@ -1,6 +1,7 @@
 # TradingAgent 当前状态
 
-> 最后核验：2026-08-02 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
+> 综合核验：2026-08-02 CST；A股/TradingCopilot 发布与运行态增量读回：2026-08-03
+> 19:18 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
 > 候选、历史事故与旧读回通过 Git 历史及仓外 release-evidence 追溯，不在此重复。
 
 ## 当前版本与运行面
@@ -10,22 +11,25 @@
 | 本地主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 本地 `main` 必须与远端主线同 head；状态页不固定会被自身提交淘汰的 SHA。 |
 | GitHub 主线 | 使用 `git rev-parse HEAD origin/main` 读取并比较 | 合入记录、CI 与精确 commit 以 GitHub 和 Git 历史为准；不是生产切换。 |
 | 三条市场 lane | A股、Crypto、CNFutures 均与 `origin/main` 同 head，`ahead=0`、`behind=0` | 三个长期 worktree 均干净；它们不是独立生产 release。 |
-| TA production current | `c305e69a53289bba5a01db39acf9077e9e770329` | 已由验证的 immutable release 原子切换；A股 session/paper timer 已恢复，Crypto G5 不受该指针影响。 |
+| TA production current | `64f7b73ba8df580dad064046ffaab7c4b204960b` | 2026-08-03 已由 immutable release 原子切换；running front process、`current` symlink 与 effective release 三层读回一致。 |
 | TradingDatas current | `2cd289db369ffebdb7b475ce71d45c9d5993eb48` | 18082 仅内部监听，generic collector timer active。 |
 | TradingDatas Crypto current | `557a2967bc9582ffef26bc412d702767e0ef5c17` | 18083 独立内部监听。 |
 
-`tradingagent-front-api.service` 保持 inactive；8082、8787 均未监听。旧
-SharedSignals service/timer 均为 masked，MarketGraph runtime 保持暂停。当前没有
+`tradingagent-front-api.service` 为 `active`，仅监听 `127.0.0.1:8787`；`/healthz`
+返回 `ok`。`/api/trading-copilot/tracking-universe` 在真实投影尚未生成时返回
+`404 unavailable`，不使用静态名单兜底。旧 SharedSignals service/timer 均为 masked，MarketGraph
+runtime 保持暂停。当前没有
 broker、Testnet、Live、模型网络、公开交易入口或真实交易权限；
 `REAL_TRADING_ENABLED=false`。
 
 ## A股
 
-- 30 股分钟 session/paper timer 均为 `enabled/active`，仍是 simulation-only。2026-08-03
-  01:11 CST 的 systemd 读回显示两个 service 均尚无 `ExecMainStartTimestamp`；timer 的
-  `enabled/active` 只表示等待下一触发，不能表述为已自动运行。首日需先完成受审核
-  bootstrap manifest/universe 的 one-shot、目录与 journal 读回，之后才以实际 session/paper
-  receipt 证明运行面可用。
+- 30 股分钟 session timer 仍是 simulation-only，最近一次于 2026-08-03 09:18 CST
+  fail-closed；该失败发生在新 release 前，旧日志未输出分类原因。2026-08-03 19:18 CST 已
+  安装新 initializer、session/bootstrap unit 与 `trading-copilot` 0700 runtime root；它们均经
+  byte-level readback 与 `systemd-analyze verify` 核验。未手动触发 session，下一次 timer 为
+  2026-08-04 09:18 CST。只有下一次自动 session 产生真实 symbol/name 投影及 session receipt，
+  才能表述 30 股分钟链已恢复或 Copilot 已有真实跟踪名单。
 - 500 股 scale500 session/paper timer 均为 `disabled/inactive`。它需要 TradingDatas
   正式连续两根 500/500、同一 bar time、完整 receipt/lineage、terminal pagination
   replay 的证据；周末或候选 loopback 不能替代。
