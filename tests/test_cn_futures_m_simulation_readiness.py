@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 
 import pytest
@@ -208,3 +209,54 @@ def test_rejects_non_m_or_duplicate_source_identity() -> None:
 
     with pytest.raises(MSimulationReadinessProjectionError, match="ft_limit_ts_code_invalid"):
         _project(ft_limit=invalid_limit)
+
+
+@pytest.mark.parametrize(
+    ("fact_update", "reason"),
+    [
+        ({"receipt_id": "receipt:other"}, "fut_basic_fact_receipt_mismatch"),
+        ({"lineage_sha256": _sha256("other-lineage")}, "fut_basic_fact_lineage_mismatch"),
+    ],
+)
+def test_rejects_fut_basic_fact_binding_drift(
+    fact_update: dict[str, str], reason: str
+) -> None:
+    snapshot = _fut_basic()
+    drifted = replace(
+        snapshot,
+        facts=(replace(snapshot.facts[0], **fact_update), *snapshot.facts[1:]),
+    )
+
+    with pytest.raises(MSimulationReadinessProjectionError, match=reason):
+        _project(fut_basic=drifted)
+
+
+@pytest.mark.parametrize(
+    ("fact_update", "reason"),
+    [
+        ({"receipt_id": "receipt:other"}, "fut_settle_fact_receipt_mismatch"),
+        ({"lineage_sha256": _sha256("other-lineage")}, "fut_settle_fact_lineage_mismatch"),
+    ],
+)
+def test_rejects_fut_settle_fact_binding_drift(
+    fact_update: dict[str, str], reason: str
+) -> None:
+    snapshot = _fut_settle()
+    drifted = replace(
+        snapshot,
+        facts=(replace(snapshot.facts[0], **fact_update),),
+    )
+
+    with pytest.raises(MSimulationReadinessProjectionError, match=reason):
+        _project(fut_settle=drifted)
+
+
+def test_rejects_fut_settle_fact_trade_date_drift() -> None:
+    snapshot = _fut_settle()
+    drifted = replace(
+        snapshot,
+        facts=(replace(snapshot.facts[0], trade_date="20260804"),),
+    )
+
+    with pytest.raises(MSimulationReadinessProjectionError, match="fut_settle_fact_trade_date_mismatch"):
+        _project(fut_settle=drifted)

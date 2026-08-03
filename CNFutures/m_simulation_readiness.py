@@ -194,6 +194,11 @@ def _validate_fut_basic(snapshot: FutBasicRawContractUnitSnapshot) -> None:
         or snapshot.trading_eligible
     ):
         raise MSimulationReadinessProjectionError("fut_basic_coverage_contract_invalid")
+    for fact in snapshot.facts:
+        if fact.receipt_id != snapshot.receipt_id:
+            raise MSimulationReadinessProjectionError("fut_basic_fact_receipt_mismatch")
+        if fact.lineage_sha256 != snapshot.lineage_sha256:
+            raise MSimulationReadinessProjectionError("fut_basic_fact_lineage_mismatch")
     _unique_m_codes((fact.ts_code for fact in snapshot.facts), "fut_basic_ts_code_invalid")
 
 
@@ -207,6 +212,13 @@ def _validate_fut_settle(snapshot: FutSettleRawMarketRuleSnapshot) -> None:
         or not snapshot.replay_verified
     ):
         raise MSimulationReadinessProjectionError("fut_settle_coverage_contract_invalid")
+    for fact in snapshot.facts:
+        if fact.receipt_id != snapshot.receipt_id:
+            raise MSimulationReadinessProjectionError("fut_settle_fact_receipt_mismatch")
+        if fact.lineage_sha256 != snapshot.lineage_sha256:
+            raise MSimulationReadinessProjectionError("fut_settle_fact_lineage_mismatch")
+        if fact.trade_date != snapshot.trade_date:
+            raise MSimulationReadinessProjectionError("fut_settle_fact_trade_date_mismatch")
 
 
 def _validate_ft_limit(evidence: FtLimitCoverageEvidence) -> None:
