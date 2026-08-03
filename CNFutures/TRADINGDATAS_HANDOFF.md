@@ -53,6 +53,12 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 映射仅保留 `M####.DCE` 行，且所有查询行的 `trade_date` 必须与请求完全一致。输出的 `settle`、交易费率/交易费、交割费和多空/套保保证金字段只是同一 receipt/lineage 绑定的原始事实；不推断 exchange rule、费率含义、保证金可用性或仓位。缺 identity、分区漂移、receipt/lineage/replay 漂移，或 metadata 不是 `ready/fresh/valid/non-degraded` 时 fail closed。该合同明确输出 `as_of=null`、`pit_authority=false`、`execution_eligible=false`，因此不构成稳定、PIT、shadow、模拟成交或真实交易授权。
 
+## `fut_basic` 原始合约单位映射
+
+`CNFutures.fut_basic_contract_units.load_fut_basic_raw_contract_units` 同样是 caller-invoked 的只读消费者。调用方注入既有 `SharedSignalsV1Client` 和精确 catalog version、receipt、lineage SHA-256；映射固定使用 `cn.dataset.fut_basic` schema major `1`、identity `[ts_code]`，并且只以 `fut_code=M` 过滤，绝不使用已知失败的 `exchange=DCE` 加 `fut_code=M` 复合筛选。查询固定选择 `ts_code`、`exchange`、`fut_code`、`multiplier`、`trade_unit`、`per_unit`、`quote_unit` 与 `quote_unit_desc`，以 `ts_code:asc` 在三页内读完 207 条，并要求同观察 replay 完全一致。
+
+每行都必须是 `exchange=DCE`、`fut_code=M` 且 `ts_code` 唯一；缺 identity 或任一单位字段、receipt/lineage 漂移、非 DCE/M 行、非终页或 replay 漂移均 fail closed。它仅将 multiplier、trade-unit、per-unit 和 quote-unit 字段原样保留为 receipt-bound raw contract facts，不推导数字 tick、会话、PIT、换月或可执行规格。当前唯一接受的 metadata 状态是 `partial`/`degraded=true` 且唯一原因 `response_completeness_unverified`：输出强制 `coverage_complete=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false` 和 `as_of=null`。因此它记录显式 coverage debt，不产生 stable、PIT、runtime、模拟成交或真实交易授权。
+
 ## 当前只读发现（2026-07-30）
 
 已查到 registry 中 `cn.dataset.fut_basic` 可执行，候选分钟数据 `cn.dataset.ft_mins` 仍为 paused/blocked（缺基础 seed receipt），`cn.dataset.rt_fut_min` 仍为 paused/locked。它们不是本合同指定的最终 dataset ID，也不满足上述验收。因此当前结果为 **NO-GO：不启动 CNFutures runtime、模拟成交或 scheduler**。
