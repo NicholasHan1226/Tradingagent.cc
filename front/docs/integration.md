@@ -46,6 +46,19 @@ missing, malformed, or untrusted file returns 404 and the UI deliberately shows
 stocks. The A-share session writer is responsible for producing this artifact;
 the frontend never creates or edits it.
 
+Event evidence is exposed separately through
+`GET /api/trading-copilot/event-timeline?symbol=000400.SZ`. The endpoint reads
+the regular, non-symlinked pair
+`runtime/tradingcopilot/event-timeline/<symbol>.json` and
+`<symbol>.receipt.json` by default (or an explicitly configured absolute
+directory). It serves GET only after checking the raw timeline SHA-256, symbol,
+identical generation/validity fields, a current validity window, and the exact
+set of source-receipt ID/SHA pairs referenced by events. Missing, expired,
+malformed, or unbound artifacts return 404; the front layer never calls a
+provider or invents sentiment. Empty event lists and blocked-source coverage
+remain visible as evidence availability, not as a recommendation or a data
+health assertion.
+
 TradingCopilot personal state uses `GET/PUT /api/trading-copilot/state`. `GET`
 returns an `ETag`; every `PUT` must send that value as `If-Match`. The server
 serializes writes, rejects stale revisions with `409`, and verifies state hash,
