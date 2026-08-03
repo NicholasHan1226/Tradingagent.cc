@@ -33,6 +33,7 @@ from shared.data.tradingdatas_transport import build_runtime_transport
 ROUND_TRIP_RUNTIME_CONTRACT = "tradingagent.crypto.round_trip_server_runtime.v1"
 ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_journal.v1"
 ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
+ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 2
 
 
 def crypto_round_trip_window_request(now: datetime) -> CryptoFiveMinuteWindowRequest:
@@ -49,6 +50,40 @@ def crypto_round_trip_window_request(now: datetime) -> CryptoFiveMinuteWindowReq
         window_end=current.window_end - ROUND_TRIP_SETTLED_BAR_DELAY,
         observation_cutoff=current.observation_cutoff,
     )
+
+
+def _iso_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _round_trip_market_slot(request: CryptoFiveMinuteWindowRequest) -> datetime:
+    """Return the first closed bar represented by one round-trip request."""
+
+    return request.window_end - timedelta(minutes=5)
+
+
+def _round_trip_request_for_market_slot(
+    market_slot: datetime,
+) -> CryptoFiveMinuteWindowRequest:
+    """Rebuild the fixed PIT request for one previously eligible closed bar."""
+
+    window_end = market_slot + timedelta(minutes=5)
+    return CryptoFiveMinuteWindowRequest(
+        window_end=window_end,
+        observation_cutoff=window_end + timedelta(seconds=55),
+    )
+
+
+def _checkpoint_market_slot(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise RuntimeError("round_trip_checkpoint_market_slot_invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError("round_trip_checkpoint_market_slot_invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise RuntimeError("round_trip_checkpoint_market_slot_invalid")
+    return parsed.astimezone(timezone.utc)
 
 
 def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, Any]:
@@ -70,6 +105,11 @@ def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, 
         "recovered_pending": core_result.get("recovered_pending"),
         "idempotent_replay": core_result.get("idempotent_replay"),
         "replay_mode": core_result.get("replay_mode"),
+        "recovery_mode": receipt.get("recovery_mode"),
+        "requested_window_consumed": receipt.get("requested_window_consumed"),
+        "processed_cycle_count": receipt.get("processed_cycle_count"),
+        "backlog_recovery_cycle_count": receipt.get("backlog_recovery_cycle_count"),
+        "backlog_remaining": receipt.get("backlog_remaining"),
         "requested_window_end": receipt.get("requested_window_end"),
         "requested_observation_cutoff": receipt.get("requested_observation_cutoff"),
         "settled_bar_delay_seconds": receipt.get("settled_bar_delay_seconds"),
@@ -133,34 +173,92 @@ def run_crypto_delayed_paper_round_trip_server_once(
         token_file=RUNTIME_TOKEN_FILE,
         transport_factory=transport_factory,
     )
-    checkpoint = CryptoDelayedPaperObservationStore(
-        prepared.output_root
-    ).runtime_checkpoint()
-    requested_market_slot = (
-        (request.window_end - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    store = CryptoDelayedPaperObservationStore(prepared.output_root)
+    checkpoint = store.runtime_checkpoint()
+    requested_market_slot = _round_trip_market_slot(request)
+    pending = checkpoint.get("pending")
+    latest_market_slot = (
+        _checkpoint_market_slot(checkpoint["latest_market_slot"])
+        if checkpoint.get("latest_market_slot") is not None
+        else None
     )
-    if (
-        checkpoint.get("pending") is None
-        and checkpoint.get("latest_market_slot") == requested_market_slot
-    ):
+    cycle_results: list[dict[str, Any]] = []
+
+    if pending is not None:
+        pending_slot = _checkpoint_market_slot(pending.get("market_slot"))
+        pending_result = run_crypto_delayed_paper_round_trip_once(
+            port=port,
+            profile=manifest.profile,
+            request=_round_trip_request_for_market_slot(pending_slot),
+            output_root=prepared.output_root,
+        )
+        if pending_result.get("status") != "completed":
+            raise RuntimeError("round_trip_pending_recovery_not_completed")
+        cycle_results.append(
+            {
+                "cycle_kind": "pending_recovery",
+                "target_window_end": _iso_utc(pending_slot + timedelta(minutes=5)),
+                "result": pending_result,
+            }
+        )
+        latest_market_slot = pending_slot
+
+    while len(cycle_results) < ROUND_TRIP_MAX_CYCLES_PER_INVOCATION:
+        if latest_market_slot is None:
+            target_request = request
+            cycle_kind = "fresh_query"
+        elif latest_market_slot < requested_market_slot:
+            target_request = _round_trip_request_for_market_slot(
+                latest_market_slot + timedelta(minutes=5)
+            )
+            cycle_kind = "backlog_recovery"
+        elif latest_market_slot == requested_market_slot:
+            break
+        else:
+            raise RuntimeError("round_trip_clock_before_latest_observation")
+        result = run_crypto_delayed_paper_round_trip_once(
+            port=port,
+            profile=manifest.profile,
+            request=target_request,
+            output_root=prepared.output_root,
+        )
+        if result.get("status") != "completed":
+            raise RuntimeError("round_trip_cycle_not_completed")
+        cycle_results.append(
+            {
+                "cycle_kind": cycle_kind,
+                "target_window_end": _iso_utc(target_request.window_end),
+                "result": result,
+            }
+        )
+        latest_market_slot = _round_trip_market_slot(target_request)
+
+    if not cycle_results:
         # A completed slot is immutable. Do not re-query a mutable current
         # view and risk accepting a different payload for the same slot.
-        result = {
+        result: Mapping[str, Any] = {
             "contract": "tradingagent.crypto.delayed_paper_round_trip_runner.v1",
             "status": "completed",
             "market": "crypto",
-            "market_slot": requested_market_slot,
+            "market_slot": _iso_utc(requested_market_slot),
             "recovered_pending": False,
             "idempotent_replay": True,
             "replay_mode": "completed_slot_without_fresh_query",
         }
     else:
-        result = run_crypto_delayed_paper_round_trip_once(
-            port=port,
-            profile=manifest.profile,
-            request=request,
-            output_root=prepared.output_root,
+        result = cycle_results[-1]["result"]
+    backlog_remaining = bool(
+        latest_market_slot is not None and latest_market_slot < requested_market_slot
+    )
+    recovery_mode = (
+        "pending_recovery"
+        if any(item["cycle_kind"] == "pending_recovery" for item in cycle_results)
+        else (
+            "backlog_recovery"
+            if any(item["cycle_kind"] == "backlog_recovery" for item in cycle_results)
+            else "none"
         )
+    )
     # Re-read both anchors after the write: neither a changed g3 manifest nor a
     # changed g2 archive may be hidden by a successful local capital cycle.
     prepared_after = prepare_round_trip_epoch_candidate(context)
@@ -168,12 +266,20 @@ def run_crypto_delayed_paper_round_trip_server_once(
         raise RuntimeError("round_trip_epoch_identity_changed")
     return {
         "contract": ROUND_TRIP_RUNTIME_CONTRACT,
-        "status": result.get("status"),
+        "status": "backlog_pending" if backlog_remaining else result.get("status"),
         "core_result": result,
-        "requested_window_end": request.window_end.isoformat().replace("+00:00", "Z"),
-        "requested_observation_cutoff": request.observation_cutoff.isoformat().replace(
-            "+00:00", "Z"
+        "requested_window_end": _iso_utc(request.window_end),
+        "requested_observation_cutoff": _iso_utc(request.observation_cutoff),
+        "requested_window_consumed": bool(
+            latest_market_slot is not None and latest_market_slot >= requested_market_slot
         ),
+        "processed_cycle_count": len(cycle_results),
+        "backlog_recovery_cycle_count": sum(
+            item["cycle_kind"] == "backlog_recovery" for item in cycle_results
+        ),
+        "backlog_remaining": backlog_remaining,
+        "recovery_mode": recovery_mode,
+        "cycle_results": cycle_results,
         "settled_bar_delay_seconds": int(ROUND_TRIP_SETTLED_BAR_DELAY.total_seconds()),
         "runtime_manifest_sha256": manifest.sha256,
         "fresh_query_catalog_version": manifest.catalog_version,
@@ -223,9 +329,6 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         print("crypto round-trip runtime failed closed", file=sys.stderr)
         return 2
-    if code:
-        print("crypto round-trip runtime failed closed", file=sys.stderr)
-        return code
     try:
         rendered = json.dumps(
             round_trip_runtime_journal_summary(receipt),
@@ -238,6 +341,9 @@ def main(argv: list[str] | None = None) -> int:
         print("crypto round-trip runtime failed closed", file=sys.stderr)
         return 2
     print(rendered)
+    if code:
+        print("crypto round-trip runtime failed closed", file=sys.stderr)
+        return code
     return 0
 
 
