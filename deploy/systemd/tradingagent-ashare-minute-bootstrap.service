@@ -1,0 +1,46 @@
+[Unit]
+Description=Bootstrap the first reviewed TradingAgent A-share minute session
+Wants=network-online.target
+After=network-online.target tradingdatas-v1-internal.service
+ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
+ConditionPathExists=/etc/tradingagent/ashare-minute-bootstrap-manifest.json
+ConditionPathExists=/etc/tradingagent/ashare-minute-bootstrap-universe.json
+ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
+ConditionPathExists=/opt/investment/releases/tradingagent/current/Ashare/minute_session_initializer.py
+
+[Service]
+Type=oneshot
+User=tradingagent
+Group=tradingagent
+WorkingDirectory=/opt/investment/releases/tradingagent/current
+Environment=REAL_TRADING_ENABLED=false
+Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_session_initializer --state-root /var/lib/tradingagent/ashare-minute-paper --token-file /run/secrets/tradingagent/tradingdatas-read.token --bootstrap-manifest /etc/tradingagent/ashare-minute-bootstrap-manifest.json --universe-source /etc/tradingagent/ashare-minute-bootstrap-universe.json
+TimeoutStartSec=10min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1
+ReadOnlyPaths=/etc/tradingagent
+ReadOnlyPaths=/run/secrets/tradingagent
+ReadWritePaths=/var/lib/tradingagent/ashare-minute-paper
+StandardOutput=journal
+StandardError=journal

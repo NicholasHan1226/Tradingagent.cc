@@ -1008,6 +1008,18 @@ python3 -m Ashare.trading_copilot_observation_worker \
   --result-output /absolute/private-staging/worker-result.json
 ```
 
+首次启用分钟 session root 时，不能靠“已启用 timer”假定存在历史模板。必须由发布侧准备一个
+仓外、已审核的 minute manifest 和 universe artifact，并仅在空 root 的第一次 session 初始化时
+显式传入 `--bootstrap-manifest` 与 `--universe-source`。bootstrap 不会跳过 catalog、日历、
+日线、分页、同观察重放或 receipt 门禁；一旦 root 已有历史 session，后续 bootstrap 被拒绝，
+避免不透明地切换 universe 或数据合同。
+
+服务器首次启动使用独立、不可 enable 的 `tradingagent-ashare-minute-bootstrap.service`；它只可由
+发布侧在首次交易日前手工执行一次。两个 `/etc/tradingagent/ashare-minute-bootstrap-*.json`
+输入均须由发布侧审核、`root:root` 拥有且不可写，token 继续只由专用 leaf 注入。bootstrap 成功
+后读回当日目录的三份输入和 service journal，再由既有 session/paper timer 在后续交易日运行；
+不得把 bootstrap service 安装成周期性 timer。
+
 退出 `0` 只证明本批 projection/receipt 已原子发布。`delayed_paper` 仍要求一个 bar cadence 加 jitter；休市日显式使用 `historical_display` 时只允许展示带当前查询回执的旧行情并固定标记 `stale`，它不证明历史 first-seen/revision 链，不取得 historical-PIT 训练、延迟模拟或执行资格。stdout 的 `symbolCount` 是本批真实覆盖；`eventCoverage.blockedDatasetIds` 非空表示相应事件数据集失败关闭，不能用摘要、缓存或演示事件补位。输出中的 `forecast=null` 是正常停止线，只有另行通过冻结OOS、校准、覆盖率、费用与基线门禁后才可发布正式预测。
 
 Kronos/基线评估只消费外部冻结的同样本预测，不下载权重、不训练、不晋级：
