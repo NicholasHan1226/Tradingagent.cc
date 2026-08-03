@@ -81,6 +81,12 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 `CNFutures.fut_index_daily_current_snapshot.load_fut_index_daily_current_snapshot` 是 caller-invoked 的 injected-client reader。它以单一 `trade_date` filter 读取 `cn.dataset.fut_index_daily` schema 1 的 `[trade_date,ts_code]` 当前分区、做终页 replay，并只保留 `close/open/high/low/pre_close/change/pct_chg/vol/amount` 原始指数日线事实。`data_through <= observed_at <= decision_time` 必须全部 timezone-aware，且 `observed_at` 是唯一 availability time；该 reader 固定不产生 stable、PIT、session、rollover、simulation、runtime、execution 或 trading authority。
 
+## `fut_weekly_monthly` 当前分区原始快照
+
+`CNFutures.fut_weekly_monthly_current_snapshot.load_fut_weekly_monthly_current_snapshot` 是 caller-invoked、注入既有 `SharedSignalsV1Client` 的只读消费者。它只以精确 `trade_date=20260731`（无 `as_of`）读取 `cn.dataset.fut_weekly_monthly` schema 1，要求 catalog identity `[trade_date,freq,ts_code]`、默认顺序 `[trade_date:asc,freq:asc,ts_code:asc]` 和完整的 18 字段原始投影。reader 固定消费五个终页、2231 个唯一身份（`week=1081`、`month=1150`），并进行一次同观察 replay；每条原始事实都绑定 enclosing receipt 和完整 provider-neutral lineage。
+
+`metadata.data_through`、`metadata.observed_at` 与 caller 的 `decision_time` 必须带时区并满足 `data_through <= observed_at <= decision_time`，其中 `observed_at` 仅表示 query-envelope availability time。输出只保留 weekly/monthly 原始事实和 provenance，不从任意品种子集推导市场规则、会话或换月；固定 `stable=false`、PIT/session/rollover/simulation/runtime/execution/trading authority 均为 `false`。该 consumer 在实际 merged-caller readback 前仅为 `contract_ready`，不是历史/PIT、模拟、shadow、broker 或真实交易授权。
+
 ## M 合约 simulation-readiness 覆盖投影
 
 `CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、实际 `FutLimitCurrentSnapshot`、已验证的当前日 `fut_mapping` snapshot，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
