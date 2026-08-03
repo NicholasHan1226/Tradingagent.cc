@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import copy
 from dataclasses import replace
+from datetime import datetime
 import hashlib
 import json
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import pytest
 
 from CNFutures.fut_daily_current_snapshot import (
     FutDailyCurrentSnapshotConsumerError,
+    _validate_metadata,
     load_fut_daily_current_snapshot,
 )
 from CNFutures.fut_mapping_current_snapshot import (
@@ -31,6 +34,9 @@ TRADE_DATE = "20260803"
 RECEIPT_ID = "receipt:fixture-fut-daily"
 MAPPING_RECEIPT_ID = "receipt:fixture-fut-mapping"
 RAW_FIELDS = ("trade_date", "ts_code", "open", "high", "low", "close", "settle", "vol", "oi")
+DATA_THROUGH = "2026-08-03T20:20:57+00:00"
+OBSERVED_AT = "2026-08-03T20:20:58+00:00"
+DECISION_TIME = datetime.fromisoformat("2026-08-03T20:21:00+00:00")
 LINEAGE = {
     "complete": True,
     "provider_neutral": True,
@@ -112,12 +118,16 @@ def _metadata(**overrides: object) -> dict[str, object]:
         "quality": {"state": "valid", "valid": True},
         "lineage": copy.deepcopy(LINEAGE),
         "receipt_id": RECEIPT_ID,
-        "data_through": "2026-08-03T20:20:57+00:00",
-        "observed_at": "2026-08-03T20:20:58+00:00",
+        "data_through": DATA_THROUGH,
+        "observed_at": OBSERVED_AT,
         "reasons": [],
     }
     value.update(overrides)
     return value
+
+
+def _metadata_object(**overrides: object) -> SimpleNamespace:
+    return SimpleNamespace(**_metadata(**overrides))
 
 
 def _mapping_snapshot() -> FutMappingCurrentSnapshot:
@@ -221,6 +231,7 @@ def _load(
     transport: FixtureTransport,
     *,
     mapping: FutMappingCurrentSnapshot | None = None,
+    decision_time: datetime | None = DECISION_TIME,
 ) -> object:
     return load_fut_daily_current_snapshot(
         client=_client(transport),
@@ -229,6 +240,7 @@ def _load(
         expected_receipt_id=RECEIPT_ID,
         expected_lineage_sha256=_sha256(LINEAGE),
         mapping_snapshot=mapping or _mapping_snapshot(),
+        decision_time=decision_time,
     )
 
 
@@ -242,6 +254,9 @@ def test_maps_the_mapping_selected_daily_row_as_raw_current_partition_fact() -> 
     assert result.trade_date == TRADE_DATE
     assert result.receipt_id == RECEIPT_ID
     assert result.lineage_sha256 == _sha256(LINEAGE)
+    assert result.data_through == datetime.fromisoformat(DATA_THROUGH)
+    assert result.observed_at == datetime.fromisoformat(OBSERVED_AT)
+    assert result.decision_time == DECISION_TIME
     assert result.mapping_ts_code == "M2609.DCE"
     assert result.mapping_receipt_id == MAPPING_RECEIPT_ID
     assert result.mapping_lineage_sha256 == _sha256(MAPPING_LINEAGE)
@@ -290,6 +305,63 @@ def test_rejects_non_consumable_metadata(
 
 
 @pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    (
+        ("data_through", None, "metadata_data_through_missing"),
+        ("observed_at", None, "metadata_observed_at_missing"),
+        ("data_through", "not-a-timestamp", "metadata_data_through_invalid"),
+        ("observed_at", "not-a-timestamp", "metadata_observed_at_invalid"),
+        ("data_through", "2026-08-03T20:20:57", "metadata_data_through_timezone_invalid"),
+        ("observed_at", "2026-08-03T20:20:58", "metadata_observed_at_timezone_invalid"),
+    ),
+)
+def test_rejects_missing_malformed_or_naive_metadata_timestamps(
+    field: str, value: object, reason: str
+) -> None:
+    with pytest.raises(FutDailyCurrentSnapshotConsumerError, match=reason):
+        _validate_metadata(
+            metadata=_metadata_object(**{field: value}),
+            expected_receipt_id=RECEIPT_ID,
+            expected_lineage_sha256=_sha256(LINEAGE),
+            decision_time=DECISION_TIME,
+        )
+
+
+def test_rejects_missing_or_naive_decision_time() -> None:
+    with pytest.raises(FutDailyCurrentSnapshotConsumerError, match="decision_time_invalid"):
+        _load(FixtureTransport(), decision_time=None)
+
+    with pytest.raises(
+        FutDailyCurrentSnapshotConsumerError, match="decision_time_timezone_invalid"
+    ):
+        _load(
+            FixtureTransport(),
+            decision_time=datetime.fromisoformat("2026-08-03T20:21:00"),
+        )
+
+
+def test_rejects_metadata_time_order_after_data_through_or_decision_time() -> None:
+    with pytest.raises(FutDailyCurrentSnapshotConsumerError, match="metadata_time_order_invalid"):
+        _validate_metadata(
+            metadata=_metadata_object(
+                data_through="2026-08-03T20:21:00+00:00",
+                observed_at=OBSERVED_AT,
+            ),
+            expected_receipt_id=RECEIPT_ID,
+            expected_lineage_sha256=_sha256(LINEAGE),
+            decision_time=DECISION_TIME,
+        )
+
+    with pytest.raises(FutDailyCurrentSnapshotConsumerError, match="metadata_time_order_invalid"):
+        _validate_metadata(
+            metadata=_metadata_object(),
+            expected_receipt_id=RECEIPT_ID,
+            expected_lineage_sha256=_sha256(LINEAGE),
+            decision_time=datetime.fromisoformat(DATA_THROUGH),
+        )
+
+
+@pytest.mark.parametrize(
     ("rows", "reason"),
     (
         ([], "mapping_selected_daily_row_missing_or_nonunique"),
@@ -320,6 +392,7 @@ def test_rejects_catalog_receipt_lineage_and_replay_drift() -> None:
             expected_receipt_id=RECEIPT_ID,
             expected_lineage_sha256=_sha256(LINEAGE),
             mapping_snapshot=_mapping_snapshot(),
+            decision_time=DECISION_TIME,
         )
 
     catalog = _catalog_row()
@@ -345,6 +418,7 @@ def test_rejects_catalog_receipt_lineage_and_replay_drift() -> None:
             expected_receipt_id="receipt:other",
             expected_lineage_sha256=_sha256(LINEAGE),
             mapping_snapshot=_mapping_snapshot(),
+            decision_time=DECISION_TIME,
         )
 
     with pytest.raises(FutDailyCurrentSnapshotConsumerError, match="lineage_mismatch"):
@@ -355,6 +429,7 @@ def test_rejects_catalog_receipt_lineage_and_replay_drift() -> None:
             expected_receipt_id=RECEIPT_ID,
             expected_lineage_sha256="0" * 64,
             mapping_snapshot=_mapping_snapshot(),
+            decision_time=DECISION_TIME,
         )
 
     with pytest.raises(FutDailyCurrentSnapshotConsumerError, match="replay_drift"):

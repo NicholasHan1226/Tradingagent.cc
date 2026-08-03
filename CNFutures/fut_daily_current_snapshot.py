@@ -8,6 +8,7 @@ persistence, timer, execution, or trading path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -100,6 +101,9 @@ class FutDailyCurrentSnapshot:
     trade_date: str
     receipt_id: str
     lineage_sha256: str
+    data_through: datetime
+    observed_at: datetime
+    decision_time: datetime
     mapping_ts_code: str
     mapping_receipt_id: str
     mapping_lineage_sha256: str
@@ -120,6 +124,13 @@ class FutDailyCurrentSnapshot:
     facts: tuple[FutDailyRawCurrentSnapshotFact, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        data_through = _aware_timestamp(
+            self.data_through, "snapshot_data_through"
+        )
+        observed_at = _aware_timestamp(self.observed_at, "snapshot_observed_at")
+        decision_time = _decision_time(self.decision_time)
+        if not (data_through <= observed_at <= decision_time):
+            raise FutDailyCurrentSnapshotConsumerError("snapshot_time_order_invalid")
         if (
             self.dataset_id != DATASET_ID
             or self.schema_major != SCHEMA_MAJOR
@@ -151,6 +162,7 @@ def load_fut_daily_current_snapshot(
     expected_receipt_id: str,
     expected_lineage_sha256: str,
     mapping_snapshot: FutMappingCurrentSnapshot,
+    decision_time: datetime,
 ) -> FutDailyCurrentSnapshot:
     """Map one current-day daily fact selected by a receipt-bound M mapping.
 
@@ -165,6 +177,7 @@ def load_fut_daily_current_snapshot(
     expected_catalog = _text(expected_catalog_version, "expected_catalog_version")
     expected_receipt = _text(expected_receipt_id, "expected_receipt_id")
     expected_lineage = _sha256_text(expected_lineage_sha256, "expected_lineage_sha256")
+    normalized_decision_time = _decision_time(decision_time)
     mapping_ts_code, mapping_receipt, mapping_lineage = _validate_mapping_snapshot(
         mapping_snapshot=mapping_snapshot,
         trade_date=normalized_trade_date,
@@ -211,10 +224,11 @@ def load_fut_daily_current_snapshot(
     ):
         raise FutDailyCurrentSnapshotConsumerError("replay_drift")
 
-    _validate_metadata(
+    data_through, observed_at = _validate_metadata(
         metadata=first.envelope.metadata,
         expected_receipt_id=expected_receipt,
         expected_lineage_sha256=expected_lineage,
+        decision_time=normalized_decision_time,
     )
     fact = _map_mapping_selected_row(
         rows=first.envelope.data,
@@ -230,6 +244,9 @@ def load_fut_daily_current_snapshot(
         trade_date=normalized_trade_date,
         receipt_id=expected_receipt,
         lineage_sha256=expected_lineage,
+        data_through=data_through,
+        observed_at=observed_at,
+        decision_time=normalized_decision_time,
         mapping_ts_code=mapping_ts_code,
         mapping_receipt_id=mapping_receipt,
         mapping_lineage_sha256=mapping_lineage,
@@ -315,7 +332,8 @@ def _validate_metadata(
     metadata: Any,
     expected_receipt_id: str,
     expected_lineage_sha256: str,
-) -> None:
+    decision_time: datetime,
+) -> tuple[datetime, datetime]:
     if metadata.state.strip().lower() != "ready":
         raise FutDailyCurrentSnapshotConsumerError("metadata_not_ready")
     if metadata.degraded is not False:
@@ -337,6 +355,11 @@ def _validate_metadata(
         raise FutDailyCurrentSnapshotConsumerError("lineage_incomplete")
     if _sha256(metadata.lineage) != expected_lineage_sha256:
         raise FutDailyCurrentSnapshotConsumerError("lineage_mismatch")
+    data_through = _aware_timestamp(metadata.data_through, "metadata_data_through")
+    observed_at = _aware_timestamp(metadata.observed_at, "metadata_observed_at")
+    if not (data_through <= observed_at <= decision_time):
+        raise FutDailyCurrentSnapshotConsumerError("metadata_time_order_invalid")
+    return data_through, observed_at
 
 
 def _map_mapping_selected_row(
@@ -397,6 +420,29 @@ def _sha256_text(value: Any, name: str) -> str:
     if not _SHA256.fullmatch(text):
         raise FutDailyCurrentSnapshotConsumerError(f"{name}_invalid")
     return text
+
+
+def _aware_timestamp(value: Any, name: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        if not isinstance(value, str) or not value.strip():
+            raise FutDailyCurrentSnapshotConsumerError(f"{name}_missing")
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise FutDailyCurrentSnapshotConsumerError(f"{name}_invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise FutDailyCurrentSnapshotConsumerError(f"{name}_timezone_invalid")
+    return parsed
+
+
+def _decision_time(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise FutDailyCurrentSnapshotConsumerError("decision_time_invalid")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise FutDailyCurrentSnapshotConsumerError("decision_time_timezone_invalid")
+    return value
 
 
 def _sha256(value: Mapping[str, Any]) -> str:
