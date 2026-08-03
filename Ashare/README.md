@@ -112,6 +112,11 @@ has no default client, timer, persistence, or runtime call site. As with the
 other mappings, local contract tests are `contract_ready` only; a real
 receipt → TD query → authenticated consumer readback remains coverage debt for
 `observed`, and repeated successful windows are required for `stable`.
+Both current holder catalog contracts declare no `as_of` field, so their frozen
+profiles bind an omitted-`as_of` policy and never send that query parameter;
+point-in-time causality remains enforced locally from receipt metadata
+`data_through` and timezone-aware `observed_at` against the caller decision
+time.
 
 `major_news` is macro-context event evidence only: its formal identity is
 `[src, pub_time, title]`, `pub_time` uses declared Asia/Shanghai semantics,

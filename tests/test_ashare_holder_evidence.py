@@ -207,6 +207,7 @@ def test_explicit_holder_profiles_read_only_facts_and_caller_invoked_bounded_rea
     batches, audit = _load(transport)
 
     assert tuple(batch.profile.dataset_id for batch in batches) == HOLDER_DATASET_IDS
+    assert all(batch.profile.omit_as_of for batch in batches)
     assert all(
         batch.same_observation and batch.contract_ready_only for batch in batches
     )
@@ -224,6 +225,7 @@ def test_explicit_holder_profiles_read_only_facts_and_caller_invoked_bounded_rea
     assert all(
         query["filters"] == {"ts_code": {"in": ["600000.SH"]}} for query in queries
     )
+    assert all("as_of" not in query for query in queries)
 
 
 @pytest.mark.parametrize(

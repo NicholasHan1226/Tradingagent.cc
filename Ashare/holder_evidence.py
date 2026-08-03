@@ -159,6 +159,7 @@ class HolderDatasetProfile:
     max_pages: int
     max_rows: int
     page_limit: int
+    omit_as_of: bool
     catalog_route: str = FIXED_CATALOG_ROUTE
     query_route: str = FIXED_QUERY_ROUTE
 
@@ -178,6 +179,8 @@ class HolderDatasetProfile:
             raise AshareHolderContractError("ashare_holder_schema_major_invalid")
         if self.identity_fields != _IDENTITIES[self.dataset_id]:
             raise AshareHolderContractError("ashare_holder_catalog_identity_mismatch")
+        if self.omit_as_of is not True:
+            raise AshareHolderContractError("ashare_holder_as_of_policy_invalid")
         fields = set(self.default_fields)
         if not set(_REQUIRED_FIELDS[self.dataset_id]).issubset(fields):
             raise AshareHolderContractError(
@@ -275,6 +278,7 @@ class HolderDatasetProfile:
             "default_order": list(default_order),
             "identity_fields": list(identity_fields),
             "filter_operators": list(operators),
+            "as_of_policy": "omitted",
             "semantics": "raw_receipt_bound_holder_facts_only_no_ownership_inference",
         }
         return cls(
@@ -291,6 +295,7 @@ class HolderDatasetProfile:
             max_pages=16,
             max_rows=page_limit * 16,
             page_limit=page_limit,
+            omit_as_of=True,
         )
 
 
@@ -662,6 +667,9 @@ class TradingDatasAshareHolderEvidencePort:
             raise AshareHolderContractError("ashare_holder_dataset_not_allowlisted")
         observed = "unobserved"
         try:
+            decision = _aware(
+                decision_time, "ashare_holder_decision_time_timezone_required"
+            )
             if self._client.config.catalog_version_policy != "evidence_only":
                 raise AshareHolderContractError(
                     "ashare_holder_catalog_version_policy_invalid"
@@ -696,9 +704,7 @@ class TradingDatasAshareHolderEvidencePort:
                 schema_major=profile.schema_major,
                 fields=profile.default_fields,
                 filters=dict(filters),
-                as_of=_aware(
-                    decision_time, "ashare_holder_decision_time_timezone_required"
-                ).isoformat(),
+                as_of=None if profile.omit_as_of else decision.isoformat(),
                 order=profile.default_order or None,
                 limit=profile.page_limit,
             )
@@ -720,7 +726,7 @@ class TradingDatasAshareHolderEvidencePort:
                 profile=profile,
                 first=first,
                 replay=replay,
-                decision_time=decision_time,
+                decision_time=decision,
                 allowed_symbols=tuple(sorted(symbols)),
             )
         except AshareHolderContractError as exc:
