@@ -6,6 +6,7 @@ import {
 import type { CopilotAnalysis, CopilotDecisionAction, CopilotHolding } from '../../copilot/types'
 import type { ForecastReadinessStatus } from '../../copilot/forecastReadiness'
 import type { StockDetailTab, StockEvent, StockIntelligence, StockRange } from '../../copilot/stockIntelligence'
+import { collectDatasetActivities } from '../../copilot/datasetActivity'
 import { StockMarketChart } from './StockMarketChart'
 
 const tabs: Array<{ key: StockDetailTab; label: string }> = [
@@ -45,6 +46,7 @@ export function StockDetailWorkspace({ analysis, intelligence, holding, latestDe
       </div>
     </header>
     <MarketRulesStrip intelligence={intelligence} />
+    <DatasetActivityStrip intelligence={intelligence} />
 
     <nav className="stock-detail-tabs" aria-label="个股详情" role="tablist">
       {tabs.map((tab) => <button aria-selected={activeTab === tab.key} className={activeTab === tab.key ? 'active' : ''} key={tab.key} onClick={() => setActiveTab(tab.key)} role="tab" type="button">{tab.label}</button>)}
@@ -228,6 +230,12 @@ function MarketRulesStrip({ intelligence }: { intelligence: StockIntelligence })
   const rules = intelligence.marketRules
   if (!rules) return <div className="market-rules-strip blocked"><ShieldAlert size={15} /><span>A 股交易规则未随正式投影交付，人工计划入口保持阻断。</span></div>
   return <div className="market-rules-strip" aria-label="A股交易约束"><ShieldAlert size={15} /><span>{boardLabel(rules.board)}</span><span>T+1</span><span>{rules.lotSize} 股一手</span><span>{rules.priceLimitPct === null ? '涨跌停未知' : `涨跌停 ±${rules.priceLimitPct}%`}</span><span>{rules.stStatus === 'normal' ? '非 ST' : rules.stStatus.toUpperCase()}</span><span>{rules.tradingStatus === 'trading' ? '可交易' : rules.tradingStatus === 'suspended' ? '停牌' : '交易状态未知'}</span><span>{rules.corporateActionAdjusted === true ? '已复权' : rules.corporateActionAdjusted === false ? '未复权' : '复权口径未知'}</span></div>
+}
+
+function DatasetActivityStrip({ intelligence }: { intelligence: StockIntelligence }) {
+  const activities = collectDatasetActivities(intelligence)
+  if (!activities.length) return <div className="market-rules-strip blocked" aria-label="数据集活跃状态"><ShieldAlert size={15} /><span>未交付可消费数据集，无法判定各市场活跃状态。</span></div>
+  return <div className="market-rules-strip blocked" aria-label="数据集活跃状态"><ShieldAlert size={15} />{activities.map((activity) => <span key={activity.datasetId} title={`数据截至 ${formatDateTime(activity.dataThrough)}`}><strong>{activity.datasetId}</strong> · {activity.state === 'coverage_gap' ? '时钟覆盖缺口' : activity.state === 'live' ? '活跃' : activity.state === 'closed' ? '已收市' : '已滞后'}</span>)}</div>
 }
 
 function EventMeta({ event }: { event: StockEvent }) {
