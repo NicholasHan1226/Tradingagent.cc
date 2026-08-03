@@ -232,6 +232,13 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 
 `env -i`只保留上面白名单变量，因此不会继承`BASH_ENV`、代理、现役workspace root、TradingDatas catalog/dataset/auth或DeepSeek credential。`TRADINGDATAS_API_URL`、旧名 tombstone `SHAREDSIGNALS_API_URL` 与 `MARKETGRAPH_API_URL` 在旁路验收中必须显式为空，避免任何未退役旧 reader 把“变量缺失”解释为 localhost 默认地址并读取现役服务；这些空值不是 V1 联调配置。依赖范围未完全锁 hash 时，receipt 必须保存 Python/pip/Node/npm 版本、完整 `pip freeze`、requirements 与 `package-lock.json` 哈希；未保存这些证据不得声称复现了同一环境。所有 evidence 文件必须由 `marketgraph` 创建或通过该用户的 `tee` 写入；若已出现 root-owned 文件，保留失败证据、停止当前验收，不能在事后改 owner 后把同一轮误报为通过。
 
+从本地临时目录或 archive 落盘 immutable release 时，archive 顶层不得把临时目录的
+`0700` 带入现役路径。切换 `current` 前，release 必须 root-owned、所有目录为 `0755`、
+文件不可被 group/other 写入，并且以每个实际 service UID 分别验证其可进入
+`WorkingDirectory`、可读取 `ExecStart` 与所需 Python 入口。前端重启后应以有界重试读取
+`127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
+release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
+
 只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
 
 ```bash
