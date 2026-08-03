@@ -83,8 +83,41 @@ def _source() -> dict:
     return {
         "transportContract": "tradingdatas_v1_catalog_query", "datasetId": "cn.equity.security_master",
         "receiptId": "company-receipt", "receiptSha256": _sha("company"),
+        "lineageSha256": _sha("company-lineage"),
         "dataThrough": "2026-08-01T01:40:00+00:00", "retrievedAt": "2026-08-01T01:40:05+00:00",
         "freshness": "fresh", "adjustment": "none",
+    }
+
+
+def _authority(*, dataset_id: str, data_through: str, receipt_id: str, receipt_sha256: str, lineage_sha256: str) -> dict:
+    return {
+        "datasetId": dataset_id, "market": "ashare", "timezone": "Asia/Shanghai",
+        "calendar": {
+            "id": "sse", "version": "2026.08", "sourceDatasetId": "cn.market.trade_calendar",
+            "receiptId": "calendar-receipt", "receiptSha256": _sha("calendar"),
+            "lineageSha256": _sha("calendar-lineage"), "calendarSha256": _sha("calendar-content"),
+        },
+        "session": {"state": "closed", "asOf": "2026-08-01T01:40:00+00:00"},
+        "dataThrough": data_through,
+        "source": {"receiptId": receipt_id, "receiptSha256": receipt_sha256, "lineageSha256": lineage_sha256},
+    }
+
+
+def _authorities() -> dict[str, dict]:
+    company = _source()
+    return {
+        "cn.dataset.rt_min": _authority(
+            dataset_id="cn.dataset.rt_min", data_through="2026-07-31T09:40:00+08:00",
+            receipt_id="minute-receipt", receipt_sha256=_sha("envelope"), lineage_sha256=_sha("lineage"),
+        ),
+        "cn.equity.security_master": _authority(
+            dataset_id="cn.equity.security_master", data_through=company["dataThrough"],
+            receipt_id=company["receiptId"], receipt_sha256=company["receiptSha256"], lineage_sha256=company["lineageSha256"],
+        ),
+        "cn.dataset.anns_d": _authority(
+            dataset_id="cn.dataset.anns_d", data_through="2026-08-01T01:19:00+00:00",
+            receipt_id="event-receipt", receipt_sha256=_sha("event-envelope"), lineage_sha256=_sha("event-lineage"),
+        ),
     }
 
 
@@ -149,6 +182,7 @@ def test_builds_and_publishes_direct_observation_with_all_receipts(tmp_path: Pat
     generated = datetime(2026, 8, 1, 1, 40, 10, tzinfo=timezone.utc)
     batch = build_projection_batch(
         snapshot=_snapshot(), company_facts=_companies(), events=(_event(),),
+        activity_authorities=_authorities(),
         generated_at=generated, valid_until=generated + timedelta(days=2),
     )
     item = batch["items"][0]
@@ -164,14 +198,30 @@ def test_builds_and_publishes_direct_observation_with_all_receipts(tmp_path: Pat
     receipt = json.loads((tmp_path / "out" / "600000.SH.receipt.json").read_text())
     assert result["symbolCount"] == 1
     assert {row["receiptId"] for row in receipt["sourceReceipts"]} == {
-        "minute-receipt", "company-receipt", "event-receipt"
+        "minute-receipt", "company-receipt", "event-receipt", "calendar-receipt"
     }
+
+
+def test_requires_activity_authority_for_each_consumed_dataset() -> None:
+    generated = datetime(2026, 8, 1, 1, 40, 10, tzinfo=timezone.utc)
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_activity_authority_required:cn.dataset.rt_min",
+    ):
+        build_projection_batch(
+            snapshot=_snapshot(),
+            company_facts=_companies(),
+            events=(_event(),),
+            generated_at=generated,
+            valid_until=generated + timedelta(days=2),
+        )
 
 
 def test_event_projection_preserves_the_verified_data_capability() -> None:
     generated = datetime(2026, 8, 1, 1, 40, 10, tzinfo=timezone.utc)
     batch = build_projection_batch(
         snapshot=_snapshot(), company_facts=_companies(), events=(_event(),),
+        activity_authorities=_authorities(),
         generated_at=generated, valid_until=generated + timedelta(days=2),
     )
 
@@ -187,6 +237,7 @@ def test_event_projection_preserves_the_verified_data_capability() -> None:
         "receiptId": "event-receipt",
         "receiptSha256": _sha("event-envelope"),
         "lineageSha256": _sha("event-lineage"),
+        "activityAuthority": _authorities()["cn.dataset.anns_d"],
     }
 
 
@@ -205,6 +256,7 @@ def test_historical_projection_marks_price_source_stale() -> None:
         snapshot=historical,
         company_facts=_companies(),
         events=(),
+        activity_authorities=_authorities(),
         generated_at=generated,
         valid_until=generated + timedelta(hours=1),
     )
@@ -471,6 +523,7 @@ def test_omits_event_without_verifiable_url_and_never_invents_sentiment() -> Non
     generated = datetime(2026, 8, 1, 1, 40, 10, tzinfo=timezone.utc)
     batch = build_projection_batch(
         snapshot=_snapshot(), company_facts=_companies(), events=(_event(url=None),),
+        activity_authorities=_authorities(),
         generated_at=generated, valid_until=generated + timedelta(days=1),
     )
     assert batch["items"][0]["events"] == []
@@ -564,7 +617,7 @@ def test_company_facts_can_only_come_from_verified_observation_bundle(monkeypatc
     master = SimpleNamespace(
         dataset_id="cn.equity.security_master", eligible=True, receipt_id="master-receipt",
         source_proof_sha256=_sha("master-proof"), data_through="2026-08-01T07:00:00+00:00",
-        observed_at="2026-08-01T07:01:00+00:00",
+        observed_at="2026-08-01T07:01:00+00:00", lineage_sha256=_sha("master-lineage"),
         decoded_rows=lambda: [{"ts_code": "600000.SH", "name": "浦发银行", "list_date": "19991110"}],
     )
     bundle = SimpleNamespace(research_snapshot=SimpleNamespace(datasets=(master,)))

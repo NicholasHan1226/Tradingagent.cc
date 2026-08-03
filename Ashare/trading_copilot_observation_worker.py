@@ -35,6 +35,7 @@ from Ashare.trading_copilot_projection import (
     BATCH_INPUT_CONTRACT,
     FIXED_SOURCE_TRANSPORT,
     TradingCopilotProjectionError,
+    _activity_authority,
     _source,
     publish_projection_batch,
 )
@@ -97,7 +98,7 @@ def load_company_facts(path: Path | str) -> dict[str, dict[str, Any]]:
     raw = _load_json(Path(path), "copilot_company_facts_invalid")
     if raw.get("contractId") != COMPANY_FACTS_CONTRACT:
         raise TradingCopilotObservationError("copilot_company_facts_contract_invalid")
-    source = _source(raw.get("source"))
+    source = dict(_mapping(raw.get("source"), "copilot_company_source_invalid"))
     items = raw.get("items")
     if not isinstance(items, list) or not items:
         raise TradingCopilotObservationError("copilot_company_facts_empty")
@@ -110,6 +111,45 @@ def load_company_facts(path: Path | str) -> dict[str, dict[str, Any]]:
         item["source"] = source
         result[symbol] = item
     return result
+
+
+def load_activity_authorities(path: Path | str) -> dict[str, dict[str, Any]]:
+    """Load only explicit per-dataset authorities; never derive one locally."""
+
+    raw = _load_json(Path(path), "copilot_activity_authorities_invalid")
+    result: dict[str, dict[str, Any]] = {}
+    for dataset_id, authority in raw.items():
+        canonical_dataset_id = _text(
+            dataset_id, "copilot_activity_authorities_invalid"
+        )
+        if canonical_dataset_id in result:
+            raise TradingCopilotObservationError("copilot_activity_authorities_invalid")
+        result[canonical_dataset_id] = dict(
+            _mapping(authority, "copilot_activity_authorities_invalid")
+        )
+    if not result:
+        raise TradingCopilotObservationError("copilot_activity_authorities_invalid")
+    return result
+
+
+def _bind_activity_authority(
+    source_value: object,
+    activity_authorities: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    source = dict(_mapping(source_value, "copilot_source_invalid"))
+    dataset_id = _text(source.get("datasetId"), "copilot_source_dataset_invalid")
+    authority = activity_authorities.get(dataset_id)
+    if authority is None:
+        raise TradingCopilotObservationError(
+            f"copilot_activity_authority_required:{dataset_id}"
+        )
+    source["activityAuthority"] = dict(
+        _mapping(authority, "copilot_activity_authority_invalid")
+    )
+    try:
+        return _source(source)
+    except TradingCopilotProjectionError as exc:
+        raise TradingCopilotObservationError(str(exc)) from exc
 
 
 def company_facts_from_verified_observation(
@@ -150,6 +190,7 @@ def company_facts_from_verified_observation(
         or not master.eligible
         or not master.receipt_id
         or not master.source_proof_sha256
+        or not getattr(master, "lineage_sha256", None)
         or not master.data_through
         or not master.observed_at
     ):
@@ -159,6 +200,7 @@ def company_facts_from_verified_observation(
         "datasetId": master.dataset_id,
         "receiptId": master.receipt_id,
         "receiptSha256": master.source_proof_sha256,
+        "lineageSha256": getattr(master, "lineage_sha256", None),
         "dataThrough": master.data_through,
         "retrievedAt": master.observed_at,
         "freshness": "fresh",
@@ -333,7 +375,11 @@ def _event_kind(event: EventEvidenceSnapshot) -> tuple[str, str]:
     return "news", "professional_news"
 
 
-def _event_for_projection(event: EventEvidenceSnapshot, generated_at: datetime) -> dict[str, Any] | None:
+def _event_for_projection(
+    event: EventEvidenceSnapshot,
+    generated_at: datetime,
+    activity_authorities: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     if event.symbol is None or event.url is None:
         return None
     kind, source_class = _event_kind(event)
@@ -343,6 +389,35 @@ def _event_for_projection(event: EventEvidenceSnapshot, generated_at: datetime) 
     title = event.title or event.content
     summary = event.content or event.title
     assert title is not None and summary is not None
+    capability = {
+        "inputContract": BATCH_INPUT_CONTRACT,
+        "transportContract": FIXED_SOURCE_TRANSPORT,
+        "datasetId": event.dataset_id,
+        "catalogVersion": event.catalog_version,
+        "asOf": event.as_of.isoformat(),
+        "dataThrough": event.data_through.isoformat(),
+        "freshness": "fresh",
+        "receiptId": event.receipt_id,
+        "receiptSha256": event.envelope_proof_sha256,
+        "lineageSha256": event.source_lineage_sha256,
+    }
+    if activity_authorities is not None:
+        authority = activity_authorities.get(event.dataset_id)
+        if authority is None:
+            raise TradingCopilotObservationError(
+                f"copilot_activity_authority_required:{event.dataset_id}"
+            )
+        try:
+            capability["activityAuthority"] = _activity_authority(
+                authority,
+                dataset_id=event.dataset_id,
+                data_through=capability["dataThrough"],
+                receipt_id=event.receipt_id,
+                receipt_sha256=event.envelope_proof_sha256,
+                lineage_sha256=event.source_lineage_sha256,
+            )
+        except TradingCopilotProjectionError as exc:
+            raise TradingCopilotObservationError(str(exc)) from exc
     return {
         "id": event.evidence_ref,
         "kind": kind,
@@ -364,32 +439,8 @@ def _event_for_projection(event: EventEvidenceSnapshot, generated_at: datetime) 
         "sourceReceiptId": event.receipt_id,
         "sourceReceiptSha256": event.envelope_proof_sha256,
         "contentSha256": event.source_row_sha256,
-        "dataCapability": {
-            "inputContract": BATCH_INPUT_CONTRACT,
-            "transportContract": FIXED_SOURCE_TRANSPORT,
-            "datasetId": event.dataset_id,
-            "catalogVersion": event.catalog_version,
-            "asOf": event.as_of.isoformat(),
-            "dataThrough": event.data_through.isoformat(),
-            "freshness": "fresh",
-            "receiptId": event.receipt_id,
-            "receiptSha256": event.envelope_proof_sha256,
-            "lineageSha256": event.source_lineage_sha256,
-        },
+        "dataCapability": capability,
     }
-
-
-def _session_at(value: datetime) -> str:
-    local = value.astimezone(SHANGHAI)
-    if local.weekday() >= 5 or local.time() >= time(15, 0) or local.time() < time(9, 15):
-        return "closed"
-    if local.time() < time(9, 30):
-        return "call_auction"
-    if time(11, 30) <= local.time() < time(13, 0):
-        return "midday_break"
-    if local.time() >= time(14, 57):
-        return "closing_auction"
-    return "continuous"
 
 
 def _receipt_pairs(bars: Sequence[MinuteBarEvidence]) -> list[dict[str, str]]:
@@ -405,6 +456,7 @@ def build_projection_batch(
     snapshot: MinuteBarSnapshot,
     company_facts: Mapping[str, Mapping[str, Any]],
     events: Sequence[EventEvidenceSnapshot],
+    activity_authorities: Mapping[str, Mapping[str, Any]] | None = None,
     generated_at: datetime,
     valid_until: datetime,
 ) -> dict[str, Any]:
@@ -414,6 +466,8 @@ def build_projection_batch(
     valid_until = _aware(valid_until, "copilot_valid_until_timezone_required")
     if valid_until <= generated_at:
         raise TradingCopilotObservationError("copilot_projection_time_invalid")
+    if activity_authorities is None:
+        activity_authorities = {}
     grouped: dict[str, list[MinuteBarEvidence]] = defaultdict(list)
     for bar in snapshot.bars:
         grouped[bar.symbol].append(bar)
@@ -433,6 +487,7 @@ def build_projection_batch(
             "datasetId": latest.dataset_id,
             "receiptId": latest.receipt_id,
             "receiptSha256": latest.envelope_proof_sha256,
+            "lineageSha256": latest.source_lineage_sha256,
             "dataThrough": max(bar.data_through for bar in bars).isoformat(),
             "retrievedAt": max(bar.available_at for bar in bars).isoformat(),
             "freshness": (
@@ -442,6 +497,7 @@ def build_projection_batch(
             ),
             "adjustment": "none",
         }
+        source = _bind_activity_authority(source, activity_authorities)
         rules = _mapping(company.get("marketRules"), "copilot_company_rules_invalid")
         price_change = latest.close_cny - latest.previous_close_cny
         direction_detail = (
@@ -452,9 +508,15 @@ def build_projection_batch(
         projected_events = [
             projected
             for event in sorted(event_groups.get(symbol, []), key=lambda item: item.available_at, reverse=True)
-            if (projected := _event_for_projection(event, generated_at)) is not None
+            if (
+                projected := _event_for_projection(
+                    event, generated_at, activity_authorities
+                )
+            ) is not None
         ]
-        company_source = _source(company.get("source"))
+        company_source = _bind_activity_authority(
+            company.get("source"), activity_authorities
+        )
         items.append({
             "symbol": symbol,
             "name": _text(company.get("name"), "copilot_company_name_invalid"),
@@ -467,7 +529,7 @@ def build_projection_batch(
                 "priceLimitPct": rules.get("priceLimitPct"),
                 "stStatus": _text(rules.get("stStatus"), "copilot_company_st_invalid"),
                 "tradingStatus": "trading",
-                "session": _session_at(generated_at),
+                "session": "unknown",
                 "corporateActionAdjusted": False,
             },
             "quote": {
@@ -555,6 +617,7 @@ def main(argv: list[str] | None = None) -> int:
     event_group.add_argument("--load-current-events", action="store_true")
     parser.add_argument("--on-demand-event-dataset", action="append", default=[])
     parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--activity-authorities", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
     parser.add_argument("--trading-date", required=True)
     parser.add_argument(
@@ -613,6 +676,9 @@ def main(argv: list[str] | None = None) -> int:
             snapshot=snapshot,
             company_facts=company_facts,
             events=events,
+            activity_authorities=load_activity_authorities(
+                arguments.activity_authorities.resolve()
+            ),
             generated_at=decision_time,
             valid_until=valid_until,
         )

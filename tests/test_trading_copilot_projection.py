@@ -16,9 +16,29 @@ from Ashare.trading_copilot_projection import (
 NOW = datetime(2026, 8, 2, 4, 0, tzinfo=timezone.utc)
 
 
+def _authority(*, dataset_id: str, data_through: str, receipt_id: str, receipt_sha256: str, lineage_sha256: str) -> dict:
+    return {
+        "datasetId": dataset_id,
+        "market": "ashare",
+        "timezone": "Asia/Shanghai",
+        "calendar": {
+            "id": "sse", "version": "2026.08", "sourceDatasetId": "cn.market.trade_calendar",
+            "receiptId": "calendar-receipt", "receiptSha256": hashlib.sha256(b"calendar").hexdigest(),
+            "lineageSha256": hashlib.sha256(b"calendar-lineage").hexdigest(),
+            "calendarSha256": hashlib.sha256(b"calendar-content").hexdigest(),
+        },
+        "session": {"state": "closed", "asOf": "2026-08-01T07:00:00+00:00"},
+        "dataThrough": data_through,
+        "source": {"receiptId": receipt_id, "receiptSha256": receipt_sha256, "lineageSha256": lineage_sha256},
+    }
+
+
 def _item(symbol: str = "000400.SZ") -> dict:
     stamp = "2026-08-01T07:00:00+00:00"
     sha = hashlib.sha256(symbol.encode()).hexdigest()
+    source_lineage = hashlib.sha256(f"source-lineage-{symbol}".encode()).hexdigest()
+    company_lineage = hashlib.sha256(f"company-lineage-{symbol}".encode()).hexdigest()
+    event_lineage = hashlib.sha256(f"event-lineage-{symbol}".encode()).hexdigest()
     return {
         "symbol": symbol,
         "name": "许继电气" if symbol == "000400.SZ" else symbol,
@@ -27,10 +47,12 @@ def _item(symbol: str = "000400.SZ") -> dict:
             "datasetId": "cn.dataset.rt_min",
             "receiptId": f"receipt-{symbol}",
             "receiptSha256": sha,
+            "lineageSha256": source_lineage,
             "dataThrough": stamp,
             "retrievedAt": "2026-08-01T07:00:10+00:00",
             "freshness": "fresh",
             "adjustment": "none",
+            "activityAuthority": _authority(dataset_id="cn.dataset.rt_min", data_through=stamp, receipt_id=f"receipt-{symbol}", receipt_sha256=sha, lineage_sha256=source_lineage),
         },
         "marketRules": {
             "board": "main", "lotSize": 100, "tPlusOne": True,
@@ -49,8 +71,10 @@ def _item(symbol: str = "000400.SZ") -> dict:
                 "transportContract": "tradingdatas_v1_catalog_query",
                 "datasetId": "cn.equity.security_master",
                 "receiptId": f"company-receipt-{symbol}", "receiptSha256": sha,
+                "lineageSha256": company_lineage,
                 "dataThrough": stamp, "retrievedAt": stamp,
                 "freshness": "fresh", "adjustment": "none",
+                "activityAuthority": _authority(dataset_id="cn.equity.security_master", data_through=stamp, receipt_id=f"company-receipt-{symbol}", receipt_sha256=sha, lineage_sha256=company_lineage),
             },
         },
         "series": {
@@ -80,7 +104,8 @@ def _item(symbol: str = "000400.SZ") -> dict:
                 "freshness": "fresh",
                 "receiptId": f"event-receipt-{symbol}",
                 "receiptSha256": sha,
-                "lineageSha256": hashlib.sha256(f"event-lineage-{symbol}".encode()).hexdigest(),
+                "lineageSha256": event_lineage,
+                "activityAuthority": _authority(dataset_id="cn.dataset.anns_d", data_through=stamp, receipt_id=f"event-receipt-{symbol}", receipt_sha256=sha, lineage_sha256=event_lineage),
             },
         }],
         "summary": "正式行情与双向证据可读；仍需人工等待触发条件。",
@@ -123,9 +148,55 @@ def test_publishes_exact_projection_and_detached_receipt(tmp_path: Path) -> None
     assert projection["forecast"] is None
     assert receipt["projectionSha256"] == hashlib.sha256(projection_bytes).hexdigest()
     assert {item["receiptId"] for item in receipt["sourceReceipts"]} == {
-        "receipt-000400.SZ", "company-receipt-000400.SZ", "event-receipt-000400.SZ"
+        "receipt-000400.SZ", "company-receipt-000400.SZ", "event-receipt-000400.SZ", "calendar-receipt"
     }
     assert json.loads((root / "batch-receipt.json").read_text())["authority"]["orders"] is False
+
+
+def test_rejects_unbound_dataset_activity_authority(tmp_path: Path) -> None:
+    """A detached projection cannot infer session state from a local clock."""
+
+    item = _item()
+    del item["source"]["activityAuthority"]
+    with pytest.raises(
+        TradingCopilotProjectionError,
+        match="projection_activity_authority_required",
+    ):
+        publish_projection_batch(
+            input_path=_write(tmp_path / "input.json", _batch([item])),
+            output_root=(tmp_path / "projection").resolve(),
+            now=NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (
+            lambda item: item["source"]["activityAuthority"].__setitem__(
+                "dataThrough", "2026-08-01T07:01:00+00:00"
+            ),
+            "projection_activity_authority_data_through_mismatch",
+        ),
+        (
+            lambda item: item["events"][0]["dataCapability"]["activityAuthority"]["source"].__setitem__(
+                "receiptId", "different-receipt"
+            ),
+            "projection_activity_authority_source_mismatch",
+        ),
+    ],
+)
+def test_rejects_activity_authority_unequal_to_enclosing_binding(
+    tmp_path: Path, mutate, reason: str
+) -> None:
+    item = _item()
+    mutate(item)
+    with pytest.raises(TradingCopilotProjectionError, match=reason):
+        publish_projection_batch(
+            input_path=_write(tmp_path / "input.json", _batch([item])),
+            output_root=(tmp_path / "projection").resolve(),
+            now=NOW,
+        )
 
 
 def test_validates_entire_batch_before_changing_any_symbol(tmp_path: Path) -> None:

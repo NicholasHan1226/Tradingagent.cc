@@ -16,16 +16,18 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["transportContract", "datasetId", "receiptId", "receiptSha256", "dataThrough", "retrievedAt", "freshness", "adjustment"],
+      "required": ["transportContract", "datasetId", "receiptId", "receiptSha256", "lineageSha256", "dataThrough", "retrievedAt", "freshness", "adjustment", "activityAuthority"],
       "properties": {
         "transportContract": { "const": "tradingdatas_v1_catalog_query" },
         "datasetId": { "type": "string", "minLength": 1 },
         "receiptId": { "type": "string", "minLength": 1 },
         "receiptSha256": { "$ref": "#/$defs/sha256" },
+        "lineageSha256": { "$ref": "#/$defs/sha256" },
         "dataThrough": { "type": "string", "format": "date-time" },
         "retrievedAt": { "type": "string", "format": "date-time" },
         "freshness": { "enum": ["fresh", "stale", "degraded"] },
-        "adjustment": { "enum": ["none", "forward", "backward", "unknown"] }
+        "adjustment": { "enum": ["none", "forward", "backward", "unknown"] },
+        "activityAuthority": { "$ref": "#/$defs/activityAuthority" }
       }
     },
     "receipt": {
@@ -40,7 +42,7 @@
     "eventDataCapability": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["inputContract", "transportContract", "datasetId", "catalogVersion", "asOf", "dataThrough", "freshness", "receiptId", "receiptSha256", "lineageSha256"],
+      "required": ["inputContract", "transportContract", "datasetId", "catalogVersion", "asOf", "dataThrough", "freshness", "receiptId", "receiptSha256", "lineageSha256", "activityAuthority"],
       "properties": {
         "inputContract": { "const": "tradingagent.trading_copilot_projection_batch_input.v2" },
         "transportContract": { "const": "tradingdatas_v1_catalog_query" },
@@ -51,7 +53,52 @@
         "freshness": { "const": "fresh" },
         "receiptId": { "type": "string", "minLength": 1 },
         "receiptSha256": { "$ref": "#/$defs/sha256" },
-        "lineageSha256": { "$ref": "#/$defs/sha256" }
+        "lineageSha256": { "$ref": "#/$defs/sha256" },
+        "activityAuthority": { "$ref": "#/$defs/activityAuthority" }
+      }
+    },
+    "activityAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["datasetId", "market", "timezone", "calendar", "session", "dataThrough", "source"],
+      "properties": {
+        "datasetId": { "type": "string", "minLength": 1 },
+        "market": { "const": "ashare" },
+        "timezone": { "const": "Asia/Shanghai" },
+        "calendar": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "sourceDatasetId", "receiptId", "receiptSha256", "lineageSha256", "calendarSha256"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 },
+            "sourceDatasetId": { "const": "cn.market.trade_calendar" },
+            "receiptId": { "type": "string", "minLength": 1 },
+            "receiptSha256": { "$ref": "#/$defs/sha256" },
+            "lineageSha256": { "$ref": "#/$defs/sha256" },
+            "calendarSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "asOf"],
+          "properties": {
+            "state": { "enum": ["open", "closed", "halted"] },
+            "asOf": { "type": "string", "format": "date-time" }
+          }
+        },
+        "dataThrough": { "type": "string", "format": "date-time" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["receiptId", "receiptSha256", "lineageSha256"],
+          "properties": {
+            "receiptId": { "type": "string", "minLength": 1 },
+            "receiptSha256": { "$ref": "#/$defs/sha256" },
+            "lineageSha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
       }
     },
     "seriesPoint": {
