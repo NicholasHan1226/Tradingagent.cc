@@ -17,12 +17,12 @@ export async function loadStockIntelligence(symbol: string, fetcher: typeof fetc
   }
 }
 
-export function assertStockIntelligenceProjection(payload: unknown, expectedSymbol?: string): asserts payload is StockIntelligence {
+export function assertStockIntelligenceProjection(payload: unknown, expectedSymbol?: string, now = Date.now()): asserts payload is StockIntelligence {
   if (!payload || typeof payload !== 'object') throw new Error('stock_intelligence_invalid')
   const value = payload as Partial<StockIntelligence>
   if (!value.symbol || value.symbol !== value.symbol.toUpperCase() || (expectedSymbol && value.symbol !== expectedSymbol)) throw new Error('stock_intelligence_symbol_invalid')
   if (value.mode !== 'tradingagent_observation' || !isTimestamp(value.updatedAt) || !value.quote || !value.company || !value.series || !Array.isArray(value.events)) throw new Error('stock_intelligence_formal_projection_required')
-  if (value.verification?.status !== 'verified' || !value.verification.receiptId || !isSha256(value.verification.projectionSha256) || !isTimestamp(value.verification.validUntil) || Date.parse(value.verification.validUntil) <= Date.now() || !isTimestamp(value.verification.verifiedAt) || !value.verification.verifierId) throw new Error('stock_intelligence_detached_verification_required')
+  if (value.verification?.status !== 'verified' || !value.verification.receiptId || !isSha256(value.verification.projectionSha256) || !isTimestamp(value.verification.validUntil) || Date.parse(value.verification.validUntil) <= now || !isTimestamp(value.verification.verifiedAt) || !value.verification.verifierId) throw new Error('stock_intelligence_detached_verification_required')
   assertProjectionSource(value.source)
   assertMarketRules(value.marketRules)
   assertQuote(value.quote)

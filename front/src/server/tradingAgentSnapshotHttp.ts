@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { realpathSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { TRADING_AGENT_SNAPSHOT_ROUTE, getTradingAgentSnapshotResponse } from '../api/tradingAgentIntegration.ts'
@@ -15,6 +16,8 @@ type SnapshotHttpServerOptions = {
   workspaceRoot?: string
   copilotStatePath?: string
   trackingUniversePath?: string
+  copilotProjectionDir?: string
+  copilotProjectionNow?: () => Date
 }
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -33,11 +36,17 @@ export function createSnapshotRequestHandler({
   workspaceRoot = process.env.FINANCE_WORKSPACE_ROOT ?? defaultWorkspaceRoot,
   copilotStatePath,
   trackingUniversePath,
+  copilotProjectionDir = process.env.TRADING_COPILOT_PROJECTION_DIR,
+  copilotProjectionNow,
   readSnapshot = () => readTradingAgentSnapshot({ workspaceRoot }),
 }: SnapshotHttpServerOptions = {}) {
   assertRestrictedCorsOrigins(allowedOrigins)
   const handleTradingCopilotState = createTradingCopilotStateHandler({ statePath: copilotStatePath, workspaceRoot })
-  const handleStockIntelligence = createTradingCopilotStockIntelligenceHandler({ workspaceRoot })
+  const handleStockIntelligence = createTradingCopilotStockIntelligenceHandler({
+    workspaceRoot,
+    projectionDir: copilotProjectionDir,
+    now: copilotProjectionNow,
+  })
   const handleTrackingUniverse = createTradingCopilotTrackingUniverseHandler({ trackingUniversePath, workspaceRoot })
 
   return async function handleSnapshotRequest(req: IncomingMessage, res: ServerResponse) {
@@ -153,8 +162,11 @@ if (isMainModule()) {
   })
 }
 
-function isMainModule() {
-  const entry = process.argv[1]
+export function isMainModule(entry = process.argv[1], modulePath = fileURLToPath(import.meta.url)) {
   if (!entry) return false
-  return fileURLToPath(import.meta.url) === entry
+  try {
+    return realpathSync(modulePath) === realpathSync(entry)
+  } catch {
+    return modulePath === entry
+  }
 }

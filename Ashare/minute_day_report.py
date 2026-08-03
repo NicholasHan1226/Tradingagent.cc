@@ -124,7 +124,11 @@ def _reason_counts(records: list[Any]) -> dict[str, int]:
 
 
 def _receipt_history(
-    bundle: Mapping[str, Any], receipt: Mapping[str, Any]
+    bundle: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    *,
+    observed_bar_ends: list[str],
+    processed_snapshot_hashes: list[object],
 ) -> tuple[list[Mapping[str, Any]], bool]:
     raw = bundle.get("receipt_history")
     if raw is None:
@@ -135,20 +139,34 @@ def _receipt_history(
         _mapping(item, "minute_day_report_receipt_history_invalid") for item in raw
     ]
     bars: set[str] = set()
+    history_bar_ends: list[str] = []
+    history_snapshot_hashes: list[str] = []
     for item in history:
         bar_end = item.get("bar_end")
+        snapshot_sha256 = item.get("snapshot_sha256")
         audit_rejections = item.get("audit_rejections")
         if (
             not isinstance(bar_end, str)
             or not bar_end
             or bar_end in bars
+            or not isinstance(snapshot_sha256, str)
+            or not snapshot_sha256
             or isinstance(audit_rejections, bool)
             or not isinstance(audit_rejections, int)
             or audit_rejections < 0
         ):
             raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
         bars.add(bar_end)
+        history_bar_ends.append(bar_end)
+        history_snapshot_hashes.append(snapshot_sha256)
     if history[-1] != receipt:
+        raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
+    if (
+        len(processed_snapshot_hashes) != len(observed_bar_ends)
+        or any(not isinstance(value, str) for value in processed_snapshot_hashes)
+        or history_bar_ends != observed_bar_ends
+        or history_snapshot_hashes != processed_snapshot_hashes
+    ):
         raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
     return history, True
 
@@ -222,7 +240,12 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     )
     raw_gaps = state.get("session_gaps", [])
     gaps = list(raw_gaps) if isinstance(raw_gaps, list) else []
-    receipt_history, receipt_history_complete = _receipt_history(bundle, receipt)
+    receipt_history, receipt_history_complete = _receipt_history(
+        bundle,
+        receipt,
+        observed_bar_ends=observed,
+        processed_snapshot_hashes=list(state["processed_snapshot_hashes"]),
+    )
     cumulative_audit_rejections = sum(
         int(item["audit_rejections"]) for item in receipt_history
     )
@@ -271,6 +294,7 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     )
     learning_eligible = (
         full_session_complete
+        and receipt_history_complete
         and cumulative_audit_rejections == 0
         and reconciliation_complete
     )
@@ -281,6 +305,8 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
         blocker_codes.append("reconciliation_incomplete")
     if not full_session_complete:
         blocker_codes.append("session_incomplete")
+    if full_session_complete and not receipt_history_complete:
+        blocker_codes.append("receipt_history_incomplete")
     return {
         "trading_date": trading_date,
         "expected_bar_slots": expected,
