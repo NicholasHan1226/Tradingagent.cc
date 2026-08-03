@@ -69,6 +69,10 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByText('行情图表暂不可用')).toBeInTheDocument()
     expect(screen.getByText('当前没有按股票代码验证通过的公告、新闻或舆情数据。')).toBeInTheDocument()
     expect(screen.getByText('暂无舆论')).toBeInTheDocument()
+    expect(screen.getByText('研究建议与条件')).toBeInTheDocument()
+    expect(screen.getByText('等待正式覆盖')).toBeInTheDocument()
+    expect(screen.getByText(/当前不生成买入或卖出建议/)).toBeInTheDocument()
+    expect(screen.getByText('事件覆盖未到位')).toBeInTheDocument()
   })
 
   it('switches chart ranges, forecast views, and stock-linked event content', async () => {

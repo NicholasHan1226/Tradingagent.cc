@@ -358,6 +358,7 @@ export function TradingCopilotPage({ demoPreviewEnabled, onOpenQuant }: { demoPr
               <p>这是可追溯证据的人工辅助评分，不是分析师共识、胜率、收益承诺或自动下单指令。</p>
               <ReadinessGrid analysis={analysis} />
             </div>
+            <ResearchFocusCard analysis={analysis} intelligence={intelligence} />
             <SentimentPulseCard intelligence={intelligence} />
             <div className="panel holding-card">
               <div className="panel-heading"><div><span className="eyebrow">CURRENT STOCK POSITION</span><h2>当前个股持仓</h2></div><button aria-label="编辑当前个股持仓" onClick={() => setHoldingTarget(selected)} type="button"><Pencil size={14} /></button></div>
@@ -567,6 +568,34 @@ function CompanyProfileCard({ intelligence }: { intelligence: StockIntelligence 
       </dl>
       <p>{company.description}</p>
     </> : <div className="rail-empty">公司资料尚未随正式个股投影交付。</div>}
+  </section>
+}
+
+function ResearchFocusCard({ analysis, intelligence }: { analysis: CopilotAnalysis; intelligence: StockIntelligence }) {
+  const hasFormalCoverage = intelligence.mode === 'tradingagent_observation'
+    && intelligence.verification.status === 'verified'
+    && intelligence.source?.freshness === 'fresh'
+  const eventSummary = summarizeStockSentiment(intelligence.events)
+  const primaryCondition = analysis.buyConditions[0] ?? '等待正式研究条件。'
+  const primaryInvalidation = analysis.invalidation[0] ?? '缺少失效条件，不能进入人工计划。'
+  const posture = hasFormalCoverage
+    ? analysis.readiness.action === 'eligible_for_human_review'
+      ? '可进入人工复核'
+      : '保持观察，不形成计划'
+    : '等待正式覆盖'
+
+  return <section className="panel research-focus-card" aria-label="个股研究建议与条件">
+    <div className="rail-card-title"><BookOpenCheck size={15} /><span>研究建议与条件</span></div>
+    <div className={`research-posture ${hasFormalCoverage ? 'ready' : 'blocked'}`}>
+      <span>当前姿态</span><strong>{posture}</strong>
+      <p>{hasFormalCoverage ? analysis.summary : '行情、基本资料、事件和研究建议必须由同一只股票的正式投影与回执共同证明。当前不生成买入或卖出建议。'}</p>
+    </div>
+    <dl className="research-focus-list">
+      <div><dt>近期关注</dt><dd>{eventSummary.total ? `${eventSummary.tone} · ${eventSummary.total} 条已绑定事件` : '事件覆盖未到位'}</dd></div>
+      <div><dt>建仓前条件</dt><dd>{primaryCondition}</dd></div>
+      <div><dt>减仓 / 退出条件</dt><dd>{primaryInvalidation}</dd></div>
+    </dl>
+    <p className="research-focus-note">条件来自只读研究投影，属于 Nicholas 的人工复核清单；不代表委托、成交、目标价或自动交易指令。</p>
   </section>
 }
 
