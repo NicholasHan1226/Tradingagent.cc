@@ -17,9 +17,12 @@ from CNFutures.fut_mapping_current_snapshot import (
     FutMappingCurrentSnapshot,
     FutMappingRawCurrentSnapshotFact,
 )
+from CNFutures.ft_limit_current_snapshot import (
+    FutLimitCurrentSnapshot,
+    FutLimitRawCurrentSnapshotFact,
+)
 from CNFutures.m_simulation_readiness import (
     DayNightFixtureAuthority,
-    FtLimitCoverageEvidence,
     MSimulationReadinessProjectionError,
     project_m_simulation_readiness,
 )
@@ -91,14 +94,36 @@ def _fut_settle() -> FutSettleRawMarketRuleSnapshot:
     )
 
 
-def _ft_limit() -> FtLimitCoverageEvidence:
-    return FtLimitCoverageEvidence(
+def _ft_limit() -> FutLimitCurrentSnapshot:
+    receipt_id = "receipt:a6b9755a6aef1da93f708b32c72e6487e2ed04a84dae9c3bc268a313e4e5c036"
+    lineage_sha256 = "6a04306b8a014a46130e79edf3355c260e0e37a3c83822ce2b1bf6eabca632a2"
+    return FutLimitCurrentSnapshot(
         dataset_id="cn.dataset.ft_limit",
-        receipt_id="receipt:ft-limit",
-        lineage_sha256=_sha256("ft-limit-lineage"),
+        schema_major=1,
+        catalog_version="v1-ae7d554642b6ae72",
+        trade_date="20260803",
+        receipt_id=receipt_id,
+        lineage_sha256=lineage_sha256,
+        page_count=9,
+        row_count=868,
+        terminal_pagination=True,
+        replay_verified=True,
+        semantic_sha256=_sha256("ft-limit-semantic"),
+        pagination_trace_sha256=_sha256("ft-limit-pagination"),
         state="stale",
         degraded=True,
-        raw_fact_ts_codes=("M001.DCE", "M002.DCE"),
+        reason="freshness_sla_exceeded",
+        facts=tuple(
+            FutLimitRawCurrentSnapshotFact(
+                trade_date="20260803",
+                ts_code=f"M{index:03d}.DCE",
+                exchange="DCE",
+                receipt_id=receipt_id,
+                lineage_sha256=lineage_sha256,
+                raw_values={"up_limit": 3000.0, "down_limit": 2500.0, "m_ratio": 12.0},
+            )
+            for index in range(1, 9)
+        ),
     )
 
 
@@ -173,7 +198,12 @@ def test_emits_deterministic_per_contract_fail_closed_coverage_ledger() -> None:
         "df4e14bf0a16a28d8b6a030ff637588f5dc315d525282cbecd16011e40c1f172"
     )
     assert result.current_mapping_observed_non_pit is True
-    assert result.ft_limit_receipt_id == "receipt:ft-limit"
+    assert result.ft_limit_dataset_id == "cn.dataset.ft_limit"
+    assert result.ft_limit_catalog_version == "v1-ae7d554642b6ae72"
+    assert result.ft_limit_trade_date == "20260803"
+    assert result.ft_limit_receipt_id == (
+        "receipt:a6b9755a6aef1da93f708b32c72e6487e2ed04a84dae9c3bc268a313e4e5c036"
+    )
     assert len(result.contracts) == 207
     assert [item.ts_code for item in result.contracts] == sorted(
         item.ts_code for item in result.contracts
@@ -239,20 +269,6 @@ def test_rejects_unproven_positive_authority_flags(
 ) -> None:
     with pytest.raises(MSimulationReadinessProjectionError, match=reason):
         _project(day_night_fixture_authority=_fixture_authority(**authority_update))
-
-
-def test_rejects_non_m_or_duplicate_source_identity() -> None:
-    invalid_limit = FtLimitCoverageEvidence(
-        dataset_id="cn.dataset.ft_limit",
-        receipt_id="receipt:ft-limit",
-        lineage_sha256=_sha256("ft-limit-lineage"),
-        state="stale",
-        degraded=True,
-        raw_fact_ts_codes=("RB2601.SHFE", "M001.DCE"),
-    )
-
-    with pytest.raises(MSimulationReadinessProjectionError, match="ft_limit_ts_code_invalid"):
-        _project(ft_limit=invalid_limit)
 
 
 @pytest.mark.parametrize(
@@ -327,3 +343,44 @@ def test_rejects_current_mapping_snapshot_binding_drift(
 
     with pytest.raises(MSimulationReadinessProjectionError, match=reason):
         _project(fut_mapping=snapshot)
+
+
+@pytest.mark.parametrize(
+    ("snapshot_update", "fact_update", "reason"),
+    [
+        ({"receipt_id": "receipt:other"}, {}, "ft_limit_fact_receipt_mismatch"),
+        ({"lineage_sha256": _sha256("other-lineage")}, {}, "ft_limit_fact_lineage_mismatch"),
+        ({"schema_major": 2}, {}, "ft_limit_catalog_invalid"),
+        ({"trade_date": "20260804"}, {}, "ft_limit_trade_date_invalid"),
+        ({"page_count": 8}, {}, "ft_limit_pagination_contract_invalid"),
+        ({"terminal_pagination": False}, {}, "ft_limit_pagination_contract_invalid"),
+        ({"replay_verified": False}, {}, "ft_limit_pagination_contract_invalid"),
+        ({"state": "ready"}, {}, "ft_limit_metadata_contract_invalid"),
+        ({"degraded": False}, {}, "ft_limit_metadata_contract_invalid"),
+        ({"reason": "other_reason"}, {}, "ft_limit_metadata_contract_invalid"),
+        ({}, {"receipt_id": "receipt:other"}, "ft_limit_fact_receipt_mismatch"),
+        ({}, {"lineage_sha256": _sha256("other-lineage")}, "ft_limit_fact_lineage_mismatch"),
+        ({}, {"trade_date": "20260804"}, "ft_limit_fact_identity_invalid"),
+        ({}, {"raw_values": {"up_limit": 3000.0}}, "ft_limit_raw_fact_invalid"),
+        ({"numeric_tick_authority": True}, {}, "ft_limit_authority_invalid"),
+        ({}, {"numeric_tick_authority": True}, "ft_limit_fact_authority_invalid"),
+    ],
+)
+def test_rejects_current_ft_limit_snapshot_binding_and_authority_drift(
+    snapshot_update: dict[str, object], fact_update: dict[str, object], reason: str
+) -> None:
+    snapshot = _ft_limit()
+    fact = snapshot.facts[0]
+    for field, value in fact_update.items():
+        object.__setattr__(fact, field, value)
+    object.__setattr__(snapshot, "facts", (fact, *snapshot.facts[1:]))
+    for field, value in snapshot_update.items():
+        object.__setattr__(snapshot, field, value)
+
+    with pytest.raises(MSimulationReadinessProjectionError, match=reason):
+        _project(ft_limit=snapshot)
+
+
+def test_rejects_non_snapshot_ft_limit_input() -> None:
+    with pytest.raises(TypeError, match="ft_limit must be FutLimitCurrentSnapshot"):
+        _project(ft_limit=object())

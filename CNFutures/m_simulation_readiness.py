@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from CNFutures.ft_limit_current_snapshot import FutLimitCurrentSnapshot
 from CNFutures.fut_basic_contract_units import FutBasicRawContractUnitSnapshot
 from CNFutures.fut_mapping_current_snapshot import FutMappingCurrentSnapshot
 from CNFutures.fut_settle_market_rules import FutSettleRawMarketRuleSnapshot
@@ -22,23 +23,6 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 class MSimulationReadinessProjectionError(ValueError):
     """Raised when an injected raw-fact snapshot cannot form a safe ledger."""
-
-
-@dataclass(frozen=True)
-class FtLimitCoverageEvidence:
-    """Offline metadata plus the DCE/M identities retained from ``ft_limit``.
-
-    Price-limit values remain with the upstream receipt-bound fact.  This
-    projection only records whether that raw fact is present and whether the
-    supplied evidence is stale or degraded.
-    """
-
-    dataset_id: str
-    receipt_id: str
-    lineage_sha256: str
-    state: str
-    degraded: bool
-    raw_fact_ts_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -100,6 +84,9 @@ class MSimulationReadinessProjection:
     current_mapping_observed_non_pit: bool
     fut_settle_receipt_id: str
     fut_settle_lineage_sha256: str
+    ft_limit_dataset_id: str
+    ft_limit_catalog_version: str
+    ft_limit_trade_date: str
     ft_limit_receipt_id: str
     ft_limit_lineage_sha256: str
     fut_basic_coverage_reason: str
@@ -133,7 +120,7 @@ def project_m_simulation_readiness(
     fut_basic: FutBasicRawContractUnitSnapshot,
     fut_mapping: FutMappingCurrentSnapshot,
     fut_settle: FutSettleRawMarketRuleSnapshot,
-    ft_limit: FtLimitCoverageEvidence,
+    ft_limit: FutLimitCurrentSnapshot,
     day_night_fixture_authority: DayNightFixtureAuthority,
 ) -> MSimulationReadinessProjection:
     """Emit an offline M-contract ledger without inferring missing authority.
@@ -151,21 +138,23 @@ def project_m_simulation_readiness(
         raise TypeError("fut_mapping must be FutMappingCurrentSnapshot")
     if not isinstance(fut_settle, FutSettleRawMarketRuleSnapshot):
         raise TypeError("fut_settle must be FutSettleRawMarketRuleSnapshot")
-    if not isinstance(ft_limit, FtLimitCoverageEvidence):
-        raise TypeError("ft_limit must be FtLimitCoverageEvidence")
+    if not isinstance(ft_limit, FutLimitCurrentSnapshot):
+        raise TypeError("ft_limit must be FutLimitCurrentSnapshot")
     if not isinstance(day_night_fixture_authority, DayNightFixtureAuthority):
         raise TypeError("day_night_fixture_authority must be DayNightFixtureAuthority")
 
     _validate_fut_basic(fut_basic)
     _validate_fut_settle(fut_settle)
     _validate_fut_mapping(fut_mapping, expected_trade_date=fut_settle.trade_date)
-    _validate_ft_limit(ft_limit)
+    _validate_ft_limit(ft_limit, expected_trade_date=fut_settle.trade_date)
     _validate_fixture_authority(day_night_fixture_authority)
 
     settle_codes = _unique_m_codes(
         (fact.ts_code for fact in fut_settle.facts), "fut_settle_ts_code_invalid"
     )
-    limit_codes = _unique_m_codes(ft_limit.raw_fact_ts_codes, "ft_limit_ts_code_invalid")
+    limit_codes = _unique_m_codes(
+        (fact.ts_code for fact in ft_limit.facts), "ft_limit_ts_code_invalid"
+    )
     reasons = _coverage_reasons(fut_basic=fut_basic, ft_limit=ft_limit)
     contracts = tuple(
         MContractCoverageLedger(
@@ -190,6 +179,9 @@ def project_m_simulation_readiness(
         current_mapping_observed_non_pit=True,
         fut_settle_receipt_id=fut_settle.receipt_id,
         fut_settle_lineage_sha256=fut_settle.lineage_sha256,
+        ft_limit_dataset_id=ft_limit.dataset_id,
+        ft_limit_catalog_version=ft_limit.catalog_version,
+        ft_limit_trade_date=ft_limit.trade_date,
         ft_limit_receipt_id=ft_limit.receipt_id,
         ft_limit_lineage_sha256=ft_limit.lineage_sha256,
         fut_basic_coverage_reason=fut_basic.coverage_reason,
@@ -289,14 +281,72 @@ def _validate_fut_mapping(
         raise MSimulationReadinessProjectionError("fut_mapping_raw_fact_invalid")
 
 
-def _validate_ft_limit(evidence: FtLimitCoverageEvidence) -> None:
-    if evidence.dataset_id != "cn.dataset.ft_limit":
+def _validate_ft_limit(
+    snapshot: FutLimitCurrentSnapshot,
+    *,
+    expected_trade_date: str,
+) -> None:
+    if snapshot.dataset_id != "cn.dataset.ft_limit":
         raise MSimulationReadinessProjectionError("ft_limit_dataset_invalid")
-    _receipt_binding(evidence.receipt_id, evidence.lineage_sha256, "ft_limit")
-    if not isinstance(evidence.state, str) or not evidence.state.strip():
-        raise MSimulationReadinessProjectionError("ft_limit_state_invalid")
-    if not isinstance(evidence.degraded, bool):
-        raise MSimulationReadinessProjectionError("ft_limit_degraded_invalid")
+    if snapshot.schema_major != 1 or not snapshot.catalog_version:
+        raise MSimulationReadinessProjectionError("ft_limit_catalog_invalid")
+    if snapshot.trade_date != expected_trade_date:
+        raise MSimulationReadinessProjectionError("ft_limit_trade_date_invalid")
+    if (
+        snapshot.page_count != 9
+        or snapshot.row_count != 868
+        or not snapshot.terminal_pagination
+        or not snapshot.replay_verified
+    ):
+        raise MSimulationReadinessProjectionError("ft_limit_pagination_contract_invalid")
+    if (
+        snapshot.state != "stale"
+        or snapshot.degraded is not True
+        or snapshot.reason != "freshness_sla_exceeded"
+    ):
+        raise MSimulationReadinessProjectionError("ft_limit_metadata_contract_invalid")
+    if (
+        snapshot.as_of is not None
+        or snapshot.stable
+        or snapshot.pit_authority
+        or snapshot.numeric_tick_authority
+        or snapshot.session_authority
+        or snapshot.rollover_authority
+        or snapshot.simulation_ready
+        or snapshot.runtime_eligible
+        or snapshot.execution_eligible
+        or snapshot.trading_eligible
+    ):
+        raise MSimulationReadinessProjectionError("ft_limit_authority_invalid")
+    _receipt_binding(snapshot.receipt_id, snapshot.lineage_sha256, "ft_limit")
+    if len(snapshot.facts) != 8:
+        raise MSimulationReadinessProjectionError("ft_limit_fact_count_invalid")
+
+    for fact in snapshot.facts:
+        if (
+            fact.trade_date != snapshot.trade_date
+            or fact.exchange != "DCE"
+            or not _M_DCE_TS_CODE.fullmatch(fact.ts_code)
+        ):
+            raise MSimulationReadinessProjectionError("ft_limit_fact_identity_invalid")
+        if fact.receipt_id != snapshot.receipt_id:
+            raise MSimulationReadinessProjectionError("ft_limit_fact_receipt_mismatch")
+        if fact.lineage_sha256 != snapshot.lineage_sha256:
+            raise MSimulationReadinessProjectionError("ft_limit_fact_lineage_mismatch")
+        if set(fact.raw_values) != {"up_limit", "down_limit", "m_ratio"}:
+            raise MSimulationReadinessProjectionError("ft_limit_raw_fact_invalid")
+        if (
+            fact.stable
+            or fact.pit_authority
+            or fact.numeric_tick_authority
+            or fact.session_authority
+            or fact.rollover_authority
+            or fact.simulation_ready
+            or fact.runtime_eligible
+            or fact.execution_eligible
+            or fact.trading_eligible
+        ):
+            raise MSimulationReadinessProjectionError("ft_limit_fact_authority_invalid")
 
 
 def _validate_fixture_authority(authority: DayNightFixtureAuthority) -> None:
@@ -311,7 +361,7 @@ def _validate_fixture_authority(authority: DayNightFixtureAuthority) -> None:
 
 
 def _coverage_reasons(
-    *, fut_basic: FutBasicRawContractUnitSnapshot, ft_limit: FtLimitCoverageEvidence
+    *, fut_basic: FutBasicRawContractUnitSnapshot, ft_limit: FutLimitCurrentSnapshot
 ) -> tuple[str, ...]:
     reasons: list[str] = []
     if not fut_basic.coverage_complete:
@@ -349,7 +399,6 @@ def _unique_m_codes(values: object, reason: str) -> frozenset[str]:
 
 __all__ = [
     "DayNightFixtureAuthority",
-    "FtLimitCoverageEvidence",
     "MContractCoverageLedger",
     "MSimulationReadinessProjection",
     "MSimulationReadinessProjectionError",
