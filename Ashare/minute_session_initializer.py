@@ -825,8 +825,10 @@ def main(argv: list[str] | None = None) -> int:
             bootstrap_manifest=args.bootstrap_manifest,
             tracking_universe_output=configured_tracking_universe_output,
         )
+    except MinuteSessionInitializerError as exc:
+        print(f"minute session initializer failed closed: {exc}", file=sys.stderr)
+        return 2
     except (
-        MinuteSessionInitializerError,
         MinuteCanaryConfigurationError,
         RuntimeGateConfigurationError,
         SharedSignalsV1Error,

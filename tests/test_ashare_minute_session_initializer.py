@@ -793,6 +793,34 @@ def test_cli_uses_copilot_tracking_universe_output_from_environment(
     assert captured["tracking_universe_output"] == output
 
 
+def test_cli_logs_only_a_structured_initializer_failure_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_initialize(**kwargs: Any) -> dict[str, object]:
+        raise MinuteSessionInitializerError("minute_session_template_missing")
+
+    monkeypatch.setattr(initializer_module, "initialize_minute_session", fail_initialize)
+
+    assert (
+        initializer_module.main(
+            [
+                "--state-root",
+                str(tmp_path / "state"),
+                "--token-file",
+                "/run/private/token",
+                "--now",
+                "2026-07-29T09:20:00+08:00",
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().err == (
+        "minute session initializer failed closed: minute_session_template_missing\n"
+    )
+
+
 def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
     _template(tmp_path)
 
