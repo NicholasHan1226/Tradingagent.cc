@@ -416,6 +416,55 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
     }
 
 
+def test_initializer_atomically_publishes_a_named_copilot_tracking_universe(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    output = tmp_path / "trading-copilot" / "tracking-universe.json"
+    output.parent.mkdir()
+    transport = FixtureTransport()
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        tracking_universe_output=output,
+        transport_factory=_factory(transport),
+    )
+
+    assert result["tracking_universe_published"] is True
+    assert result["tracking_universe_symbol_count"] == 2
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "contractId": "tradingagent.trading_copilot_tracking_universe.v1",
+        "generatedAt": "2026-07-29T09:20:00+08:00",
+        "items": [
+            {"symbol": "000001.SZ", "name": "平安银行"},
+            {"symbol": "600000.SH", "name": "浦发银行"},
+        ],
+    }
+
+
+def test_initializer_rejects_a_symlinked_copilot_tracking_universe_output(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    output = tmp_path / "tracking-universe.json"
+    output.symlink_to(tmp_path / "outside.json")
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="tracking_universe_output_invalid",
+    ):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            tracking_universe_output=output,
+            transport_factory=_factory(FixtureTransport()),
+        )
+
+
 def test_initializer_bootstraps_an_empty_root_from_explicit_reviewed_inputs(
     tmp_path: Path,
 ) -> None:
@@ -712,6 +761,64 @@ def test_cli_uses_reviewed_universe_source_from_environment(
         == 0
     )
     assert captured["universe_source"] == source
+
+
+def test_cli_uses_copilot_tracking_universe_output_from_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "tracking-universe.json"
+    captured: dict[str, Any] = {}
+
+    def fake_initialize(**kwargs: Any) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"status": "pass", "real_trading_enabled": False}
+
+    monkeypatch.setenv("TRADING_COPILOT_TRACKING_UNIVERSE_PATH", str(output))
+    monkeypatch.setattr(initializer_module, "initialize_minute_session", fake_initialize)
+
+    assert (
+        initializer_module.main(
+            [
+                "--state-root",
+                str(tmp_path / "state"),
+                "--token-file",
+                "/run/private/token",
+                "--now",
+                "2026-07-29T09:20:00+08:00",
+            ]
+        )
+        == 0
+    )
+    assert captured["tracking_universe_output"] == output
+
+
+def test_cli_logs_only_a_structured_initializer_failure_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_initialize(**kwargs: Any) -> dict[str, object]:
+        raise MinuteSessionInitializerError("minute_session_template_missing")
+
+    monkeypatch.setattr(initializer_module, "initialize_minute_session", fail_initialize)
+
+    assert (
+        initializer_module.main(
+            [
+                "--state-root",
+                str(tmp_path / "state"),
+                "--token-file",
+                "/run/private/token",
+                "--now",
+                "2026-07-29T09:20:00+08:00",
+            ]
+        )
+        == 2
+    )
+    assert capsys.readouterr().err == (
+        "minute session initializer failed closed: minute_session_template_missing\n"
+    )
 
 
 def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
