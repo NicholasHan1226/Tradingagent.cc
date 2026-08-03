@@ -59,6 +59,12 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 每行都必须是 `exchange=DCE`、`fut_code=M` 且 `ts_code` 唯一；缺 identity 或任一单位字段、receipt/lineage 漂移、非 DCE/M 行、非终页或 replay 漂移均 fail closed。它仅将 multiplier、trade-unit、per-unit 和 quote-unit 字段原样保留为 receipt-bound raw contract facts，不推导数字 tick、会话、PIT、换月或可执行规格。当前唯一接受的 metadata 状态是 `partial`/`degraded=true` 且唯一原因 `response_completeness_unverified`：输出强制 `coverage_complete=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false` 和 `as_of=null`。因此它记录显式 coverage debt，不产生 stable、PIT、runtime、模拟成交或真实交易授权。
 
+## `fut_mapping` 当前日映射快照
+
+`CNFutures.fut_mapping_current_snapshot.load_fut_mapping_current_snapshot` 是 caller-invoked、注入既有 `SharedSignalsV1Client` 的只读消费者。它固定消费 `cn.dataset.fut_mapping` schema major `1`：catalog identity 必须为 `[trade_date,ts_code]`，默认顺序必须为 `[trade_date:asc,ts_code:asc]`；query 固定为一个 `trade_date`、`as_of=null`、同一排序和三字段 `trade_date`、`ts_code`、`mapping_ts_code`。该 reader 仅接受 202 行的单终页完整 receipt，并做同观察 replay，验证 `ready/fresh/valid/non-degraded` metadata、精确 receipt、完整 provider-neutral lineage 和每行相同交易日。输出只保留唯一 `M.DCE` 行的原始 `mapping_ts_code`，不解释其为实际主力、有效区间或换月规则。
+
+即使当前快照完整，该数据集仍没有 as-of、effective interval 或 rollover PIT authority。输出固定 `stable=false`、`pit_rollover_authority=false`、`simulation_ready=false`、`runtime_eligible=false`、`execution_eligible=false`、`trading_eligible=false`；它不是模拟成交、shadow、broker 或真实交易授权。
+
 ## M 合约 simulation-readiness 覆盖投影
 
 `CNFutures.m_simulation_readiness.project_m_simulation_readiness` 是 caller-invoked、纯离线的每合约 coverage ledger。调用方只能注入现有 `fut_basic` raw-unit snapshot、`fut_settle` raw-rule snapshot、receipt/lineage 绑定的 `ft_limit` evidence，以及由 day/night handoff fixture 明确标记的 authority gaps；它不会创建 client、调用 API/provider、写入 runtime 或持久化。
