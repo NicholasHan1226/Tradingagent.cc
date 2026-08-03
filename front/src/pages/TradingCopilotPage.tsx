@@ -576,8 +576,15 @@ function ResearchFocusCard({ analysis, intelligence }: { analysis: CopilotAnalys
     && intelligence.verification.status === 'verified'
     && intelligence.source?.freshness === 'fresh'
   const eventSummary = summarizeStockSentiment(intelligence.events)
-  const primaryCondition = analysis.buyConditions[0] ?? '等待正式研究条件。'
-  const primaryInvalidation = analysis.invalidation[0] ?? '缺少失效条件，不能进入人工计划。'
+  const primaryCondition = hasFormalCoverage
+    ? analysis.buyConditions[0] ?? '等待正式研究条件。'
+    : '正式研究条件未覆盖'
+  const primaryInvalidation = hasFormalCoverage
+    ? analysis.invalidation[0] ?? '缺少失效条件，不能进入人工计划。'
+    : '正式失效条件未覆盖，不能进入人工计划。'
+  const eventCoverage = hasFormalCoverage && eventSummary.total
+    ? `${eventSummary.tone} · ${eventSummary.total} 条已绑定事件`
+    : '事件覆盖未到位'
   const posture = hasFormalCoverage
     ? analysis.readiness.action === 'eligible_for_human_review'
       ? '可进入人工复核'
@@ -591,7 +598,7 @@ function ResearchFocusCard({ analysis, intelligence }: { analysis: CopilotAnalys
       <p>{hasFormalCoverage ? analysis.summary : '行情、基本资料、事件和研究建议必须由同一只股票的正式投影与回执共同证明。当前不生成买入或卖出建议。'}</p>
     </div>
     <dl className="research-focus-list">
-      <div><dt>近期关注</dt><dd>{eventSummary.total ? `${eventSummary.tone} · ${eventSummary.total} 条已绑定事件` : '事件覆盖未到位'}</dd></div>
+      <div><dt>近期关注</dt><dd>{eventCoverage}</dd></div>
       <div><dt>建仓前条件</dt><dd>{primaryCondition}</dd></div>
       <div><dt>减仓 / 退出条件</dt><dd>{primaryInvalidation}</dd></div>
     </dl>

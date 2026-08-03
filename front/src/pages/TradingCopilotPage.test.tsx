@@ -31,6 +31,10 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByText('Copilot 证据共识')).toBeInTheDocument()
     expect(screen.getByText('舆论与事件温度')).toBeInTheDocument()
     expect(screen.getByText('偏积极')).toBeInTheDocument()
+    expect(screen.getByText('等待正式覆盖')).toBeInTheDocument()
+    expect(screen.getByText('正式研究条件未覆盖')).toBeInTheDocument()
+    expect(screen.getByText('正式失效条件未覆盖，不能进入人工计划。')).toBeInTheDocument()
+    expect(screen.queryByText('收盘站上人工观察位并有量能确认')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /调整资金/ }))
     const capital = screen.getByLabelText('申报总资金（元）')
