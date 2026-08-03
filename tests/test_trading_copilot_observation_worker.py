@@ -30,6 +30,7 @@ from Ashare.trading_copilot_observation_worker import (
 )
 import Ashare.trading_copilot_observation_worker as observation_worker
 from Ashare.trading_copilot_projection import publish_projection_batch
+from Ashare.trading_copilot_event_timeline import build_event_timeline_batch, publish_event_timeline_batch
 
 
 def _sha(value: str) -> str:
@@ -266,6 +267,21 @@ def test_omits_event_without_verifiable_url_and_never_invents_sentiment() -> Non
         generated_at=generated, valid_until=generated + timedelta(days=1),
     )
     assert batch["items"][0]["events"] == []
+
+
+def test_event_timeline_publishes_accepted_events_with_independent_coverage_debt(tmp_path: Path) -> None:
+    generated = datetime(2026, 8, 1, 1, 40, tzinfo=timezone.utc)
+    batch = build_event_timeline_batch(
+        symbols=("600000.SH", "000001.SZ"), events=(_event(),),
+        blocked_dataset_reasons={"cn.dataset.irm_qa_sh": "ashare_evidence_metadata_not_ready"},
+        generated_at=generated, valid_until=generated + timedelta(hours=2),
+    )
+    result = publish_event_timeline_batch(batch=batch, output_root=(tmp_path / "timeline").resolve(), now=generated)
+    timeline = json.loads((tmp_path / "timeline" / "600000.SH.json").read_text())
+    assert result["symbolCount"] == 2
+    assert timeline["events"][0]["sentiment"] == "neutral"
+    assert timeline["coverage"]["blockedDatasetIds"] == ["cn.dataset.irm_qa_sh"]
+    assert (tmp_path / "timeline" / "000001.SZ.receipt.json").is_file()
 
 
 def test_blocks_symbol_without_verified_company_facts() -> None:
