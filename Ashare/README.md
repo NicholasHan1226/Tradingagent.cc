@@ -85,6 +85,18 @@ The first catalog-validated profiles are:
   and receipt-bound `cn.dataset.major_news`;
 - forbidden fallback while paused: `cn.dataset.news`.
 
+`broker_recommend` and `report_rc` have an explicit, caller-invoked analyst
+expectation mapping through `load_analyst_expectation_snapshots`. It uses the
+same receipt-bound TD catalog/query port and frozen symbol allowlist as the
+existing A-share event consumer. Both sources must retain compatible active
+profiles, fresh metadata, complete receipt/lineage proof, and a successful
+bounded query; any rejected source fails the requested analyst read closed and
+is recorded in the evidence audit. The mapping does not automatically enter
+the event pass, timeline, UI, sentiment, candidate, risk, or order paths.
+Active catalog entries and contract tests remain `contract_ready` only:
+same-window receipt, TD query, and consumer readback are still coverage debt
+before an `observed` or `stable` claim.
+
 `major_news` is macro-context event evidence only: its formal identity is
 `[src, pub_time, title]`, `pub_time` uses declared Asia/Shanghai semantics,
 and rows without a stock identity remain `CN-MACRO` context. It can lower or
