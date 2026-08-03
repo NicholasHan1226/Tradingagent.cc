@@ -60,6 +60,11 @@ Date: 2026-08-03
 
 - Browser-rendered desktop capture at 1026×994: no horizontal overflow; one
   `.copilot-rail`, one `.tracking-ribbon`, and zero `.copilot-sidebar` nodes.
+- Browser-rendered 1280 px local demo check after the per-dataset activity-state
+  slice: the new strip is visible between A-share rules and detail tabs, renders
+  `demo_fixture · 时钟覆盖缺口`, and does not alter the existing right rail or
+  chart controls. The coverage-gap text is intentional because the current
+  shared projection contract does not yet carry per-dataset clock authority.
 - Browser-rendered mobile capture at 390×844: no horizontal overflow.
 - Browser console: no warnings or errors observed in the inspected demo state.
 - Primary interactions checked: top navigation visible, stock search entry

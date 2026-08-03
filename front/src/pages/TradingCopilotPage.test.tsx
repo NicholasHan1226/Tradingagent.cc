@@ -34,6 +34,7 @@ describe('TradingCopilotPage', () => {
     expect(screen.getByText('等待正式覆盖')).toBeInTheDocument()
     expect(screen.getByText('正式研究条件未覆盖')).toBeInTheDocument()
     expect(screen.getByText('正式失效条件未覆盖，不能进入人工计划。')).toBeInTheDocument()
+    expect(screen.getByLabelText('数据集活跃状态')).toHaveTextContent('demo_fixture · 时钟覆盖缺口')
     expect(screen.queryByText('收盘站上人工观察位并有量能确认')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /调整资金/ }))

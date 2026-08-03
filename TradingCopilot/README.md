@@ -130,6 +130,7 @@ V3 把“预测功能存在”和“预测可用于人工决策”拆成机器�
 - 没有同股票、同批次的正式 projection/receipt，或行情来源不是 `fresh` 时，固定显示“等待正式覆盖”；不生成买入、卖出、目标价或概率结论，也不把演示 fixture 的建仓、退出或舆情条件伪装成正式研究。
 - 只有 `eligible_for_human_review` 的正式投影才能进入“可进入人工复核”。这仍是 Nicholas 的研究清单，不是订单、成交、自动交易或投资承诺。
 - 舆情温度仅统计逐条绑定的公告、新闻和舆情事件。没有事件回执时显示“事件覆盖未到位”，不从标题、热度或摘要推断情绪。
+- 个股页按每个已消费 `datasetId` 独立显示 activity state；只有该数据集同时交付 `market`、`timezone`、`calendar`、`session` 与可解析的 `dataThrough` authority 时，才可显示“活跃”或“已收市”。现有 projection 未交付这组 authority 时固定显示“时钟覆盖缺口”，不得借用 A 股个股 `marketRules.session`，也不得以一个市场的时钟推断 Crypto 或 CN futures 数据集状态。
 - 30、100、500 和全量是四个独立覆盖层。每层都依次要求：immutable universe/config → complete receipt/lineage → catalog/query 分页回读 → TA 投影 → Copilot 读回；前一层的代码、历史样本或 HTTP 200 均不能替代后一层。
 
 文档分层保持单一事实源：本文件定义产品行为和字段边界；`../STATUS.md` 记录 TA runtime 与当前停止线；TradingDatas 的 `STATUS.md` 记录采集/runtime/receipt 事实；`contracts/` 定义机器合同；历史运行证据写入 `docs/reports/`。持续交付只以这些可核验事实推进，候选、PR 和 UI 演示均不自动晋级为 live 或 stable。
