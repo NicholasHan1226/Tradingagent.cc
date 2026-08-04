@@ -365,7 +365,7 @@ def _budgeted_scrub_stubs(
     monkeypatch.setattr(
         learning_module,
         "_completion_inventory",
-        lambda *_: observations,
+        lambda *args, **kwargs: observations,
     )
     monkeypatch.setattr(
         learning_module,
@@ -428,6 +428,59 @@ def test_full_scrub_budget_stop_is_append_only_and_resume_matches_uninterrupted(
     )
     assert uninterrupted["status"] == "recovered"
     assert _learning_files(interrupted_root) == _learning_files(uninterrupted_root)
+
+
+def test_full_scrub_inventory_budget_stop_writes_no_learning_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "inventory-interrupted"
+    root.mkdir()
+    completions = root / "completions"
+    completions.mkdir()
+    for observation_id in ("first", "second"):
+        (completions / f"{observation_id}.json").write_text("{}\n", encoding="utf-8")
+    store = SimpleNamespace(completions_dir=completions)
+    slots = {"first": "2026-08-04T00:00:00Z", "second": "2026-08-04T00:05:00Z"}
+    seen: list[str] = []
+
+    monkeypatch.setattr(
+        learning_module,
+        "_core_snapshot",
+        lambda _: (
+            store,
+            {"pending": None, "completion_count": 2, "observation_count": 2},
+            {"latest_observation_id": "second"},
+        ),
+    )
+    monkeypatch.setattr(
+        learning_module,
+        "_source_record",
+        lambda _, observation_id, **__: seen.append(observation_id)
+        or {"observation": {"market_slot": slots[observation_id]}},
+    )
+    monkeypatch.setattr(learning_module, "_verify_or_project", _stub_projection)
+    clock = iter((0.0, 0.0, 91.0))
+    monkeypatch.setattr(learning_module, "monotonic", lambda: next(clock), raising=False)
+
+    deferred = run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=root)
+
+    assert deferred == learning_module._result(
+        status="deferred_inventory_time_budget", inventory_complete=False
+    )
+    assert seen == ["first"]
+    assert not (root / "evolution").exists()
+
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0, raising=False)
+    resumed = run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=root)
+    assert resumed["status"] == "recovered"
+
+    uninterrupted_root = tmp_path / "inventory-uninterrupted"
+    uninterrupted_root.mkdir()
+    completed = run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=uninterrupted_root
+    )
+    assert completed["status"] == "recovered"
+    assert _learning_files(root) == _learning_files(uninterrupted_root)
 
 
 def test_full_scrub_resume_rejects_drifted_checkpoint_source(

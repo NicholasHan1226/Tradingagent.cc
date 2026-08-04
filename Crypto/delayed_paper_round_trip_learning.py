@@ -399,9 +399,13 @@ def _completion_inventory(
     store: CryptoDelayedPaperObservationStore,
     checkpoint: Mapping[str, Any],
     core_state: Mapping[str, Any],
-) -> list[str]:
+    *,
+    deadline: float,
+) -> list[str] | None:
     completed: list[tuple[Any, str]] = []
     for path in store.completions_dir.glob("*.json"):
+        if monotonic() >= deadline:
+            return None
         source = _source_record(store, path.stem, strict_ledger_membership=True)
         completed.append(
             (_market_slot(source["observation"].get("market_slot")), path.stem)
@@ -733,9 +737,15 @@ def run_crypto_delayed_paper_round_trip_learning_full_scrub(
     store, checkpoint, core_state = _core_snapshot(root)
     if checkpoint.get("pending") is not None:
         return _result(status="deferred_core_pending")
+    completed = _completion_inventory(
+        store, checkpoint, core_state, deadline=deadline
+    )
+    if completed is None:
+        return _result(
+            status="deferred_inventory_time_budget", inventory_complete=False
+        )
     evolution = _ensure_evolution_root(root)
     with _learning_lock(evolution):
-        completed = _completion_inventory(store, checkpoint, core_state)
         checkpoints = _read_checkpoints(evolution)
         if len(checkpoints) > len(completed):
             raise CryptoRoundTripLearningError(
@@ -823,6 +833,7 @@ def round_trip_learning_exit_code(result: Mapping[str, Any]) -> int:
         "recovered",
         "scrubbed",
         "deferred_core_pending",
+        "deferred_inventory_time_budget",
         "deferred_time_budget",
     }:
         return 2

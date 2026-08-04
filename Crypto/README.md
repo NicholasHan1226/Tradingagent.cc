@@ -474,7 +474,9 @@ checkpoint identity，才可由受控发布流程单独决定是否启用；dail
 G5 full scrub 每次对该只读 store 的 decision ledger 只做一次完整链校验并按
 sequence 建立进程内索引，之后仍逐条复核 observation/completion/event index 与
 projection receipt。它有低于 systemd 120 秒上限的内部单调时间预算，并且只会在两个
-完整 observation 之间停止。`deferred_time_budget` 是受控的未完成状态：只保留已经
+完整 source record 或 observation 之间停止。`deferred_inventory_time_budget` 表示尚未
+建立完整冻结 inventory，因而不会写任何 learning artifact；`deferred_time_budget` 是
+inventory 已完成后的受控未完成状态：只保留已经
 绑定 source completion sha 与 projection receipt sha 的 append-only checkpoint，绝不
 写 worker state 或 full-scrub certificate，也不给 incremental 学习资格。下一次
 Controller 受控的 disabled scrub/replay 必须先重新验证 root identity、冻结 inventory
