@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from datetime import timedelta
 import json
 from pathlib import Path
 
@@ -245,16 +246,21 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
     )
 
     assert calendar_lines == (
-        "OnCalendar=Mon..Fri *-*-* 09:49/5:00",
-        "OnCalendar=Mon..Fri *-*-* 10:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:04..44/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:19/5:00",
-        "OnCalendar=Mon..Fri *-*-* 14:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 15:04:00",
-        "OnCalendar=Mon..Fri *-*-* 15:09:00",
-        "OnCalendar=Mon..Fri *-*-* 15:14:00",
+        "OnCalendar=Mon..Fri *-*-* 09:40/5:00",
+        "OnCalendar=Mon..Fri *-*-* 10:00/5:00",
+        "OnCalendar=Mon..Fri *-*-* 11:00..35/5:00",
+        "OnCalendar=Mon..Fri *-*-* 13:10/5:00",
+        "OnCalendar=Mon..Fri *-*-* 14:00/5:00",
+        "OnCalendar=Mon..Fri *-*-* 15:00:00",
+        "OnCalendar=Mon..Fri *-*-* 15:05:00",
     )
     assert "09..11" not in timer
     assert "13..15" not in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-paper.service" in timer
+    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
+    triggers = tuple(slot + timedelta(minutes=5) for slot in slots)
+    assert len(triggers) == 48
+    for trigger, slot in zip(triggers, slots, strict=True):
+        assert expected_available_bar_end(trigger) == slot
+        assert expected_available_bar_end(trigger + timedelta(seconds=10)) == slot
