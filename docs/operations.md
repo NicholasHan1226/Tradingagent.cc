@@ -31,7 +31,8 @@
   envelope metadata；任一批 503、缺行、重复或证据拒绝都不创建当日 inputs，
   禁止退回无界查询或 SQLite。
 - A股现役 TradingDatas 通用采集与 TA 分钟消费必须错峰：session initializer
-  固定 09:18；48 个 delayed-paper 轮次固定在目标 5 分钟边界后约 4 分钟。
+  固定 09:18；48 个 delayed-paper 轮次固定在目标 5 分钟边界后 5 分钟（含
+  timer 最多 10 秒随机延迟）。这正好落在 runner 的 5–5.5 分钟可消费窗口。
   `expected_available_bar_end` 仍减去一根 5 分钟 provider lag，因此错峰只避免
   SQLite/receipt 写入窗口的 HTTP 503，不改变被消费 bar、交易日、数量或顺序。
 - A 股个股只允许沪深主板普通股。创业板、科创板及北京市场个股不得进入候选、预测、目标仓位、订单、成交或持仓；双创指数与全市场行业聚合只作 `context_only` 环境证据。
@@ -755,8 +756,9 @@ deploy/systemd/tradingagent-ashare-minute-paper.timer
 ```
 
 timer 只在工作日48根可处理K线的延迟到达窗口触发：上午
-`09:49–11:44`、下午`13:19–15:14`。生产读回证明上游在自然K线边界仍晚一根，
-因此策略固定等待两根5分钟K线，并在对应TradingDatas采集轮后约4分钟触发。
+`09:40–11:35`、下午`13:10–15:05`。每次计划触发在目标 bar end 后5分钟，
+含最多10秒随机延迟仍在 source 规定的5–5.5分钟窗口。生产读回证明上游在自然K线边界仍晚一根，
+因此策略固定等待一根完整5分钟K线后再触发。
 午休后段和收盘后不再重复触发，因此已知
 缺口只保留一次失败关闭证据，不会在无新K线时制造重复失败日志。启用前必须依次
 通过：不可变 release/manifest 校验、
