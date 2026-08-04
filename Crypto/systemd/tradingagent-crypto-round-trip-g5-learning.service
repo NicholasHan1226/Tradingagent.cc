@@ -1,0 +1,32 @@
+[Unit]
+Description=TradingAgent Crypto g5 detached round-trip learning projection
+After=tradingagent-crypto-round-trip-g5-delayed-paper.service
+AssertPathExists=/etc/tradingagent/crypto-delayed-paper-round-trip-g5.env
+AssertPathExists=/opt/investment/releases/tradingagent/current/Crypto/delayed_paper_round_trip_learning_worker.py
+AssertPathExists=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-round-trip-epoch-g5-20260801/evolution
+
+[Service]
+Type=oneshot
+User=tradingagent
+Group=tradingagent
+WorkingDirectory=/opt/investment/releases/tradingagent/current
+Environment=REAL_TRADING_ENABLED=false
+Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/tradingagent/crypto-delayed-paper-round-trip-g5.env
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_round_trip_learning_worker --mode incremental --epoch-manifest ${ROUND_TRIP_EPOCH_MANIFEST}
+TimeoutStartSec=45s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/etc/tradingagent/crypto-delayed-paper-round-trip-g5.env
+ReadOnlyPaths=/etc/tradingagent/crypto-delayed-paper-round-trip-epochs
+ReadOnlyPaths=/var/lib/tradingagent/crypto-delayed-paper-epochs
+ReadWritePaths=/var/lib/tradingagent/crypto-delayed-paper-epochs/crypto-delayed-paper-round-trip-epoch-g5-20260801/evolution
+StandardOutput=journal
+StandardError=journal

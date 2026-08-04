@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent Crypto g5 detached round-trip learning timer
+
+[Timer]
+OnCalendar=*-*-* *:3/5:20
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=false
+Unit=tradingagent-crypto-round-trip-g5-learning.service
+
+[Install]
+WantedBy=timers.target

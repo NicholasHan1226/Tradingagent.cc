@@ -1,4 +1,4 @@
-"""CLI boundary for the detached G4 round-trip learning worker.
+"""CLI boundary for detached G4/G5 round-trip learning projections.
 
 The command deliberately accepts a versioned round-trip epoch manifest only;
 there is no free output-root argument and no network input.  It rechecks the
@@ -29,15 +29,28 @@ from Crypto.delayed_paper_round_trip_learning import (
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 
 
+def _manifest_generation(path: Path) -> int:
+    """Return the generation encoded by one accepted round-trip manifest name."""
+
+    prefixes = {
+        "crypto-delayed-paper-round-trip-epoch-g4-": 4,
+        "crypto-delayed-paper-round-trip-epoch-g5-": 5,
+    }
+    for prefix, generation in prefixes.items():
+        if path.name.startswith(prefix):
+            return generation
+    raise CryptoRoundTripLearningError("round_trip_learning_manifest_path_invalid")
+
+
 def _validated_manifest_path(value: Path | str) -> Path:
     path = Path(value)
     if (
         path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
         or path.name.startswith("generation-")
-        or not path.name.startswith("crypto-delayed-paper-round-trip-epoch-g4-")
         or path.suffix != ".json"
     ):
         raise CryptoRoundTripLearningError("round_trip_learning_manifest_path_invalid")
+    _manifest_generation(path)
     return path
 
 
@@ -63,13 +76,14 @@ def _existing_epoch_root(context: Any) -> None:
 def run_round_trip_learning_worker_once(
     *, mode: str, epoch_manifest: Path | str
 ) -> dict[str, Any]:
-    """Run an isolated projection after binding it to exactly one G4 epoch."""
+    """Run an isolated projection after binding it to one exact G4/G5 epoch."""
 
     _assert_simulation_only()
     manifest_path = _validated_manifest_path(epoch_manifest)
+    expected_generation = _manifest_generation(manifest_path)
     try:
         context = load_round_trip_epoch_manifest(manifest_path)
-        if context.epoch_generation != 4:
+        if context.epoch_generation != expected_generation:
             raise CryptoRoundTripLearningError(
                 "round_trip_learning_epoch_generation_invalid"
             )
@@ -106,7 +120,7 @@ def run_round_trip_learning_worker_once(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run one detached Crypto G4 round-trip learning projection"
+        description="Run one detached Crypto G4/G5 round-trip learning projection"
     )
     parser.add_argument("--mode", choices=("incremental", "full-scrub"), required=True)
     parser.add_argument("--epoch-manifest", type=Path, required=True)

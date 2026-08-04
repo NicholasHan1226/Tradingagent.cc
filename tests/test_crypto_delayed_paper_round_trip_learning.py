@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import Crypto.delayed_paper_round_trip_learning_worker as worker_module
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_learning import (
     CryptoRoundTripLearningError,
@@ -133,6 +134,94 @@ def test_worker_rejects_free_or_non_g4_manifest_paths(tmp_path: Path) -> None:
         run_round_trip_learning_worker_once(
             mode="incremental", epoch_manifest=tmp_path / "epoch.json"
         )
+
+
+@pytest.mark.parametrize("generation", (4, 5))
+def test_worker_admits_only_matching_g4_or_g5_manifest_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, generation: int
+) -> None:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    manifest = manifest_directory / f"crypto-delayed-paper-round-trip-epoch-g{generation}-test.json"
+    identity = tmp_path / "identity.json"
+    identity.write_bytes(b"identity")
+    root = tmp_path / f"g{generation}-root"
+    context = SimpleNamespace(
+        epoch_generation=generation,
+        output_root=root,
+        identity_path=identity,
+        epoch_id=f"g{generation}-test",
+        manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=root, identity_path=identity)
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory
+    )
+    monkeypatch.setattr(worker_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(worker_module, "_existing_epoch_root", lambda _: None)
+    monkeypatch.setattr(worker_module, "prepare_round_trip_epoch_candidate", lambda _: prepared)
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_full_scrub",
+        lambda *, output_root: seen.append(output_root) or {"status": "recovered"},
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="full-scrub", epoch_manifest=manifest
+    )
+
+    assert seen == [root]
+    assert result["epoch_generation"] == generation
+    assert result["epoch_output_root"] == str(root)
+
+
+def test_worker_rejects_g5_manifest_with_g4_context_before_root_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    manifest = manifest_directory / "crypto-delayed-paper-round-trip-epoch-g5-test.json"
+    context = SimpleNamespace(epoch_generation=4)
+    monkeypatch.setattr(
+        worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory
+    )
+    monkeypatch.setattr(worker_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(
+        worker_module,
+        "_existing_epoch_root",
+        lambda _: pytest.fail("mismatched generation reached root access"),
+    )
+
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_epoch_generation_invalid",
+    ):
+        worker_module.run_round_trip_learning_worker_once(
+            mode="full-scrub", epoch_manifest=manifest
+        )
+
+
+def test_worker_rejects_non_round_trip_or_unknown_generation_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    monkeypatch.setattr(
+        worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory
+    )
+
+    for name in (
+        "crypto-delayed-paper-epoch-g5-test.json",
+        "crypto-delayed-paper-round-trip-epoch-g6-test.json",
+    ):
+        with pytest.raises(
+            CryptoRoundTripLearningError,
+            match="round_trip_learning_manifest_path_invalid",
+        ):
+            worker_module.run_round_trip_learning_worker_once(
+                mode="full-scrub", epoch_manifest=manifest_directory / name
+            )
 
 
 def test_worker_refuses_incomplete_epoch_before_any_prepare_write(

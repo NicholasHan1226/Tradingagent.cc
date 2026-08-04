@@ -461,6 +461,16 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 G5 acceptance 仍只报告 `not_ready` 或 `eligible`，并沿用 288 根连续 closed-5m
 completion 的 learning maturity 门槛；它不因 epoch generation 改变而放宽门禁。
 
+G5 的 learning projection 使用独立的
+`tradingagent-crypto-round-trip-g5-learning` 与 daily
+`...-learning-scrub` unit 候选。它们仅接受 G5 versioned round-trip manifest，且只能
+写入 `crypto-delayed-paper-round-trip-epoch-g5-20260801/evolution/`；G4/G2 根、自由
+output root、网络、核心 observation、capital、order、Champion 与自动风险扩张都不在
+其权限内。两组 G5 timer 默认 disabled。即使 acceptance 已 eligible，也必须先在
+disabled 状态完成同一 G5 根的 full scrub 与精确幂等 replay，并读回 projection/
+checkpoint identity，才可由受控发布流程单独决定是否启用；daily scrub 不因该决定而
+替代 core 收集或成为交易调度器。
+
 为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽 PIT 校验。这带来 5 分钟的模拟延迟，但给采集独立完成和落库留出了一个完整周期，而非用直接 service 依赖进行耦合。若主机停机造成 timer 漏触发，runtime 用 checkpoint 从最早缺失 slot 开始补处理；每次最多两根，未追平的 `backlog_pending` receipt 会让该轮失败并保留缺口，不把它伪装成最新成功。新的 `data_reject` receipt 记录请求的 window/cutoff，只读报告会将它作为 gap 证据展示；没有这些 receipt 的缺口仍标为未分类，不伪造外部原因。
 核心单请求超时固定为 8 秒：该值覆盖正式 18083 已验证的冷路径 catalog 尾延迟，且两轮
 最坏分页预算仍低于 systemd 的 180 秒停止线；超时不重试、不回退，也不放宽 freshness。
