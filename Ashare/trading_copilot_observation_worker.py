@@ -24,6 +24,7 @@ from Ashare.event_evidence import (
     AshareEvidenceContractError,
     EventEvidenceSnapshot,
     TradingDatasAshareEvidencePort,
+    write_event_evidence_batch_artifact,
 )
 from Ashare.minute_canary import (
     load_minute_canary_config,
@@ -254,10 +255,11 @@ def load_current_event_snapshots(
     decision_time: datetime,
     symbols: Sequence[str],
     requested_on_demand_dataset_ids: Sequence[str] = (),
+    retained_artifact_root: Path | str | None = None,
 ) -> tuple[
-    tuple[EventEvidenceSnapshot, ...],
-    tuple[str, ...],
-    dict[str, str],
+    tuple[EventEvidenceSnapshot, ...], tuple[str, ...], dict[str, str]
+] | tuple[
+    tuple[EventEvidenceSnapshot, ...], tuple[str, ...], dict[str, str], tuple[Path, ...]
 ]:
     """Read current event evidence through the same two fixed TD V1 routes.
 
@@ -265,6 +267,9 @@ def load_current_event_snapshots(
     causes the worker to synthesize an event or sentiment label.
     """
 
+    artifact_root = None if retained_artifact_root is None else Path(retained_artifact_root)
+    if artifact_root is not None and (not artifact_root.is_absolute() or artifact_root.is_symlink()):
+        raise TradingCopilotObservationError("copilot_event_artifact_root_invalid")
     try:
         consumer_profiles = select_event_consumer_profiles(
             load_event_consumer_profiles(),
@@ -296,14 +301,16 @@ def load_current_event_snapshots(
     try:
         profiles = port.freeze_profiles(audit_ledger=audit)
     except AshareEvidenceContractError as exc:
-        return (
+        result = (
             (),
             dataset_ids,
             {dataset_id: exc.reason_code for dataset_id in dataset_ids},
         )
+        return (*result, ()) if artifact_root is not None else result
     accepted: list[EventEvidenceSnapshot] = []
     blocked: list[str] = []
     blocked_reasons: dict[str, str] = {}
+    retained_paths: list[Path] = []
     allowed = tuple(sorted(set(symbols)))
     for consumer_profile in consumer_profiles:
         dataset_id = consumer_profile.dataset_id
@@ -357,8 +364,19 @@ def load_current_event_snapshots(
             blocked.append(dataset_id)
             blocked_reasons[dataset_id] = str(exc)
             continue
+        if artifact_root is not None:
+            receipt_suffix = snapshot.events[0].receipt_id.removeprefix("receipt:")
+            artifact_path = artifact_root / f"{dataset_id}.{receipt_suffix}.json"
+            try:
+                write_event_evidence_batch_artifact(batch=snapshot, path=artifact_path)
+            except AshareEvidenceContractError as exc:
+                blocked.append(dataset_id)
+                blocked_reasons[dataset_id] = exc.reason_code
+                continue
+            retained_paths.append(artifact_path)
         accepted.extend(snapshot.events)
-    return tuple(accepted), tuple(blocked), blocked_reasons
+    result = (tuple(accepted), tuple(blocked), blocked_reasons)
+    return (*result, tuple(retained_paths)) if artifact_root is not None else result
 
 
 def _published_at(event: EventEvidenceSnapshot) -> str:
@@ -616,6 +634,8 @@ def main(argv: list[str] | None = None) -> int:
     event_group.add_argument("--event-bundle", type=Path)
     event_group.add_argument("--load-current-events", action="store_true")
     parser.add_argument("--on-demand-event-dataset", action="append", default=[])
+    parser.add_argument("--event-evidence-artifact-root", type=Path)
+    parser.add_argument("--event-timeline-output-root", type=Path)
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--activity-authorities", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
@@ -634,6 +654,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--result-output", type=Path, required=True)
     arguments = parser.parse_args(argv)
     try:
+        if bool(arguments.event_evidence_artifact_root) != bool(arguments.event_timeline_output_root):
+            raise TradingCopilotObservationError("copilot_event_retention_roots_required")
+        if (arguments.event_evidence_artifact_root or arguments.event_timeline_output_root) and not arguments.load_current_events:
+            raise TradingCopilotObservationError("copilot_event_retention_requires_current_td_read")
         decision_time = datetime.fromisoformat(arguments.decision_time.replace("Z", "+00:00"))
         valid_until = datetime.fromisoformat(arguments.valid_until.replace("Z", "+00:00"))
         config = load_minute_canary_config(arguments.minute_manifest.resolve())
@@ -657,13 +681,32 @@ def main(argv: list[str] | None = None) -> int:
                 raise TradingCopilotObservationError("copilot_observation_manifest_required")
             company_facts = load_company_facts(arguments.company_facts.resolve())
         if arguments.load_current_events:
-            events, blocked_event_datasets, blocked_event_reasons = load_current_event_snapshots(
+            current_events = load_current_event_snapshots(
                 minute_config=config,
                 token_file=arguments.token_file.resolve(),
                 decision_time=decision_time,
                 symbols=tuple(bar.symbol for bar in snapshot.bars),
                 requested_on_demand_dataset_ids=arguments.on_demand_event_dataset,
+                retained_artifact_root=(
+                    arguments.event_evidence_artifact_root.resolve()
+                    if arguments.event_evidence_artifact_root
+                    else None
+                ),
             )
+            if arguments.event_evidence_artifact_root:
+                events, blocked_event_datasets, blocked_event_reasons, retained_paths = current_events
+                from Ashare.trading_copilot_event_timeline import publish_retained_event_timeline
+
+                publish_retained_event_timeline(
+                    artifact_paths=retained_paths,
+                    symbols=tuple(bar.symbol for bar in snapshot.bars),
+                    blocked_dataset_reasons=blocked_event_reasons,
+                    generated_at=decision_time,
+                    valid_until=valid_until,
+                    output_root=arguments.event_timeline_output_root.resolve(),
+                )
+            else:
+                events, blocked_event_datasets, blocked_event_reasons = current_events
         else:
             if arguments.on_demand_event_dataset:
                 raise TradingCopilotObservationError(

@@ -16,7 +16,10 @@ import re
 import tempfile
 from typing import Any, Mapping, Sequence
 
-from Ashare.event_evidence import EventEvidenceSnapshot
+from Ashare.event_evidence import (
+    EventEvidenceSnapshot,
+    load_event_evidence_batch_artifact,
+)
 from Ashare.trading_copilot_event_consumer_profile import (
     TradingCopilotEventConsumerProfileError,
     load_event_consumer_profiles,
@@ -135,3 +138,42 @@ def publish_event_timeline_batch(*, batch: Mapping[str, Any], output_root: Path 
         _atomic_write(root / f"{symbol}.json", payload)
         _atomic_write(root / f"{symbol}.receipt.json", receipt)
     return {"contractId": EVENT_TIMELINE_CONTRACT, "symbolCount": len(prepared), "outputRoot": str(root), "sentimentLabelsInvented": False}
+
+
+def publish_retained_event_timeline(
+    *,
+    artifact_paths: Sequence[Path | str],
+    symbols: Sequence[str],
+    blocked_dataset_reasons: Mapping[str, str],
+    generated_at: datetime,
+    valid_until: datetime,
+    output_root: Path | str,
+) -> dict[str, Any]:
+    """Load only validated retained batches, then use the existing publisher."""
+
+    paths = tuple(Path(path) for path in artifact_paths)
+    if len(paths) != len(set(paths)) or any(
+        not path.is_absolute() or path.is_symlink() for path in paths
+    ):
+        raise TradingCopilotObservationError("event_timeline_retained_artifact_invalid")
+    events: list[EventEvidenceSnapshot] = []
+    for path in paths:
+        try:
+            batch = load_event_evidence_batch_artifact(path)
+        except ValueError as exc:
+            raise TradingCopilotObservationError(
+                "event_timeline_retained_artifact_invalid"
+            ) from exc
+        events.extend(batch.events)
+    batch = build_event_timeline_batch(
+        symbols=symbols,
+        events=events,
+        blocked_dataset_reasons=blocked_dataset_reasons,
+        generated_at=generated_at,
+        valid_until=valid_until,
+    )
+    return publish_event_timeline_batch(
+        batch=batch,
+        output_root=output_root,
+        now=generated_at,
+    )

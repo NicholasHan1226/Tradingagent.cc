@@ -13,6 +13,7 @@ from Ashare.event_evidence import (
     AshareEvidenceContractError,
     EvidenceDatasetProfile,
     EventEvidenceSnapshot,
+    EventEvidenceSnapshotBatch,
     PRIMARY_DATASET_IDS,
 )
 from Ashare.minute_data import (
@@ -503,6 +504,54 @@ def test_event_loader_only_queries_major_news_after_explicit_on_demand_request(m
         "cn.dataset.irm_qa_sz", "cn.dataset.research_report", "cn.dataset.major_news",
     })
     assert seen["calls"][-1][1:] == ({}, None)
+
+
+def test_event_artifact_failure_blocks_batch_before_flattening(tmp_path: Path, monkeypatch) -> None:
+    profile = _event_evidence_profile("cn.dataset.anns_d")
+    retained = EventEvidenceSnapshotBatch(
+        profile=profile,
+        events=(_event(),),
+        page_count=1,
+        row_count=1,
+        pagination_trace_sha256=_sha("pages"),
+        first_semantic_sha256=_sha("replay"),
+        replay_semantic_sha256=_sha("replay"),
+        same_observation=True,
+    )
+    monkeypatch.setattr(observation_worker, "build_runtime_transport", lambda *args, **kwargs: object())
+    monkeypatch.setattr(observation_worker, "SharedSignalsV1Client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(observation_worker, "select_event_consumer_profiles", lambda *args, **kwargs: (SimpleNamespace(dataset_id="cn.dataset.anns_d", symbol_binding="required"),))
+    monkeypatch.setattr(observation_worker, "validate_event_consumer_profile_contract", lambda **kwargs: None)
+    monkeypatch.setattr(observation_worker, "validate_event_consumer_runtime_evidence", lambda **kwargs: None)
+
+    class Port:
+        def __init__(self, client) -> None:
+            pass
+
+        def freeze_profiles(self, *, audit_ledger):
+            return SimpleNamespace(by_dataset={"cn.dataset.anns_d": profile})
+
+        def load_event_snapshot(self, **kwargs):
+            return retained
+
+    monkeypatch.setattr(observation_worker, "TradingDatasAshareEvidencePort", Port)
+    monkeypatch.setattr(
+        observation_worker,
+        "write_event_evidence_batch_artifact",
+        lambda **kwargs: (_ for _ in ()).throw(AshareEvidenceContractError("artifact_write_failed")),
+    )
+
+    events, blocked, reasons, paths = load_current_event_snapshots(
+        minute_config=SimpleNamespace(transport_id="http-json-v1", base_url="http://127.0.0.1:18082", expected_catalog_version="catalog-v1", access_policy_id="test-read-v1", timeout_seconds=1),
+        token_file=Path("/not-read-by-test"),
+        decision_time=datetime(2026, 8, 2, 8, 1, tzinfo=timezone.utc),
+        symbols=("600000.SH",),
+        retained_artifact_root=(tmp_path / "artifacts").resolve(),
+    )
+
+    assert events == () and paths == ()
+    assert blocked == ("cn.dataset.anns_d",)
+    assert reasons == {"cn.dataset.anns_d": "artifact_write_failed"}
 
 
 def test_event_bundle_cannot_substitute_for_verified_td_runtime_evidence(tmp_path: Path) -> None:

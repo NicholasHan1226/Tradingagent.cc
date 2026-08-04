@@ -1017,6 +1017,8 @@ python3 -m Ashare.trading_copilot_observation_worker \
   --observation-manifest /absolute/observation-manifest.json \
   --observation-state-root /absolute/committed/research-snapshots \
   --load-current-events \
+  --event-evidence-artifact-root /absolute/private-staging/event-evidence \
+  --event-timeline-output-root /absolute/private-runtime/event-timeline \
   --token-file /absolute/tradingdatas-read.token \
   --decision-time 2026-08-02T16:00:00+08:00 \
   --trading-date 2026-07-31 \
@@ -1034,6 +1036,13 @@ freshness、receipt 与完整 lineage。`cn.dataset.major_news` 固定为 `on_de
 `--on-demand-event-dataset cn.dataset.major_news` 才可请求。其公开查询不支持 `as_of`，因此仍仅是
 当前观察，不是历史 PIT、自动实时能力或交易 authority。`--event-bundle` 不可作为正式事件入口，
 因为本地 JSON 不能替代 TradingDatas capability 与 runtime evidence。
+
+`--event-evidence-artifact-root` 与 `--event-timeline-output-root` 必须成对地同
+`--load-current-events` 使用，且均为显式绝对路径。前者只在 batch 完成 TD 读取及 runtime
+evidence 校验后原子保留 receipt-bound typed artifact；写入失败时该 batch 不会被展平或发布。
+后者只读取并再次校验这些 artifact，再调用现有 event timeline publisher；它不会重新查询 TD
+或从 timeline JSON 重建事件。该路径仅用于离线/operator preflight；生产 caller、输出 root 与
+启用仍需 Nicholas 另行授权，本示例不代表它已激活。
 
 首次启用分钟 session root 时，不能靠“已启用 timer”假定存在历史模板。必须由发布侧准备一个
 仓外、已审核的 minute manifest 和 universe artifact，并仅在空 root 的第一次 session 初始化时

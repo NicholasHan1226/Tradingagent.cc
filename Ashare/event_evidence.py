@@ -19,9 +19,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 from types import MappingProxyType
+import tempfile
 from typing import Any, Mapping, Protocol
 from zoneinfo import ZoneInfo
 
@@ -49,6 +52,9 @@ from shared.universe.policy import classify_instrument
 
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
+EVENT_EVIDENCE_BATCH_ARTIFACT_CONTRACT = (
+    "tradingagent.ashare.event_evidence_batch.v1"
+)
 
 PRIMARY_DATASET_IDS = (
     "cn.dataset.anns_d",
@@ -1075,6 +1081,11 @@ class EventEvidenceSnapshotBatch:
             raise AshareEvidenceContractError(
                 "ashare_evidence_snapshot_catalog_version_drift"
             )
+        if any(event.dataset_id != self.profile.dataset_id for event in self.events):
+            raise AshareEvidenceContractError("ashare_evidence_snapshot_dataset_drift")
+        receipt_ids = {event.receipt_id for event in self.events}
+        if len(receipt_ids) != 1:
+            raise AshareEvidenceContractError("ashare_evidence_snapshot_receipt_drift")
 
     @property
     def expected_catalog_version(self) -> str:
@@ -1095,6 +1106,224 @@ class EventEvidenceSnapshotBatch:
     @property
     def consumer_profile_sha256(self) -> str:
         return self.profile.consumer_profile_sha256
+
+
+def _event_batch_artifact_profile(profile: EvidenceDatasetProfile) -> dict[str, object]:
+    return {
+        "expected_catalog_version": profile.expected_catalog_version,
+        "observed_catalog_version": profile.observed_catalog_version,
+        "dataset_id": profile.dataset_id,
+        "schema_major": profile.schema_major,
+        "default_fields": list(profile.default_fields),
+        "default_order": list(profile.default_order),
+        "filter_operators": [
+            [field_name, list(operators)]
+            for field_name, operators in profile.filter_operators
+        ],
+        "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
+        "consumer_profile_sha256": profile.consumer_profile_sha256,
+        "identity_fields": list(profile.identity_fields),
+        "event_time_field": profile.event_time_field,
+        "symbol_field": profile.symbol_field,
+        "entity_field": profile.entity_field,
+        "title_field": profile.title_field,
+        "content_field": profile.content_field,
+        "url_field": profile.url_field,
+        "source_field": profile.source_field,
+        "default_entity": profile.default_entity,
+        "optional_dataset": profile.optional_dataset,
+        "max_pages": profile.max_pages,
+        "max_rows": profile.max_rows,
+        "page_limit": profile.page_limit,
+        "omit_as_of": profile.omit_as_of,
+    }
+
+
+def _event_batch_artifact_event(event: EventEvidenceSnapshot) -> dict[str, object]:
+    return {
+        **event.canonical_payload(),
+        "as_of": event.as_of.isoformat(),
+        "data_through": event.data_through.isoformat(),
+        "available_at": event.available_at.isoformat(),
+    }
+
+
+def event_evidence_batch_artifact(
+    batch: EventEvidenceSnapshotBatch,
+) -> dict[str, object]:
+    """Return the canonical, receipt-bound persistence form for one batch."""
+
+    if not isinstance(batch, EventEvidenceSnapshotBatch):
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    return {
+        "contract_id": EVENT_EVIDENCE_BATCH_ARTIFACT_CONTRACT,
+        "profile": _event_batch_artifact_profile(batch.profile),
+        "events": [_event_batch_artifact_event(event) for event in batch.events],
+        "page_count": batch.page_count,
+        "row_count": batch.row_count,
+        "pagination_trace_sha256": batch.pagination_trace_sha256,
+        "first_semantic_sha256": batch.first_semantic_sha256,
+        "replay_semantic_sha256": batch.replay_semantic_sha256,
+        "same_observation": batch.same_observation,
+    }
+
+
+def _artifact_mapping(value: object) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    return value
+
+
+def _artifact_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return _text(value, "ashare_evidence_batch_artifact_invalid")
+
+
+def _artifact_profile(value: object) -> EvidenceDatasetProfile:
+    raw = _artifact_mapping(value)
+    expected = {
+        "expected_catalog_version", "observed_catalog_version", "dataset_id",
+        "schema_major", "default_fields", "default_order", "filter_operators",
+        "dataset_contract_fingerprint", "consumer_profile_sha256", "identity_fields",
+        "event_time_field", "symbol_field", "entity_field", "title_field",
+        "content_field", "url_field", "source_field", "default_entity",
+        "optional_dataset", "max_pages", "max_rows", "page_limit", "omit_as_of",
+    }
+    if set(raw) != expected:
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    operators = raw["filter_operators"]
+    if not isinstance(operators, list):
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    normalized_operators: list[tuple[str, tuple[str, ...]]] = []
+    for item in operators:
+        if not isinstance(item, list) or len(item) != 2:
+            raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+        normalized_operators.append(
+            (_text(item[0], "ashare_evidence_batch_artifact_invalid"), _strings(
+                item[1], "ashare_evidence_batch_artifact_invalid"
+            ))
+        )
+    return EvidenceDatasetProfile(
+        expected_catalog_version=_text(raw["expected_catalog_version"], "ashare_evidence_batch_artifact_invalid"),
+        observed_catalog_version=_text(raw["observed_catalog_version"], "ashare_evidence_batch_artifact_invalid"),
+        dataset_id=_text(raw["dataset_id"], "ashare_evidence_batch_artifact_invalid"),
+        schema_major=raw["schema_major"],
+        default_fields=_strings(raw["default_fields"], "ashare_evidence_batch_artifact_invalid"),
+        default_order=_strings(raw["default_order"], "ashare_evidence_batch_artifact_invalid", nonempty=False),
+        filter_operators=tuple(normalized_operators),
+        dataset_contract_fingerprint=raw["dataset_contract_fingerprint"],
+        consumer_profile_sha256=raw["consumer_profile_sha256"],
+        identity_fields=_strings(raw["identity_fields"], "ashare_evidence_batch_artifact_invalid"),
+        event_time_field=_text(raw["event_time_field"], "ashare_evidence_batch_artifact_invalid"),
+        symbol_field=_artifact_optional_text(raw["symbol_field"]),
+        entity_field=_artifact_optional_text(raw["entity_field"]),
+        title_field=_artifact_optional_text(raw["title_field"]),
+        content_field=_artifact_optional_text(raw["content_field"]),
+        url_field=_artifact_optional_text(raw["url_field"]),
+        source_field=_artifact_optional_text(raw["source_field"]),
+        default_entity=_artifact_optional_text(raw["default_entity"]),
+        optional_dataset=raw["optional_dataset"],
+        max_pages=raw["max_pages"],
+        max_rows=raw["max_rows"],
+        page_limit=raw["page_limit"],
+        omit_as_of=raw["omit_as_of"],
+    )
+
+
+def _artifact_event(value: object) -> EventEvidenceSnapshot:
+    raw = _artifact_mapping(value)
+    expected = set(EventEvidenceSnapshot.__dataclass_fields__)
+    if set(raw) != expected:
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    return EventEvidenceSnapshot(
+        dataset_id=raw["dataset_id"],
+        catalog_version=raw["catalog_version"],
+        event_time=raw["event_time"],
+        event_time_precision=raw["event_time_precision"],
+        as_of=_parse_aware_iso(raw["as_of"], "ashare_evidence_batch_artifact_invalid"),
+        data_through=_parse_aware_iso(raw["data_through"], "ashare_evidence_batch_artifact_invalid"),
+        available_at=_parse_aware_iso(raw["available_at"], "ashare_evidence_batch_artifact_invalid"),
+        available_at_source=raw["available_at_source"],
+        entity=raw["entity"], symbol=raw["symbol"], title=raw["title"],
+        content=raw["content"], url=raw["url"], source=raw["source"],
+        receipt_id=raw["receipt_id"], source_lineage_sha256=raw["source_lineage_sha256"],
+        source_row_sha256=raw["source_row_sha256"], envelope_proof_sha256=raw["envelope_proof_sha256"],
+        evidence_ref=raw["evidence_ref"], evidence_confidence=raw["evidence_confidence"],
+        event_time_instant_proven=raw["event_time_instant_proven"],
+        historical_known_time_proven=raw["historical_known_time_proven"],
+        pit_feature_eligible=raw["pit_feature_eligible"],
+        confidence_semantics=raw["confidence_semantics"],
+        calibrated_probability=raw["calibrated_probability"],
+        candidate_eligible=raw["candidate_eligible"], execution_eligible=raw["execution_eligible"],
+        training_eligible=raw["training_eligible"], promotion_eligible=raw["promotion_eligible"],
+        execution_authority=raw["execution_authority"], risk_authority=raw["risk_authority"],
+        position_authority=raw["position_authority"], real_trading_enabled=raw["real_trading_enabled"],
+    )
+
+
+def write_event_evidence_batch_artifact(
+    *, batch: EventEvidenceSnapshotBatch, path: Path | str
+) -> None:
+    """Atomically retain a validated batch; existing files are never overwritten."""
+
+    target = Path(path)
+    if (
+        not target.is_absolute()
+        or target.is_symlink()
+        or target.parent.is_symlink()
+        or target.exists()
+    ):
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_path_invalid")
+    payload = (_canonical_json(event_evidence_batch_artifact(batch)) + "\n").encode()
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.link(temporary, target)
+    except FileExistsError as exc:
+        raise AshareEvidenceContractError(
+            "ashare_evidence_batch_artifact_path_invalid"
+        ) from exc
+    except OSError as exc:
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_persist_failed") from exc
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def load_event_evidence_batch_artifact(path: Path | str) -> EventEvidenceSnapshotBatch:
+    """Load only a complete receipt-bound artifact; malformed data fails closed."""
+
+    target = Path(path)
+    if not target.is_absolute() or target.is_symlink() or not target.is_file():
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_path_invalid")
+    try:
+        raw = _artifact_mapping(json.loads(target.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid") from exc
+    expected = {
+        "contract_id", "profile", "events", "page_count", "row_count",
+        "pagination_trace_sha256", "first_semantic_sha256", "replay_semantic_sha256",
+        "same_observation",
+    }
+    if set(raw) != expected or raw["contract_id"] != EVENT_EVIDENCE_BATCH_ARTIFACT_CONTRACT:
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    events = raw["events"]
+    if not isinstance(events, list):
+        raise AshareEvidenceContractError("ashare_evidence_batch_artifact_invalid")
+    return EventEvidenceSnapshotBatch(
+        profile=_artifact_profile(raw["profile"]),
+        events=tuple(_artifact_event(event) for event in events),
+        page_count=raw["page_count"], row_count=raw["row_count"],
+        pagination_trace_sha256=raw["pagination_trace_sha256"],
+        first_semantic_sha256=raw["first_semantic_sha256"],
+        replay_semantic_sha256=raw["replay_semantic_sha256"],
+        same_observation=raw["same_observation"],
+    )
 
 
 def _event_time(
@@ -2139,6 +2368,7 @@ def build_llm_shadow_request(
 
 __all__ = [
     "ANALYST_EXPECTATION_DATASET_IDS",
+    "EVENT_EVIDENCE_BATCH_ARTIFACT_CONTRACT",
     "FIXED_CATALOG_ROUTE",
     "FIXED_QUERY_ROUTE",
     "OPTIONAL_DATASET_IDS",
@@ -2157,6 +2387,9 @@ __all__ = [
     "bind_shadow_decision",
     "build_llm_shadow_request",
     "build_sentiment_snapshot",
+    "event_evidence_batch_artifact",
     "load_analyst_expectation_snapshots",
+    "load_event_evidence_batch_artifact",
     "snapshot_from_runs",
+    "write_event_evidence_batch_artifact",
 ]
