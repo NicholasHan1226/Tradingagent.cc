@@ -29,6 +29,18 @@ from Crypto.delayed_paper_round_trip_learning import (
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 
 
+ROUND_TRIP_LEARNING_EPOCH_ROOTS = {
+    4: Path(
+        "/var/lib/tradingagent/crypto-delayed-paper-epochs/"
+        "crypto-delayed-paper-round-trip-epoch-g4-20260731"
+    ),
+    5: Path(
+        "/var/lib/tradingagent/crypto-delayed-paper-epochs/"
+        "crypto-delayed-paper-round-trip-epoch-g5-20260801"
+    ),
+}
+
+
 def _manifest_generation(path: Path) -> int:
     """Return the generation encoded by one accepted round-trip manifest name."""
 
@@ -73,6 +85,13 @@ def _existing_epoch_root(context: Any) -> None:
         raise CryptoRoundTripLearningError("round_trip_learning_root_incomplete")
 
 
+def _validated_epoch_root(context: Any, *, expected_generation: int) -> None:
+    """Bind an accepted manifest generation to its one immutable epoch root."""
+
+    if context.output_root != ROUND_TRIP_LEARNING_EPOCH_ROOTS[expected_generation]:
+        raise CryptoRoundTripLearningError("round_trip_learning_epoch_root_invalid")
+
+
 def run_round_trip_learning_worker_once(
     *, mode: str, epoch_manifest: Path | str
 ) -> dict[str, Any]:
@@ -87,6 +106,7 @@ def run_round_trip_learning_worker_once(
             raise CryptoRoundTripLearningError(
                 "round_trip_learning_epoch_generation_invalid"
             )
+        _validated_epoch_root(context, expected_generation=expected_generation)
         _existing_epoch_root(context)
         prepared = prepare_round_trip_epoch_candidate(context)
         identity_before = prepared.identity_path.read_bytes()

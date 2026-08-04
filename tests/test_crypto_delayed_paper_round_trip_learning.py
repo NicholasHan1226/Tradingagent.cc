@@ -145,7 +145,7 @@ def test_worker_admits_only_matching_g4_or_g5_manifest_generation(
     manifest = manifest_directory / f"crypto-delayed-paper-round-trip-epoch-g{generation}-test.json"
     identity = tmp_path / "identity.json"
     identity.write_bytes(b"identity")
-    root = tmp_path / f"g{generation}-root"
+    root = worker_module.ROUND_TRIP_LEARNING_EPOCH_ROOTS[generation]
     context = SimpleNamespace(
         epoch_generation=generation,
         output_root=root,
@@ -196,6 +196,44 @@ def test_worker_rejects_g5_manifest_with_g4_context_before_root_access(
     with pytest.raises(
         CryptoRoundTripLearningError,
         match="round_trip_learning_epoch_generation_invalid",
+    ):
+        worker_module.run_round_trip_learning_worker_once(
+            mode="full-scrub", epoch_manifest=manifest
+        )
+
+
+@pytest.mark.parametrize("generation", (4, 5))
+def test_worker_rejects_matching_generation_with_noncanonical_root_before_root_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, generation: int
+) -> None:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    manifest = (
+        manifest_directory
+        / f"crypto-delayed-paper-round-trip-epoch-g{generation}-test.json"
+    )
+    context = SimpleNamespace(
+        epoch_generation=generation,
+        output_root=tmp_path / f"wrong-g{generation}-root",
+    )
+    monkeypatch.setattr(
+        worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory
+    )
+    monkeypatch.setattr(worker_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(
+        worker_module,
+        "_existing_epoch_root",
+        lambda _: pytest.fail("noncanonical root reached root access"),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "prepare_round_trip_epoch_candidate",
+        lambda _: pytest.fail("noncanonical root reached prepare access"),
+    )
+
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_epoch_root_invalid",
     ):
         worker_module.run_round_trip_learning_worker_once(
             mode="full-scrub", epoch_manifest=manifest
