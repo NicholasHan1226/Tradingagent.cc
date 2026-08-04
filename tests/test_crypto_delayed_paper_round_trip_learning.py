@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -275,3 +276,57 @@ def test_worker_refuses_incomplete_epoch_before_any_prepare_write(
         _existing_epoch_root(context)
 
     assert list(root.iterdir()) == []
+
+
+def test_worker_cli_emits_allowed_failure_reason_without_exception_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        worker_module,
+        "run_round_trip_learning_worker_once",
+        lambda **_: (_ for _ in ()).throw(
+            CryptoRoundTripLearningError("round_trip_learning_source_invalid")
+        ),
+    )
+
+    assert worker_module.main(
+        ["--mode", "full-scrub", "--epoch-manifest", str(tmp_path / "epoch.json")]
+    ) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "contract": "tradingagent.crypto.round_trip_learning_worker_failure.v1",
+        "failure_phase": "full_scrub",
+        "failure_reason": "round_trip_learning_source_invalid",
+        "status": "failed_closed",
+    }
+    assert captured.err == "crypto round-trip learning worker failed closed\n"
+
+
+def test_worker_cli_maps_unexpected_failure_to_generic_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        worker_module,
+        "run_round_trip_learning_worker_once",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("do not disclose this text")),
+    )
+
+    assert worker_module.main(
+        ["--mode", "incremental", "--epoch-manifest", str(tmp_path / "epoch.json")]
+    ) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["failure_phase"] == "incremental"
+    assert json.loads(captured.out)["failure_reason"] == "round_trip_learning_failed"
+    assert "do not disclose this text" not in captured.out + captured.err
+
+
+def test_worker_cli_invalid_arguments_do_not_emit_failure_event(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exited:
+        worker_module.main(["--mode", "invalid", "--epoch-manifest", "epoch.json"])
+
+    assert exited.value.code == 2
+    assert capsys.readouterr().out == ""

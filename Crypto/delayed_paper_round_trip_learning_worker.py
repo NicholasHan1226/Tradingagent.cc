@@ -40,6 +40,69 @@ ROUND_TRIP_LEARNING_EPOCH_ROOTS = {
     ),
 }
 
+ROUND_TRIP_LEARNING_FAILURE_REASONS = frozenset(
+    {
+        "round_trip_learning_checkpoint_invalid",
+        "round_trip_learning_checkpoint_orphaned",
+        "round_trip_learning_checkpoint_source_mismatch",
+        "round_trip_learning_claimed_projection_missing",
+        "round_trip_learning_core_checkpoint_mismatch",
+        "round_trip_learning_core_invalid",
+        "round_trip_learning_core_inventory_invalid",
+        "round_trip_learning_core_regressed",
+        "round_trip_learning_decision_index_invalid",
+        "round_trip_learning_decision_index_missing",
+        "round_trip_learning_directory_invalid",
+        "round_trip_learning_epoch_generation_invalid",
+        "round_trip_learning_epoch_identity_changed",
+        "round_trip_learning_epoch_invalid",
+        "round_trip_learning_epoch_root_invalid",
+        "round_trip_learning_immutable_conflict",
+        "round_trip_learning_lock_invalid",
+        "round_trip_learning_manifest_path_invalid",
+        "round_trip_learning_mode_invalid",
+        "round_trip_learning_payload_invalid",
+        "round_trip_learning_projection_invalid",
+        "round_trip_learning_projection_not_derived",
+        "round_trip_learning_root_incomplete",
+        "round_trip_learning_source_invalid",
+        "round_trip_learning_state_invalid",
+        "round_trip_learning_state_write_failed",
+        "round_trip_learning_write_failed",
+    }
+)
+
+
+def _failure_event(*, mode: str, exc: Exception | None = None) -> dict[str, str]:
+    """Return the public, secret-free failure provenance for one CLI invocation."""
+
+    reason = "round_trip_learning_failed"
+    if (
+        isinstance(exc, CryptoRoundTripLearningError)
+        and len(exc.args) == 1
+        and isinstance(exc.args[0], str)
+        and exc.args[0] in ROUND_TRIP_LEARNING_FAILURE_REASONS
+    ):
+        reason = exc.args[0]
+    return {
+        "contract": "tradingagent.crypto.round_trip_learning_worker_failure.v1",
+        "status": "failed_closed",
+        "failure_phase": mode.replace("-", "_"),
+        "failure_reason": reason,
+    }
+
+
+def _emit_failure(*, mode: str, exc: Exception | None = None) -> None:
+    print(
+        json.dumps(
+            _failure_event(mode=mode, exc=exc),
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
 
 def _manifest_generation(path: Path) -> int:
     """Return the generation encoded by one accepted round-trip manifest name."""
@@ -149,10 +212,12 @@ def main(argv: list[str] | None = None) -> int:
         result = run_round_trip_learning_worker_once(
             mode=args.mode, epoch_manifest=args.epoch_manifest
         )
-    except Exception:
+    except Exception as exc:
+        _emit_failure(mode=args.mode, exc=exc)
         print("crypto round-trip learning worker failed closed", file=sys.stderr)
         return 2
     if round_trip_learning_exit_code(result):
+        _emit_failure(mode=args.mode)
         print("crypto round-trip learning worker failed closed", file=sys.stderr)
         return 2
     print(
