@@ -48,6 +48,10 @@ def test_front_api_uses_dedicated_primary_identity_and_read_only_release() -> No
         "Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1",
         "Environment=TRADING_AGENT_SNAPSHOT_PORT=8787",
         (
+            "Environment=TRADING_COPILOT_EVENT_TIMELINE_DIR="
+            "/var/lib/tradingagent/trading-copilot/event-timeline"
+        ),
+        (
             "Environment=TRADING_COPILOT_TRACKING_UNIVERSE_PATH="
             "/var/lib/tradingagent/trading-copilot/tracking-universe.json"
         ),
