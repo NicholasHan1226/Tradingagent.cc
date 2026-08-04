@@ -59,6 +59,14 @@ provider or invents sentiment. Empty event lists and blocked-source coverage
 remain visible as evidence availability, not as a recommendation or a data
 health assertion.
 
+The private front unit sets `TRADING_COPILOT_EVENT_TIMELINE_DIR` to
+`/var/lib/tradingagent/trading-copilot/event-timeline`, so its read-only route
+uses the same server-local publication root as the event-timeline publisher.
+The directory is not a source-tree fallback.  A releasable front candidate must
+also include the generated `front/dist-server/server/tradingAgentSnapshotHttp.js`
+artifact from `npm run build:all`; this artifact is intentionally not tracked in
+Git, and the existing unit refuses to start when it is absent.
+
 TradingCopilot personal state uses `GET/PUT /api/trading-copilot/state`. `GET`
 returns an `ETag`; every `PUT` must send that value as `If-Match`. The server
 serializes writes, rejects stale revisions with `409`, and verifies state hash,
