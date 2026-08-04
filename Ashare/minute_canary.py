@@ -218,9 +218,20 @@ def load_minute_canary_config(path: Path | str) -> MinuteCanaryConfig:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise MinuteCanaryConfigurationError("minute_canary_manifest_invalid") from exc
     value = _mapping(raw, "minute_canary_manifest")
+    if "expected_catalog_version" in value:
+        expected_catalog_version = value.get("expected_catalog_version")
+        if "catalog_version" in value and (
+            _text(expected_catalog_version, "expected_catalog_version")
+            != _text(value.get("catalog_version"), "catalog_version")
+        ):
+            raise MinuteCanaryConfigurationError(
+                "catalog_version_compatibility_mismatch"
+            )
+    else:
+        expected_catalog_version = value.get("catalog_version")
     return MinuteCanaryConfig(
         base_url=value.get("base_url"),
-        expected_catalog_version=value.get("expected_catalog_version"),
+        expected_catalog_version=expected_catalog_version,
         dataset_id=value.get("dataset_id"),
         access_policy_id=value.get("access_policy_id"),
         transport_id=value.get("transport_id"),

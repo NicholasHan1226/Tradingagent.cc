@@ -275,7 +275,9 @@ def test_external_manifests_are_strict_and_secret_free(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert load_minute_canary_config(manifest).dataset_id == DATASET
+    loaded_manifest = load_minute_canary_config(manifest)
+    assert loaded_manifest.dataset_id == DATASET
+    assert loaded_manifest.expected_catalog_version == CATALOG
     assert load_reference_facts(references)["600000.SH"].previous_close_cny == 9.98
 
     references.write_text("[]", encoding="utf-8")
@@ -283,3 +285,78 @@ def test_external_manifests_are_strict_and_secret_free(tmp_path: Path) -> None:
         MinuteCanaryConfigurationError, match="minute_reference_manifest_invalid"
     ):
         load_reference_facts(references)
+
+
+def test_external_manifest_accepts_legacy_catalog_version_only(tmp_path: Path) -> None:
+    manifest = tmp_path / "legacy-minute.json"
+    legacy_catalog_version = "v1-1e4560099e58a89e"
+    manifest.write_text(
+        json.dumps(
+            {
+                "base_url": _config().base_url,
+                "catalog_version": legacy_catalog_version,
+                "dataset_id": DATASET,
+                "access_policy_id": "fixture-ta-read",
+                "transport_id": "http-json-v1",
+                "timeout_seconds": 5,
+                "filters": {"ts_code": {"in": ["600000.SH"]}},
+                "profile": dict(_config().profile),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        load_minute_canary_config(manifest).expected_catalog_version
+        == legacy_catalog_version
+    )
+
+
+def test_external_manifest_rejects_conflicting_catalog_version_keys(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "conflicting-minute.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "base_url": _config().base_url,
+                "expected_catalog_version": CATALOG,
+                "catalog_version": "v1-legacy-conflict",
+                "dataset_id": DATASET,
+                "access_policy_id": "fixture-ta-read",
+                "transport_id": "http-json-v1",
+                "timeout_seconds": 5,
+                "filters": {"ts_code": {"in": ["600000.SH"]}},
+                "profile": dict(_config().profile),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="catalog_version_compatibility_mismatch"
+    ):
+        load_minute_canary_config(manifest)
+
+
+def test_external_manifest_rejects_missing_catalog_version_keys(tmp_path: Path) -> None:
+    manifest = tmp_path / "missing-catalog-version-minute.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "base_url": _config().base_url,
+                "dataset_id": DATASET,
+                "access_policy_id": "fixture-ta-read",
+                "transport_id": "http-json-v1",
+                "timeout_seconds": 5,
+                "filters": {"ts_code": {"in": ["600000.SH"]}},
+                "profile": dict(_config().profile),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="expected_catalog_version_invalid"
+    ):
+        load_minute_canary_config(manifest)

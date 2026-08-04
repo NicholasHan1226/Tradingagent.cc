@@ -484,7 +484,10 @@ reviewed universe's prior-session `daily.close` rows through `/v1/query`. It
 revalidates the current `rt_min` catalog contract, copies the already-reviewed
 universe, and atomically publishes only `minute-manifest.json`,
 `reference-facts.json`, and `universe.json`. It never creates
-`state-bundle.json`.
+`state-bundle.json`. New manifests use the canonical
+`expected_catalog_version` key. A persisted legacy manifest may use
+`catalog_version` only when the canonical key is absent; if both values exist
+they must be identical or the initializer fails closed.
 
 For a reviewed scale transition, the initializer accepts an explicit absolute
 `--universe-source` artifact. It derives `page_limit`, `max_rows` and
