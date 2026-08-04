@@ -7,7 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 import Crypto.delayed_paper_round_trip_learning_worker as worker_module
+import Crypto.delayed_paper_round_trip_learning as learning_module
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
+from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
 from Crypto.delayed_paper_round_trip_learning import (
     CryptoRoundTripLearningError,
     round_trip_learning_exit_code,
@@ -330,3 +332,151 @@ def test_worker_cli_invalid_arguments_do_not_emit_failure_event(
 
     assert exited.value.code == 2
     assert capsys.readouterr().out == ""
+
+
+def test_indexed_event_uses_one_verified_ledger_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = CryptoDelayedPaperObservationStore(tmp_path)
+    rows = [{"sequence": 1}, {"sequence": 2}]
+    calls = 0
+
+    def read_ledger() -> list[dict[str, int]]:
+        nonlocal calls
+        calls += 1
+        return rows
+
+    monkeypatch.setattr(store, "_read_ledger", read_ledger)
+
+    assert store._ledger_event_at_sequence(1) == rows[0]
+    assert store._ledger_event_at_sequence(2) == rows[1]
+    assert store._ledger_event_at_sequence(1) == rows[0]
+    assert calls == 1
+
+
+def _budgeted_scrub_stubs(
+    monkeypatch: pytest.MonkeyPatch, observations: list[str]
+) -> None:
+    monkeypatch.setattr(
+        learning_module,
+        "_core_snapshot",
+        lambda _: (object(), {"pending": None}, {}),
+    )
+    monkeypatch.setattr(
+        learning_module,
+        "_completion_inventory",
+        lambda *_: observations,
+    )
+    monkeypatch.setattr(
+        learning_module,
+        "_verify_or_project",
+        _stub_projection,
+    )
+
+
+def _stub_projection(root: Path, store, observation_id: str, **kwargs) -> dict[str, str]:
+    for name, path in learning_module._paths(root, observation_id).items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{observation_id}-{name}\n", encoding="utf-8")
+    return {
+        "observation_id": observation_id,
+        "source_completion_sha256": f"source-{observation_id}",
+        "projection_receipt_sha256": f"receipt-{observation_id}",
+    }
+
+
+def _learning_files(root: Path) -> dict[str, bytes]:
+    learning = root / "evolution" / "round_trip_learning"
+    return {
+        path.relative_to(learning).as_posix(): path.read_bytes()
+        for path in learning.rglob("*")
+        if path.is_file() and path.name != ".lock"
+    }
+
+
+def test_full_scrub_budget_stop_is_append_only_and_resume_matches_uninterrupted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observations = ["first", "second"]
+    _budgeted_scrub_stubs(monkeypatch, observations)
+    clock = iter((0.0, 0.0, 91.0))
+    monkeypatch.setattr(learning_module, "monotonic", lambda: next(clock), raising=False)
+
+    interrupted_root = tmp_path / "interrupted"
+    interrupted_root.mkdir()
+    deferred = run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=interrupted_root
+    )
+
+    learning = interrupted_root / "evolution" / "round_trip_learning"
+    assert deferred["status"] == "deferred_time_budget"
+    assert deferred["projected_completion_count"] == 1
+    assert (learning / "checkpoints" / "000000000001.json").is_file()
+    assert not (learning / "worker_state.json").exists()
+    assert not list((learning / "scrubs").glob("*.json"))
+
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0, raising=False)
+    resumed = run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=interrupted_root
+    )
+    assert resumed["status"] == "recovered"
+
+    uninterrupted_root = tmp_path / "uninterrupted"
+    uninterrupted_root.mkdir()
+    uninterrupted = run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=uninterrupted_root
+    )
+    assert uninterrupted["status"] == "recovered"
+    assert _learning_files(interrupted_root) == _learning_files(uninterrupted_root)
+
+
+def test_full_scrub_resume_rejects_drifted_checkpoint_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observations = ["first", "second"]
+    drifted = False
+    _budgeted_scrub_stubs(monkeypatch, observations)
+
+    def projection(root, store, observation_id, **kwargs) -> dict[str, str]:
+        suffix = "-drifted" if drifted and observation_id == "first" else ""
+        for name, path in learning_module._paths(root, observation_id).items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{observation_id}-{name}\n", encoding="utf-8")
+        return {
+            "observation_id": observation_id,
+            "source_completion_sha256": f"source-{observation_id}{suffix}",
+            "projection_receipt_sha256": f"receipt-{observation_id}{suffix}",
+        }
+
+    monkeypatch.setattr(learning_module, "_verify_or_project", projection)
+    clock = iter((0.0, 0.0, 91.0))
+    monkeypatch.setattr(learning_module, "monotonic", lambda: next(clock), raising=False)
+    root = tmp_path / "drifted"
+    root.mkdir()
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=root)
+
+    drifted = True
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0, raising=False)
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_checkpoint_source_mismatch",
+    ):
+        run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=root)
+
+
+def test_worker_cli_treats_budget_deferred_as_controlled_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        worker_module,
+        "run_round_trip_learning_worker_once",
+        lambda **_: learning_module._result(status="deferred_time_budget"),
+    )
+
+    assert worker_module.main(
+        ["--mode", "full-scrub", "--epoch-manifest", str(tmp_path / "epoch.json")]
+    ) == 0
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["status"] == "deferred_time_budget"
+    assert captured.err == ""

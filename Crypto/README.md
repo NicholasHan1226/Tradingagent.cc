@@ -471,6 +471,16 @@ disabled 状态完成同一 G5 根的 full scrub 与精确幂等 replay，并读
 checkpoint identity，才可由受控发布流程单独决定是否启用；daily scrub 不因该决定而
 替代 core 收集或成为交易调度器。
 
+G5 full scrub 每次对该只读 store 的 decision ledger 只做一次完整链校验并按
+sequence 建立进程内索引，之后仍逐条复核 observation/completion/event index 与
+projection receipt。它有低于 systemd 120 秒上限的内部单调时间预算，并且只会在两个
+完整 observation 之间停止。`deferred_time_budget` 是受控的未完成状态：只保留已经
+绑定 source completion sha 与 projection receipt sha 的 append-only checkpoint，绝不
+写 worker state 或 full-scrub certificate，也不给 incremental 学习资格。下一次
+Controller 受控的 disabled scrub/replay 必须先重新验证 root identity、冻结 inventory
+和所有已有 checkpoint/receipt binding；任何漂移均失败关闭。只有完整 scrub 和同根
+幂等 replay 都成功后，Controller 才能考虑启用这两组 simulation-only timer。
+
 为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽 PIT 校验。这带来 5 分钟的模拟延迟，但给采集独立完成和落库留出了一个完整周期，而非用直接 service 依赖进行耦合。若主机停机造成 timer 漏触发，runtime 用 checkpoint 从最早缺失 slot 开始补处理；每次最多两根，未追平的 `backlog_pending` receipt 会让该轮失败并保留缺口，不把它伪装成最新成功。新的 `data_reject` receipt 记录请求的 window/cutoff，只读报告会将它作为 gap 证据展示；没有这些 receipt 的缺口仍标为未分类，不伪造外部原因。
 核心单请求超时固定为 8 秒：该值覆盖正式 18083 已验证的冷路径 catalog 尾延迟，且两轮
 最坏分页预算仍低于 systemd 的 180 秒停止线；超时不重试、不回退，也不放宽 freshness。

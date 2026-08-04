@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import stat
+from time import monotonic
 from typing import Any, Iterator, Mapping
 import uuid
 
@@ -41,6 +42,7 @@ ROUND_TRIP_LEARNING_CHECKPOINT_CONTRACT = (
 ROUND_TRIP_LEARNING_SCRUB_CONTRACT = "tradingagent.crypto.round_trip_learning_scrub.v1"
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
+ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS = 90.0
 
 
 class CryptoRoundTripLearningError(RuntimeError):
@@ -726,6 +728,7 @@ def run_crypto_delayed_paper_round_trip_learning_full_scrub(
     """Verify the whole source-to-projection mapping and fill only new entries."""
 
     _assert_simulation_only()
+    deadline = monotonic() + ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS
     root = Path(output_root)
     store, checkpoint, core_state = _core_snapshot(root)
     if checkpoint.get("pending") is not None:
@@ -740,6 +743,13 @@ def run_crypto_delayed_paper_round_trip_learning_full_scrub(
             )
         recovered: list[str] = []
         for sequence, observation_id in enumerate(completed, start=1):
+            if monotonic() >= deadline:
+                return _result(
+                    status="deferred_time_budget",
+                    completion_count=len(completed),
+                    projected_completion_count=len(checkpoints),
+                    verified_completion_count=sequence - 1,
+                )
             if sequence <= len(checkpoints) and any(
                 not path.is_file() or path.is_symlink()
                 for path in _paths(root, observation_id).values()
@@ -813,6 +823,7 @@ def round_trip_learning_exit_code(result: Mapping[str, Any]) -> int:
         "recovered",
         "scrubbed",
         "deferred_core_pending",
+        "deferred_time_budget",
     }:
         return 2
     return (

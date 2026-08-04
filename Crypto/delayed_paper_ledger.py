@@ -317,6 +317,7 @@ class CryptoDelayedPaperObservationStore:
         self.ledger_state_path = self.root / "decision_ledger_state.json"
         self.event_index_dir = self.root / "event_index"
         self.observation_event_index_dir = self.root / "observation_event_index"
+        self._verified_ledger_events_by_sequence: dict[int, dict[str, Any]] | None = None
 
     @contextmanager
     def _file_lock(self, path: Path) -> Iterator[None]:
@@ -1045,42 +1046,27 @@ class CryptoDelayedPaperObservationStore:
         )
 
     def _ledger_event_at_sequence(self, sequence: int) -> dict[str, Any]:
-        state = self._ledger_runtime_state()
-        if sequence <= 0 or sequence > int(state["sequence"]):
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence <= 0:
             raise CryptoDelayedPaperLedgerError(
                 "delayed_paper_decision_event_index_invalid"
             )
-        current_start = int(state["current_start_sequence"])
-        if sequence >= current_start:
-            current_rows = self._current_rows_from_runtime_state(state)
-            offset = sequence - current_start
-            if offset < 0 or offset >= len(current_rows):
+        if self._verified_ledger_events_by_sequence is None:
+            rows = self._read_ledger()
+            indexed = {row.get("sequence"): row for row in rows}
+            if len(indexed) != len(rows) or any(
+                isinstance(key, bool) or not isinstance(key, int) or key <= 0
+                for key in indexed
+            ):
                 raise CryptoDelayedPaperLedgerError(
                     "delayed_paper_decision_event_index_invalid"
                 )
-            return current_rows[offset]
-
-        start_sequence = 1
-        previous_checksum = "0" * 64
-        for path in self._segment_paths():
-            rows = self._read_ledger_file(
-                path,
-                start_sequence=start_sequence,
-                previous_checksum=previous_checksum,
-            )
-            if rows and sequence <= int(rows[-1]["sequence"]):
-                offset = sequence - start_sequence
-                if offset < 0 or offset >= len(rows):
-                    raise CryptoDelayedPaperLedgerError(
-                        "delayed_paper_decision_event_index_invalid"
-                    )
-                return rows[offset]
-            if rows:
-                previous_checksum = str(rows[-1]["checksum"])
-                start_sequence = int(rows[-1]["sequence"]) + 1
-        raise CryptoDelayedPaperLedgerError(
-            "delayed_paper_decision_event_index_invalid"
-        )
+            self._verified_ledger_events_by_sequence = indexed
+        try:
+            return self._verified_ledger_events_by_sequence[sequence]
+        except KeyError as exc:
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_event_index_invalid"
+            ) from exc
 
     def _verify_indexed_event(
         self,
