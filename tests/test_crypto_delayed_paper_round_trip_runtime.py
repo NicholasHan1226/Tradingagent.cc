@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -139,6 +139,57 @@ def test_round_trip_runtime_cli_emits_only_bounded_journal_summary(
     assert payload["status"] == "completed"
     assert "core_result" not in payload
     assert "simulated-order" not in rendered
+
+
+def test_round_trip_runtime_cli_records_fixed_validation_failure_context(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed cycle identifies its fixed closed-bar target without error detail."""
+
+    frozen_now = WINDOW_END + timedelta(minutes=5, seconds=55)
+    expected_window_end = runtime_module.crypto_round_trip_window_request(
+        frozen_now
+    ).window_end.isoformat().replace("+00:00", "Z")
+
+    class _FrozenDatetime:
+        @staticmethod
+        def now(*, tz: timezone) -> object:
+            assert tz is timezone.utc
+            return frozen_now
+
+    monkeypatch.setattr(runtime_module, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("sensitive exception text must not be emitted")
+        ),
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload == {
+        "contract": "tradingagent.crypto.round_trip_runtime_failure.v1",
+        "failure_phase": "runtime_validation",
+        "failure_reason": "runtime_validation_failed",
+        "status": "failed_closed",
+        "target_window_end": expected_window_end,
+    }
+    assert "sensitive exception text" not in captured.out
+    assert "sensitive exception text" not in captured.err
+    assert captured.err == "crypto round-trip runtime failed closed\n"
 
 
 def test_round_trip_runtime_cli_fails_closed_when_journal_summary_is_invalid(

@@ -32,6 +32,7 @@ from shared.data.tradingdatas_transport import build_runtime_transport
 
 ROUND_TRIP_RUNTIME_CONTRACT = "tradingagent.crypto.round_trip_server_runtime.v1"
 ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_journal.v1"
+ROUND_TRIP_RUNTIME_FAILURE_CONTRACT = "tradingagent.crypto.round_trip_runtime_failure.v1"
 ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
 ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 2
 
@@ -141,6 +142,21 @@ def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, 
         ),
         "outbox_id": receipt.get("outbox_id"),
         "capital_commit_id": receipt.get("capital_commit_id"),
+    }
+
+
+def round_trip_runtime_validation_failure_summary(
+    now: datetime,
+) -> dict[str, str]:
+    """Describe a failed runtime cycle without exposing exception details."""
+
+    request = crypto_round_trip_window_request(now)
+    return {
+        "contract": ROUND_TRIP_RUNTIME_FAILURE_CONTRACT,
+        "status": "failed_closed",
+        "failure_phase": "runtime_validation",
+        "failure_reason": "runtime_validation_failed",
+        "target_window_end": _iso_utc(request.window_end),
     }
 
 
@@ -318,15 +334,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runtime-manifest", type=Path, required=True)
     parser.add_argument("--token-file", type=Path, required=True)
     args = parser.parse_args(argv)
+    now = datetime.now(tz=timezone.utc)
+    failure_summary = round_trip_runtime_validation_failure_summary(now)
     try:
         receipt = run_crypto_delayed_paper_round_trip_server_once(
             epoch_manifest=args.epoch_manifest,
             runtime_manifest=args.runtime_manifest,
             token_file=args.token_file,
-            now=datetime.now(tz=timezone.utc),
+            now=now,
         )
         code = crypto_runtime_receipt_exit_code(receipt)
     except Exception:
+        print(
+            json.dumps(
+                failure_summary,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
         print("crypto round-trip runtime failed closed", file=sys.stderr)
         return 2
     try:
@@ -353,10 +380,12 @@ if __name__ == "__main__":
 
 __all__ = [
     "ROUND_TRIP_RUNTIME_CONTRACT",
+    "ROUND_TRIP_RUNTIME_FAILURE_CONTRACT",
     "ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT",
     "ROUND_TRIP_SETTLED_BAR_DELAY",
     "crypto_round_trip_window_request",
     "main",
+    "round_trip_runtime_validation_failure_summary",
     "round_trip_runtime_journal_summary",
     "run_crypto_delayed_paper_round_trip_server_once",
 ]
