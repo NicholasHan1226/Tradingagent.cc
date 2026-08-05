@@ -47,7 +47,7 @@ def test_round_trip_request_uses_one_closed_bar_settlement_delay() -> None:
     )
 
     assert request.window_end == WINDOW_END - timedelta(minutes=5)
-    assert request.observation_cutoff == WINDOW_END + timedelta(seconds=55)
+    assert request.observation_cutoff == request.window_end + timedelta(seconds=55)
 
 
 def test_round_trip_runtime_journal_summary_excludes_full_core_payload() -> None:

@@ -162,14 +162,15 @@ def crypto_round_trip_window_request(now: datetime) -> CryptoFiveMinuteWindowReq
 
     The Crypto collector and this paper runtime are deliberately independent.
     Consuming the prior closed bar gives the collector a full five-minute
-    interval to publish its receipt, while retaining the current cycle's fixed
-    observation cutoff for the historical query.
+    interval to publish its receipt. The fixed cutoff remains bound to that
+    settled window, so its receipt watermark cannot include the next bar.
     """
 
     current = crypto_runtime_window_request(now)
+    window_end = current.window_end - ROUND_TRIP_SETTLED_BAR_DELAY
     return CryptoFiveMinuteWindowRequest(
-        window_end=current.window_end - ROUND_TRIP_SETTLED_BAR_DELAY,
-        observation_cutoff=current.observation_cutoff,
+        window_end=window_end,
+        observation_cutoff=window_end + timedelta(seconds=55),
     )
 
 
