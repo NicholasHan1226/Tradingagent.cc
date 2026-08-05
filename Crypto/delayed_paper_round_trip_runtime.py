@@ -9,23 +9,31 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Mapping
 
-from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
+from Crypto.delayed_paper_ledger import (
+    CryptoDelayedPaperLedgerError,
+    CryptoDelayedPaperObservationStore,
+)
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_epoch import (
     ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
     ROUND_TRIP_EPOCH_MANIFEST_PATH,
+    CryptoRoundTripEpochError,
     load_round_trip_epoch_manifest,
     prepare_round_trip_epoch_candidate,
 )
 from Crypto.delayed_paper_runtime import (
     RUNTIME_TOKEN_FILE,
+    CryptoDelayedPaperRuntimeError,
     _LazyCryptoFiveMinutePort,
     crypto_runtime_receipt_exit_code,
     crypto_runtime_window_request,
     load_crypto_delayed_paper_runtime_manifest,
 )
 from Crypto.fixture_sim.contracts import _assert_simulation_only
-from Crypto.five_minute_data import CryptoFiveMinuteWindowRequest
+from Crypto.five_minute_data import (
+    CryptoFiveMinuteDataError,
+    CryptoFiveMinuteWindowRequest,
+)
 from shared.data.sharedsignals_v1 import HTTPTransport
 from shared.data.tradingdatas_transport import build_runtime_transport
 
@@ -35,6 +43,118 @@ ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_jou
 ROUND_TRIP_RUNTIME_FAILURE_CONTRACT = "tradingagent.crypto.round_trip_runtime_failure.v1"
 ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
 ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 2
+
+_FAILURE_PROVENANCE = {
+    "pre_network_validation": "runtime_pre_network_validation_failed",
+    "checkpoint_recovery_selection": "runtime_checkpoint_recovery_selection_failed",
+    "market_data_query": "runtime_market_data_query_failed",
+    "core_cycle": "runtime_core_cycle_failed",
+    "post_write_anchor_validation": "runtime_post_write_anchor_validation_failed",
+}
+_GENERIC_FAILURE_PHASE = "runtime_validation"
+_GENERIC_FAILURE_REASON = "runtime_validation_failed"
+
+
+class CryptoRoundTripRuntimeFailure(RuntimeError):
+    """A finite public failure classification with no underlying error detail."""
+
+    def __init__(
+        self,
+        *,
+        phase: str,
+        reason: str,
+        detail: str | None = None,
+    ) -> None:
+        if _FAILURE_PROVENANCE.get(phase) != reason:
+            raise ValueError("round_trip_runtime_failure_provenance_invalid")
+        self.phase = phase
+        self.reason = reason
+        super().__init__(detail if detail is not None else reason)
+
+
+def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeFailure | None:
+    """Map only declared stable errors to a secret-free public category."""
+
+    if phase == "pre_network_validation" and (
+        isinstance(error, (CryptoRoundTripEpochError, CryptoDelayedPaperRuntimeError))
+        or str(error)
+        in {
+            "round_trip_epoch_manifest_path_invalid",
+            "round_trip_token_file_path_invalid",
+        }
+    ):
+        return CryptoRoundTripRuntimeFailure(
+            phase=phase,
+            reason=_FAILURE_PROVENANCE[phase],
+        )
+    if phase == "checkpoint_recovery_selection" and (
+        isinstance(error, CryptoDelayedPaperLedgerError)
+        or str(error)
+        in {
+            "round_trip_checkpoint_market_slot_invalid",
+            "round_trip_clock_before_latest_observation",
+        }
+    ):
+        return CryptoRoundTripRuntimeFailure(
+            phase=phase,
+            reason=_FAILURE_PROVENANCE[phase],
+        )
+    if phase == "market_data_query" and isinstance(error, CryptoFiveMinuteDataError):
+        return CryptoRoundTripRuntimeFailure(
+            phase=phase,
+            reason=_FAILURE_PROVENANCE[phase],
+        )
+    if phase == "core_cycle" and str(error) in {
+        "round_trip_pending_recovery_not_completed",
+        "round_trip_cycle_not_completed",
+    }:
+        return CryptoRoundTripRuntimeFailure(
+            phase=phase,
+            reason=_FAILURE_PROVENANCE[phase],
+        )
+    if phase == "post_write_anchor_validation" and (
+        isinstance(error, CryptoRoundTripEpochError)
+        or str(error) == "round_trip_epoch_identity_changed"
+    ):
+        return CryptoRoundTripRuntimeFailure(
+            phase=phase,
+            reason=_FAILURE_PROVENANCE[phase],
+        )
+    return None
+
+
+def _run_failure_stage(phase: str, callback: Callable[[], Any]) -> Any:
+    """Run a stage without allowing raw exception details into the journal."""
+
+    try:
+        return callback()
+    except CryptoRoundTripRuntimeFailure:
+        raise
+    except Exception as exc:
+        classified = _classified_failure(phase, exc)
+        if classified is not None:
+            raise CryptoRoundTripRuntimeFailure(
+                phase=classified.phase,
+                reason=classified.reason,
+                detail=str(exc),
+            ) from None
+        raise
+
+
+class _FailureClassifyingPort:
+    """Tag only the market-data boundary while retaining the existing port API."""
+
+    def __init__(self, port: _LazyCryptoFiveMinutePort) -> None:
+        self._port = port
+
+    def load_snapshot(self, **kwargs: Any) -> Any:
+        return _run_failure_stage(
+            "market_data_query",
+            lambda: self._port.load_snapshot(**kwargs),
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._port, name)
 
 
 def crypto_round_trip_window_request(now: datetime) -> CryptoFiveMinuteWindowRequest:
@@ -147,6 +267,7 @@ def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, 
 
 def round_trip_runtime_validation_failure_summary(
     now: datetime,
+    failure: CryptoRoundTripRuntimeFailure | None = None,
 ) -> dict[str, str]:
     """Describe a failed runtime cycle without exposing exception details."""
 
@@ -154,8 +275,12 @@ def round_trip_runtime_validation_failure_summary(
     return {
         "contract": ROUND_TRIP_RUNTIME_FAILURE_CONTRACT,
         "status": "failed_closed",
-        "failure_phase": "runtime_validation",
-        "failure_reason": "runtime_validation_failed",
+        "failure_phase": (
+            failure.phase if failure is not None else _GENERIC_FAILURE_PHASE
+        ),
+        "failure_reason": (
+            failure.reason if failure is not None else _GENERIC_FAILURE_REASON
+        ),
         "target_window_end": _iso_utc(request.window_end),
     }
 
@@ -170,46 +295,75 @@ def run_crypto_delayed_paper_round_trip_server_once(
 ) -> dict[str, Any]:
     """Run exactly one new/pending closed-bar cycle in the isolated epoch."""
 
-    _assert_simulation_only()
-    manifest_path = Path(epoch_manifest)
-    if (
-        manifest_path != ROUND_TRIP_EPOCH_MANIFEST_PATH
-        and manifest_path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
-    ):
-        raise RuntimeError("round_trip_epoch_manifest_path_invalid")
-    if Path(token_file) != RUNTIME_TOKEN_FILE:
-        raise RuntimeError("round_trip_token_file_path_invalid")
-    context = load_round_trip_epoch_manifest(manifest_path)
-    prepared = prepare_round_trip_epoch_candidate(context)
-    identity_before = prepared.identity_path.read_bytes()
-    manifest = load_crypto_delayed_paper_runtime_manifest(runtime_manifest)
-    request = crypto_round_trip_window_request(now)
-    port = _LazyCryptoFiveMinutePort(
-        manifest=manifest,
-        token_file=RUNTIME_TOKEN_FILE,
-        transport_factory=transport_factory,
-    )
-    store = CryptoDelayedPaperObservationStore(prepared.output_root)
-    checkpoint = store.runtime_checkpoint()
-    requested_market_slot = _round_trip_market_slot(request)
-    pending = checkpoint.get("pending")
-    latest_market_slot = (
-        _checkpoint_market_slot(checkpoint["latest_market_slot"])
-        if checkpoint.get("latest_market_slot") is not None
-        else None
+    def prepare_pre_network() -> tuple[Any, Any, bytes, Any, Any, Any]:
+        _assert_simulation_only()
+        manifest_path = Path(epoch_manifest)
+        if (
+            manifest_path != ROUND_TRIP_EPOCH_MANIFEST_PATH
+            and manifest_path.parent != ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY
+        ):
+            raise RuntimeError("round_trip_epoch_manifest_path_invalid")
+        if Path(token_file) != RUNTIME_TOKEN_FILE:
+            raise RuntimeError("round_trip_token_file_path_invalid")
+        context = load_round_trip_epoch_manifest(manifest_path)
+        prepared = prepare_round_trip_epoch_candidate(context)
+        identity_before = prepared.identity_path.read_bytes()
+        manifest = load_crypto_delayed_paper_runtime_manifest(runtime_manifest)
+        request = crypto_round_trip_window_request(now)
+        port = _FailureClassifyingPort(
+            _LazyCryptoFiveMinutePort(
+                manifest=manifest,
+                token_file=RUNTIME_TOKEN_FILE,
+                transport_factory=transport_factory,
+            )
+        )
+        return context, prepared, identity_before, manifest, request, port
+
+    (
+        context,
+        prepared,
+        identity_before,
+        manifest,
+        request,
+        port,
+    ) = _run_failure_stage("pre_network_validation", prepare_pre_network)
+
+    def load_checkpoint() -> tuple[Any, Any, Any, Any]:
+        store = CryptoDelayedPaperObservationStore(prepared.output_root)
+        checkpoint = store.runtime_checkpoint()
+        requested_market_slot = _round_trip_market_slot(request)
+        pending = checkpoint.get("pending")
+        latest_market_slot = (
+            _checkpoint_market_slot(checkpoint["latest_market_slot"])
+            if checkpoint.get("latest_market_slot") is not None
+            else None
+        )
+        return store, requested_market_slot, pending, latest_market_slot
+
+    store, requested_market_slot, pending, latest_market_slot = _run_failure_stage(
+        "checkpoint_recovery_selection", load_checkpoint
     )
     cycle_results: list[dict[str, Any]] = []
 
     if pending is not None:
-        pending_slot = _checkpoint_market_slot(pending.get("market_slot"))
-        pending_result = run_crypto_delayed_paper_round_trip_once(
-            port=port,
-            profile=manifest.profile,
-            request=_round_trip_request_for_market_slot(pending_slot),
-            output_root=prepared.output_root,
+        pending_slot = _run_failure_stage(
+            "checkpoint_recovery_selection",
+            lambda: _checkpoint_market_slot(pending.get("market_slot")),
+        )
+        pending_result = _run_failure_stage(
+            "core_cycle",
+            lambda: run_crypto_delayed_paper_round_trip_once(
+                port=port,
+                profile=manifest.profile,
+                request=_round_trip_request_for_market_slot(pending_slot),
+                output_root=prepared.output_root,
+            ),
         )
         if pending_result.get("status") != "completed":
-            raise RuntimeError("round_trip_pending_recovery_not_completed")
+            raise CryptoRoundTripRuntimeFailure(
+                phase="core_cycle",
+                reason=_FAILURE_PROVENANCE["core_cycle"],
+            )
         cycle_results.append(
             {
                 "cycle_kind": "pending_recovery",
@@ -220,26 +374,40 @@ def run_crypto_delayed_paper_round_trip_server_once(
         latest_market_slot = pending_slot
 
     while len(cycle_results) < ROUND_TRIP_MAX_CYCLES_PER_INVOCATION:
-        if latest_market_slot is None:
-            target_request = request
-            cycle_kind = "fresh_query"
-        elif latest_market_slot < requested_market_slot:
-            target_request = _round_trip_request_for_market_slot(
-                latest_market_slot + timedelta(minutes=5)
-            )
-            cycle_kind = "backlog_recovery"
-        elif latest_market_slot == requested_market_slot:
-            break
-        else:
+        def select_next_cycle() -> tuple[CryptoFiveMinuteWindowRequest, str] | None:
+            if latest_market_slot is None:
+                return request, "fresh_query"
+            if latest_market_slot < requested_market_slot:
+                return (
+                    _round_trip_request_for_market_slot(
+                        latest_market_slot + timedelta(minutes=5)
+                    ),
+                    "backlog_recovery",
+                )
+            if latest_market_slot == requested_market_slot:
+                return None
             raise RuntimeError("round_trip_clock_before_latest_observation")
-        result = run_crypto_delayed_paper_round_trip_once(
-            port=port,
-            profile=manifest.profile,
-            request=target_request,
-            output_root=prepared.output_root,
+
+        selected = _run_failure_stage(
+            "checkpoint_recovery_selection", select_next_cycle
+        )
+        if selected is None:
+            break
+        target_request, cycle_kind = selected
+        result = _run_failure_stage(
+            "core_cycle",
+            lambda: run_crypto_delayed_paper_round_trip_once(
+                port=port,
+                profile=manifest.profile,
+                request=target_request,
+                output_root=prepared.output_root,
+            ),
         )
         if result.get("status") != "completed":
-            raise RuntimeError("round_trip_cycle_not_completed")
+            raise CryptoRoundTripRuntimeFailure(
+                phase="core_cycle",
+                reason=_FAILURE_PROVENANCE["core_cycle"],
+            )
         cycle_results.append(
             {
                 "cycle_kind": cycle_kind,
@@ -277,9 +445,12 @@ def run_crypto_delayed_paper_round_trip_server_once(
     )
     # Re-read both anchors after the write: neither a changed g3 manifest nor a
     # changed g2 archive may be hidden by a successful local capital cycle.
-    prepared_after = prepare_round_trip_epoch_candidate(context)
-    if prepared_after.identity_path.read_bytes() != identity_before:
-        raise RuntimeError("round_trip_epoch_identity_changed")
+    def validate_post_write_anchor() -> None:
+        prepared_after = prepare_round_trip_epoch_candidate(context)
+        if prepared_after.identity_path.read_bytes() != identity_before:
+            raise RuntimeError("round_trip_epoch_identity_changed")
+
+    _run_failure_stage("post_write_anchor_validation", validate_post_write_anchor)
     return {
         "contract": ROUND_TRIP_RUNTIME_CONTRACT,
         "status": "backlog_pending" if backlog_remaining else result.get("status"),
@@ -335,7 +506,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token-file", type=Path, required=True)
     args = parser.parse_args(argv)
     now = datetime.now(tz=timezone.utc)
-    failure_summary = round_trip_runtime_validation_failure_summary(now)
     try:
         receipt = run_crypto_delayed_paper_round_trip_server_once(
             epoch_manifest=args.epoch_manifest,
@@ -344,7 +514,21 @@ def main(argv: list[str] | None = None) -> int:
             now=now,
         )
         code = crypto_runtime_receipt_exit_code(receipt)
+    except CryptoRoundTripRuntimeFailure as exc:
+        failure_summary = round_trip_runtime_validation_failure_summary(now, exc)
+        print(
+            json.dumps(
+                failure_summary,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        print("crypto round-trip runtime failed closed", file=sys.stderr)
+        return 2
     except Exception:
+        failure_summary = round_trip_runtime_validation_failure_summary(now)
         print(
             json.dumps(
                 failure_summary,

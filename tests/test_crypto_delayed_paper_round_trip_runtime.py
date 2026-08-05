@@ -141,10 +141,29 @@ def test_round_trip_runtime_cli_emits_only_bounded_journal_summary(
     assert "simulated-order" not in rendered
 
 
-def test_round_trip_runtime_cli_records_fixed_validation_failure_context(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("failure_phase", "failure_reason"),
+    [
+        ("pre_network_validation", "runtime_pre_network_validation_failed"),
+        (
+            "checkpoint_recovery_selection",
+            "runtime_checkpoint_recovery_selection_failed",
+        ),
+        ("market_data_query", "runtime_market_data_query_failed"),
+        ("core_cycle", "runtime_core_cycle_failed"),
+        (
+            "post_write_anchor_validation",
+            "runtime_post_write_anchor_validation_failed",
+        ),
+    ],
+)
+def test_round_trip_runtime_cli_records_allowlisted_failure_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure_phase: str,
+    failure_reason: str,
 ) -> None:
-    """A failed cycle identifies its fixed closed-bar target without error detail."""
+    """A declared failure exposes only its fixed phase/reason pair and target."""
 
     frozen_now = WINDOW_END + timedelta(minutes=5, seconds=55)
     expected_window_end = runtime_module.crypto_round_trip_window_request(
@@ -162,7 +181,10 @@ def test_round_trip_runtime_cli_records_fixed_validation_failure_context(
         runtime_module,
         "run_crypto_delayed_paper_round_trip_server_once",
         lambda **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("sensitive exception text must not be emitted")
+            runtime_module.CryptoRoundTripRuntimeFailure(
+                phase=failure_phase,
+                reason=failure_reason,
+            )
         ),
     )
 
@@ -182,14 +204,96 @@ def test_round_trip_runtime_cli_records_fixed_validation_failure_context(
     assert exit_code == 2
     assert payload == {
         "contract": "tradingagent.crypto.round_trip_runtime_failure.v1",
-        "failure_phase": "runtime_validation",
-        "failure_reason": "runtime_validation_failed",
+        "failure_phase": failure_phase,
+        "failure_reason": failure_reason,
         "status": "failed_closed",
         "target_window_end": expected_window_end,
     }
-    assert "sensitive exception text" not in captured.out
-    assert "sensitive exception text" not in captured.err
     assert captured.err == "crypto round-trip runtime failed closed\n"
+
+
+def test_round_trip_runtime_cli_maps_unexpected_failure_to_generic_provenance(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unexpected errors preserve the old fixed public boundary without leakage."""
+
+    sensitive = "/secret/token=do-not-emit"
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(sensitive)),
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["failure_phase"] == "runtime_validation"
+    assert payload["failure_reason"] == "runtime_validation_failed"
+    assert sensitive not in captured.out
+    assert sensitive not in captured.err
+    assert captured.err == "crypto round-trip runtime failed closed\n"
+
+
+@pytest.mark.parametrize(
+    ("phase", "error", "expected_reason"),
+    [
+        (
+            "pre_network_validation",
+            runtime_module.CryptoRoundTripEpochError("round_trip_epoch_manifest_untrusted"),
+            "runtime_pre_network_validation_failed",
+        ),
+        (
+            "checkpoint_recovery_selection",
+            runtime_module.CryptoDelayedPaperLedgerError(
+                "delayed_paper_observation_state_invalid"
+            ),
+            "runtime_checkpoint_recovery_selection_failed",
+        ),
+        (
+            "market_data_query",
+            runtime_module.CryptoFiveMinuteDataError("crypto_5m_snapshot_invalid"),
+            "runtime_market_data_query_failed",
+        ),
+        (
+            "core_cycle",
+            RuntimeError("round_trip_cycle_not_completed"),
+            "runtime_core_cycle_failed",
+        ),
+        (
+            "post_write_anchor_validation",
+            RuntimeError("round_trip_epoch_identity_changed"),
+            "runtime_post_write_anchor_validation_failed",
+        ),
+    ],
+)
+def test_round_trip_runtime_maps_only_declared_stage_errors(
+    phase: str, error: Exception, expected_reason: str
+) -> None:
+    failure = runtime_module._classified_failure(phase, error)
+
+    assert failure is not None
+    assert failure.phase == phase
+    assert failure.reason == expected_reason
+
+
+def test_round_trip_runtime_does_not_classify_unexpected_error_text() -> None:
+    assert (
+        runtime_module._classified_failure(
+            "core_cycle", RuntimeError("/secret/token=do-not-emit")
+        )
+        is None
+    )
 
 
 def test_round_trip_runtime_cli_fails_closed_when_journal_summary_is_invalid(
