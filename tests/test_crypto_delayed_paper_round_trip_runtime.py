@@ -546,42 +546,28 @@ def test_round_trip_runtime_recovers_missed_closed_slots_after_timer_outage(
         token_file=token,
         now=WINDOW_END + timedelta(minutes=20, seconds=55),
         transport_factory=_sequence_factory(
-            [_shifted_transport(5), _shifted_transport(10)]
+            [
+                _shifted_transport(5),
+                _shifted_transport(10),
+                _shifted_transport(15),
+            ]
         ),
     )
 
-    assert recovered["status"] == "backlog_pending"
+    assert recovered["status"] == "completed"
     assert recovered["recovery_mode"] == "backlog_recovery"
-    assert recovered["backlog_remaining"] is True
+    assert recovered["requested_window_consumed"] is True
+    assert recovered["backlog_remaining"] is False
+    assert recovered["backlog_recovery_cycle_count"] == 3
     assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
+        "backlog_recovery",
         "backlog_recovery",
         "backlog_recovery",
     ]
     assert [item["target_window_end"] for item in recovered["cycle_results"]] == [
         "2026-07-19T01:10:00Z",
         "2026-07-19T01:15:00Z",
-    ]
-    checkpoint = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
-    assert checkpoint["latest_market_slot"] == "2026-07-19T01:10:00Z"
-
-    drained = run_crypto_delayed_paper_round_trip_server_once(
-        epoch_manifest=epoch,
-        runtime_manifest=runtime_manifest,
-        token_file=token,
-        now=WINDOW_END + timedelta(minutes=20, seconds=55),
-        transport_factory=_factory(_shifted_transport(15)),
-    )
-
-    assert drained["status"] == "completed"
-    assert drained["recovery_mode"] == "backlog_recovery"
-    assert drained["requested_window_consumed"] is True
-    assert drained["backlog_remaining"] is False
-    assert drained["backlog_recovery_cycle_count"] == 1
-    assert [item["cycle_kind"] for item in drained["cycle_results"]] == [
-        "backlog_recovery"
-    ]
-    assert [item["target_window_end"] for item in drained["cycle_results"]] == [
-        "2026-07-19T01:20:00Z"
+        "2026-07-19T01:20:00Z",
     ]
     checkpoint = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
     assert checkpoint == {
@@ -648,15 +634,16 @@ def test_round_trip_runtime_gaps_pit_unrecoverable_backlog_slot(
         token_file=token,
         now=WINDOW_END + timedelta(minutes=20, seconds=55),
         transport_factory=_sequence_factory(
-            [_shifted_transport(10)]
+            [_shifted_transport(10), _shifted_transport(15)]
         ),
     )
 
-    assert recovered["status"] == "backlog_pending"
+    assert recovered["status"] == "completed"
     assert recovered["backlog_gap_cycle_count"] == 1
-    assert recovered["backlog_remaining"] is True
+    assert recovered["backlog_remaining"] is False
     assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
         "backlog_gap",
+        "backlog_recovery",
         "backlog_recovery",
     ]
     store = CryptoDelayedPaperObservationStore(output)

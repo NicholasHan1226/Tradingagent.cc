@@ -45,7 +45,7 @@ ROUND_TRIP_RUNTIME_CONTRACT = "tradingagent.crypto.round_trip_server_runtime.v1"
 ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_journal.v1"
 ROUND_TRIP_RUNTIME_FAILURE_CONTRACT = "tradingagent.crypto.round_trip_runtime_failure.v1"
 ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
-ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 2
+ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 24
 ROUND_TRIP_DATA_GAP_CONTRACT = "tradingagent.crypto.round_trip_data_gap.v1"
 ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
     {
@@ -53,7 +53,7 @@ ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
         "crypto_5m_data_through_mismatch",
     }
 )
-ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 1
+ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
 
 _FAILURE_PROVENANCE = {
     "pre_network_validation": "runtime_pre_network_validation_failed",
@@ -555,7 +555,23 @@ def run_crypto_delayed_paper_round_trip_server_once(
             "replay_mode": "completed_slot_without_fresh_query",
         }
     else:
-        result = cycle_results[-1]["result"]
+        last = cycle_results[-1]
+        if "result" in last:
+            result = last["result"]
+        else:
+            result = {
+                "contract": "tradingagent.crypto.delayed_paper_round_trip_runner.v1",
+                "status": "completed",
+                "market": "crypto",
+                "market_slot": (
+                    _iso_utc(latest_market_slot)
+                    if latest_market_slot is not None
+                    else _iso_utc(requested_market_slot)
+                ),
+                "recovered_pending": False,
+                "idempotent_replay": False,
+                "replay_mode": "backlog_gap",
+            }
     backlog_remaining = bool(
         latest_market_slot is not None and latest_market_slot < requested_market_slot
     )
