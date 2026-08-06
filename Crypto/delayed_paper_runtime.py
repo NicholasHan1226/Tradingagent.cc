@@ -1459,6 +1459,8 @@ def crypto_runtime_receipt_exit_code(
     if not isinstance(receipt, Mapping):
         return 2
     if receipt.get("backlog_remaining") is True:
+        if int(receipt.get("backlog_gap_cycle_count") or 0) > 0:
+            return 0
         return 2
     if receipt.get("status") in {"completed", "noop"}:
         return 0

@@ -17,6 +17,7 @@ from Crypto.delayed_paper_round_trip_runtime import (
     crypto_round_trip_window_request,
     run_crypto_delayed_paper_round_trip_server_once,
 )
+from Crypto.delayed_paper_runtime import crypto_runtime_receipt_exit_code
 from tests.test_crypto_5m_support import FixtureTradingDatasTransport, WINDOW_END
 from tests.test_crypto_delayed_paper_runtime import (
     _factory,
@@ -84,6 +85,31 @@ def test_round_trip_gap_event_shape_and_eligibility() -> None:
     assert gap["fill_generated"] is False
     assert gap["capital_effect"] == "none_preserved_outage_recovery"
     assert gap["event_id"]
+
+
+def test_backlog_gap_batch_receipt_is_progress_not_failure() -> None:
+    """A run that records gaps while still behind exits 0 for the timer."""
+
+    assert (
+        crypto_runtime_receipt_exit_code(
+            {
+                "status": "backlog_pending",
+                "backlog_remaining": True,
+                "backlog_gap_cycle_count": 24,
+            }
+        )
+        == 0
+    )
+    assert (
+        crypto_runtime_receipt_exit_code(
+            {
+                "status": "backlog_pending",
+                "backlog_remaining": True,
+                "backlog_gap_cycle_count": 0,
+            }
+        )
+        == 2
+    )
 
 
 def test_round_trip_runtime_journal_summary_excludes_full_core_payload() -> None:
