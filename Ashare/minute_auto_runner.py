@@ -309,8 +309,25 @@ def main(argv: list[str] | None = None) -> int:
             now=now,
             allow_late_start=args.allow_late_start,
         )
-    except (MinuteAutoRunnerError, OSError, ValueError):
+    except (MinuteAutoRunnerError, OSError, ValueError) as exc:
         print("automatic delayed minute paper runner failed closed", file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "contract": "tradingagent.ashare.minute_auto_runner_failure.v1",
+                    "status": "failed_closed",
+                    "failure_type": type(exc).__name__,
+                    "failure_reason": (
+                        str(exc)
+                        if isinstance(exc, MinuteAutoRunnerError)
+                        else type(exc).__name__.lower()
+                    ),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            file=sys.stderr,
+        )
         return 2
     print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
     return 0

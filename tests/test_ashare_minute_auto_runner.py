@@ -10,6 +10,7 @@ import pytest
 from Ashare.minute_auto_runner import (
     MinuteAutoRunnerError,
     expected_available_bar_end,
+    main,
     run_current_delayed_minute_paper,
     session_bar_ends,
 )
@@ -44,6 +45,35 @@ def test_session_has_48_bars_and_excludes_lunch() -> None:
     assert slots[23].strftime("%H:%M") == "11:30"
     assert slots[24].strftime("%H:%M") == "13:05"
     assert slots[-1].strftime("%H:%M") == "15:00"
+
+
+def test_main_reports_fail_closed_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failing runner writes a secret-free reason code before exit 2."""
+
+    def fail(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise MinuteAutoRunnerError("minute_auto_continuity_invalid")
+
+    monkeypatch.setattr(
+        "Ashare.minute_auto_runner.run_current_delayed_minute_paper", fail
+    )
+    code = main(
+        [
+            "--state-root",
+            str(tmp_path),
+            "--token-file",
+            str(tmp_path / "token"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "automatic delayed minute paper runner failed closed" in captured.err
+    assert "minute_auto_continuity_invalid" in captured.err
+    assert "minute_auto_runner_failure.v1" in captured.err
 
 
 @pytest.mark.parametrize(

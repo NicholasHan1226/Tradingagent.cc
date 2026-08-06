@@ -404,6 +404,7 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
     assert result["symbol_count"] == 2
     assert result["previous_session"] == "2026-07-28"
     assert result["reused"] is False
+    assert result["state_bundle_created"] is True
     day = tmp_path / "20260729"
     assert sorted(path.name for path in day.iterdir()) == [
         "minute-manifest.json",
@@ -909,6 +910,8 @@ def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
     after = {path.name: path.read_bytes() for path in (tmp_path / "20260729").iterdir()}
     assert first["reused"] is False
     assert second["reused"] is True
+    assert first["state_bundle_created"] is True
+    assert second["state_bundle_created"] is False
     assert before == after
 
 
