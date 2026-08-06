@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 import sys
 from typing import Any, Callable, Mapping
 
 from Crypto.delayed_paper_ledger import (
+    DECISION_LEDGER_CONTRACT,
     CryptoDelayedPaperLedgerError,
     CryptoDelayedPaperObservationStore,
+    _non_authority_fields,
 )
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_epoch import (
@@ -43,6 +46,14 @@ ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_jou
 ROUND_TRIP_RUNTIME_FAILURE_CONTRACT = "tradingagent.crypto.round_trip_runtime_failure.v1"
 ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
 ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 2
+ROUND_TRIP_DATA_GAP_CONTRACT = "tradingagent.crypto.round_trip_data_gap.v1"
+ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
+    {
+        "crypto_5m_observation_after_cutoff",
+        "crypto_5m_data_through_mismatch",
+    }
+)
+ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 1
 
 _FAILURE_PROVENANCE = {
     "pre_network_validation": "runtime_pre_network_validation_failed",
@@ -208,6 +219,87 @@ def _checkpoint_market_slot(value: object) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _round_trip_gap_eligible(failure: CryptoRoundTripRuntimeFailure) -> bool:
+    """Only PIT-unrecoverable market-data failures on historical slots gap."""
+
+    return bool(
+        isinstance(failure, CryptoRoundTripRuntimeFailure)
+        and failure.phase == "market_data_query"
+        and failure.reason == _FAILURE_PROVENANCE["market_data_query"]
+        and str(failure) in ROUND_TRIP_GAP_ELIGIBLE_REASONS
+    )
+
+
+def _round_trip_data_gap_event(
+    *,
+    prior_market_slot: datetime,
+    reason_code: str,
+    recorded_at: datetime,
+) -> dict[str, Any]:
+    """Freeze one round-trip outage gap covering the single skipped slot."""
+
+    skipped_from = prior_market_slot + timedelta(minutes=5)
+    skipped_to = skipped_from
+    recovery_market_slot = skipped_to + timedelta(minutes=5)
+    rejected_window_end = skipped_from + timedelta(minutes=5)
+    if reason_code not in ROUND_TRIP_GAP_ELIGIBLE_REASONS:
+        raise CryptoRoundTripRuntimeFailure(
+            phase="checkpoint_recovery_selection",
+            reason=_FAILURE_PROVENANCE["checkpoint_recovery_selection"],
+            detail="round_trip_gap_reason_not_eligible",
+        )
+    event_id_material = json.dumps(
+        {
+            "gap_contract": ROUND_TRIP_DATA_GAP_CONTRACT,
+            "event_type": "data_gap",
+            "prior_market_slot": _iso_utc(prior_market_slot),
+            "recovery_market_slot": _iso_utc(recovery_market_slot),
+            "reason_code": reason_code,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    payload = {
+        "contract": DECISION_LEDGER_CONTRACT,
+        "gap_contract": ROUND_TRIP_DATA_GAP_CONTRACT,
+        "event_type": "data_gap",
+        "market": "crypto",
+        "market_session": "24x7",
+        "prior_market_slot": _iso_utc(prior_market_slot),
+        "skipped_from": _iso_utc(skipped_from),
+        "skipped_to": _iso_utc(skipped_to),
+        "recovery_market_slot": _iso_utc(recovery_market_slot),
+        "rejected_target_window_end": _iso_utc(rejected_window_end),
+        "rejected_target_observation_cutoff": _iso_utc(
+            rejected_window_end + timedelta(seconds=55)
+        ),
+        "reason_code": reason_code,
+        "candidate_generated": False,
+        "order_generated": False,
+        "fill_generated": False,
+        "capital_effect": "none_preserved_outage_recovery",
+        "recorded_at": _iso_utc(recorded_at),
+        "event_id": hashlib.sha256(event_id_material.encode("utf-8")).hexdigest(),
+    }
+    payload.update(_non_authority_fields())
+    return payload
+
+
+def _round_trip_latest_gap_slot(
+    store: CryptoDelayedPaperObservationStore,
+) -> datetime | None:
+    """Return the newest round-trip gap recovery slot, if any."""
+
+    latest: datetime | None = None
+    for gap in store.data_gap_events():
+        if gap.get("gap_contract") != ROUND_TRIP_DATA_GAP_CONTRACT:
+            continue
+        recovery = _checkpoint_market_slot(gap.get("recovery_market_slot"))
+        if latest is None or recovery > latest:
+            latest = recovery
+    return latest
+
+
 def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, Any]:
     """Return the bounded systemd-journal projection of one runtime receipt.
 
@@ -231,6 +323,7 @@ def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, 
         "requested_window_consumed": receipt.get("requested_window_consumed"),
         "processed_cycle_count": receipt.get("processed_cycle_count"),
         "backlog_recovery_cycle_count": receipt.get("backlog_recovery_cycle_count"),
+        "backlog_gap_cycle_count": receipt.get("backlog_gap_cycle_count"),
         "backlog_remaining": receipt.get("backlog_remaining"),
         "requested_window_end": receipt.get("requested_window_end"),
         "requested_observation_cutoff": receipt.get("requested_observation_cutoff"),
@@ -339,12 +432,18 @@ def run_crypto_delayed_paper_round_trip_server_once(
             if checkpoint.get("latest_market_slot") is not None
             else None
         )
+        latest_gap_slot = _round_trip_latest_gap_slot(store)
+        if latest_gap_slot is not None and (
+            latest_market_slot is None or latest_gap_slot > latest_market_slot
+        ):
+            latest_market_slot = latest_gap_slot
         return store, requested_market_slot, pending, latest_market_slot
 
     store, requested_market_slot, pending, latest_market_slot = _run_failure_stage(
         "checkpoint_recovery_selection", load_checkpoint
     )
     cycle_results: list[dict[str, Any]] = []
+    gap_count = 0
 
     if pending is not None:
         pending_slot = _run_failure_stage(
@@ -395,15 +494,40 @@ def run_crypto_delayed_paper_round_trip_server_once(
         if selected is None:
             break
         target_request, cycle_kind = selected
-        result = _run_failure_stage(
-            "core_cycle",
-            lambda: run_crypto_delayed_paper_round_trip_once(
-                port=port,
-                profile=manifest.profile,
-                request=target_request,
-                output_root=prepared.output_root,
-            ),
-        )
+        try:
+            result = _run_failure_stage(
+                "core_cycle",
+                lambda: run_crypto_delayed_paper_round_trip_once(
+                    port=port,
+                    profile=manifest.profile,
+                    request=target_request,
+                    output_root=prepared.output_root,
+                ),
+            )
+        except CryptoRoundTripRuntimeFailure as failure:
+            if (
+                cycle_kind == "backlog_recovery"
+                and _round_trip_gap_eligible(failure)
+                and gap_count < ROUND_TRIP_MAX_GAPS_PER_INVOCATION
+            ):
+                store.append_event(
+                    _round_trip_data_gap_event(
+                        prior_market_slot=latest_market_slot,
+                        reason_code=str(failure),
+                        recorded_at=now,
+                    )
+                )
+                gap_count += 1
+                latest_market_slot = _round_trip_market_slot(target_request)
+                cycle_results.append(
+                    {
+                        "cycle_kind": "backlog_gap",
+                        "target_window_end": _iso_utc(target_request.window_end),
+                        "gap_reason": str(failure),
+                    }
+                )
+                continue
+            raise
         if result.get("status") != "completed":
             raise CryptoRoundTripRuntimeFailure(
                 phase="core_cycle",
@@ -464,6 +588,9 @@ def run_crypto_delayed_paper_round_trip_server_once(
         "processed_cycle_count": len(cycle_results),
         "backlog_recovery_cycle_count": sum(
             item["cycle_kind"] == "backlog_recovery" for item in cycle_results
+        ),
+        "backlog_gap_cycle_count": sum(
+            item["cycle_kind"] == "backlog_gap" for item in cycle_results
         ),
         "backlog_remaining": backlog_remaining,
         "recovery_mode": recovery_mode,
@@ -568,9 +695,15 @@ __all__ = [
     "ROUND_TRIP_RUNTIME_FAILURE_CONTRACT",
     "ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT",
     "ROUND_TRIP_SETTLED_BAR_DELAY",
+    "ROUND_TRIP_DATA_GAP_CONTRACT",
+    "ROUND_TRIP_GAP_ELIGIBLE_REASONS",
+    "ROUND_TRIP_MAX_GAPS_PER_INVOCATION",
     "crypto_round_trip_window_request",
     "main",
     "round_trip_runtime_validation_failure_summary",
     "round_trip_runtime_journal_summary",
     "run_crypto_delayed_paper_round_trip_server_once",
+    "_round_trip_data_gap_event",
+    "_round_trip_gap_eligible",
+    "_round_trip_latest_gap_slot",
 ]

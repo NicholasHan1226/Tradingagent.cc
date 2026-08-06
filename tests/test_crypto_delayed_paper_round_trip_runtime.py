@@ -50,6 +50,42 @@ def test_round_trip_request_uses_one_closed_bar_settlement_delay() -> None:
     assert request.observation_cutoff == request.window_end + timedelta(seconds=55)
 
 
+def test_round_trip_gap_event_shape_and_eligibility() -> None:
+    """A PIT-unrecoverable historical slot is frozen as a bounded gap event."""
+
+    eligible = runtime_module.CryptoRoundTripRuntimeFailure(
+        phase="market_data_query",
+        reason="runtime_market_data_query_failed",
+        detail="crypto_5m_observation_after_cutoff",
+    )
+    assert runtime_module._round_trip_gap_eligible(eligible) is True
+    not_gap = runtime_module.CryptoRoundTripRuntimeFailure(
+        phase="market_data_query",
+        reason="runtime_market_data_query_failed",
+        detail="crypto_5m_metadata_not_ready",
+    )
+    assert runtime_module._round_trip_gap_eligible(not_gap) is False
+
+    gap = runtime_module._round_trip_data_gap_event(
+        prior_market_slot=WINDOW_END,
+        reason_code="crypto_5m_observation_after_cutoff",
+        recorded_at=WINDOW_END + timedelta(minutes=10),
+    )
+    assert gap["gap_contract"] == runtime_module.ROUND_TRIP_DATA_GAP_CONTRACT
+    assert gap["event_type"] == "data_gap"
+    assert gap["market"] == "crypto"
+    assert gap["market_session"] == "24x7"
+    assert gap["prior_market_slot"] == "2026-07-19T01:05:00Z"
+    assert gap["skipped_from"] == "2026-07-19T01:10:00Z"
+    assert gap["skipped_to"] == gap["skipped_from"]
+    assert gap["recovery_market_slot"] == "2026-07-19T01:15:00Z"
+    assert gap["candidate_generated"] is False
+    assert gap["order_generated"] is False
+    assert gap["fill_generated"] is False
+    assert gap["capital_effect"] == "none_preserved_outage_recovery"
+    assert gap["event_id"]
+
+
 def test_round_trip_runtime_journal_summary_excludes_full_core_payload() -> None:
     receipt = {
         "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
@@ -569,6 +605,78 @@ def test_round_trip_runtime_recovers_missed_closed_slots_after_timer_outage(
     assert replay["cycle_results"] == []
     assert replay["market_data_access_attempt_count"] == 0
     assert CryptoDelayedPaperObservationStore(output).runtime_checkpoint() == checkpoint
+
+
+def test_round_trip_runtime_gaps_pit_unrecoverable_backlog_slot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A slot that can never satisfy PIT checks is gapped, not retried forever."""
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    first = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+
+    real_cycle = runtime_module.run_crypto_delayed_paper_round_trip_once
+
+    def fail_oldest_recovery(**kwargs: Any) -> Any:
+        request = kwargs["request"]
+        if request.window_end == WINDOW_END + timedelta(minutes=5):
+            raise runtime_module.CryptoRoundTripRuntimeFailure(
+                phase="market_data_query",
+                reason="runtime_market_data_query_failed",
+                detail="crypto_5m_observation_after_cutoff",
+            )
+        return real_cycle(**kwargs)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_once",
+        fail_oldest_recovery,
+    )
+    recovered = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_sequence_factory(
+            [_shifted_transport(10)]
+        ),
+    )
+
+    assert recovered["status"] == "backlog_pending"
+    assert recovered["backlog_gap_cycle_count"] == 1
+    assert recovered["backlog_remaining"] is True
+    assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
+        "backlog_gap",
+        "backlog_recovery",
+    ]
+    store = CryptoDelayedPaperObservationStore(output)
+    gaps = store.data_gap_events()
+    assert len(gaps) == 1
+    assert gaps[0]["gap_contract"] == runtime_module.ROUND_TRIP_DATA_GAP_CONTRACT
+    assert gaps[0]["recovery_market_slot"] == "2026-07-19T01:10:00Z"
+
+    drained = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_factory(_shifted_transport(15)),
+    )
+
+    assert drained["status"] == "completed"
+    assert drained["requested_window_consumed"] is True
+    assert drained["backlog_remaining"] is False
+    assert len(CryptoDelayedPaperObservationStore(output).data_gap_events()) == 1
 
 
 def test_round_trip_runtime_rejects_noncanonical_epoch_or_token(
