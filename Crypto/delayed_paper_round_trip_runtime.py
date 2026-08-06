@@ -310,6 +310,17 @@ def _invocation_budget_exceeded(started_at: float, budget_seconds: float) -> boo
     return time.monotonic() - started_at >= budget_seconds
 
 
+def round_trip_receipt_exit_code(receipt: Mapping[str, Any]) -> int:
+    """Map a bounded backlog batch that advanced the ledger to success."""
+    if (
+        receipt.get("status") == "backlog_pending"
+        and receipt.get("backlog_remaining") is True
+        and int(receipt.get("processed_cycle_count") or 0) > 0
+    ):
+        return 0
+    return crypto_runtime_receipt_exit_code(receipt)
+
+
 def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, Any]:
     """Return the bounded systemd-journal projection of one runtime receipt.
 
@@ -675,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
             token_file=args.token_file,
             now=now,
         )
-        code = crypto_runtime_receipt_exit_code(receipt)
+        code = round_trip_receipt_exit_code(receipt)
     except CryptoRoundTripRuntimeFailure as exc:
         failure_summary = round_trip_runtime_validation_failure_summary(now, exc)
         print(
@@ -737,6 +748,7 @@ __all__ = [
     "main",
     "round_trip_runtime_validation_failure_summary",
     "round_trip_runtime_journal_summary",
+    "round_trip_receipt_exit_code",
     "run_crypto_delayed_paper_round_trip_server_once",
     "_invocation_budget_exceeded",
     "_round_trip_data_gap_event",

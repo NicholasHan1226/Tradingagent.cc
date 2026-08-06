@@ -112,6 +112,39 @@ def test_backlog_gap_batch_receipt_is_progress_not_failure() -> None:
     )
 
 
+def test_round_trip_backlog_progress_receipt_exits_zero() -> None:
+    """A bounded recovery-only backlog batch is progress, not a failure."""
+
+    assert (
+        runtime_module.round_trip_receipt_exit_code(
+            {
+                "status": "backlog_pending",
+                "backlog_remaining": True,
+                "processed_cycle_count": 6,
+                "backlog_gap_cycle_count": 0,
+            }
+        )
+        == 0
+    )
+    assert (
+        runtime_module.round_trip_receipt_exit_code(
+            {
+                "status": "backlog_pending",
+                "backlog_remaining": True,
+                "processed_cycle_count": 0,
+                "backlog_gap_cycle_count": 0,
+            }
+        )
+        == 2
+    )
+    assert (
+        runtime_module.round_trip_receipt_exit_code(
+            {"status": "completed", "backlog_remaining": False}
+        )
+        == 0
+    )
+
+
 def test_round_trip_runtime_journal_summary_excludes_full_core_payload() -> None:
     receipt = {
         "contract": runtime_module.ROUND_TRIP_RUNTIME_CONTRACT,
