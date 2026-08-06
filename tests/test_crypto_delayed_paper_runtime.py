@@ -1107,7 +1107,7 @@ def test_bounded_backlog_progresses_without_skipping_slots(
         "2026-07-19T01:10:00Z",
         "2026-07-19T01:15:00Z",
     ]
-    assert runtime_module.crypto_runtime_receipt_exit_code(backlog) == 2
+    assert runtime_module.crypto_runtime_receipt_exit_code(backlog) == 0
 
     caught_up = run_crypto_delayed_paper_server_once(
         runtime_manifest=manifest_path,

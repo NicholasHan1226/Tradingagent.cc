@@ -88,14 +88,14 @@ def test_round_trip_gap_event_shape_and_eligibility() -> None:
 
 
 def test_backlog_gap_batch_receipt_is_progress_not_failure() -> None:
-    """A run that records gaps while still behind exits 0 for the timer."""
+    """A run that makes gap or recovery progress while behind exits 0."""
 
     assert (
         crypto_runtime_receipt_exit_code(
             {
                 "status": "backlog_pending",
                 "backlog_remaining": True,
-                "backlog_gap_cycle_count": 24,
+                "processed_cycle_count": 24,
             }
         )
         == 0
@@ -105,7 +105,17 @@ def test_backlog_gap_batch_receipt_is_progress_not_failure() -> None:
             {
                 "status": "backlog_pending",
                 "backlog_remaining": True,
-                "backlog_gap_cycle_count": 0,
+                "processed_cycle_count": 5,
+            }
+        )
+        == 0
+    )
+    assert (
+        crypto_runtime_receipt_exit_code(
+            {
+                "status": "backlog_pending",
+                "backlog_remaining": True,
+                "processed_cycle_count": 0,
             }
         )
         == 2
