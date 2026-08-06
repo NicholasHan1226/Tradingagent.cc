@@ -505,11 +505,9 @@ def run_crypto_delayed_paper_round_trip_server_once(
                 ),
             )
         except CryptoRoundTripRuntimeFailure as failure:
-            if (
-                cycle_kind == "backlog_recovery"
-                and _round_trip_gap_eligible(failure)
-                and gap_count < ROUND_TRIP_MAX_GAPS_PER_INVOCATION
-            ):
+            if cycle_kind == "backlog_recovery" and _round_trip_gap_eligible(failure):
+                if gap_count >= ROUND_TRIP_MAX_GAPS_PER_INVOCATION:
+                    break
                 store.append_event(
                     _round_trip_data_gap_event(
                         prior_market_slot=latest_market_slot,

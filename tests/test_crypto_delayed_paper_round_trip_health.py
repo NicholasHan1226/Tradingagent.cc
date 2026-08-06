@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 import Crypto.delayed_paper_round_trip_health as health_module
+import Crypto.delayed_paper_round_trip_runtime as runtime_module
+from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_health import (
     CryptoRoundTripHealthError,
@@ -58,6 +60,29 @@ def test_round_trip_health_is_read_only_and_reports_sample_kpis(tmp_path: Path) 
     assert _tree_bytes(tmp_path) == before
     assert result["status"] == "healthy"
     assert result["core"]["pending"] is False
+
+
+def test_round_trip_health_tolerates_ledger_data_gap_events(
+    tmp_path: Path,
+) -> None:
+    """Ledger data-gap rows are audit events, not decisions, in the KPI count."""
+
+    _completed_round_trip(tmp_path)
+    store = CryptoDelayedPaperObservationStore(tmp_path)
+    store.append_event(
+        runtime_module._round_trip_data_gap_event(
+            prior_market_slot=WINDOW_END,
+            reason_code="crypto_5m_observation_after_cutoff",
+            recorded_at=WINDOW_END + timedelta(minutes=10),
+        )
+    )
+
+    result = build_crypto_delayed_paper_round_trip_health(
+        output_root=tmp_path,
+        now=WINDOW_END + timedelta(minutes=5),
+    )
+
+    assert result["status"] == "healthy"
     assert result["sample_kpis"] == {
         "usable_completed_observations": 1,
         "verified_decision_events": 2,

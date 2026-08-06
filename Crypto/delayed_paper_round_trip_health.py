@@ -151,7 +151,10 @@ def build_crypto_delayed_paper_round_trip_health(
         store._verify_completion(completion, observation=observation)
         decisions = store._read_ledger()
         expected_decisions = int(checkpoint["completion_count"]) * 2
-        if len(decisions) != expected_decisions:
+        decision_rows = [
+            row for row in decisions if row.get("event_type") == "decision"
+        ]
+        if len(decision_rows) != expected_decisions:
             raise CryptoRoundTripHealthError("round_trip_health_decision_count_invalid")
         if len({row.get("event_id") for row in decisions}) != len(decisions):
             raise CryptoRoundTripHealthError(
@@ -216,7 +219,7 @@ def build_crypto_delayed_paper_round_trip_health(
         },
         "sample_kpis": {
             "usable_completed_observations": checkpoint["completion_count"],
-            "verified_decision_events": len(decisions),
+            "verified_decision_events": len(decision_rows),
             "expected_decision_events": expected_decisions,
             "capital_cycle_events": int(capital["head_sequence"]) - 1,
             "symbol_decisions_per_observation": 2,
