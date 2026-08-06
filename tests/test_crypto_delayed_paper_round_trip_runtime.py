@@ -692,6 +692,94 @@ def test_round_trip_runtime_gaps_pit_unrecoverable_backlog_slot(
     assert len(CryptoDelayedPaperObservationStore(output).data_gap_events()) == 1
 
 
+def test_round_trip_runtime_invocation_budget_breaks_backlog_pending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A mixed backlog batch exits backlog_pending once its cycle budget is spent."""
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    first = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+
+    real_cycle = runtime_module.run_crypto_delayed_paper_round_trip_once
+
+    def fail_oldest_recovery(**kwargs: Any) -> Any:
+        request = kwargs["request"]
+        if request.window_end == WINDOW_END + timedelta(minutes=5):
+            raise runtime_module.CryptoRoundTripRuntimeFailure(
+                phase="market_data_query",
+                reason="runtime_market_data_query_failed",
+                detail="crypto_5m_observation_after_cutoff",
+            )
+        return real_cycle(**kwargs)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_once",
+        fail_oldest_recovery,
+    )
+    budget_calls = {"count": 0}
+
+    def expire_after_two_cycles(
+        started_at: float, budget_seconds: float
+    ) -> bool:
+        budget_calls["count"] += 1
+        return budget_calls["count"] > 2
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_invocation_budget_exceeded",
+        expire_after_two_cycles,
+    )
+    partial = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_sequence_factory(
+            [_shifted_transport(10), _shifted_transport(15)]
+        ),
+        invocation_budget_seconds=10.0,
+    )
+
+    assert partial["status"] == "backlog_pending"
+    assert partial["backlog_remaining"] is True
+    assert partial["processed_cycle_count"] == 2
+    assert partial["invocation_budget_seconds"] == 10.0
+    assert [item["cycle_kind"] for item in partial["cycle_results"]] == [
+        "backlog_gap",
+        "backlog_recovery",
+    ]
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_invocation_budget_exceeded",
+        lambda started_at, budget_seconds: False,
+    )
+    drained = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_factory(_shifted_transport(15)),
+        invocation_budget_seconds=10.0,
+    )
+
+    assert drained["status"] == "completed"
+    assert drained["backlog_remaining"] is False
+    assert drained["requested_window_consumed"] is True
+    assert drained["invocation_budget_seconds"] == 10.0
+
+
 def test_round_trip_runtime_rejects_noncanonical_epoch_or_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

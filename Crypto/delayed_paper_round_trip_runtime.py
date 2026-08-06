@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import time
 from typing import Any, Callable, Mapping
 
 from Crypto.delayed_paper_ledger import (
@@ -54,6 +55,10 @@ ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
     }
 )
 ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
+# Kept below the 600s systemd TimeoutStartSec so a backlog batch that mixes
+# fast PIT gaps with heavier recoverable observations exits backlog_pending
+# before the unit is killed mid-cycle.
+ROUND_TRIP_INVOCATION_BUDGET_SECONDS = 480.0
 
 _FAILURE_PROVENANCE = {
     "pre_network_validation": "runtime_pre_network_validation_failed",
@@ -300,6 +305,11 @@ def _round_trip_latest_gap_slot(
     return latest
 
 
+def _invocation_budget_exceeded(started_at: float, budget_seconds: float) -> bool:
+    """True when the invocation has consumed its wall-clock cycle budget."""
+    return time.monotonic() - started_at >= budget_seconds
+
+
 def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, Any]:
     """Return the bounded systemd-journal projection of one runtime receipt.
 
@@ -386,6 +396,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
     token_file: Path | str,
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] = build_runtime_transport,
+    invocation_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Run exactly one new/pending closed-bar cycle in the isolated epoch."""
 
@@ -444,6 +455,12 @@ def run_crypto_delayed_paper_round_trip_server_once(
     )
     cycle_results: list[dict[str, Any]] = []
     gap_count = 0
+    budget_seconds = (
+        ROUND_TRIP_INVOCATION_BUDGET_SECONDS
+        if invocation_budget_seconds is None
+        else invocation_budget_seconds
+    )
+    invocation_started_at = time.monotonic()
 
     if pending is not None:
         pending_slot = _run_failure_stage(
@@ -474,6 +491,8 @@ def run_crypto_delayed_paper_round_trip_server_once(
         latest_market_slot = pending_slot
 
     while len(cycle_results) < ROUND_TRIP_MAX_CYCLES_PER_INVOCATION:
+        if _invocation_budget_exceeded(invocation_started_at, budget_seconds):
+            break
         def select_next_cycle() -> tuple[CryptoFiveMinuteWindowRequest, str] | None:
             if latest_market_slot is None:
                 return request, "fresh_query"
@@ -610,6 +629,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
         "recovery_mode": recovery_mode,
         "cycle_results": cycle_results,
         "settled_bar_delay_seconds": int(ROUND_TRIP_SETTLED_BAR_DELAY.total_seconds()),
+        "invocation_budget_seconds": budget_seconds,
         "runtime_manifest_sha256": manifest.sha256,
         "fresh_query_catalog_version": manifest.catalog_version,
         "fresh_query_profile_sha256": manifest.profile.sha256,
@@ -712,11 +732,13 @@ __all__ = [
     "ROUND_TRIP_DATA_GAP_CONTRACT",
     "ROUND_TRIP_GAP_ELIGIBLE_REASONS",
     "ROUND_TRIP_MAX_GAPS_PER_INVOCATION",
+    "ROUND_TRIP_INVOCATION_BUDGET_SECONDS",
     "crypto_round_trip_window_request",
     "main",
     "round_trip_runtime_validation_failure_summary",
     "round_trip_runtime_journal_summary",
     "run_crypto_delayed_paper_round_trip_server_once",
+    "_invocation_budget_exceeded",
     "_round_trip_data_gap_event",
     "_round_trip_gap_eligible",
     "_round_trip_latest_gap_slot",
