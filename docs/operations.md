@@ -1044,6 +1044,85 @@ evidence 校验后原子保留 receipt-bound typed artifact；写入失败时该
 或从 timeline JSON 重建事件。该路径仅用于离线/operator preflight；生产 caller、输出 root 与
 启用仍需 Nicholas 另行授权，本示例不代表它已激活。
 
+#### 4.3.1 08-07 事件保留 runbook（post-window）
+
+分钟快照门禁（已逐项 runtime 验证，2026-08-07，Tradings ECS，`tradingagent` 身份）：
+
+- 08-05/08-07 manifest 直接重放（`filters={}`）：`pagination_row_budget_exceeded`——manifest
+  profile 声明 `max_pages=1/max_rows=30/page_limit=30`，`collect_query_pages` 在装下 30 只
+  symbol 的全量 rt_min 结果集前按预算失败关闭。08-07 09:18 会话发布的新 manifest 同样如此，
+  因此任何保留运行都必须携带与 paper runner 一致的查询形态。
+- 以 root 直跑失败于 `tradingdatas_token_owner_invalid`：token 为 `tradingagent:tradingagent`
+  `0600`，worker/canary 必须以 `User=tradingagent` 身份执行，不得以 root 直读。
+- 仅加 `time eq + ts_code in` 固定查询、但 decision 仍取 09:40：`minute_evidence_time_order_invalid`
+  ——会话首根 bar 在 gap-recovery 下实际晚于 330s 边界提交（同日 paper 09:40/09:45 亦
+  `failed_closed`：`minutedatacontracterror`/`minute_auto_initial_bar_missing`；8369ac3 固定
+  universe 后 11:25+ 恢复 `status=pass`）。
+- 修复（候选）：worker 的分钟快照改为固定 universe（`ts_code.in` + `time eq`）并按
+  `minute_auto_runner` 的 `PROVIDER_AVAILABILITY_LAG`（330s）边界取 decision；已用 08-07
+  manifest 实测 bar 11:30/decision 11:35:30 通过（30 行、单页、same_observation=true）。
+  `--decision-time` 应传运行时刻，worker 自动选取最近可用 bar。
+
+窗口后执行（仅当新 manifest 重放通过；一次一个 vertical slice，输出到专用仓外 0700 root）：
+
+```bash
+runuser -u tradingagent -- env \
+  REAL_TRADING_ENABLED=false \
+  PYTHONPATH=/opt/investment/releases/tradingagent/<effective-release> \
+  /opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 \
+  -m Ashare.trading_copilot_observation_worker \
+    --minute-manifest /var/lib/tradingagent/ashare-minute-paper/20260807/minute-manifest.json \
+    --reference-facts /var/lib/tradingagent/ashare-minute-paper/20260807/reference-facts.json \
+    --observation-manifest /var/lib/tradingagent/ashare-observation/manifests/ashare-observation-20260724-v4.json \
+    --observation-state-root /var/lib/tradingagent/ashare-observation/pass-20260727T123136Z \
+    --load-current-events \
+    --event-evidence-artifact-root /var/lib/tradingagent/trading-copilot/event-evidence-batches-3e6933d \
+    --event-timeline-output-root /var/lib/tradingagent/trading-copilot/event-timeline-3e6933d \
+    --token-file /run/secrets/tradingagent/tradingdatas-read.token \
+    --decision-time <运行时刻，如 2026-08-07T11:40:00+08:00> \
+    --trading-date 2026-08-07 \
+    --evidence-use historical_display \
+    --valid-until <下一交易日 09:00+08:00，按 trade_calendar 核对> \
+    --activity-authorities /var/lib/tradingagent/trading-copilot/activity-authorities-20260807.json \
+    --batch-output /var/lib/tradingagent/trading-copilot/worker-batch-20260807.json \
+    --projection-output-root /var/lib/tradingagent/trading-copilot/stock-intelligence \
+    --result-output /var/lib/tradingagent/trading-copilot/worker-result-20260807.json
+```
+
+证券主数据 company-facts 取自 committed observation bundle（`ashare-observation`，07-24/07-26
+receipt 绑定）：陈旧但可加载，投影按绑定 `dataThrough` 标注，不得改写为 fresh；`trading-copilot-canary`
+目录最新为 08-02 分钟 canary 回执，不含 security_master company facts，不混用。若 Controller 指定
+其它 company-facts 源，执行前须确认其 receipt 绑定与 data_through。
+
+activity-authorities 构造（不得从展示 JSON 重建；取自 worker 同批 TD catalog/query 回执
+envelope）：
+
+- 数据集：`cn.dataset.rt_min`、`cn.equity.security_master`，以及会产出事件的
+  `TradingCopilot/contracts/td_event_consumer_profile.v1.json` 五个 session_bounded 数据集
+  （`anns_d`/`cctv_news`/`irm_qa_sh`/`irm_qa_sz`/`research_report`；`major_news` 仅当显式追加
+  `--on-demand-event-dataset`）。
+- 每个数据集做一次有界认证 `POST /v1/query`（token 只经 leaf 注入），从响应 envelope 取
+  `receipt_id`、lineage sha、envelope proof sha、`data_through`、`observed_at`。
+- 条目结构：`datasetId/market=ashare/timezone=Asia/Shanghai`、`calendar`
+  （`sourceDatasetId=cn.market.trade_calendar` + receipt/lineage/calendarSha 三哈希）、
+  `session.{state,asOf}`、`dataThrough`、`source.{receiptId,receiptSha256,lineageSha256}`。
+  校验见 `_activity_authority`：`dataThrough` 与 source 三哈希必须等于 worker 自身查询产出值，
+  任何不匹配失败关闭；构造错误不会被静默接受。示例结构见
+  `tests/test_trading_copilot_observation_worker.py::_authorities`。
+
+执行后 readback：
+
+- 直接核对保留产物：`/var/lib/tradingagent/trading-copilot/event-timeline-3e6933d/<symbol>.json`
+  与 `<symbol>.receipt.json`，`validUntil` 晚于当前时间；stdout `symbolCount` 为真实覆盖，
+  `eventCoverage.blockedDatasetIds` 非空表示该事件数据集失败关闭，不得补位。
+- 前端时间线路由当前读 `TRADING_COPILOT_EVENT_TIMELINE_DIR=/var/lib/tradingagent/trading-copilot/event-timeline`
+  （既有 root，见 `front/docs/integration.md`），one-shot 写入 3e6933d root：按 integration.md
+  的路由读取前端时间线前，须先由 Controller 把该 env 切到 3e6933d root（可回退服务 env 变更 +
+  healthz 回读）；未切换前 404 是预期状态，不代表保留失败。000001.SZ 与 000333.SZ 各读一次，
+  200 且 validUntil 有效才记为已消费。
+- 本 runbook 不授权 provider 重放、事件合成、模型晋级或任何订单 authority；结果按
+  `AUTODEV_HANDOFF_V1` 交 Controller 验收。
+
 首次启用分钟 session root 时，不能靠“已启用 timer”假定存在历史模板。必须由发布侧准备一个
 仓外、已审核的 minute manifest 和 universe artifact，并仅在空 root 的第一次 session 初始化时
 显式传入 `--bootstrap-manifest` 与 `--universe-source`。bootstrap 不会跳过 catalog、日历、
