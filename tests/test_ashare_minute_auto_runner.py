@@ -210,7 +210,7 @@ def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
     assert result == {"status": "pass", "bar_end": "2026-07-28 13:50:00"}
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:56:00")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
     assert calls[0]["trading_date"].isoformat() == "2026-07-28"
     assert (day / ".minute-auto.lock").stat().st_mode & 0o777 == 0o600
 
@@ -236,7 +236,7 @@ def test_decision_time_is_window_end_for_collector_commit(
 
     assert len(calls) == 1
     assert calls[0]["bar_end"] == "2026-07-28 13:50:00"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:56:00")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
 
 
 def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
@@ -291,7 +291,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     }
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T10:16:00")
+    assert calls[0]["decision_time"] == _at("2026-07-28T10:15:30")
     assert calls[0]["gap_recovery"] == {
         "reason_code": "incident_recovery_no_historical_pit",
         "skipped_session_slots": (
