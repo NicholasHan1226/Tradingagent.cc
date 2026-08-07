@@ -760,12 +760,12 @@ def test_historical_display_rejects_nonfreshness_degradation() -> None:
 
 def test_delayed_paper_allows_one_cadence_plus_shared_jitter_only() -> None:
     delayed = _metadata(
-        observed_at="2026-07-27T09:45:30+08:00",
-        data_through="2026-07-27T09:45:30+08:00",
+        observed_at="2026-07-27T09:46:00+08:00",
+        data_through="2026-07-27T09:46:00+08:00",
     )
     snapshot, audit = _load(
         _Transport(metadata=delayed),
-        decision_time="2026-07-27T09:45:30+08:00",
+        decision_time="2026-07-27T09:46:00+08:00",
         evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
     )
     assert audit.records() == ()
@@ -776,8 +776,8 @@ def test_delayed_paper_allows_one_cadence_plus_shared_jitter_only() -> None:
     assert all(bar.execution_latency_eligible is False for bar in snapshot.bars)
 
     too_late = _metadata(
-        observed_at="2026-07-27T09:45:30+08:00",
-        data_through="2026-07-27T09:45:30+08:00",
+        observed_at="2026-07-27T09:46:00+08:00",
+        data_through="2026-07-27T09:46:00+08:00",
     )
     client = _client(_Transport(metadata=too_late))
     profile = _profile(client)
@@ -786,7 +786,7 @@ def test_delayed_paper_allows_one_cadence_plus_shared_jitter_only() -> None:
         TradingDatasMinuteMarketDataPort(client).load_snapshot(
             profile=profile,
             filters={},
-            decision_time=datetime.fromisoformat("2026-07-27T09:45:31+08:00"),
+            decision_time=datetime.fromisoformat("2026-07-27T09:46:01+08:00"),
             trading_dates=frozenset({date(2026, 7, 27)}),
             audit_ledger=late_audit,
             evidence_use=MinuteEvidenceUse.DELAYED_PAPER,

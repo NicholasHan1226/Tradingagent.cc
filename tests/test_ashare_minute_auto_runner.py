@@ -108,20 +108,19 @@ def test_main_reports_data_contract_reason_code(
 @pytest.mark.parametrize(
     ("now", "expected"),
     (
-        ("2026-07-28T09:39:59", None),
-        ("2026-07-28T09:40:29", None),
-        ("2026-07-28T09:40:30", "09:35"),
+        ("2026-07-28T09:40:59", None),
         ("2026-07-28T09:41:00", "09:35"),
-        ("2026-07-28T09:41:01", None),
-        ("2026-07-28T09:45:30", "09:40"),
+        ("2026-07-28T09:41:30", "09:35"),
+        ("2026-07-28T09:41:31", None),
         ("2026-07-28T09:46:00", "09:40"),
-        ("2026-07-28T09:46:01", None),
-        ("2026-07-28T11:35:30", "11:30"),
+        ("2026-07-28T09:46:30", "09:40"),
+        ("2026-07-28T09:46:31", None),
         ("2026-07-28T11:36:00", "11:30"),
+        ("2026-07-28T11:36:30", "11:30"),
         ("2026-07-28T11:45:40", None),
-        ("2026-07-28T13:10:30", "13:05"),
         ("2026-07-28T13:11:00", "13:05"),
-        ("2026-07-28T13:10:40", "13:05"),
+        ("2026-07-28T13:11:30", "13:05"),
+        ("2026-07-28T13:11:10", "13:05"),
         ("2026-07-28T15:10:40", None),
     ),
 )
@@ -138,7 +137,7 @@ def test_missing_session_directory_is_safe_noop(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T09:45:30"),
+        now=_at("2026-07-28T09:46:00"),
     )
 
     assert result == {
@@ -155,7 +154,7 @@ def test_already_processed_bar_is_safe_noop(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:50:30"),
+        now=_at("2026-07-28T13:51:00"),
     )
 
     assert result["reason"] == "bar_already_processed"
@@ -172,7 +171,7 @@ def test_gap_resumes_with_explicit_non_learning_segment_reset(tmp_path: Path) ->
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:30"),
+        now=_at("2026-07-28T13:56:00"),
         run_once=fake_run_once,
     )
 
@@ -203,14 +202,14 @@ def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:30"),
+        now=_at("2026-07-28T13:56:00"),
         run_once=fake_run_once,
     )
 
     assert result == {"status": "pass", "bar_end": "2026-07-28 13:50:00"}
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:56:00")
     assert calls[0]["trading_date"].isoformat() == "2026-07-28"
     assert (day / ".minute-auto.lock").stat().st_mode & 0o777 == 0o600
 
@@ -230,13 +229,13 @@ def test_decision_time_is_window_end_for_collector_commit(
     run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:40"),
+        now=_at("2026-07-28T13:56:10"),
         run_once=fake_run_once,
     )
 
     assert len(calls) == 1
     assert calls[0]["bar_end"] == "2026-07-28 13:50:00"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:56:00")
 
 
 def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
@@ -246,7 +245,7 @@ def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
         run_current_delayed_minute_paper(
             state_root=tmp_path,
             token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T13:10:30"),
+            now=_at("2026-07-28T13:11:00"),
             run_once=lambda **_: {"status": "pass"},
         )
 
@@ -264,7 +263,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T10:15:30"),
+        now=_at("2026-07-28T10:16:00"),
         run_once=fake_run_once,
         allow_late_start=True,
     )
@@ -291,7 +290,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     }
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T10:15:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T10:16:00")
     assert calls[0]["gap_recovery"] == {
         "reason_code": "incident_recovery_no_historical_pit",
         "skipped_session_slots": (
@@ -316,7 +315,7 @@ def test_real_trading_flag_fails_closed(
         run_current_delayed_minute_paper(
             state_root=tmp_path,
             token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T09:40:40"),
+            now=_at("2026-07-28T09:41:10"),
         )
 
 
@@ -332,7 +331,7 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
     slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
     expected_calendar = tuple(
         "OnCalendar=Mon..Fri *-*-* "
-        f"{(slot + timedelta(minutes=5, seconds=30)).strftime('%H:%M:%S')}"
+        f"{(slot + timedelta(minutes=6)).strftime('%H:%M:%S')}"
         for slot in slots
     )
     assert calendar_lines == expected_calendar
@@ -341,7 +340,7 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-paper.service" in timer
     triggers = tuple(
-        slot + timedelta(minutes=5, seconds=30) for slot in slots
+        slot + timedelta(minutes=6) for slot in slots
     )
     assert len(triggers) == 48
     for trigger, slot in zip(triggers, slots, strict=True):
