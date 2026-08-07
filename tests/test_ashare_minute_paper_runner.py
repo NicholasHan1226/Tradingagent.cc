@@ -133,6 +133,7 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
                 "filters": {},
                 "profile": {
                     "timestamp_field": "time",
+                    "symbol_field": "ts_code",
                     "page_limit": 10,
                 },
             }
@@ -176,6 +177,40 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
         encoding="utf-8",
     )
     return manifest, references, universe
+
+
+def test_runner_pins_exact_universe_filter_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, references, universe = _write_inputs(tmp_path)
+    seen_filters: list[dict] = []
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        seen_filters.append(dict(config.filters))
+        return _profile(), _snapshot("2026-07-28T09:35:00+08:00", 10.0), MinuteEvidenceAuditLedger()
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot",
+        fake_load,
+    )
+    state = tmp_path / "state" / "bundle.json"
+    run_delayed_minute_paper_once(
+        manifest=manifest,
+        reference_facts_path=references,
+        universe_path=universe,
+        token_file=tmp_path / "token",
+        state_bundle=state,
+        decision_time=datetime.fromisoformat("2026-07-28T09:40:07+08:00"),
+        trading_date=date(2026, 7, 28),
+        bar_end="2026-07-28 09:35:00",
+        pin_universe_filter=True,
+    )
+    assert seen_filters == [
+        {
+            "time": {"eq": "2026-07-28 09:35:00"},
+            "ts_code": {"in": ("000001.SZ", "600000.SH")},
+        }
+    ]
 
 
 def test_runner_persists_fixture_state_and_waits_for_reachable_fill(

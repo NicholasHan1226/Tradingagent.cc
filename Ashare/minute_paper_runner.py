@@ -212,6 +212,7 @@ def run_delayed_minute_paper_once(
     trading_date: date,
     bar_end: str,
     gap_recovery: Mapping[str, object] | None = None,
+    pin_universe_filter: bool = False,
 ) -> dict[str, Any]:
     """Process one exact completed bar in the delayed, simulation-only tier."""
 
@@ -221,12 +222,18 @@ def run_delayed_minute_paper_once(
     timestamp_field = config.profile.get("timestamp_field")
     if not isinstance(timestamp_field, str) or not timestamp_field:
         raise MinutePaperRunnerError("minute_paper_timestamp_field_invalid")
-    config = replace(config, filters={timestamp_field: {"eq": bar_end}})
     reference_facts = load_reference_facts(reference_facts_path)
     universe = load_minute_research_universe(universe_path)
     universe_symbols = set(universe.instruments)
     if universe_symbols != set(reference_facts):
         raise MinutePaperRunnerError("minute_paper_reference_universe_mismatch")
+    filters: dict[str, object] = {timestamp_field: {"eq": bar_end}}
+    if pin_universe_filter:
+        symbol_field = config.profile.get("symbol_field")
+        if not isinstance(symbol_field, str) or not symbol_field:
+            raise MinutePaperRunnerError("minute_paper_symbol_field_invalid")
+        filters[symbol_field] = {"in": tuple(sorted(universe_symbols))}
+    config = replace(config, filters=filters)
     profile, snapshot, audit = load_minute_snapshot(
         config,
         token_file=token_file,

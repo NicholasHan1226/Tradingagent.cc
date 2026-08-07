@@ -188,6 +188,7 @@ def run_current_delayed_minute_paper(
     now: datetime,
     run_once: Callable[..., dict[str, object]] = run_delayed_minute_paper_once,
     allow_late_start: bool = False,
+    pin_universe_filter: bool = False,
 ) -> dict[str, object]:
     """Process exactly one expected current delayed bar or return a safe no-op."""
 
@@ -252,6 +253,7 @@ def run_current_delayed_minute_paper(
             "decision_time": decision_time,
             "trading_date": target.date(),
             "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
+            "pin_universe_filter": pin_universe_filter,
         }
         if skipped_slots:
             recovery_reason = (
@@ -326,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
             token_file=args.token_file,
             now=now,
             allow_late_start=args.allow_late_start,
+            pin_universe_filter=True,
         )
     except (MinuteAutoRunnerError, OSError, ValueError) as exc:
         print("automatic delayed minute paper runner failed closed", file=sys.stderr)
