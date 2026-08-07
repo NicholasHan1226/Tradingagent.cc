@@ -17,14 +17,17 @@ from Ashare.event_evidence import (
     PRIMARY_DATASET_IDS,
 )
 from Ashare.minute_data import (
+    MinuteDataContractError,
     MinuteBarEvidence,
     MinuteBarSnapshot,
     MinuteDatasetProfile,
     MinuteEvidenceUse,
     MinuteTimestampSemantics,
 )
+from Ashare.minute_canary import MinuteCanaryConfig
 from Ashare.trading_copilot_observation_worker import (
     TradingCopilotObservationError,
+    _pinned_snapshot_plan,
     build_projection_batch,
     company_facts_from_verified_observation,
     load_event_bundle,
@@ -677,3 +680,105 @@ def test_company_facts_can_only_come_from_verified_observation_bundle(monkeypatc
     )
     assert facts["600000.SH"]["industry"] == "未交付"
     assert facts["600000.SH"]["source"]["receiptSha256"] == _sha("master-proof")
+
+
+def _minute_config() -> MinuteCanaryConfig:
+    return MinuteCanaryConfig(
+        base_url="http://127.0.0.1:18082",
+        expected_catalog_version="catalog-v1",
+        dataset_id="cn.dataset.rt_min",
+        access_policy_id="test-read-v1",
+        transport_id="http-json-v1",
+        timeout_seconds=1,
+        filters={},
+        profile={
+            "timestamp_field": "time",
+            "symbol_field": "ts_code",
+            "timestamp_format": "%Y-%m-%d %H:%M:%S",
+        },
+    )
+
+
+def test_snapshot_plan_pins_universe_at_availability_boundary() -> None:
+    config = _minute_config()
+    facts = {"000001.SZ": object(), "600000.SH": object()}
+    decision = datetime(2026, 8, 7, 11, 40, tzinfo=timezone(timedelta(hours=8)))
+    pinned, snapshot_decision = _pinned_snapshot_plan(config, facts, decision)
+    assert pinned.filters == {
+        "time": {"eq": "2026-08-07 11:30:00"},
+        "ts_code": {"in": ("000001.SZ", "600000.SH")},
+    }
+    assert snapshot_decision == datetime(
+        2026, 8, 7, 11, 35, 30, tzinfo=timezone(timedelta(hours=8))
+    )
+    assert snapshot_decision <= decision
+
+
+def test_snapshot_plan_rejects_before_any_available_bar() -> None:
+    config = _minute_config()
+    decision = datetime(2026, 8, 7, 9, 10, tzinfo=timezone(timedelta(hours=8)))
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_minute_snapshot_bar_unavailable",
+    ):
+        _pinned_snapshot_plan(config, {"600000.SH": object()}, decision)
+
+
+def test_main_pins_snapshot_query_for_retention_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest = tmp_path / "minute-manifest.json"
+    manifest.write_text(json.dumps({
+        "dataset_id": "cn.dataset.rt_min",
+        "expected_catalog_version": "catalog-v1",
+        "base_url": "http://127.0.0.1:18082",
+        "access_policy_id": "test-read-v1",
+        "transport_id": "http-json-v1",
+        "timeout_seconds": 1,
+        "filters": {},
+        "profile": {
+            "timestamp_field": "time",
+            "symbol_field": "ts_code",
+            "timestamp_format": "%Y-%m-%d %H:%M:%S",
+        },
+    }), encoding="utf-8")
+    reference = tmp_path / "reference-facts.json"
+    reference.write_text(json.dumps([
+        {
+            "symbol": "600000.SH",
+            "trade_date": "2026-08-07",
+            "previous_close_cny": 9.8,
+            "suspended": False,
+            "evidence_sha256": _sha("ref"),
+        }
+    ]), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fail_with_captured(config, **kwargs):
+        captured["filters"] = config.filters
+        captured["decision_time"] = kwargs["decision_time"]
+        raise MinuteDataContractError("minute_test_fail")
+
+    monkeypatch.setattr(observation_worker, "load_minute_snapshot", fail_with_captured)
+    rc = observation_worker.main([
+        "--minute-manifest", str(manifest),
+        "--reference-facts", str(reference),
+        "--company-facts", str(tmp_path / "company.json"),
+        "--token-file", str(tmp_path / "token"),
+        "--decision-time", "2026-08-07T11:40:00+08:00",
+        "--trading-date", "2026-08-07",
+        "--evidence-use", "historical_display",
+        "--valid-until", "2026-08-10T09:00:00+08:00",
+        "--activity-authorities", str(tmp_path / "authorities.json"),
+        "--batch-output", str(tmp_path / "batch.json"),
+        "--projection-output-root", str(tmp_path / "projection"),
+        "--result-output", str(tmp_path / "result.json"),
+    ])
+    assert rc == 2
+    assert captured["filters"] == {
+        "time": {"eq": "2026-08-07 11:30:00"},
+        "ts_code": {"in": ("600000.SH",)},
+    }
+    assert captured["decision_time"] == datetime(
+        2026, 8, 7, 11, 35, 30, tzinfo=timezone(timedelta(hours=8))
+    )
