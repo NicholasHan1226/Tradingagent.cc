@@ -269,7 +269,7 @@ def run_current_delayed_minute_paper(
         # collector's commit watermark (bar end + ~5m + collection latency) is
         # already observed before the decision; wall-now at timer fire is too
         # early and fails the PIT ordering check. The decision must stay at
-        # the 360s delayed-paper latency boundary.
+        # the 420s delayed-paper latency boundary.
         run_kwargs["decision_time"] = target + PROVIDER_AVAILABILITY_LAG
         receipt = run_once(
             **run_kwargs,

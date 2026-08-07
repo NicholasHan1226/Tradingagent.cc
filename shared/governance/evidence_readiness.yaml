@@ -75,7 +75,7 @@ freshness_policies:
     wall_clock_freshness_required: true
     maximum_lag_seconds: null
     maximum_bar_cadence_multiple: 1
-    maximum_jitter_seconds: 60
+    maximum_jitter_seconds: 120
     same_event_execution_allowed: false
   historical_pit:
     wall_clock_freshness_required: false
