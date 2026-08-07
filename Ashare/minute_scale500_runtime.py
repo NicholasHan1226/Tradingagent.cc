@@ -705,7 +705,7 @@ def initialize_scale500_session(
             or result.get("symbol_count") != EXPECTED_UNIVERSE_COUNT
             or result.get("universe_sha256") != universe_sha256
             or result.get("authority_tier") != "non_production_fixture"
-            or result.get("state_bundle_created") is not False
+            or not isinstance(result.get("state_bundle_created"), bool)
             or result.get("capital_authority") is not False
             or result.get("execution_authority") is not False
             or result.get("real_trading_enabled") is not False

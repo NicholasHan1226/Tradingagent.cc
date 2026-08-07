@@ -221,6 +221,32 @@ def _initialize(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     return paths
 
 
+def test_initialize_accepts_honest_fresh_state_bundle_flag(
+    tmp_path: Path,
+) -> None:
+    """A freshly created day reports state_bundle_created=True and passes."""
+
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(
+        tmp_path
+    )
+
+    def fresh_initializer(**kwargs: object) -> dict[str, object]:
+        return {**_initializer(**kwargs), "state_bundle_created": True}
+
+    result = initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:18:00"),
+        initializer=fresh_initializer,
+    )
+
+    assert result["status"] == "pass"
+    assert result["scale500_acceptance_status"] == "pending_two_live_snapshots"
+
+
 def _symbols(count: int = EXPECTED_UNIVERSE_COUNT) -> tuple[str, ...]:
     return tuple(
         f"{600000 + index:06d}.SH" if index % 2 else f"{index + 1:06d}.SZ"
