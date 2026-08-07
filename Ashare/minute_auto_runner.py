@@ -16,9 +16,14 @@ import json
 import os
 from pathlib import Path
 import sys
+import time as time_module
 from typing import Callable, Iterator, Mapping
 
-from .minute_data import MAX_DELAYED_PAPER_LATENCY, SHANGHAI
+from .minute_data import (
+    MAX_DELAYED_PAPER_LATENCY,
+    MinuteDataContractError,
+    SHANGHAI,
+)
 from .minute_paper_runner import run_delayed_minute_paper_once
 
 
@@ -31,10 +36,28 @@ STATE_BUNDLE_NAME = "state-bundle.json"
 MANIFEST_NAME = "minute-manifest.json"
 REFERENCE_FACTS_NAME = "reference-facts.json"
 UNIVERSE_NAME = "universe.json"
+READINESS_RETRY_LIMIT = 3
+READINESS_RETRY_BACKOFF_SECONDS = 15
+READINESS_RETRY_GRACE_SECONDS = 60
+_READINESS_FAILURE_REASONS = frozenset(
+    {
+        "minute_metadata_not_ready",
+        "minute_metadata_not_fresh",
+        "minute_evidence_time_order_invalid",
+    }
+)
 
 
 class MinuteAutoRunnerError(ValueError):
     """Fail-closed automatic delayed-paper configuration or continuity error."""
+
+
+def _is_readiness_failure(exc: BaseException) -> bool:
+    """Return whether a contract failure is the collector-latency race class."""
+
+    return isinstance(exc, MinuteDataContractError) and (
+        str(exc) in _READINESS_FAILURE_REASONS
+    )
 
 
 def _aware(value: datetime) -> datetime:
@@ -251,9 +274,26 @@ def run_current_delayed_minute_paper(
                 "reason_code": recovery_reason,
                 "skipped_session_slots": skipped_slots,
             }
-        receipt = run_once(
-            **run_kwargs,
-        )
+        attempts = 0
+        while True:
+            if attempts:
+                retry_decision = datetime.now(tz=SHANGHAI)
+                if (
+                    retry_decision - target
+                    > PROVIDER_AVAILABILITY_LAG + timedelta(
+                        seconds=READINESS_RETRY_GRACE_SECONDS
+                    )
+                ):
+                    raise MinuteAutoRunnerError("minute_auto_bar_aged_out_during_retry")
+                run_kwargs["decision_time"] = retry_decision
+            try:
+                receipt = run_once(**run_kwargs)
+                break
+            except MinuteDataContractError as exc:
+                attempts += 1
+                if attempts >= READINESS_RETRY_LIMIT or not _is_readiness_failure(exc):
+                    raise
+                time_module.sleep(READINESS_RETRY_BACKOFF_SECONDS)
         result = dict(receipt)
         if skipped_slots:
             result.update(
