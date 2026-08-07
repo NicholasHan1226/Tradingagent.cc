@@ -933,6 +933,7 @@ def run_scale500_once(
             token_file=token,
             now=now,
             allow_late_start=allow_late_start,
+            pin_universe_filter=True,
         )
         if result.get("status") == "noop":
             if result.get("reason") != "bar_already_processed":
