@@ -329,20 +329,17 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
         line for line in timer.splitlines() if line.startswith("OnCalendar=")
     )
 
-    assert calendar_lines == (
-        "OnCalendar=Mon..Fri *-*-* 09:40:30/5:00",
-        "OnCalendar=Mon..Fri *-*-* 10:00:30/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:00:30..35:30/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:10:30/5:00",
-        "OnCalendar=Mon..Fri *-*-* 14:00:30/5:00",
-        "OnCalendar=Mon..Fri *-*-* 15:00:30",
-        "OnCalendar=Mon..Fri *-*-* 15:05:30",
+    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
+    expected_calendar = tuple(
+        "OnCalendar=Mon..Fri *-*-* "
+        f"{(slot + timedelta(minutes=5, seconds=30)).strftime('%H:%M:%S')}"
+        for slot in slots
     )
+    assert calendar_lines == expected_calendar
     assert "09..11" not in timer
     assert "13..15" not in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-paper.service" in timer
-    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
     triggers = tuple(
         slot + timedelta(minutes=5, seconds=30) for slot in slots
     )
