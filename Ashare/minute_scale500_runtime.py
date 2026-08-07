@@ -327,6 +327,18 @@ def _validated_universe(
     return rows, actual_sha256
 
 
+def _parse_bar_end_any(value: str) -> datetime:
+    """Parse a bar end in either canonical space or ISO-8601 serialization."""
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return parsed.replace(tzinfo=SHANGHAI)
+    return parsed.astimezone(SHANGHAI)
+
+
 def _validate_late_start_canary(
     *,
     canary_receipt: Path | str | None,
@@ -377,6 +389,12 @@ def _validate_late_start_canary(
     bars = raw.get("bars")
     if not isinstance(bars, list) or len(bars) != EXPECTED_UNIVERSE_COUNT:
         raise MinuteScale500RuntimeError("minute_scale500_late_start_canary_invalid")
+    try:
+        expected_bar_end = _parse_bar_end_any(bar_end)
+    except ValueError as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_late_start_canary_invalid"
+        ) from exc
     symbols: list[str] = []
     for item in bars:
         if not isinstance(item, Mapping):
@@ -384,9 +402,20 @@ def _validate_late_start_canary(
                 "minute_scale500_late_start_canary_invalid"
             )
         symbol = item.get("symbol")
+        raw_bar_end = item.get("bar_end")
+        try:
+            item_bar_end = (
+                _parse_bar_end_any(raw_bar_end)
+                if isinstance(raw_bar_end, str)
+                else None
+            )
+        except ValueError as exc:
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_late_start_canary_invalid"
+            ) from exc
         if (
             not isinstance(symbol, str)
-            or item.get("bar_end") != bar_end
+            or item_bar_end != expected_bar_end
             or not isinstance(item.get("receipt_id"), str)
             or not item["receipt_id"].strip()
             or not isinstance(item.get("observed_at"), str)

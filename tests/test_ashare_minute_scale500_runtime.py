@@ -192,7 +192,7 @@ def _canary_receipt(path: Path, *, universe_source: Path, bar_end: str) -> Path:
                 "bars": [
                     {
                         "symbol": symbol,
-                        "bar_end": bar_end,
+                        "bar_end": _at(bar_end).isoformat(),
                         "receipt_id": f"receipt-{index}",
                         "observed_at": "2026-07-31T13:50:00+08:00",
                     }
