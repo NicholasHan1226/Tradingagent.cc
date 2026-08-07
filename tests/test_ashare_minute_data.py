@@ -737,6 +737,35 @@ def test_historical_display_accepts_old_receipt_without_delayed_authority() -> N
     assert all(bar.execution_latency_eligible is False for bar in snapshot.bars)
 
 
+def test_delayed_paper_accepts_freshness_only_stale_metadata_with_coverage() -> None:
+    """The delayed-paper consumer reads an exact completed bar at bar_end plus
+    one cadence, so metadata whose only degradation is freshness_sla_exceeded
+    is expected; coverage and latency bounds still gate the read downstream."""
+
+    stale = _metadata(
+        state="stale",
+        degraded=True,
+        freshness={"state": "stale", "stale": True},
+        quality={
+            "state": "degraded",
+            "valid": False,
+            "evidence": ["freshness_sla_exceeded"],
+        },
+        reasons=["freshness_sla_exceeded"],
+    )
+    snapshot, audit = _load(
+        _Transport(metadata=stale),
+        decision_time="2026-07-27T09:45:30+08:00",
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert audit.records() == ()
+    assert all(
+        bar.evidence_use is MinuteEvidenceUse.DELAYED_PAPER
+        for bar in snapshot.bars
+    )
+
+
 def test_historical_display_rejects_nonfreshness_degradation() -> None:
     degraded = _metadata(
         state="stale",

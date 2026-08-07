@@ -952,27 +952,34 @@ def _map_run(
         raise MinuteDataContractError("minute_query_binding_mismatch")
     historical_display = evidence_use is MinuteEvidenceUse.HISTORICAL_DISPLAY
     state = metadata.state.strip().lower()
+    freshness_only_degraded = (
+        state == "stale"
+        and metadata.degraded is True
+        and bool(metadata.reasons)
+        and set(metadata.reasons) <= {"freshness_sla_exceeded"}
+    )
+    delayed_paper_freshness_tolerated = (
+        evidence_use is MinuteEvidenceUse.DELAYED_PAPER
+        and freshness_only_degraded
+    )
     if historical_display:
-        freshness_only_degraded = (
-            state == "stale"
-            and metadata.degraded is True
-            and bool(metadata.reasons)
-            and set(metadata.reasons) <= {"freshness_sla_exceeded"}
-        )
         if not (
             (state == "ready" and metadata.degraded is False)
             or freshness_only_degraded
         ):
             raise MinuteDataContractError("minute_metadata_not_displayable")
     else:
-        if state != "ready" or metadata.degraded is not False:
+        if not (
+            (state == "ready" and metadata.degraded is False)
+            or delayed_paper_freshness_tolerated
+        ):
             raise MinuteDataContractError("minute_metadata_not_ready")
-        if not _fresh(metadata.freshness):
+        if not delayed_paper_freshness_tolerated and not _fresh(metadata.freshness):
             raise MinuteDataContractError("minute_metadata_not_fresh")
     quality = metadata.quality
     quality_evidence = quality.get("evidence")
-    historical_freshness_only_quality = (
-        historical_display
+    freshness_only_quality = (
+        (historical_display or delayed_paper_freshness_tolerated)
         and freshness_only_degraded
         and quality.get("state") == "degraded"
         and quality.get("valid") is False
@@ -981,7 +988,7 @@ def _map_run(
         and all(isinstance(item, str) for item in quality_evidence)
         and set(quality_evidence) <= {"freshness_sla_exceeded"}
     )
-    if not _valid_quality(quality) and not historical_freshness_only_quality:
+    if not _valid_quality(quality) and not freshness_only_quality:
         raise MinuteDataContractError("minute_metadata_quality_invalid")
     if not _complete_lineage(metadata.lineage):
         raise MinuteDataContractError("minute_metadata_lineage_incomplete")
