@@ -31,6 +31,10 @@ FIVE_MINUTES = timedelta(minutes=5)
 # jitter budget. This remains observation-only and never changes the 30-second
 # low-latency execution gate in ``minute_data``.
 PROVIDER_AVAILABILITY_LAG = MAX_DELAYED_PAPER_LATENCY
+# The TD collector commits each rt_min bar about 20s after the 5m boundary, so
+# the delayed tier opens its availability window 30s later than the original
+# cadence window to guarantee the commit is observed before the decision.
+_OBSERVATION_WINDOW_SHIFT = timedelta(seconds=30)
 STATE_BUNDLE_NAME = "state-bundle.json"
 MANIFEST_NAME = "minute-manifest.json"
 REFERENCE_FACTS_NAME = "reference-facts.json"
@@ -79,7 +83,11 @@ def expected_available_bar_end(now: datetime) -> datetime | None:
     eligible = [
         value
         for value in slots
-        if FIVE_MINUTES <= local - value <= PROVIDER_AVAILABILITY_LAG
+        if (
+            PROVIDER_AVAILABILITY_LAG
+            <= local - value
+            <= PROVIDER_AVAILABILITY_LAG + _OBSERVATION_WINDOW_SHIFT
+        )
     ]
     return max(eligible, default=None)
 
@@ -259,7 +267,9 @@ def run_current_delayed_minute_paper(
         # collector's commit watermark (bar end + ~5m + collection latency) is
         # already observed before the decision; wall-now at timer fire is too
         # early and fails the PIT ordering check.
-        run_kwargs["decision_time"] = target + timedelta(minutes=5, seconds=30)
+        run_kwargs["decision_time"] = (
+            target + PROVIDER_AVAILABILITY_LAG + _OBSERVATION_WINDOW_SHIFT
+        )
         receipt = run_once(
             **run_kwargs,
         )

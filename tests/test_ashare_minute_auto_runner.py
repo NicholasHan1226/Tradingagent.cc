@@ -109,18 +109,19 @@ def test_main_reports_data_contract_reason_code(
     ("now", "expected"),
     (
         ("2026-07-28T09:39:59", None),
-        ("2026-07-28T09:40:00", "09:35"),
+        ("2026-07-28T09:40:29", None),
         ("2026-07-28T09:40:30", "09:35"),
-        ("2026-07-28T09:40:31", None),
-        ("2026-07-28T09:45:00", "09:40"),
+        ("2026-07-28T09:41:00", "09:35"),
+        ("2026-07-28T09:41:01", None),
         ("2026-07-28T09:45:30", "09:40"),
-        ("2026-07-28T09:45:31", None),
-        ("2026-07-28T11:35:00", "11:30"),
+        ("2026-07-28T09:46:00", "09:40"),
+        ("2026-07-28T09:46:01", None),
         ("2026-07-28T11:35:30", "11:30"),
+        ("2026-07-28T11:36:00", "11:30"),
         ("2026-07-28T11:45:40", None),
-        ("2026-07-28T13:10:00", "13:05"),
         ("2026-07-28T13:10:30", "13:05"),
-        ("2026-07-28T13:10:40", None),
+        ("2026-07-28T13:11:00", "13:05"),
+        ("2026-07-28T13:10:40", "13:05"),
         ("2026-07-28T15:10:40", None),
     ),
 )
@@ -209,7 +210,7 @@ def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
     assert result == {"status": "pass", "bar_end": "2026-07-28 13:50:00"}
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:56:00")
     assert calls[0]["trading_date"].isoformat() == "2026-07-28"
     assert (day / ".minute-auto.lock").stat().st_mode & 0o777 == 0o600
 
@@ -229,13 +230,13 @@ def test_decision_time_is_window_end_for_collector_commit(
     run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:10"),
+        now=_at("2026-07-28T13:55:40"),
         run_once=fake_run_once,
     )
 
     assert len(calls) == 1
     assert calls[0]["bar_end"] == "2026-07-28 13:50:00"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:56:00")
 
 
 def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
@@ -290,7 +291,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     }
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T10:15:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T10:16:00")
     assert calls[0]["gap_recovery"] == {
         "reason_code": "incident_recovery_no_historical_pit",
         "skipped_session_slots": (
@@ -329,20 +330,22 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
     )
 
     assert calendar_lines == (
-        "OnCalendar=Mon..Fri *-*-* 09:40/5:00",
-        "OnCalendar=Mon..Fri *-*-* 10:00/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:00..35/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:10/5:00",
-        "OnCalendar=Mon..Fri *-*-* 14:00/5:00",
-        "OnCalendar=Mon..Fri *-*-* 15:00:00",
-        "OnCalendar=Mon..Fri *-*-* 15:05:00",
+        "OnCalendar=Mon..Fri *-*-* 09:40:30/5:00",
+        "OnCalendar=Mon..Fri *-*-* 10:00:30/5:00",
+        "OnCalendar=Mon..Fri *-*-* 11:00:30..35:30/5:00",
+        "OnCalendar=Mon..Fri *-*-* 13:10:30/5:00",
+        "OnCalendar=Mon..Fri *-*-* 14:00:30/5:00",
+        "OnCalendar=Mon..Fri *-*-* 15:00:30",
+        "OnCalendar=Mon..Fri *-*-* 15:05:30",
     )
     assert "09..11" not in timer
     assert "13..15" not in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-paper.service" in timer
     slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
-    triggers = tuple(slot + timedelta(minutes=5) for slot in slots)
+    triggers = tuple(
+        slot + timedelta(minutes=5, seconds=30) for slot in slots
+    )
     assert len(triggers) == 48
     for trigger, slot in zip(triggers, slots, strict=True):
         assert expected_available_bar_end(trigger) == slot
