@@ -18,8 +18,12 @@ from pathlib import Path
 import sys
 from typing import Callable, Iterator, Mapping
 
-from .minute_data import MAX_DELAYED_PAPER_LATENCY, SHANGHAI
-from .minute_paper_runner import run_delayed_minute_paper_once
+from .minute_data import (
+    MAX_DELAYED_PAPER_LATENCY,
+    SHANGHAI,
+    MinuteDataContractError,
+)
+from .minute_paper_runner import MinutePaperRunnerError, run_delayed_minute_paper_once
 
 
 FIVE_MINUTES = timedelta(minutes=5)
@@ -319,7 +323,14 @@ def main(argv: list[str] | None = None) -> int:
                     "failure_type": type(exc).__name__,
                     "failure_reason": (
                         str(exc)
-                        if isinstance(exc, MinuteAutoRunnerError)
+                        if isinstance(
+                            exc,
+                            (
+                                MinuteAutoRunnerError,
+                                MinutePaperRunnerError,
+                                MinuteDataContractError,
+                            ),
+                        )
                         else type(exc).__name__.lower()
                     ),
                 },

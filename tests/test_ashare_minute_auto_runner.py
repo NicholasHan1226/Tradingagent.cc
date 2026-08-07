@@ -76,6 +76,35 @@ def test_main_reports_fail_closed_provenance(
     assert "minute_auto_runner_failure.v1" in captured.err
 
 
+def test_main_reports_data_contract_reason_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MinuteDataContractError reason codes surface in the failure contract."""
+
+    from Ashare.minute_data import MinuteDataContractError
+
+    def fail(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise MinuteDataContractError("minute_metadata_not_ready")
+
+    monkeypatch.setattr(
+        "Ashare.minute_auto_runner.run_current_delayed_minute_paper", fail
+    )
+    code = main(
+        [
+            "--state-root",
+            str(tmp_path),
+            "--token-file",
+            str(tmp_path / "token"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "minute_metadata_not_ready" in captured.err
+
+
 @pytest.mark.parametrize(
     ("now", "expected"),
     (
