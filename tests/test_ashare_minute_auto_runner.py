@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import Ashare.minute_auto_runner as auto_runner_module
 from Ashare.minute_auto_runner import (
     MinuteAutoRunnerError,
     expected_available_bar_end,
@@ -14,7 +15,7 @@ from Ashare.minute_auto_runner import (
     run_current_delayed_minute_paper,
     session_bar_ends,
 )
-from Ashare.minute_data import SHANGHAI
+from Ashare.minute_data import MinuteDataContractError, SHANGHAI
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -236,6 +237,107 @@ def test_decision_time_is_window_end_for_collector_commit(
     assert len(calls) == 1
     assert calls[0]["bar_end"] == "2026-07-28 13:50:00"
     assert calls[0]["decision_time"] == _at("2026-07-28T13:57:00")
+
+
+def test_readiness_failure_retries_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A collector-latency readiness failure is retried with a refreshed
+    decision time until the bar data becomes available."""
+
+    _initialized_day(tmp_path, last_bar="2026-07-28 13:45:00")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise MinuteDataContractError("minute_metadata_not_ready")
+        return {"status": "pass", "bar_end": kwargs["bar_end"]}
+
+    class _FixedNow(datetime):
+        @staticmethod
+        def now(tz: object = SHANGHAI) -> datetime:
+            return _at("2026-07-28T13:57:40")
+
+    monkeypatch.setattr(auto_runner_module, "datetime", _FixedNow)
+    monkeypatch.setattr(
+        auto_runner_module.time_module, "sleep", lambda _seconds: None
+    )
+
+    result = run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fake_run_once,
+    )
+
+    assert result == {"status": "pass", "bar_end": "2026-07-28 13:50:00"}
+    assert len(calls) == 2
+    assert calls[1]["decision_time"] == _at("2026-07-28T13:57:40")
+
+
+def test_readiness_failure_exhausts_bounded_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A persistently-not-ready bar fails closed after the bounded retry
+    budget instead of retrying forever."""
+
+    _initialized_day(tmp_path, last_bar="2026-07-28 13:45:00")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        raise MinuteDataContractError("minute_evidence_time_order_invalid")
+
+    class _FixedNow(datetime):
+        @staticmethod
+        def now(tz: object = SHANGHAI) -> datetime:
+            return _at("2026-07-28T13:57:40")
+
+    monkeypatch.setattr(auto_runner_module, "datetime", _FixedNow)
+    monkeypatch.setattr(
+        auto_runner_module.time_module, "sleep", lambda _seconds: None
+    )
+
+    with pytest.raises(MinuteDataContractError):
+        run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fake_run_once,
+        )
+
+    assert len(calls) == auto_runner_module.READINESS_RETRY_LIMIT
+
+
+def test_non_readiness_failure_does_not_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A genuine data-gap failure (snapshot incomplete) fails immediately."""
+
+    _initialized_day(tmp_path, last_bar="2026-07-28 13:45:00")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        raise MinuteDataContractError("minute_paper_snapshot_universe_incomplete")
+
+    monkeypatch.setattr(
+        auto_runner_module.time_module, "sleep", lambda _seconds: None
+    )
+
+    with pytest.raises(MinuteDataContractError):
+        run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fake_run_once,
+        )
+
+    assert len(calls) == 1
 
 
 def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
