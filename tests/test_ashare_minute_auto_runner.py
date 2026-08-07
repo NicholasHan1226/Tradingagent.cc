@@ -214,6 +214,30 @@ def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
     assert (day / ".minute-auto.lock").stat().st_mode & 0o777 == 0o600
 
 
+def test_decision_time_is_window_end_for_collector_commit(
+    tmp_path: Path,
+) -> None:
+    """The delayed tier decides at the availability-window end."""
+
+    _initialized_day(tmp_path, last_bar="2026-07-28 13:45:00")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"status": "pass", "bar_end": kwargs["bar_end"]}
+
+    run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:55:10"),
+        run_once=fake_run_once,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["bar_end"] == "2026-07-28 13:50:00"
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
+
+
 def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
     _initialized_day(tmp_path, last_bar=None)
 

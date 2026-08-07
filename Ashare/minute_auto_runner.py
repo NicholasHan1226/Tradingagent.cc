@@ -255,6 +255,11 @@ def run_current_delayed_minute_paper(
                 "reason_code": recovery_reason,
                 "skipped_session_slots": skipped_slots,
             }
+        # Decide at the end of the bar's availability window so the TD
+        # collector's commit watermark (bar end + ~5m + collection latency) is
+        # already observed before the decision; wall-now at timer fire is too
+        # early and fails the PIT ordering check.
+        run_kwargs["decision_time"] = target + timedelta(minutes=5, seconds=30)
         receipt = run_once(
             **run_kwargs,
         )
