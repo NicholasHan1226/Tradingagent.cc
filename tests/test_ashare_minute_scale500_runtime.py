@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -883,19 +883,33 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     triggers = tuple(
         line for line in paper_timer.splitlines() if line.startswith("OnCalendar=")
     )
-    assert triggers == (
-        "OnCalendar=Mon..Fri *-*-* 09:49/5:00",
-        "OnCalendar=Mon..Fri *-*-* 10:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:04..44/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:19/5:00",
-        "OnCalendar=Mon..Fri *-*-* 14:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 15:04:00",
-        "OnCalendar=Mon..Fri *-*-* 15:09:00",
-        "OnCalendar=Mon..Fri *-*-* 15:19:00",
+    from Ashare.minute_auto_runner import (
+        expected_available_bar_end,
+        session_bar_ends,
     )
-    assert "15:14:00" not in paper_timer
+
+    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
+    expected_calendar = tuple(
+        "OnCalendar=Mon..Fri *-*-* "
+        f"{(slot + timedelta(minutes=5, seconds=30)).strftime('%H:%M:%S')}"
+        for slot in slots
+    )
+    assert triggers == expected_calendar
+    assert len(triggers) == 48
+    assert "09..11" not in paper_timer
+    assert "13..15" not in paper_timer
+    assert "15:05:30" in paper_timer
+    assert "15:19" not in paper_timer
     assert "Persistent=false" in paper_timer
+    assert "Unit=tradingagent-ashare-minute-scale500-paper.service" in paper_timer
     assert "disable --now tradingagent-ashare-minute-scale500" in rollback_service
+    trigger_times = tuple(
+        slot + timedelta(minutes=5, seconds=30) for slot in slots
+    )
+    assert len(trigger_times) == 48
+    for trigger, slot in zip(trigger_times, slots, strict=True):
+        assert expected_available_bar_end(trigger) == slot
+        assert expected_available_bar_end(trigger + timedelta(seconds=10)) == slot
     assert (
         "ConditionPathIsDirectory=/opt/investment/releases/tradingagent/2b7b52b"
         in rollback_service

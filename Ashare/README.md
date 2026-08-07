@@ -574,9 +574,9 @@ Rollback disables the scale timers, atomically repoints TA `current` to the
 preserved immutable 30-symbol release, then restores the 30-symbol timers
 without deleting or rewriting either state root. It does not manufacture a
 same-day 30-symbol session after the 09:18 initializer has passed; that day
-remains fail-closed. The scale timer mirrors the delayed schedule but moves the
-final 15:00-bar attempt to 15:19 so TradingDatas has one bounded final
-publication interval. `DELAYED_PAPER` consumes the shared readiness limit of
+remains fail-closed. The scale timer mirrors the delayed 48-slot schedule with
+explicit `:30s` triggers for every session bar, including the final 15:00-bar
+attempt at 15:05:30. `DELAYED_PAPER` consumes the shared readiness limit of
 one five-minute cadence plus 30 seconds of jitter (330 seconds), measured both
 from bar end to source availability and from bar end to the actual decision;
 the later timer does not make stale evidence eligible. The low-latency
