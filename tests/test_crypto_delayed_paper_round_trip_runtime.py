@@ -60,6 +60,12 @@ def test_round_trip_gap_event_shape_and_eligibility() -> None:
         detail="crypto_5m_observation_after_cutoff",
     )
     assert runtime_module._round_trip_gap_eligible(eligible) is True
+    window_incomplete = runtime_module.CryptoRoundTripRuntimeFailure(
+        phase="market_data_query",
+        reason="runtime_market_data_query_failed",
+        detail="crypto_5m_window_incomplete",
+    )
+    assert runtime_module._round_trip_gap_eligible(window_incomplete) is True
     not_gap = runtime_module.CryptoRoundTripRuntimeFailure(
         phase="market_data_query",
         reason="runtime_market_data_query_failed",

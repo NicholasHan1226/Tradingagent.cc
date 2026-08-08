@@ -52,6 +52,7 @@ ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
     {
         "crypto_5m_observation_after_cutoff",
         "crypto_5m_data_through_mismatch",
+        "crypto_5m_window_incomplete",
     }
 )
 ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
