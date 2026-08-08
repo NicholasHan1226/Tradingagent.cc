@@ -78,7 +78,7 @@ RUNTIME_ACCESS_POLICY_MAX_CHARS = 128
 # systemd 180s stop line without relying on the normal one-page response.
 # Formal 18083 catalog reads have a verified cold-path tail above six seconds.
 # Eight seconds remains within the existing two-cycle, 180-second systemd bound.
-RUNTIME_TIMEOUT_SECONDS = 60.0
+RUNTIME_TIMEOUT_SECONDS = 8.0
 MAX_CYCLES_PER_INVOCATION = 2
 MAX_PROFILE_PAGE_BUDGET = 10
 OUTAGE_GAP_CONTRACT = "tradingagent.crypto.delayed_paper_data_gap.v1"
@@ -639,10 +639,12 @@ class _LazyCryptoFiveMinutePort:
         manifest: CryptoDelayedPaperRuntimeManifest,
         token_file: Path,
         transport_factory: Callable[..., HTTPTransport],
+        timeout_seconds: float = RUNTIME_TIMEOUT_SECONDS,
     ) -> None:
         self._manifest = manifest
         self._token_file = token_file
         self._transport_factory = transport_factory
+        self._timeout_seconds = timeout_seconds
         self.load_snapshot_calls = 0
         self.transport_factory_attempts = 0
         self.transport_constructed_count = 0
@@ -671,7 +673,7 @@ class _LazyCryptoFiveMinutePort:
                     dataset_ids=self._manifest.dataset_ids,
                     access_policy_id=self._manifest.access_policy_id,
                     catalog_version_policy="evidence_only",
-                    timeout_seconds=RUNTIME_TIMEOUT_SECONDS,
+                    timeout_seconds=self._timeout_seconds,
                     max_limit=max(
                         dataset.page_limit
                         for binding in profile.symbols
