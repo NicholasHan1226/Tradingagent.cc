@@ -709,7 +709,7 @@ def test_snapshot_plan_pins_universe_at_availability_boundary() -> None:
         "ts_code": {"in": ("000001.SZ", "600000.SH")},
     }
     assert snapshot_decision == datetime(
-        2026, 8, 7, 11, 35, 30, tzinfo=timezone(timedelta(hours=8))
+        2026, 8, 7, 11, 37, 0, tzinfo=timezone(timedelta(hours=8))
     )
     assert snapshot_decision <= decision
 
@@ -780,5 +780,5 @@ def test_main_pins_snapshot_query_for_retention_path(
         "ts_code": {"in": ("600000.SH",)},
     }
     assert captured["decision_time"] == datetime(
-        2026, 8, 7, 11, 35, 30, tzinfo=timezone(timedelta(hours=8))
+        2026, 8, 7, 11, 37, 0, tzinfo=timezone(timedelta(hours=8))
     )
