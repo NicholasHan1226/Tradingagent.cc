@@ -99,11 +99,11 @@ def test_ledger_append_idempotent_and_checksum(tmp_path: Path) -> None:
     assert written == len(rows)
     back = read_ledger(tmp_path, symbol="BTCUSDT")
     assert len(back) == len(rows)
-    # re-append duplicates -> file grows (append-only), but checksum still valid
+    # re-append same days -> idempotent, no duplication
     written2 = append_tsm_shadow_rows(ledger_root=tmp_path, rows=rows[:3])
-    assert written2 == 3
+    assert written2 == 0
     back2 = read_ledger(tmp_path, symbol="BTCUSDT")
-    assert len(back2) == len(rows) + 3
+    assert len(back2) == len(rows)
     # unsupported symbol rejected
     try:
         append_tsm_shadow_rows(

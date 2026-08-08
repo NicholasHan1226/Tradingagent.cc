@@ -296,7 +296,11 @@ def append_tsm_shadow_rows(
     ledger_root: Path | str,
     rows: list[Mapping[str, Any]],
 ) -> int:
-    """Append shadow rows to the per-symbol ledger; return rows written."""
+    """Append shadow rows to the per-symbol ledger; return rows written.
+
+    Idempotent per (symbol, day_open_ms): rows whose day already exists in the
+    ledger are skipped, so repeated cron runs never duplicate a daily row.
+    """
 
     root = Path(ledger_root)
     if not rows:
@@ -310,8 +314,21 @@ def append_tsm_shadow_rows(
     written = 0
     for symbol, symbol_rows in sorted(grouped.items()):
         ledger_path = root / symbol / LEDGER_NAME
-        _append_ledger_rows(ledger_path, symbol_rows)
-        written += len(symbol_rows)
+        existing: set[int] = set()
+        if ledger_path.exists():
+            for row in read_ledger(root, symbol=symbol):
+                day = row.get("day_open_ms")
+                if isinstance(day, int):
+                    existing.add(day)
+        fresh = [
+            row
+            for row in symbol_rows
+            if not isinstance(row.get("day_open_ms"), int)
+            or row["day_open_ms"] not in existing
+        ]
+        if fresh:
+            _append_ledger_rows(ledger_path, fresh)
+            written += len(fresh)
     return written
 
 
