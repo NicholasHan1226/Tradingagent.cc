@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 from typing import Any, Mapping, Sequence
@@ -21,6 +22,9 @@ from typing import Any, Mapping, Sequence
 from Crypto.delayed_paper_runtime import (
     CryptoDelayedPaperRuntimeError,
     load_crypto_delayed_paper_runtime_manifest,
+)
+from Crypto.five_minute_data import (
+    CryptoDatasetQueryProfile,
 )
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.tsm_shadow_observer import (
@@ -40,10 +44,10 @@ from shared.data.tradingdatas_transport import build_runtime_transport
 
 
 SUPPORTED_SYMBOLS = ("BTCUSDT", "ETHUSDT")
-HISTORY_START = "2026-01-01T00:00:00.000Z"
-MAX_PAGES = 200
+LOOKBACK_DAYS = 100
+MAX_PAGES = 300
 MAX_ROWS = 200_000
-MAX_LIMIT = 10_000
+MAX_LIMIT = 500
 
 
 def _csv_rows(path: Path) -> Mapping[str, list[dict[str, Any]]]:
@@ -79,6 +83,7 @@ def _runtime_bars(
     *,
     manifest_path: Path,
     token_file: Path,
+    history_start: str,
 ) -> Mapping[str, list[dict[str, Any]]]:
     """Read all closed 5m bars for BTC/ETH through the loopback V1 service."""
 
@@ -103,41 +108,53 @@ def _runtime_bars(
             transport=transport,
         )
         catalog = client.get_catalog()
+        history_end = (
+            datetime.now(tz=timezone.utc).replace(microsecond=0)
+            + timedelta(days=1)
+        ).isoformat()
         bars_by_symbol: dict[str, list[dict[str, Any]]] = {}
         for binding in manifest.profile.symbols:
             dataset = binding.bars
-            run = collect_query_pages(
-                client=client,
-                request=QueryRequest(
-                    dataset_id=dataset.dataset_id,
-                    schema_major=catalog.schema_major,
-                    fields=(
-                        "symbol",
-                        "open_time",
-                        "open",
-                        "high",
-                        "low",
-                        "close",
-                        "volume",
-                    ),
-                    filters={
-                        "symbol": {"eq": binding.symbol},
-                        "open_time": {"between": [HISTORY_START, "9999-12-31T00:00:00.000Z"]},
-                    },
-                    order=("open_time",),
-                    limit=MAX_LIMIT,
-                ),
-                identity_fields=("symbol", "open_time"),
+            profile = CryptoDatasetQueryProfile.from_catalog(
+                catalog,
+                expected_catalog_version=manifest.catalog_version,
+                dataset_id=dataset.dataset_id,
+                expected_schema_major=dataset.schema_major,
+                selected_fields=dataset.selected_fields,
+                query_order=dataset.query_order,
+                identity_fields=dataset.identity_fields,
+                filter_bindings=dataset.filter_bindings,
+                page_limit=MAX_LIMIT,
                 max_pages=MAX_PAGES,
                 max_rows=MAX_ROWS,
             )
+            filter_fields: dict[str, dict[str, Any]] = {}
+            for fb in profile.filter_bindings:
+                if fb.role == "symbol":
+                    filter_fields[fb.field] = {"eq": binding.symbol}
+                elif fb.role == "open_time_window":
+                    filter_fields[fb.field] = {
+                        "between": [history_start, history_end]
+                    }
+            run = collect_query_pages(
+                client=client,
+                request=QueryRequest(
+                    dataset_id=profile.dataset_id,
+                    schema_major=profile.schema_major,
+                    fields=profile.selected_fields,
+                    filters=filter_fields,
+                    order=profile.query_order,
+                    limit=profile.page_limit,
+                ),
+                identity_fields=profile.identity_fields,
+                max_pages=profile.max_pages,
+                max_rows=profile.max_rows,
+            )
             normalized: list[dict[str, Any]] = []
-            for row in run.rows:
+            for row in run.envelope.data:
                 open_time = row.get("open_time")
                 if not isinstance(open_time, str):
                     raise TsmShadowObserverError("tsm_shadow_open_time_invalid")
-                from datetime import datetime, timezone
-
                 parsed = datetime.fromisoformat(open_time.replace("Z", "+00:00"))
                 if parsed.tzinfo is None:
                     raise TsmShadowObserverError("tsm_shadow_open_time_invalid")
@@ -169,6 +186,7 @@ def run_tsm_shadow_worker_once(
     manifest_path: Path | None = None,
     token_file: Path | None = None,
     ledger_root: Path,
+    lookback_days: int | None = None,
 ) -> dict[str, Any]:
     """Run one read-only TSM shadow pass and return the receipt."""
 
@@ -176,7 +194,15 @@ def run_tsm_shadow_worker_once(
     if csv_path is not None:
         bars = _csv_rows(csv_path)
     elif manifest_path is not None and token_file is not None:
-        bars = _runtime_bars(manifest_path=manifest_path, token_file=token_file)
+        days = LOOKBACK_DAYS if lookback_days is None else lookback_days
+        history_start = (
+            datetime.now(tz=timezone.utc) - timedelta(days=days)
+        ).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        bars = _runtime_bars(
+            manifest_path=manifest_path,
+            token_file=token_file,
+            history_start=history_start,
+        )
     else:
         raise TsmShadowObserverError("tsm_shadow_input_mode_required")
     if not any(bars.values()):
@@ -196,6 +222,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--token-file", type=Path, help="read-only TD token leaf")
     parser.add_argument("--ledger-root", type=Path, required=True)
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=None,
+        help="history window for runtime mode (default 100d)",
+    )
     args = parser.parse_args(argv)
     try:
         receipt = run_tsm_shadow_worker_once(
@@ -203,6 +235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest_path=args.runtime_manifest,
             token_file=args.token_file,
             ledger_root=args.ledger_root,
+            lookback_days=args.lookback_days,
         )
     except (TsmShadowObserverError, OSError, ValueError, TypeError) as exc:
         print(f"tsm shadow observer failed closed: {exc}", file=sys.stderr)
