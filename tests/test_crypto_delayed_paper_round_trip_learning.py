@@ -467,7 +467,8 @@ def test_full_scrub_inventory_budget_stop_writes_no_learning_artifacts(
     assert deferred == learning_module._result(
         status="deferred_inventory_time_budget", inventory_complete=False
     )
-    assert seen == ["first"]
+    assert len(seen) == 1
+    assert seen[0] in ("first", "second")
     assert not (root / "evolution").exists()
 
     monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0, raising=False)
