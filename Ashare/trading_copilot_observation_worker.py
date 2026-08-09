@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 import json
 import os
@@ -31,6 +32,7 @@ from Ashare.minute_canary import (
     load_minute_snapshot,
     load_reference_facts,
 )
+from Ashare.minute_auto_runner import PROVIDER_AVAILABILITY_LAG, session_bar_ends
 from Ashare.minute_data import MinuteBarEvidence, MinuteBarSnapshot, MinuteEvidenceUse
 from Ashare.trading_copilot_projection import (
     BATCH_INPUT_CONTRACT,
@@ -131,6 +133,51 @@ def load_activity_authorities(path: Path | str) -> dict[str, dict[str, Any]]:
     if not result:
         raise TradingCopilotObservationError("copilot_activity_authorities_invalid")
     return result
+
+
+def _pinned_snapshot_plan(
+    config: Any,
+    reference_facts: Mapping[str, Any],
+    decision_time: datetime,
+) -> tuple[Any, datetime]:
+    """Pin the exact universe and decide at the provider availability boundary.
+
+    Mirrors the A-share delayed-paper runner (``minute_auto_runner``): the
+    minute snapshot query is pinned to the reference-fact symbol set and one
+    completed bar so it fits the manifest pagination budget, and the snapshot
+    decision sits at the provider availability lag so the evidence time
+    ordering (bar_end <= data_through <= observed <= available <= decision)
+    holds.  The projection's generatedAt remains the caller decision time,
+    which the bar selection guarantees is never earlier than the snapshot
+    decision.
+    """
+
+    profile = _mapping(getattr(config, "profile", None), "copilot_minute_profile_invalid")
+    timestamp_field = _text(
+        profile.get("timestamp_field"), "copilot_minute_timestamp_field_invalid"
+    )
+    symbol_field = _text(profile.get("symbol_field"), "copilot_minute_symbol_field_invalid")
+    timestamp_format = _text(
+        profile.get("timestamp_format"), "copilot_minute_timestamp_format_invalid"
+    )
+    symbols = tuple(sorted(reference_facts))
+    local = _aware(decision_time, "copilot_decision_time_timezone_required").astimezone(
+        SHANGHAI
+    )
+    eligible = [
+        slot
+        for slot in session_bar_ends(local.date())
+        if local - slot >= PROVIDER_AVAILABILITY_LAG
+    ]
+    if not eligible:
+        raise TradingCopilotObservationError("copilot_minute_snapshot_bar_unavailable")
+    bar_end = max(eligible)
+    snapshot_decision_time = bar_end + PROVIDER_AVAILABILITY_LAG
+    filters = {
+        timestamp_field: {"eq": bar_end.strftime(timestamp_format)},
+        symbol_field: {"in": symbols},
+    }
+    return replace(config, filters=filters), snapshot_decision_time
 
 
 def _bind_activity_authority(
@@ -661,12 +708,16 @@ def main(argv: list[str] | None = None) -> int:
         decision_time = datetime.fromisoformat(arguments.decision_time.replace("Z", "+00:00"))
         valid_until = datetime.fromisoformat(arguments.valid_until.replace("Z", "+00:00"))
         config = load_minute_canary_config(arguments.minute_manifest.resolve())
+        reference_facts = load_reference_facts(arguments.reference_facts.resolve())
+        snapshot_config, snapshot_decision_time = _pinned_snapshot_plan(
+            config, reference_facts, decision_time
+        )
         _, snapshot, _ = load_minute_snapshot(
-            config,
+            snapshot_config,
             token_file=arguments.token_file.resolve(),
-            decision_time=decision_time,
+            decision_time=snapshot_decision_time,
             trading_date=date.fromisoformat(arguments.trading_date),
-            reference_facts=load_reference_facts(arguments.reference_facts.resolve()),
+            reference_facts=reference_facts,
             evidence_use=MinuteEvidenceUse(arguments.evidence_use),
         )
         if arguments.observation_manifest:

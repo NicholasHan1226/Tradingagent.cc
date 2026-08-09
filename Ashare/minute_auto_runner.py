@@ -24,7 +24,7 @@ from .minute_data import (
     MinuteDataContractError,
     SHANGHAI,
 )
-from .minute_paper_runner import run_delayed_minute_paper_once
+from .minute_paper_runner import MinutePaperRunnerError, run_delayed_minute_paper_once
 
 
 FIVE_MINUTES = timedelta(minutes=5)
@@ -32,6 +32,10 @@ FIVE_MINUTES = timedelta(minutes=5)
 # jitter budget. This remains observation-only and never changes the 30-second
 # low-latency execution gate in ``minute_data``.
 PROVIDER_AVAILABILITY_LAG = MAX_DELAYED_PAPER_LATENCY
+# The TD collector commits each rt_min bar about 20s after the 5m boundary, so
+# the delayed tier opens its availability window 30s later than the original
+# cadence window to guarantee the commit is observed before the decision.
+_OBSERVATION_WINDOW_SHIFT = timedelta(seconds=30)
 STATE_BUNDLE_NAME = "state-bundle.json"
 MANIFEST_NAME = "minute-manifest.json"
 REFERENCE_FACTS_NAME = "reference-facts.json"
@@ -98,7 +102,11 @@ def expected_available_bar_end(now: datetime) -> datetime | None:
     eligible = [
         value
         for value in slots
-        if FIVE_MINUTES <= local - value <= PROVIDER_AVAILABILITY_LAG
+        if (
+            PROVIDER_AVAILABILITY_LAG
+            <= local - value
+            <= PROVIDER_AVAILABILITY_LAG + _OBSERVATION_WINDOW_SHIFT
+        )
     ]
     return max(eligible, default=None)
 
@@ -199,6 +207,7 @@ def run_current_delayed_minute_paper(
     now: datetime,
     run_once: Callable[..., dict[str, object]] = run_delayed_minute_paper_once,
     allow_late_start: bool = False,
+    pin_universe_filter: bool = False,
 ) -> dict[str, object]:
     """Process exactly one expected current delayed bar or return a safe no-op."""
 
@@ -263,6 +272,7 @@ def run_current_delayed_minute_paper(
             "decision_time": decision_time,
             "trading_date": target.date(),
             "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
+            "pin_universe_filter": pin_universe_filter,
         }
         if skipped_slots:
             recovery_reason = (
@@ -274,6 +284,12 @@ def run_current_delayed_minute_paper(
                 "reason_code": recovery_reason,
                 "skipped_session_slots": skipped_slots,
             }
+        # Decide at the end of the bar's availability window so the TD
+        # collector's commit watermark (bar end + ~5m + collection latency) is
+        # already observed before the decision; wall-now at timer fire is too
+        # early and fails the PIT ordering check. The decision must stay at
+        # the 420s delayed-paper latency boundary.
+        run_kwargs["decision_time"] = target + PROVIDER_AVAILABILITY_LAG
         attempts = 0
         while True:
             if attempts:
@@ -348,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
             token_file=args.token_file,
             now=now,
             allow_late_start=args.allow_late_start,
+            pin_universe_filter=True,
         )
     except (MinuteAutoRunnerError, OSError, ValueError) as exc:
         print("automatic delayed minute paper runner failed closed", file=sys.stderr)
@@ -359,7 +376,14 @@ def main(argv: list[str] | None = None) -> int:
                     "failure_type": type(exc).__name__,
                     "failure_reason": (
                         str(exc)
-                        if isinstance(exc, MinuteAutoRunnerError)
+                        if isinstance(
+                            exc,
+                            (
+                                MinuteAutoRunnerError,
+                                MinutePaperRunnerError,
+                                MinuteDataContractError,
+                            ),
+                        )
                         else type(exc).__name__.lower()
                     ),
                 },

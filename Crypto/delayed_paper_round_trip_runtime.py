@@ -47,11 +47,13 @@ ROUND_TRIP_RUNTIME_JOURNAL_CONTRACT = "tradingagent.crypto.round_trip_server_jou
 ROUND_TRIP_RUNTIME_FAILURE_CONTRACT = "tradingagent.crypto.round_trip_runtime_failure.v1"
 ROUND_TRIP_SETTLED_BAR_DELAY = timedelta(minutes=5)
 ROUND_TRIP_MAX_CYCLES_PER_INVOCATION = 24
+ROUND_TRIP_TIMEOUT_SECONDS = 60.0
 ROUND_TRIP_DATA_GAP_CONTRACT = "tradingagent.crypto.round_trip_data_gap.v1"
 ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
     {
         "crypto_5m_observation_after_cutoff",
         "crypto_5m_data_through_mismatch",
+        "crypto_5m_window_incomplete",
     }
 )
 ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
@@ -431,6 +433,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
                 manifest=manifest,
                 token_file=RUNTIME_TOKEN_FILE,
                 transport_factory=transport_factory,
+                timeout_seconds=ROUND_TRIP_TIMEOUT_SECONDS,
             )
         )
         return context, prepared, identity_before, manifest, request, port

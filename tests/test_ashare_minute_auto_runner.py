@@ -77,22 +77,51 @@ def test_main_reports_fail_closed_provenance(
     assert "minute_auto_runner_failure.v1" in captured.err
 
 
+def test_main_reports_data_contract_reason_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MinuteDataContractError reason codes surface in the failure contract."""
+
+    from Ashare.minute_data import MinuteDataContractError
+
+    def fail(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise MinuteDataContractError("minute_metadata_not_ready")
+
+    monkeypatch.setattr(
+        "Ashare.minute_auto_runner.run_current_delayed_minute_paper", fail
+    )
+    code = main(
+        [
+            "--state-root",
+            str(tmp_path),
+            "--token-file",
+            str(tmp_path / "token"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "minute_metadata_not_ready" in captured.err
+
+
 @pytest.mark.parametrize(
     ("now", "expected"),
     (
-        ("2026-07-28T09:39:59", None),
-        ("2026-07-28T09:40:00", "09:35"),
-        ("2026-07-28T09:40:30", "09:35"),
-        ("2026-07-28T09:40:31", None),
-        ("2026-07-28T09:45:00", "09:40"),
-        ("2026-07-28T09:45:30", "09:40"),
-        ("2026-07-28T09:45:31", None),
-        ("2026-07-28T11:35:00", "11:30"),
-        ("2026-07-28T11:35:30", "11:30"),
+        ("2026-07-28T09:41:59", None),
+        ("2026-07-28T09:42:00", "09:35"),
+        ("2026-07-28T09:42:30", "09:35"),
+        ("2026-07-28T09:42:31", None),
+        ("2026-07-28T09:47:00", "09:40"),
+        ("2026-07-28T09:47:30", "09:40"),
+        ("2026-07-28T09:47:31", None),
+        ("2026-07-28T11:37:00", "11:30"),
+        ("2026-07-28T11:37:30", "11:30"),
         ("2026-07-28T11:45:40", None),
-        ("2026-07-28T13:10:00", "13:05"),
-        ("2026-07-28T13:10:30", "13:05"),
-        ("2026-07-28T13:10:40", None),
+        ("2026-07-28T13:12:00", "13:05"),
+        ("2026-07-28T13:12:30", "13:05"),
+        ("2026-07-28T13:12:10", "13:05"),
         ("2026-07-28T15:10:40", None),
     ),
 )
@@ -109,7 +138,7 @@ def test_missing_session_directory_is_safe_noop(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T09:45:30"),
+        now=_at("2026-07-28T09:47:00"),
     )
 
     assert result == {
@@ -126,7 +155,7 @@ def test_already_processed_bar_is_safe_noop(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:50:30"),
+        now=_at("2026-07-28T13:52:00"),
     )
 
     assert result["reason"] == "bar_already_processed"
@@ -143,7 +172,7 @@ def test_gap_resumes_with_explicit_non_learning_segment_reset(tmp_path: Path) ->
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:30"),
+        now=_at("2026-07-28T13:57:00"),
         run_once=fake_run_once,
     )
 
@@ -174,20 +203,40 @@ def test_current_bar_delegates_exactly_once(tmp_path: Path) -> None:
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:30"),
+        now=_at("2026-07-28T13:57:00"),
         run_once=fake_run_once,
     )
 
     assert result == {"status": "pass", "bar_end": "2026-07-28 13:50:00"}
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T13:55:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:57:00")
     assert calls[0]["trading_date"].isoformat() == "2026-07-28"
     assert (day / ".minute-auto.lock").stat().st_mode & 0o777 == 0o600
 
 
-def _retry_clock(*, tz: object = SHANGHAI) -> datetime:
-    return _at("2026-07-28T13:55:40")
+def test_decision_time_is_window_end_for_collector_commit(
+    tmp_path: Path,
+) -> None:
+    """The delayed tier decides at the availability-window end."""
+
+    _initialized_day(tmp_path, last_bar="2026-07-28 13:45:00")
+    calls: list[dict[str, object]] = []
+
+    def fake_run_once(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"status": "pass", "bar_end": kwargs["bar_end"]}
+
+    run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fake_run_once,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["bar_end"] == "2026-07-28 13:50:00"
+    assert calls[0]["decision_time"] == _at("2026-07-28T13:57:00")
 
 
 def test_readiness_failure_retries_then_succeeds(
@@ -209,7 +258,7 @@ def test_readiness_failure_retries_then_succeeds(
     class _FixedNow(datetime):
         @staticmethod
         def now(tz: object = SHANGHAI) -> datetime:
-            return _at("2026-07-28T13:55:40")
+            return _at("2026-07-28T13:57:40")
 
     monkeypatch.setattr(auto_runner_module, "datetime", _FixedNow)
     monkeypatch.setattr(
@@ -219,13 +268,13 @@ def test_readiness_failure_retries_then_succeeds(
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T13:55:30"),
+        now=_at("2026-07-28T13:57:10"),
         run_once=fake_run_once,
     )
 
     assert result == {"status": "pass", "bar_end": "2026-07-28 13:50:00"}
     assert len(calls) == 2
-    assert calls[1]["decision_time"] == _at("2026-07-28T13:55:40")
+    assert calls[1]["decision_time"] == _at("2026-07-28T13:57:40")
 
 
 def test_readiness_failure_exhausts_bounded_retries(
@@ -245,7 +294,7 @@ def test_readiness_failure_exhausts_bounded_retries(
     class _FixedNow(datetime):
         @staticmethod
         def now(tz: object = SHANGHAI) -> datetime:
-            return _at("2026-07-28T13:55:40")
+            return _at("2026-07-28T13:57:40")
 
     monkeypatch.setattr(auto_runner_module, "datetime", _FixedNow)
     monkeypatch.setattr(
@@ -254,10 +303,10 @@ def test_readiness_failure_exhausts_bounded_retries(
 
     with pytest.raises(MinuteDataContractError):
         run_current_delayed_minute_paper(
-            state_root=tmp_path,
-            token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T13:55:30"),
-            run_once=fake_run_once,
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fake_run_once,
         )
 
     assert len(calls) == auto_runner_module.READINESS_RETRY_LIMIT
@@ -282,10 +331,10 @@ def test_non_readiness_failure_does_not_retry(
 
     with pytest.raises(MinuteDataContractError):
         run_current_delayed_minute_paper(
-            state_root=tmp_path,
-            token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T13:55:30"),
-            run_once=fake_run_once,
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fake_run_once,
         )
 
     assert len(calls) == 1
@@ -298,7 +347,7 @@ def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
         run_current_delayed_minute_paper(
             state_root=tmp_path,
             token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T13:10:30"),
+            now=_at("2026-07-28T13:12:00"),
             run_once=lambda **_: {"status": "pass"},
         )
 
@@ -316,7 +365,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     result = run_current_delayed_minute_paper(
         state_root=tmp_path,
         token_file=Path("/run/private/token"),
-        now=_at("2026-07-28T10:15:30"),
+        now=_at("2026-07-28T10:17:00"),
         run_once=fake_run_once,
         allow_late_start=True,
     )
@@ -343,7 +392,7 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     }
     assert len(calls) == 1
     assert calls[0]["state_bundle"] == day / "state-bundle.json"
-    assert calls[0]["decision_time"] == _at("2026-07-28T10:15:30")
+    assert calls[0]["decision_time"] == _at("2026-07-28T10:17:00")
     assert calls[0]["gap_recovery"] == {
         "reason_code": "incident_recovery_no_historical_pit",
         "skipped_session_slots": (
@@ -368,7 +417,7 @@ def test_real_trading_flag_fails_closed(
         run_current_delayed_minute_paper(
             state_root=tmp_path,
             token_file=Path("/run/private/token"),
-            now=_at("2026-07-28T09:40:40"),
+            now=_at("2026-07-28T09:42:10"),
         )
 
 
@@ -381,21 +430,20 @@ def test_minute_timer_has_exactly_the_48_delayed_session_triggers() -> None:
         line for line in timer.splitlines() if line.startswith("OnCalendar=")
     )
 
-    assert calendar_lines == (
-        "OnCalendar=Mon..Fri *-*-* 09:40/5:00",
-        "OnCalendar=Mon..Fri *-*-* 10:00/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:00..35/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:10/5:00",
-        "OnCalendar=Mon..Fri *-*-* 14:00/5:00",
-        "OnCalendar=Mon..Fri *-*-* 15:00:00",
-        "OnCalendar=Mon..Fri *-*-* 15:05:00",
+    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
+    expected_calendar = tuple(
+        "OnCalendar=Mon..Fri *-*-* "
+        f"{(slot + timedelta(minutes=7)).strftime('%H:%M:%S')}"
+        for slot in slots
     )
+    assert calendar_lines == expected_calendar
     assert "09..11" not in timer
     assert "13..15" not in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-paper.service" in timer
-    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
-    triggers = tuple(slot + timedelta(minutes=5) for slot in slots)
+    triggers = tuple(
+        slot + timedelta(minutes=7) for slot in slots
+    )
     assert len(triggers) == 48
     for trigger, slot in zip(triggers, slots, strict=True):
         assert expected_available_bar_end(trigger) == slot

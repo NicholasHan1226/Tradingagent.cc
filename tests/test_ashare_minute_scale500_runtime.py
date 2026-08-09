@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -192,7 +192,7 @@ def _canary_receipt(path: Path, *, universe_source: Path, bar_end: str) -> Path:
                 "bars": [
                     {
                         "symbol": symbol,
-                        "bar_end": bar_end,
+                        "bar_end": _at(bar_end).isoformat(),
                         "receipt_id": f"receipt-{index}",
                         "observed_at": "2026-07-31T13:50:00+08:00",
                     }
@@ -219,6 +219,32 @@ def _initialize(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     )
     assert result["status"] == "pass"
     return paths
+
+
+def test_initialize_accepts_honest_fresh_state_bundle_flag(
+    tmp_path: Path,
+) -> None:
+    """A freshly created day reports state_bundle_created=True and passes."""
+
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(
+        tmp_path
+    )
+
+    def fresh_initializer(**kwargs: object) -> dict[str, object]:
+        return {**_initializer(**kwargs), "state_bundle_created": True}
+
+    result = initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:18:00"),
+        initializer=fresh_initializer,
+    )
+
+    assert result["status"] == "pass"
+    assert result["scale500_acceptance_status"] == "pending_two_live_snapshots"
 
 
 def _symbols(count: int = EXPECTED_UNIVERSE_COUNT) -> tuple[str, ...]:
@@ -298,8 +324,8 @@ def test_partial_shadow_rejects_missing_duplicate_replacement_or_full_cohort(
     ("observed_at", "decision_time", "reason"),
     [
         ("2026-07-31T13:40:00", "2026-07-31T13:45:00", "shadow_time_invalid"),
-        ("2026-07-31T13:45:31", "2026-07-31T13:45:31", "shadow_time_invalid"),
-        ("2026-07-31T13:45:20", "2026-07-31T13:45:31", "shadow_time_invalid"),
+        ("2026-07-31T13:47:01", "2026-07-31T13:47:01", "shadow_time_invalid"),
+        ("2026-07-31T13:46:50", "2026-07-31T13:47:01", "shadow_time_invalid"),
     ],
 )
 def test_partial_shadow_rejects_same_bar_or_overdue_observation(
@@ -365,7 +391,7 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:40:30"),
+        now=_at("2026-07-31T09:42:00"),
         runner=lambda **_: _receipt("2026-07-31 09:35:00"),
     )
     (scale_root / "20260731" / "state-bundle.json").write_text(
@@ -378,7 +404,7 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:45:30"),
+        now=_at("2026-07-31T09:47:00"),
         runner=lambda **_: _receipt("2026-07-31 09:40:00"),
     )
 
@@ -411,7 +437,7 @@ def test_legacy_pending_gate_defaults_to_non_late_start(tmp_path: Path) -> None:
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:40:30"),
+        now=_at("2026-07-31T09:42:00"),
         runner=lambda **_: _receipt("2026-07-31 09:35:00"),
     )
 
@@ -453,7 +479,7 @@ def test_any_data_authority_failure_selects_rollback_with_exact_reason(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T09:40:30"),
+            now=_at("2026-07-31T09:42:00"),
             runner=fail,
         )
 
@@ -495,7 +521,7 @@ def test_partial_or_authoritative_receipt_fails_closed(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T09:40:30"),
+            now=_at("2026-07-31T09:42:00"),
             runner=lambda **_: receipt,
         )
 
@@ -516,7 +542,7 @@ def test_first_accepted_round_must_be_opening_bar_not_late_start(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T09:45:30"),
+            now=_at("2026-07-31T09:47:00"),
             runner=lambda **_: _receipt("2026-07-31 09:40:00"),
         )
 
@@ -543,7 +569,7 @@ def test_late_start_requires_explicit_flag_and_never_accepts_a_prior_bar(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:45:30"),
+            now=_at("2026-07-31T13:47:00"),
             runner=late_runner,
         )
 
@@ -573,7 +599,7 @@ def test_explicit_late_start_uses_only_current_complete_bar_and_stays_partial(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:45:30"),
+        now=_at("2026-07-31T13:47:00"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -617,7 +643,7 @@ def test_late_start_requires_an_exact_delayed_canary_before_runner(
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:45:30"),
+            now=_at("2026-07-31T13:47:00"),
             allow_late_start=True,
             runner=lambda **_: (
                 calls.append("runner") or _late_start_receipt("2026-07-31 13:40:00")
@@ -639,7 +665,7 @@ def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:45:30"),
+        now=_at("2026-07-31T13:47:00"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -660,7 +686,7 @@ def test_late_start_replay_is_idempotent_and_cannot_restore_learning(
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:45:30"),
+        now=_at("2026-07-31T13:47:00"),
         runner=replay_runner,
     )
 
@@ -681,7 +707,7 @@ def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> Non
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:45:30"),
+        now=_at("2026-07-31T13:47:00"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -701,7 +727,7 @@ def test_late_start_cannot_reopen_an_active_scale_session(tmp_path: Path) -> Non
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:50:30"),
+            now=_at("2026-07-31T13:52:00"),
             allow_late_start=True,
             canary_receipt=_canary_receipt(
                 tmp_path / "second-canary.json",
@@ -728,7 +754,7 @@ def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
         token_file=token_file,
         universe_source=universe_source,
         expected_universe_sha256=digest,
-        now=_at("2026-07-31T13:45:30"),
+        now=_at("2026-07-31T13:47:00"),
         allow_late_start=True,
         canary_receipt=_canary_receipt(
             tmp_path / "canary.json",
@@ -753,7 +779,7 @@ def test_late_start_does_not_relax_data_rejects(tmp_path: Path) -> None:
             token_file=token_file,
             universe_source=universe_source,
             expected_universe_sha256=digest,
-            now=_at("2026-07-31T13:50:30"),
+            now=_at("2026-07-31T13:52:00"),
             allow_late_start=True,
             canary_receipt=_canary_receipt(
                 tmp_path / "second-canary.json",
@@ -857,19 +883,33 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     triggers = tuple(
         line for line in paper_timer.splitlines() if line.startswith("OnCalendar=")
     )
-    assert triggers == (
-        "OnCalendar=Mon..Fri *-*-* 09:49/5:00",
-        "OnCalendar=Mon..Fri *-*-* 10:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 11:04..44/5:00",
-        "OnCalendar=Mon..Fri *-*-* 13:19/5:00",
-        "OnCalendar=Mon..Fri *-*-* 14:04/5:00",
-        "OnCalendar=Mon..Fri *-*-* 15:04:00",
-        "OnCalendar=Mon..Fri *-*-* 15:09:00",
-        "OnCalendar=Mon..Fri *-*-* 15:19:00",
+    from Ashare.minute_auto_runner import (
+        expected_available_bar_end,
+        session_bar_ends,
     )
-    assert "15:14:00" not in paper_timer
+
+    slots = session_bar_ends(_at("2026-07-28T10:00:00").date())
+    expected_calendar = tuple(
+        "OnCalendar=Mon..Fri *-*-* "
+        f"{(slot + timedelta(minutes=7)).strftime('%H:%M:%S')}"
+        for slot in slots
+    )
+    assert triggers == expected_calendar
+    assert len(triggers) == 48
+    assert "09..11" not in paper_timer
+    assert "13..15" not in paper_timer
+    assert "15:07:00" in paper_timer
+    assert "15:19" not in paper_timer
     assert "Persistent=false" in paper_timer
+    assert "Unit=tradingagent-ashare-minute-scale500-paper.service" in paper_timer
     assert "disable --now tradingagent-ashare-minute-scale500" in rollback_service
+    trigger_times = tuple(
+        slot + timedelta(minutes=7) for slot in slots
+    )
+    assert len(trigger_times) == 48
+    for trigger, slot in zip(trigger_times, slots, strict=True):
+        assert expected_available_bar_end(trigger) == slot
+        assert expected_available_bar_end(trigger + timedelta(seconds=10)) == slot
     assert (
         "ConditionPathIsDirectory=/opt/investment/releases/tradingagent/2b7b52b"
         in rollback_service
