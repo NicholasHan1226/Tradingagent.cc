@@ -18,6 +18,7 @@ from Ashare.minute_scale500_runtime import (
     main,
     run_scale500_once,
 )
+from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -490,6 +491,112 @@ def test_any_data_authority_failure_selects_rollback_with_exact_reason(
     assert gate["selected_mode"] == "rollback30"
     assert gate["failure_reason"] == reason
     assert sentinel.read_text(encoding="utf-8") == "immutable-30"
+
+
+def test_authentication_failure_projects_redacted_reason_and_preserves_rollback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    sentinel = rollback_root / "historical-state"
+    sentinel.write_text("immutable-30", encoding="utf-8")
+    expected_reason = "minute_scale500_tradingdatas_authentication_rejected"
+    sensitive_exception_body = "HTTP 403 bearer=must-not-leak"
+    runner_calls = 0
+
+    def reject_runner(**_: object) -> dict[str, object]:
+        nonlocal runner_calls
+        runner_calls += 1
+        raise TradingDatasAuthenticationError(sensitive_exception_body)
+
+    with pytest.raises(MinuteScale500RuntimeError) as raised:
+        run_scale500_once(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T09:42:00"),
+            runner=reject_runner,
+        )
+
+    assert runner_calls == 1
+    assert str(raised.value) == expected_reason
+    assert sensitive_exception_body not in str(raised.value)
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gate["status"] == "fallback30_selected"
+    assert gate["selected_mode"] == "rollback30"
+    assert gate["failure_reason"] == expected_reason
+    assert sentinel.read_text(encoding="utf-8") == "immutable-30"
+
+    cli_calls = 0
+
+    def reject_cli(**_: object) -> dict[str, object]:
+        nonlocal cli_calls
+        cli_calls += 1
+        raise TradingDatasAuthenticationError(sensitive_exception_body)
+
+    monkeypatch.setattr(
+        "Ashare.minute_scale500_runtime.run_scale500_once",
+        reject_cli,
+    )
+    code = main(
+        [
+            "run",
+            "--scale-state-root",
+            str(scale_root),
+            "--rollback30-state-root",
+            str(rollback_root),
+            "--token-file",
+            str(token_file),
+            "--universe-source",
+            str(universe_source),
+            "--expected-universe-sha256",
+            digest,
+            "--now",
+            "2026-07-31T09:42:00+08:00",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+    assert code == 2
+    assert cli_calls == 1
+    assert captured.out == ""
+    assert payload["status"] == "failed_closed"
+    assert payload["reason_code"] == expected_reason
+    assert payload["selected_mode"] == "rollback30"
+    assert payload["capital_authority"] is False
+    assert payload["execution_authority"] is False
+    assert payload["training_eligible"] is False
+    assert payload["real_trading_enabled"] is False
+    assert sensitive_exception_body not in captured.err
+    assert "403" not in captured.err
+    assert "bearer" not in captured.err
+    assert "must-not-leak" not in captured.err
+    assert "minute_scale500_unclassified" not in captured.err
+
+    systemd_root = REPO_ROOT / "Ashare" / "systemd"
+    paper_service = (
+        systemd_root / "tradingagent-ashare-minute-scale500-paper.service"
+    ).read_text(encoding="utf-8")
+    rollback_service = (
+        systemd_root / "tradingagent-ashare-minute-scale500-rollback.service"
+    ).read_text(encoding="utf-8")
+    assert "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" in (
+        paper_service
+    )
+    assert (
+        "disable --now tradingagent-ashare-minute-scale500-session.timer "
+        "tradingagent-ashare-minute-scale500-paper.timer"
+    ) in rollback_service
 
 
 @pytest.mark.parametrize(

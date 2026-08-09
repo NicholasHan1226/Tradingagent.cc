@@ -32,6 +32,7 @@ from .minute_auto_runner import (
 from .minute_data import MAX_DELAYED_PAPER_LATENCY, SHANGHAI
 from .minute_paper_runner import load_minute_research_universe
 from .minute_session_initializer import initialize_minute_session
+from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
 
@@ -595,6 +596,8 @@ def _load_gate(
 
 
 def _reason_code(exc: BaseException) -> str:
+    if isinstance(exc, TradingDatasAuthenticationError):
+        return "minute_scale500_tradingdatas_authentication_rejected"
     value = str(exc).strip()
     if (
         value
