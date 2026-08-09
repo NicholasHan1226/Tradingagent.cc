@@ -202,6 +202,11 @@ class RoundTripCapitalLedger:
         self.lock_path = self.root / ".lock"
         self.cycle_lock_path = self.root / ".cycle.lock"
         self._write_enabled = _capability is _WRITE_CAPABILITY
+        self._cycle_lock_held = False
+        self._cycle_rows_cache: list[dict[str, Any]] | None = None
+        self._cycle_state_cache: dict[str, Any] | None = None
+        self._cycle_checksum_cache: str | None = None
+        self._cycle_events_fingerprint: tuple[int, int, int, int] | None = None
 
     def _assert_safe_paths(self) -> None:
         if self.root.exists():
@@ -234,10 +239,60 @@ class RoundTripCapitalLedger:
         self._assert_safe_paths()
         with self.cycle_lock_path.open("a+", encoding="utf-8") as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            self._cycle_lock_held = True
+            self._clear_cycle_cache()
             try:
                 yield
             finally:
+                self._clear_cycle_cache()
+                self._cycle_lock_held = False
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    def _clear_cycle_cache(self) -> None:
+        self._cycle_rows_cache = None
+        self._cycle_state_cache = None
+        self._cycle_checksum_cache = None
+        self._cycle_events_fingerprint = None
+
+    def _events_fingerprint(self) -> tuple[int, int, int, int] | None:
+        if not self.events_path.exists():
+            return None
+        node = self.events_path.stat()
+        return (node.st_dev, node.st_ino, node.st_size, node.st_mtime_ns)
+
+    def _cache_cycle_replay(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        state: dict[str, Any],
+        checksum: str,
+    ) -> None:
+        if not self._cycle_lock_held:
+            return
+        self._cycle_rows_cache = [dict(row) for row in rows]
+        self._cycle_state_cache = state
+        self._cycle_checksum_cache = checksum
+        self._cycle_events_fingerprint = self._events_fingerprint()
+
+    def _validated_rows_state(
+        self,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+        if (
+            self._cycle_lock_held
+            and self._cycle_rows_cache is not None
+            and self._cycle_state_cache is not None
+            and self._cycle_checksum_cache is not None
+            and self._cycle_events_fingerprint == self._events_fingerprint()
+        ):
+            return (
+                self._cycle_rows_cache,
+                self._cycle_state_cache,
+                self._cycle_checksum_cache,
+            )
+        rows = self._read_rows()
+        state, checksum = self._replay(rows)
+        self._validate_head(rows, checksum)
+        self._cache_cycle_replay(rows, state, checksum)
+        return rows, state, checksum
 
     @staticmethod
     def _empty_state() -> dict[str, Any]:
@@ -806,10 +861,7 @@ class RoundTripCapitalLedger:
         return snapshot
 
     def _validated_state(self) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
-        rows = self._read_rows()
-        state, checksum = self._replay(rows)
-        self._validate_head(rows, checksum)
-        return rows, state, checksum
+        return self._validated_rows_state()
 
     def _validate_head(
         self,
@@ -899,9 +951,21 @@ class RoundTripCapitalLedger:
         canonical_payload = _canonical_value(payload)
         with self.lock_path.open("a+", encoding="utf-8") as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            rows = self._read_rows_unlocked()
-            state, checksum = self._replay(rows)
+            if (
+                self._cycle_lock_held
+                and self._cycle_rows_cache is not None
+                and self._cycle_state_cache is not None
+                and self._cycle_checksum_cache is not None
+                and self._cycle_events_fingerprint == self._events_fingerprint()
+            ):
+                rows = self._cycle_rows_cache
+                state = self._cycle_state_cache
+                checksum = self._cycle_checksum_cache
+            else:
+                rows = self._read_rows_unlocked()
+                state, checksum = self._replay(rows)
             self._repair_head(rows, checksum)
+            self._cache_cycle_replay(rows, state, checksum)
             for row in rows:
                 if row.get("reference_id") != reference_id:
                     continue
@@ -933,6 +997,11 @@ class RoundTripCapitalLedger:
                 events.flush()
                 os.fsync(events.fileno())
             self._write_head(sequence, str(event["checksum"]))
+            self._cache_cycle_replay(
+                [*rows, event],
+                next_state,
+                str(event["checksum"]),
+            )
             return event, False
 
     def ensure_opening(self) -> tuple[dict[str, Any], bool]:
@@ -989,15 +1058,35 @@ class RoundTripCapitalLedger:
 
     def state_for_writer(self) -> dict[str, Any]:
         self._require_writer()
+        if (
+            self._cycle_lock_held
+            and self._cycle_rows_cache is not None
+            and self._cycle_state_cache is not None
+            and self._cycle_checksum_cache is not None
+            and self._cycle_events_fingerprint == self._events_fingerprint()
+        ):
+            return self._cycle_state_cache
         rows = self._read_rows_unlocked()
         state, checksum = self._replay(rows)
         self._repair_head(rows, checksum)
+        self._cache_cycle_replay(rows, state, checksum)
         return state
 
     def event_for_writer(self, reference_id: str) -> dict[str, Any] | None:
         self._require_writer()
-        rows = self._read_rows_unlocked()
-        _, checksum = self._replay(rows)
+        if (
+            self._cycle_lock_held
+            and self._cycle_rows_cache is not None
+            and self._cycle_state_cache is not None
+            and self._cycle_checksum_cache is not None
+            and self._cycle_events_fingerprint == self._events_fingerprint()
+        ):
+            rows = self._cycle_rows_cache
+            checksum = self._cycle_checksum_cache
+        else:
+            rows = self._read_rows_unlocked()
+            state, checksum = self._replay(rows)
+            self._cache_cycle_replay(rows, state, checksum)
         self._repair_head(rows, checksum)
         matches = [row for row in rows if row.get("reference_id") == reference_id]
         if len(matches) > 1:
