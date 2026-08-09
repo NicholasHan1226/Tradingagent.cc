@@ -33,6 +33,7 @@ DECISION_LEDGER_STATE_CONTRACT = (
 LOCAL_AUDIT_DURABILITY = "local_audit_fsync_only"
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
+LEDGER_ROTATION_TARGET_BYTES = 1 * 1024 * 1024
 LEDGER_SEGMENT_PREFIX = "decision_ledger.segment-"
 LEDGER_SEGMENT_SUFFIX = ".jsonl"
 
@@ -1330,7 +1331,10 @@ class CryptoDelayedPaperObservationStore:
                 (_canonical_json(item) + "\n").encode("utf-8")
                 for item in candidate_current
             )
-            if len(candidate_bytes) > MAX_LEDGER_BYTES:
+            if len(candidate_bytes) > min(
+                MAX_LEDGER_BYTES,
+                LEDGER_ROTATION_TARGET_BYTES,
+            ):
                 if not current_rows:
                     raise CryptoDelayedPaperLedgerError(
                         "delayed_paper_decision_event_too_large"

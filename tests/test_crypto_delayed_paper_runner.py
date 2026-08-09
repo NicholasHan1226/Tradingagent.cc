@@ -872,6 +872,38 @@ def test_decision_ledger_rotates_atomically_and_recovers_after_interruption(
     assert len(store._segment_paths()) == 2
 
 
+def test_decision_ledger_rotates_at_runtime_target_below_read_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def event(event_id: str) -> dict[str, Any]:
+        return {
+            "contract": ledger_module.DECISION_LEDGER_CONTRACT,
+            "event_id": event_id,
+            "event_type": "rotation_target_test",
+            "market": "crypto",
+            **ledger_module._non_authority_fields(),
+        }
+
+    seed = CryptoDelayedPaperObservationStore(tmp_path / "seed")
+    seed.append_event(event("rotation-target-event-000001"))
+    one_event_bytes = seed.ledger_path.stat().st_size
+    monkeypatch.setattr(
+        ledger_module,
+        "LEDGER_ROTATION_TARGET_BYTES",
+        one_event_bytes + 32,
+    )
+
+    store = CryptoDelayedPaperObservationStore(tmp_path / "target")
+    store.append_event(event("rotation-target-event-000001"))
+    store.append_event(event("rotation-target-event-000002"))
+    store.append_event(event("rotation-target-event-000003"))
+
+    assert ledger_module.LEDGER_ROTATION_TARGET_BYTES < ledger_module.MAX_LEDGER_BYTES
+    assert len(store._segment_paths()) == 2
+    assert [row["sequence"] for row in store._read_ledger()] == [1, 2, 3]
+
+
 def test_llm_sidecar_text_cannot_change_decision_order_or_capital(
     tmp_path: Path,
 ) -> None:
