@@ -147,6 +147,18 @@ promotion, candidate, execution, risk, position, order, and real-trading
 authority remain false. The mapper has no client, timer, persistence path, or
 runtime hook.
 
+The one-shot `trading_copilot_observation_worker` has an explicit opt-in
+`--research-snapshot-store-root` retention path. It must be paired with the
+verified observation manifest/state root, current TD event loading, and the
+existing event-artifact/timeline roots. After the typed event artifacts are
+written, it stores the exact same-invocation `ResearchDataSnapshot` through
+`FileResearchSnapshotStore` and binds its immutable SHA/path to each event
+artifact path, receipt, and catalog version in the worker result. Missing
+security-master evidence, cross-window identity, malformed/partial artifacts,
+symlink roots, or immutable conflicts fail closed; the mapper remains a pure
+read-only consumer and all candidate, training, execution, risk, position,
+order, and real-trading authority stays false.
+
 Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
 identity must be present in the exact active catalog row. Each event profile
 stores the canonical seven-field `dataset_contract_fingerprint` and a separate

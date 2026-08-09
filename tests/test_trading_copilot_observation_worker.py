@@ -33,10 +33,163 @@ from Ashare.trading_copilot_observation_worker import (
     load_event_bundle,
     load_company_facts,
     load_current_event_snapshots,
+    retain_same_observation_inputs,
 )
 import Ashare.trading_copilot_observation_worker as observation_worker
 from Ashare.trading_copilot_projection import publish_projection_batch
 from Ashare.trading_copilot_event_timeline import build_event_timeline_batch, publish_event_timeline_batch
+
+
+def test_same_observation_retention_entrypoint_exists() -> None:
+    """The worker exposes an explicit opt-in retention boundary."""
+
+    assert callable(retain_same_observation_inputs)
+
+
+def test_same_observation_retention_binds_snapshot_and_typed_event_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_ashare_security_event_research_mapping import _research_snapshot
+
+    snapshot = _research_snapshot()
+    decision = datetime.fromisoformat(snapshot.decision_as_of)
+    artifact_paths = []
+    batches = {}
+    for dataset_id in ("cn.dataset.anns_d", "cn.dataset.cctv_news", "cn.dataset.research_report"):
+        path = (tmp_path / f"{dataset_id}.json").resolve()
+        path.write_bytes(dataset_id.encode())
+        artifact_paths.append(path)
+        batches[path] = SimpleNamespace(
+            profile=SimpleNamespace(dataset_id=dataset_id),
+            observed_catalog_version=snapshot.catalog_version,
+            events=(SimpleNamespace(as_of=decision, receipt_id=f"receipt:{dataset_id}"),),
+            row_count=1,
+            page_count=1,
+            same_observation=True,
+        )
+    monkeypatch.setattr(
+        observation_worker,
+        "load_event_evidence_batch_artifact",
+        lambda path: batches[Path(path)],
+    )
+    calls = []
+
+    class Store:
+        def __init__(self, root: Path) -> None:
+            self.root = root
+
+        def compare_and_swap(self, **kwargs) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setattr(observation_worker, "FileResearchSnapshotStore", Store)
+    result = retain_same_observation_inputs(
+        research_snapshot=snapshot,
+        event_artifact_paths=artifact_paths,
+        blocked_dataset_reasons={
+            "cn.dataset.irm_qa_sh": "ashare_evidence_metadata_not_ready",
+            "cn.dataset.irm_qa_sz": "ashare_evidence_metadata_not_ready",
+        },
+        decision_time=decision,
+        store_root=(tmp_path / "snapshots").resolve(),
+    )
+    assert calls == [{"snapshot": snapshot, "expected_snapshot_sha256": None}]
+    assert result["snapshotSha256"] == snapshot.snapshot_sha256
+    assert result["snapshotPath"].endswith(f"snapshot-{snapshot.snapshot_sha256}.json")
+    assert [item["datasetId"] for item in result["eventArtifacts"]] == [
+        "cn.dataset.anns_d", "cn.dataset.cctv_news", "cn.dataset.research_report"
+    ]
+    assert result["blockedDatasetReasons"] == {
+        "cn.dataset.irm_qa_sh": "ashare_evidence_metadata_not_ready",
+        "cn.dataset.irm_qa_sz": "ashare_evidence_metadata_not_ready",
+    }
+    assert all(value is False for key, value in result["authority"].items() if key.endswith("Authority") or key.endswith("Eligible") or key.endswith("Enabled"))
+
+
+def test_same_observation_retention_fails_closed_for_missing_security_master(
+    tmp_path: Path,
+) -> None:
+    from tests.test_ashare_security_event_research_mapping import _research_snapshot
+
+    snapshot = _research_snapshot()
+    missing = replace(snapshot, datasets=())
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_security_master_binding_invalid",
+    ):
+        retain_same_observation_inputs(
+            research_snapshot=missing,
+            event_artifact_paths=(),
+            blocked_dataset_reasons={},
+            decision_time=datetime.fromisoformat(snapshot.decision_as_of),
+            store_root=(tmp_path / "snapshots").resolve(),
+        )
+
+
+def test_same_observation_retention_fails_closed_for_cross_window_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_ashare_security_event_research_mapping import _research_snapshot
+
+    snapshot = _research_snapshot()
+    path = (tmp_path / "anns.json").resolve()
+    path.write_bytes(b"artifact")
+    monkeypatch.setattr(
+        observation_worker,
+        "load_event_evidence_batch_artifact",
+        lambda _: SimpleNamespace(
+            profile=SimpleNamespace(dataset_id="cn.dataset.anns_d"),
+            observed_catalog_version=snapshot.catalog_version,
+            events=(SimpleNamespace(as_of=datetime.fromisoformat(snapshot.decision_as_of).replace(hour=10), receipt_id="receipt:cross"),),
+            row_count=1,
+            page_count=1,
+            same_observation=True,
+        ),
+    )
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_research_snapshot_observation_identity_mismatch",
+    ):
+        retain_same_observation_inputs(
+            research_snapshot=snapshot,
+            event_artifact_paths=(path,),
+            blocked_dataset_reasons={
+                "cn.dataset.irm_qa_sh": "ashare_evidence_metadata_not_ready",
+                "cn.dataset.irm_qa_sz": "ashare_evidence_metadata_not_ready",
+                "cn.dataset.cctv_news": "missing",
+                "cn.dataset.research_report": "missing",
+            },
+            decision_time=datetime.fromisoformat(snapshot.decision_as_of),
+            store_root=(tmp_path / "snapshots").resolve(),
+        )
+
+
+def test_same_observation_retention_maps_immutable_store_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_ashare_security_event_research_mapping import _research_snapshot
+
+    class ConflictStore:
+        def __init__(self, root: Path) -> None:
+            pass
+
+        def compare_and_swap(self, **kwargs) -> None:
+            raise observation_worker.ResearchSnapshotStoreConflict("conflict-detail")
+
+    monkeypatch.setattr(observation_worker, "FileResearchSnapshotStore", ConflictStore)
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_research_snapshot_retention_failed",
+    ):
+        retain_same_observation_inputs(
+            research_snapshot=_research_snapshot(),
+            event_artifact_paths=(),
+            blocked_dataset_reasons={
+                dataset_id: "ashare_evidence_metadata_not_ready"
+                for dataset_id in PRIMARY_DATASET_IDS
+            },
+            decision_time=datetime(2026, 8, 9, 11, 10, tzinfo=timezone.utc),
+            store_root=(tmp_path / "snapshots").resolve(),
+        )
 
 
 def _sha(value: str) -> str:

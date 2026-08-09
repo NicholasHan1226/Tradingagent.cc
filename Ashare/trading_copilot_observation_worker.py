@@ -12,7 +12,8 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from dataclasses import replace
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,8 @@ from Ashare.event_evidence import (
     AshareEvidenceContractError,
     EventEvidenceSnapshot,
     TradingDatasAshareEvidencePort,
+    PRIMARY_DATASET_IDS,
+    load_event_evidence_batch_artifact,
     write_event_evidence_batch_artifact,
 )
 from Ashare.minute_canary import (
@@ -54,6 +57,12 @@ from shared.runtime.ashare_runtime_ports import (
     load_verified_ashare_runtime_authority_bundle,
 )
 from shared.runtime_test.sharedsignals_v1_integration_probe import load_probe_manifest
+from shared.data.research_snapshot import ResearchDataSnapshot
+from shared.data.research_snapshot_store import (
+    FileResearchSnapshotStore,
+    ResearchSnapshotStoreConflict,
+    ResearchSnapshotStoreCorruption,
+)
 from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Client,
     SharedSignalsV1Config,
@@ -200,12 +209,12 @@ def _bind_activity_authority(
         raise TradingCopilotObservationError(str(exc)) from exc
 
 
-def company_facts_from_verified_observation(
+def _load_verified_observation_bundle(
     *,
     manifest_path: Path | str,
     state_root: Path | str,
-) -> dict[str, dict[str, Any]]:
-    """Read security-master rows only through a committed observation bundle."""
+) -> tuple[Any, Any]:
+    """Load the exact committed observation bundle once for all consumers."""
 
     manifest = load_probe_manifest(Path(manifest_path))
     schema_majors = {item.schema_major for item in manifest.datasets}
@@ -225,12 +234,19 @@ def company_facts_from_verified_observation(
         raise TradingCopilotObservationError(
             f"copilot_observation_bundle_blocked:{exc}"
         ) from exc
+    return manifest, bundle
+
+
+def _company_facts_from_bundle(bundle: tuple[Any, Any]) -> dict[str, dict[str, Any]]:
+    """Read security-master rows from an already loaded committed bundle."""
+
+    manifest, bundle_value = bundle
     master_dataset_id = next(
         (item.dataset_id for item in manifest.datasets if item.probe_role == "security_master"),
         None,
     )
     master = next(
-        (dataset for dataset in bundle.research_snapshot.datasets if dataset.dataset_id == master_dataset_id),
+        (dataset for dataset in bundle_value.research_snapshot.datasets if dataset.dataset_id == master_dataset_id),
         None,
     )
     if (
@@ -285,6 +301,21 @@ def company_facts_from_verified_observation(
             "marketCapCny": None,
         }
     return facts
+
+
+def company_facts_from_verified_observation(
+    *,
+    manifest_path: Path | str,
+    state_root: Path | str,
+) -> dict[str, dict[str, Any]]:
+    """Read security-master rows only through a committed observation bundle."""
+
+    return _company_facts_from_bundle(
+        _load_verified_observation_bundle(
+            manifest_path=manifest_path,
+            state_root=state_root,
+        )
+    )
 
 
 def load_event_bundle(path: Path | str | None) -> tuple[EventEvidenceSnapshot, ...]:
@@ -424,6 +455,210 @@ def load_current_event_snapshots(
         accepted.extend(snapshot.events)
     result = (tuple(accepted), tuple(blocked), blocked_reasons)
     return (*result, tuple(retained_paths)) if artifact_root is not None else result
+
+
+def _retention_root(path: Path | str, reason: str) -> Path:
+    """Validate an explicitly configured retention root without resolving links."""
+
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        raise TradingCopilotObservationError(reason)
+    absolute = Path(os.path.abspath(os.fspath(candidate)))
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        try:
+            if current.is_symlink():
+                raise TradingCopilotObservationError(reason)
+        except OSError as exc:
+            raise TradingCopilotObservationError(reason) from exc
+    return absolute
+
+
+def _canonical_observation_time(value: object, reason: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise TradingCopilotObservationError(reason) from exc
+    else:
+        raise TradingCopilotObservationError(reason)
+    return _aware(parsed, reason).astimezone(timezone.utc)
+
+
+def retain_same_observation_inputs(
+    *,
+    research_snapshot: ResearchDataSnapshot,
+    event_artifact_paths: Sequence[Path | str],
+    blocked_dataset_reasons: Mapping[str, str],
+    decision_time: datetime,
+    store_root: Path | str,
+) -> dict[str, Any]:
+    """Persist and bind one exact security snapshot with its event artifacts.
+
+    This is deliberately opt-in and runs only after the caller has completed
+    the existing typed event artifact writes.  It never creates a second
+    snapshot format or combines artifacts by directory discovery.
+    """
+
+    if not isinstance(research_snapshot, ResearchDataSnapshot):
+        raise TradingCopilotObservationError("copilot_research_snapshot_invalid")
+    if (
+        research_snapshot.execution_eligible is not True
+        or research_snapshot.historical_pit_eligible is not False
+        or research_snapshot.blocking_reasons
+    ):
+        raise TradingCopilotObservationError(
+            "copilot_research_snapshot_not_observation_eligible"
+        )
+    decision = _canonical_observation_time(
+        decision_time,
+        "copilot_research_snapshot_observation_time_invalid",
+    )
+    snapshot_decision = _canonical_observation_time(
+        research_snapshot.decision_as_of,
+        "copilot_research_snapshot_observation_time_invalid",
+    )
+    if snapshot_decision != decision:
+        raise TradingCopilotObservationError(
+            "copilot_research_snapshot_observation_identity_mismatch"
+        )
+    master = next(
+        (
+            dataset
+            for dataset in research_snapshot.datasets
+            if dataset.dataset_id == "cn.equity.security_master"
+        ),
+        None,
+    )
+    if (
+        master is None
+        or master.eligible is not True
+        or not master.receipt_id
+        or not master.source_proof_sha256
+        or not master.lineage_sha256
+        or not master.data_through
+        or not master.observed_at
+    ):
+        raise TradingCopilotObservationError(
+            "copilot_security_master_binding_invalid"
+        )
+    if not isinstance(blocked_dataset_reasons, Mapping):
+        raise TradingCopilotObservationError("copilot_event_retention_coverage_invalid")
+    blocked: dict[str, str] = {}
+    for dataset_id, reason in blocked_dataset_reasons.items():
+        if dataset_id not in PRIMARY_DATASET_IDS or not isinstance(reason, str) or not reason.strip():
+            raise TradingCopilotObservationError("copilot_event_retention_coverage_invalid")
+        blocked[dataset_id] = reason
+
+    batches: list[tuple[Path, Any]] = []
+    seen_paths: set[Path] = set()
+    seen_datasets: set[str] = set()
+    for raw_path in event_artifact_paths:
+        try:
+            path = _retention_root(
+                raw_path,
+                "copilot_event_retention_artifact_invalid",
+            )
+        except (TradingCopilotObservationError, TypeError, ValueError, OSError) as exc:
+            raise TradingCopilotObservationError(
+                "copilot_event_retention_artifact_invalid"
+            ) from exc
+        if path.is_symlink() or path in seen_paths:
+            raise TradingCopilotObservationError("copilot_event_retention_artifact_invalid")
+        seen_paths.add(path)
+        try:
+            batch = load_event_evidence_batch_artifact(path)
+        except AshareEvidenceContractError as exc:
+            raise TradingCopilotObservationError(
+                "copilot_event_retention_artifact_invalid"
+            ) from exc
+        dataset_id = batch.profile.dataset_id
+        try:
+            event_times = tuple(
+                _canonical_observation_time(
+                    event.as_of,
+                    "copilot_event_retention_artifact_invalid",
+                )
+                for event in batch.events
+            )
+        except (TradingCopilotObservationError, AttributeError, TypeError) as exc:
+            raise TradingCopilotObservationError(
+                "copilot_event_retention_artifact_invalid"
+            ) from exc
+        if (
+            dataset_id not in PRIMARY_DATASET_IDS
+            or dataset_id in seen_datasets
+            or dataset_id in blocked
+            or batch.same_observation is not True
+            or batch.observed_catalog_version != research_snapshot.catalog_version
+            or any(event_time != snapshot_decision for event_time in event_times)
+        ):
+            raise TradingCopilotObservationError(
+                "copilot_research_snapshot_observation_identity_mismatch"
+            )
+        seen_datasets.add(dataset_id)
+        batches.append((path, batch))
+
+    if seen_datasets | set(blocked) != set(PRIMARY_DATASET_IDS) or seen_datasets & set(blocked):
+        raise TradingCopilotObservationError("copilot_event_retention_coverage_invalid")
+    root = _retention_root(store_root, "copilot_research_snapshot_store_root_invalid")
+    try:
+        FileResearchSnapshotStore(root).compare_and_swap(
+            snapshot=research_snapshot,
+            expected_snapshot_sha256=None,
+        )
+    except (ResearchSnapshotStoreConflict, ResearchSnapshotStoreCorruption, ValueError) as exc:
+        raise TradingCopilotObservationError(
+            "copilot_research_snapshot_retention_failed"
+        ) from exc
+
+    event_bindings = []
+    for path, batch in batches:
+        try:
+            artifact_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise TradingCopilotObservationError(
+                "copilot_event_retention_artifact_invalid"
+            ) from exc
+        event_bindings.append(
+            {
+                "path": str(path),
+                "artifactSha256": artifact_sha,
+                "datasetId": batch.profile.dataset_id,
+                "catalogVersion": batch.observed_catalog_version,
+                "receiptIds": sorted({event.receipt_id for event in batch.events}),
+                "rowCount": batch.row_count,
+                "pageCount": batch.page_count,
+                "sameObservation": batch.same_observation,
+            }
+        )
+    event_bindings.sort(key=lambda item: item["datasetId"])
+    return {
+        "storeRoot": str(root),
+        "snapshotSha256": research_snapshot.snapshot_sha256,
+        "snapshotPath": str(root / f"snapshot-{research_snapshot.snapshot_sha256}.json"),
+        "profileId": research_snapshot.profile_id,
+        "catalogVersion": research_snapshot.catalog_version,
+        "decisionAsOf": research_snapshot.decision_as_of,
+        "eventArtifacts": event_bindings,
+        "blockedDatasetReasons": dict(sorted(blocked.items())),
+        "authority": {
+            "observationMode": "current_observation",
+            "currentObservationAuthority": False,
+            "historicalPitEligible": False,
+            "trainingEligible": False,
+            "candidateEligible": False,
+            "promotionEligible": False,
+            "executionEligible": False,
+            "riskAuthority": False,
+            "positionAuthority": False,
+            "orderAuthority": False,
+            "realTradingEnabled": False,
+        },
+    }
 
 
 def _published_at(event: EventEvidenceSnapshot) -> str:
@@ -683,6 +918,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--on-demand-event-dataset", action="append", default=[])
     parser.add_argument("--event-evidence-artifact-root", type=Path)
     parser.add_argument("--event-timeline-output-root", type=Path)
+    parser.add_argument("--research-snapshot-store-root", type=Path)
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--activity-authorities", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
@@ -705,6 +941,31 @@ def main(argv: list[str] | None = None) -> int:
             raise TradingCopilotObservationError("copilot_event_retention_roots_required")
         if (arguments.event_evidence_artifact_root or arguments.event_timeline_output_root) and not arguments.load_current_events:
             raise TradingCopilotObservationError("copilot_event_retention_requires_current_td_read")
+        if arguments.research_snapshot_store_root:
+            if not arguments.observation_manifest or not arguments.observation_state_root:
+                raise TradingCopilotObservationError(
+                    "copilot_research_snapshot_retention_requires_observation"
+                )
+            if (
+                not arguments.load_current_events
+                or not arguments.event_evidence_artifact_root
+                or not arguments.event_timeline_output_root
+            ):
+                raise TradingCopilotObservationError(
+                    "copilot_research_snapshot_retention_requires_event_artifacts"
+                )
+            _retention_root(
+                arguments.research_snapshot_store_root,
+                "copilot_research_snapshot_store_root_invalid",
+            )
+            _retention_root(
+                arguments.event_evidence_artifact_root,
+                "copilot_event_artifact_root_invalid",
+            )
+            _retention_root(
+                arguments.event_timeline_output_root,
+                "copilot_event_timeline_root_invalid",
+            )
         decision_time = datetime.fromisoformat(arguments.decision_time.replace("Z", "+00:00"))
         valid_until = datetime.fromisoformat(arguments.valid_until.replace("Z", "+00:00"))
         config = load_minute_canary_config(arguments.minute_manifest.resolve())
@@ -720,13 +981,15 @@ def main(argv: list[str] | None = None) -> int:
             reference_facts=reference_facts,
             evidence_use=MinuteEvidenceUse(arguments.evidence_use),
         )
+        observation_bundle = None
         if arguments.observation_manifest:
             if not arguments.observation_state_root:
                 raise TradingCopilotObservationError("copilot_observation_state_root_required")
-            company_facts = company_facts_from_verified_observation(
+            observation_bundle = _load_verified_observation_bundle(
                 manifest_path=arguments.observation_manifest.resolve(),
                 state_root=arguments.observation_state_root.resolve(),
             )
+            company_facts = _company_facts_from_bundle(observation_bundle)
         else:
             if arguments.observation_state_root:
                 raise TradingCopilotObservationError("copilot_observation_manifest_required")
@@ -739,7 +1002,10 @@ def main(argv: list[str] | None = None) -> int:
                 symbols=tuple(bar.symbol for bar in snapshot.bars),
                 requested_on_demand_dataset_ids=arguments.on_demand_event_dataset,
                 retained_artifact_root=(
-                    arguments.event_evidence_artifact_root.resolve()
+                    _retention_root(
+                        arguments.event_evidence_artifact_root,
+                        "copilot_event_artifact_root_invalid",
+                    )
                     if arguments.event_evidence_artifact_root
                     else None
                 ),
@@ -754,7 +1020,10 @@ def main(argv: list[str] | None = None) -> int:
                     blocked_dataset_reasons=blocked_event_reasons,
                     generated_at=decision_time,
                     valid_until=valid_until,
-                    output_root=arguments.event_timeline_output_root.resolve(),
+                    output_root=_retention_root(
+                        arguments.event_timeline_output_root,
+                        "copilot_event_timeline_root_invalid",
+                    ),
                 )
             else:
                 events, blocked_event_datasets, blocked_event_reasons = current_events
@@ -778,6 +1047,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         batch_path = arguments.batch_output.resolve()
         _atomic_json(batch_path, batch)
+        research_event_retention = None
+        if arguments.research_snapshot_store_root:
+            if observation_bundle is None:
+                raise TradingCopilotObservationError(
+                    "copilot_research_snapshot_retention_requires_observation"
+                )
+            _, authority_bundle = observation_bundle
+            research_event_retention = retain_same_observation_inputs(
+                research_snapshot=authority_bundle.research_snapshot,
+                event_artifact_paths=retained_paths,
+                blocked_dataset_reasons=blocked_event_reasons,
+                decision_time=decision_time,
+                store_root=arguments.research_snapshot_store_root,
+            )
         result = publish_projection_batch(
             input_path=batch_path,
             output_root=arguments.projection_output_root.resolve(),
@@ -796,6 +1079,8 @@ def main(argv: list[str] | None = None) -> int:
         "blockedDatasetReasons": blocked_event_reasons,
         "sentimentLabelsInvented": False,
     }
+    if research_event_retention is not None:
+        result["researchEventRetention"] = research_event_retention
     result["resultOutput"] = str(arguments.result_output.resolve())
     _atomic_json(arguments.result_output.resolve(), result)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
