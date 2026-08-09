@@ -135,6 +135,18 @@ and rows without a stock identity remain `CN-MACRO` context. It can lower or
 annotate a shadow assessment but cannot select a stock, create a candidate,
 train a model, alter risk, or authorize an order.
 
+`security_event_research_mapping.py` is the TA-only composition boundary for
+an already-frozen `cn.equity.security_master` research snapshot and the five
+primary event profiles above. Every primary event dataset must be represented
+by a validated receipt-bound batch or by an explicit fail-closed reason. The
+mapping keeps per-symbol events separate from symbol-less macro context and
+retains the security profile/snapshot hash, receipts, lineage, catalog
+fingerprints, pagination/replay hashes, and bounded-query budgets. It is
+current-observation research evidence only: historical PIT, training,
+promotion, candidate, execution, risk, position, order, and real-trading
+authority remain false. The mapper has no client, timer, persistence path, or
+runtime hook.
+
 Dataset IDs, schema, selectable fields, ordering, pagination bounds, and row
 identity must be present in the exact active catalog row. Each event profile
 stores the canonical seven-field `dataset_contract_fingerprint` and a separate
