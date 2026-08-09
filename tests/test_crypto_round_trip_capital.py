@@ -281,6 +281,59 @@ def test_same_cycle_conflicting_fill_report_fails_closed(tmp_path: Path) -> None
         run_round_trip_fixture_cycle(conflict, output_root=tmp_path)
 
 
+def test_writer_cycle_reuses_one_validated_capital_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replay_count = 0
+    original_replay = RoundTripCapitalLedger._replay
+
+    def counted_replay(
+        self: RoundTripCapitalLedger,
+        rows: Any,
+    ) -> tuple[dict[str, Any], str]:
+        nonlocal replay_count
+        replay_count += 1
+        return original_replay(self, rows)
+
+    monkeypatch.setattr(RoundTripCapitalLedger, "_replay", counted_replay)
+    payload = _direct_payload(
+        fixture_id="fixture-cycle-cache",
+        slot="2026-07-30T00:00:00Z",
+    )
+
+    result = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+
+    assert result["idempotent_replay"] is False
+    assert replay_count == 1
+
+    replay = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+
+    assert replay["idempotent_replay"] is True
+    assert replay_count == 2
+
+
+def test_writer_cycle_invalidates_cache_after_external_ledger_change(
+    tmp_path: Path,
+) -> None:
+    payload = _direct_payload(
+        fixture_id="fixture-cache-source",
+        slot="2026-07-30T00:00:00Z",
+    )
+    run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+    ledger = RoundTripCapitalLedger(
+        tmp_path / "round_trip_capital",
+        _capability=capital_module._WRITE_CAPABILITY,
+    )
+
+    with ledger.cycle():
+        ledger.state_for_writer()
+        with ledger.events_path.open("a", encoding="utf-8") as stream:
+            stream.write("{}\n")
+        with pytest.raises(CryptoRoundTripError, match="event_schema_invalid"):
+            ledger.state_for_writer()
+
+
 @pytest.mark.parametrize(
     ("exit_payload", "reason"),
     [
