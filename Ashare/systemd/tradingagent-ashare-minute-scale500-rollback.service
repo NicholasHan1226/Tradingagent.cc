@@ -1,13 +1,9 @@
 [Unit]
-Description=Fail closed from A-share scale-500 to preserved rollback-30 timers
-ConditionPathIsDirectory=/opt/investment/releases/tradingagent/2b7b52bfb552247478c5a78f854d365eb9fcc335
-ConditionPathIsSymbolicLink=/opt/investment/current
+Description=Fail closed by stopping only the isolated A-share scale-500 units
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/systemctl disable --now tradingagent-ashare-minute-scale500-session.timer tradingagent-ashare-minute-scale500-paper.timer
-ExecStart=/bin/sh -ec 'temporary=/opt/investment/.tradingagent-current-rollback-2b.$$$$; /usr/bin/ln -s /opt/investment/releases/tradingagent/2b7b52bfb552247478c5a78f854d365eb9fcc335 "$$temporary"; /usr/bin/mv -Tf "$$temporary" /opt/investment/current'
-ExecStart=/usr/bin/systemctl enable --now tradingagent-ashare-minute-session.timer
-ExecStart=/usr/bin/systemctl enable --now tradingagent-ashare-minute-paper.timer
+ExecStart=/usr/bin/systemctl stop tradingagent-ashare-minute-scale500-session.service tradingagent-ashare-minute-scale500-paper.service
 StandardOutput=journal
 StandardError=journal
