@@ -976,6 +976,22 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
         assert "Environment=REAL_TRADING_ENABLED=false" in service
         assert "User=tradingagent" in service
         assert "Ashare.minute_scale500_runtime" in service
+        assert (
+            "ConditionPathExists=/etc/tradingagent/ashare-minute-scale500.env"
+            in service
+        )
+        assert (
+            "ConditionPathExists=/run/secrets/tradingagent/"
+            "tradingdatas-read.token"
+        ) in service
+        assert (
+            "ConditionPathExists=/opt/investment/tools/venvs/"
+            "tradingagent-observation-py312-pyyaml603-v1/bin/python3"
+        ) in service
+        assert (
+            "ConditionPathExists=/opt/investment/releases/tradingagent/current/"
+            not in service
+        )
         assert "ReadOnlyPaths=/var/lib/tradingagent/ashare-minute-paper" in service
         assert (
             "ReadWritePaths=/var/lib/tradingagent/ashare-minute-paper-scale500"
@@ -1009,7 +1025,19 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     assert "15:19" not in paper_timer
     assert "Persistent=false" in paper_timer
     assert "Unit=tradingagent-ashare-minute-scale500-paper.service" in paper_timer
-    assert "disable --now tradingagent-ashare-minute-scale500" in rollback_service
+    rollback_commands = tuple(
+        line.removeprefix("ExecStart=")
+        for line in rollback_service.splitlines()
+        if line.startswith("ExecStart=")
+    )
+    assert rollback_commands == (
+        "/usr/bin/systemctl disable --now "
+        "tradingagent-ashare-minute-scale500-session.timer "
+        "tradingagent-ashare-minute-scale500-paper.timer",
+        "/usr/bin/systemctl stop "
+        "tradingagent-ashare-minute-scale500-session.service "
+        "tradingagent-ashare-minute-scale500-paper.service",
+    )
     trigger_times = tuple(
         slot + timedelta(minutes=7) for slot in slots
     )
@@ -1017,19 +1045,14 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
     for trigger, slot in zip(trigger_times, slots, strict=True):
         assert expected_available_bar_end(trigger) == slot
         assert expected_available_bar_end(trigger + timedelta(seconds=10)) == slot
-    assert (
-        "ConditionPathIsDirectory=/opt/investment/releases/tradingagent/2b7b52b"
-        in rollback_service
-    )
-    assert "ConditionPathIsSymbolicLink=/opt/investment/current" in rollback_service
-    assert (
-        "/usr/bin/ln -s /opt/investment/releases/tradingagent/2b7b52b"
-        in rollback_service
-    )
-    assert "tradingagent-current-rollback-2b.$$$$" in rollback_service
-    assert "/usr/bin/mv -Tf" in rollback_service
-    assert "enable --now tradingagent-ashare-minute-session.timer" in rollback_service
-    assert "enable --now tradingagent-ashare-minute-paper.timer" in rollback_service
+    assert "/opt/investment/current" not in rollback_service
+    for unit in (
+        "tradingagent-ashare-minute-session.timer",
+        "tradingagent-ashare-minute-paper.timer",
+        "tradingagent-ashare-minute-session.service",
+        "tradingagent-ashare-minute-paper.service",
+    ):
+        assert unit not in rollback_service
     assert "REAL_TRADING_ENABLED=false" in environment
     assert (
         "ASHARE_MINUTE_SCALE500_STATE_ROOT="

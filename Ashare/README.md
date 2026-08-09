@@ -582,13 +582,15 @@ present. That receipt is deterministic, zero-notional and shadow-only: it has
 no candidate, capital, execution, training or promotion authority and cannot
 be routed through the runner.
 
-Rollback disables the scale timers, atomically repoints TA `current` to the
-preserved immutable 30-symbol release, then restores the 30-symbol timers
-without deleting or rewriting either state root. It does not manufacture a
-same-day 30-symbol session after the 09:18 initializer has passed; that day
-remains fail-closed. The scale timer mirrors the delayed 48-slot schedule with
-explicit triggers for every session bar, including the final 15:00-bar
-attempt at 15:07:00. `DELAYED_PAPER` consumes the shared readiness limit of
+The runtime records `fallback30_selected` and its stable failure reason in the
+isolated scale gate before it exits non-zero. The tracked rollback unit only
+disables the two scale timers and stops the two scale services; it never changes
+TA `current`, starts or enables the 30-symbol units, or deletes or rewrites either
+state root. The preserved rollback-30 state therefore remains evidence for a
+separate Controller decision rather than an automatic runtime switch. The scale
+timer mirrors the delayed 48-slot schedule with explicit triggers for every
+session bar, including the final 15:00-bar attempt at 15:07:00.
+`DELAYED_PAPER` consumes the shared readiness limit of
 one five-minute cadence plus 120 seconds of jitter (420 seconds), measured both
 from bar end to source availability and from bar end to the actual decision;
 the later timer does not make stale evidence eligible. The low-latency

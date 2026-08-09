@@ -6,7 +6,6 @@ OnFailure=tradingagent-ashare-minute-scale500-rollback.service
 ConditionPathExists=/etc/tradingagent/ashare-minute-scale500.env
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
 ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
-ConditionPathExists=/opt/investment/releases/tradingagent/current/Ashare/minute_scale500_runtime.py
 
 [Service]
 Type=oneshot
