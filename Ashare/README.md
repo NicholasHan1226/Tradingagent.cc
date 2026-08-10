@@ -730,6 +730,13 @@ python3 -m Ashare.minute_canary \
   --output /absolute/runtime/minute-canary-receipt.json
 ```
 
+To replay one exact completed slot after later bars exist, add
+`--bar-end '2026-07-28 09:35:00'` (or an ISO-8601 equivalent). The canary then
+uses the catalog-authorized timestamp equality filter and pins the query to
+the symbols present in the reference-fact manifest; returned receipt,
+`data_through`, lineage hashes and same-observation replay evidence remain
+bound to that slot. A missing symbol or mixed bar end fails closed.
+
 The manifest and reference facts are runtime evidence, not repository defaults.
 TradingDatas formally froze `cn.dataset.rt_min` schema major 2 and began the
 ten-mainboard-symbol five-minute continuous canary on 2026-07-28. TA read back

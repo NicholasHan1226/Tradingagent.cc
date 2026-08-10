@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 import os
 from pathlib import Path
 import sys
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from Ashare.minute_data import (
     MinuteDataContractError,
@@ -43,6 +44,8 @@ class MinuteCanaryConfigurationError(ValueError):
 
 
 TransportFactory = Callable[..., HTTPTransport]
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+FIVE_MINUTES = timedelta(minutes=5)
 
 
 def _text(value: object, field_name: str) -> str:
@@ -275,6 +278,68 @@ def load_reference_facts(path: Path | str) -> dict[str, MinuteReferenceFact]:
     return result
 
 
+def _normalize_bar_end(
+    value: str | datetime,
+    *,
+    timestamp_format: str,
+) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        raw = value.strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = datetime.strptime(raw, timestamp_format)
+            except ValueError as exc:
+                raise MinuteCanaryConfigurationError("bar_end_invalid") from exc
+    else:
+        raise MinuteCanaryConfigurationError("bar_end_invalid")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI)
+    return parsed.astimezone(SHANGHAI)
+
+
+def _exact_slot_filters(
+    config: MinuteCanaryConfig,
+    profile: MinuteDatasetProfile,
+    reference_facts: Mapping[str, MinuteReferenceFact],
+    bar_end: datetime | None,
+) -> Mapping[str, Any]:
+    filters = dict(config.filters)
+    filter_contract = dict(profile.filter_operators)
+    symbols = tuple(sorted(reference_facts))
+    if bar_end is not None and symbols:
+        if "in" not in filter_contract.get(profile.symbol_field, ()):
+            raise MinuteDataContractError("minute_symbol_filter_not_catalog_authorized")
+        filters[profile.symbol_field] = {"in": list(symbols)}
+    if bar_end is not None:
+        if "eq" not in filter_contract.get(profile.timestamp_field, ()):
+            raise MinuteDataContractError("minute_bar_end_filter_not_catalog_authorized")
+        query_time = (
+            bar_end
+            if profile.timestamp_semantics is MinuteTimestampSemantics.BAR_END
+            else bar_end - FIVE_MINUTES
+        )
+        filters[profile.timestamp_field] = {
+            "eq": query_time.strftime(profile.timestamp_format)
+        }
+    return filters
+
+
+def _validate_exact_selection(
+    snapshot: MinuteBarSnapshot,
+    *,
+    reference_facts: Mapping[str, MinuteReferenceFact],
+    bar_end: datetime | None,
+) -> None:
+    if set(bar.symbol for bar in snapshot.bars) != set(reference_facts):
+        raise MinuteDataContractError("minute_reference_universe_mismatch")
+    if bar_end is not None and any(bar.bar_end != bar_end for bar in snapshot.bars):
+        raise MinuteDataContractError("minute_bar_end_mismatch")
+
+
 def run_minute_canary(
     config: MinuteCanaryConfig,
     *,
@@ -282,6 +347,7 @@ def run_minute_canary(
     decision_time: datetime,
     trading_date: date,
     reference_facts: Mapping[str, MinuteReferenceFact],
+    bar_end: str | datetime | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> dict[str, Any]:
@@ -291,8 +357,35 @@ def run_minute_canary(
         decision_time=decision_time,
         trading_date=trading_date,
         reference_facts=reference_facts,
+        bar_end=bar_end,
         evidence_use=evidence_use,
         transport_factory=transport_factory,
+    )
+    selected_bar_end = (
+        _normalize_bar_end(bar_end, timestamp_format=profile.timestamp_format)
+        if bar_end is not None
+        else None
+    )
+    if selected_bar_end is not None:
+        _validate_exact_selection(
+            snapshot,
+            reference_facts=reference_facts,
+            bar_end=selected_bar_end,
+        )
+    receipt_ids = sorted({bar.receipt_id for bar in snapshot.bars})
+    data_through = sorted(
+        {
+            bar.data_through.astimezone(SHANGHAI).isoformat()
+            for bar in snapshot.bars
+        }
+    )
+    source_lineage_sha256 = sorted(
+        {bar.source_lineage_sha256 for bar in snapshot.bars}
+    )
+    receipt_id = receipt_ids[0] if len(receipt_ids) == 1 else None
+    data_through_value = data_through[0] if len(data_through) == 1 else None
+    source_lineage_value = (
+        source_lineage_sha256[0] if len(source_lineage_sha256) == 1 else None
     )
     return {
         "status": "pass",
@@ -304,6 +397,10 @@ def run_minute_canary(
         "real_trading_enabled": False,
         "trading_date": trading_date.isoformat(),
         "decision_time": decision_time.isoformat(),
+        "bar_end": (
+            selected_bar_end.isoformat() if selected_bar_end is not None else None
+        ),
+        "reference_symbols": sorted(reference_facts),
         "dataset_id": profile.dataset_id,
         "expected_catalog_version": profile.expected_catalog_version,
         "observed_catalog_version": snapshot.observed_catalog_version,
@@ -315,12 +412,27 @@ def run_minute_canary(
         "same_observation": snapshot.same_observation,
         "lineage_complete": True,
         "snapshot_sha256": snapshot.sha256,
+        "receipt_id": receipt_id,
+        "data_through": data_through_value,
+        "source_lineage_sha256": source_lineage_value,
+        "receipt_ids": receipt_ids,
+        "data_through_values": data_through,
+        "source_lineage_sha256s": source_lineage_sha256,
+        "replay": {
+            "same_observation": snapshot.same_observation,
+            "pagination_trace_sha256": snapshot.pagination_trace_sha256,
+            "first_semantic_sha256": snapshot.first_semantic_sha256,
+            "replay_semantic_sha256": snapshot.replay_semantic_sha256,
+        },
         "bars": [
             {
                 "symbol": bar.symbol,
                 "bar_end": bar.bar_end.isoformat(),
                 "receipt_id": bar.receipt_id,
+                "data_through": bar.data_through.astimezone(SHANGHAI).isoformat(),
                 "observed_at": bar.observed_at.isoformat(),
+                "source_lineage_sha256": bar.source_lineage_sha256,
+                "envelope_proof_sha256": bar.envelope_proof_sha256,
                 "sha256": bar.sha256,
             }
             for bar in snapshot.bars
@@ -336,6 +448,7 @@ def load_minute_snapshot(
     decision_time: datetime,
     trading_date: date,
     reference_facts: Mapping[str, MinuteReferenceFact],
+    bar_end: str | datetime | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> tuple[MinuteDatasetProfile, MinuteBarSnapshot, MinuteEvidenceAuditLedger]:
@@ -351,15 +464,33 @@ def load_minute_snapshot(
     client = SharedSignalsV1Client(config.client_config(), transport=transport)
     profile = config.build_profile(client)
     audit = MinuteEvidenceAuditLedger()
+    selected_bar_end = (
+        _normalize_bar_end(bar_end, timestamp_format=profile.timestamp_format)
+        if bar_end is not None
+        else None
+    )
+    if selected_bar_end is not None and selected_bar_end.date() != trading_date:
+        raise MinuteCanaryConfigurationError("bar_end_trade_date_mismatch")
     snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
         profile=profile,
-        filters=config.filters,
+        filters=_exact_slot_filters(
+            config,
+            profile,
+            reference_facts,
+            selected_bar_end,
+        ),
         decision_time=decision_time,
         trading_dates=frozenset({trading_date}),
         audit_ledger=audit,
         reference_facts=reference_facts,
         evidence_use=evidence_use,
     )
+    if selected_bar_end is not None:
+        _validate_exact_selection(
+            snapshot,
+            reference_facts=reference_facts,
+            bar_end=selected_bar_end,
+        )
     return profile, snapshot, audit
 
 
@@ -408,6 +539,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
     parser.add_argument("--trading-date", required=True)
+    parser.add_argument(
+        "--bar-end",
+        help="optional exact completed bar_end to replay after later bars exist",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--evidence-use",
@@ -425,6 +560,7 @@ def main(argv: list[str] | None = None) -> int:
             decision_time=datetime.fromisoformat(args.decision_time),
             trading_date=date.fromisoformat(args.trading_date),
             reference_facts=load_reference_facts(args.reference_facts),
+            bar_end=args.bar_end,
             evidence_use=MinuteEvidenceUse(args.evidence_use),
         )
         _write_receipt(args.output, receipt)
