@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -22,6 +22,7 @@ from Ashare.minute_data import (
     MinuteBarSnapshot,
     MinuteDatasetProfile,
     MinuteEvidenceUse,
+    MinuteReferenceFact,
     MinuteTimestampSemantics,
 )
 from Ashare.minute_canary import MinuteCanaryConfig
@@ -29,6 +30,7 @@ from Ashare.trading_copilot_observation_worker import (
     TradingCopilotObservationError,
     _pinned_snapshot_plan,
     build_projection_batch,
+    build_offline_projection_batch,
     company_facts_from_verified_observation,
     load_event_bundle,
     load_company_facts,
@@ -36,8 +38,9 @@ from Ashare.trading_copilot_observation_worker import (
     retain_same_observation_inputs,
 )
 import Ashare.trading_copilot_observation_worker as observation_worker
-from Ashare.trading_copilot_projection import publish_projection_batch
+from Ashare.trading_copilot_projection import BATCH_INPUT_CONTRACT, publish_projection_batch
 from Ashare.trading_copilot_event_timeline import build_event_timeline_batch, publish_event_timeline_batch
+from shared.data.sharedsignals_v1 import SharedSignalsV1Client
 
 
 def test_same_observation_retention_entrypoint_exists() -> None:
@@ -935,3 +938,198 @@ def test_main_pins_snapshot_query_for_retention_path(
     assert captured["decision_time"] == datetime(
         2026, 8, 7, 11, 37, 0, tzinfo=timezone(timedelta(hours=8))
     )
+
+
+def test_offline_projection_batch_uses_canary_rows_without_query_or_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_ashare_minute_canary import _Transport, _config
+    from Ashare.minute_canary import run_minute_canary
+
+    config = _config()
+    transport = _Transport()
+    references = {
+        "600000.SH": MinuteReferenceFact(
+            symbol="600000.SH", trade_date=date(2026, 7, 28),
+            previous_close_cny=9.8, suspended=False, evidence_sha256=_sha("ref"),
+        )
+    }
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        trading_date=date(2026, 7, 28), reference_facts=references,
+        bar_end="2026-07-28 09:35:00",
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+    canary_path = (tmp_path / "canary.json").resolve()
+    canary_path.write_text(json.dumps(receipt), encoding="utf-8")
+    references_path = (tmp_path / "references.json").resolve()
+    references_path.write_text(json.dumps([{
+        "symbol": "600000.SH", "trade_date": "2026-07-28",
+        "previous_close_cny": 9.8, "suspended": False, "evidence_sha256": _sha("ref"),
+    }]), encoding="utf-8")
+    manifest = tmp_path / "minute.json"
+    profile = dict(config.profile)
+    bound = config.build_profile(
+        SharedSignalsV1Client(config.client_config(), transport=transport),
+        require_declared_bindings=False,
+    )
+    profile.update({
+        "schema_major": bound.schema_major,
+        "default_fields": list(bound.default_fields),
+        "default_order": list(bound.default_order),
+        "filter_operators": dict(bound.filter_operators),
+        "dataset_contract_fingerprint": bound.dataset_contract_fingerprint,
+        "consumer_profile_sha256": bound.consumer_profile_sha256,
+        "observed_catalog_version": bound.observed_catalog_version,
+    })
+    manifest.write_text(json.dumps({
+        "base_url": config.base_url,
+        "expected_catalog_version": config.expected_catalog_version,
+        "dataset_id": config.dataset_id,
+        "access_policy_id": config.access_policy_id,
+        "transport_id": config.transport_id,
+        "timeout_seconds": config.timeout_seconds,
+        "filters": dict(config.filters), "profile": profile,
+    }), encoding="utf-8")
+    company = _companies()["600000.SH"]
+    row = receipt["bars"][0]
+    window = receipt["snapshot_rows"]["items"][0]["data_through"]
+    company_window = "2026-07-27T01:35:00+00:00"
+    company = dict(company)
+    company["source"] = {
+        **company["source"],
+        "receiptId": "company-receipt",
+        "receiptSha256": _sha("company"),
+        "lineageSha256": _sha("company-lineage"),
+        "dataThrough": company_window,
+        "retrievedAt": "2026-07-27T01:35:05+00:00",
+    }
+    company_path = tmp_path / "company.json"
+    company_path.write_text(json.dumps({
+        "contractId": "tradingagent.trading_copilot_company_facts.v1",
+        "source": company["source"],
+        "items": [{key: value for key, value in company.items() if key != "source"}],
+    }), encoding="utf-8")
+    authority_path = tmp_path / "authorities.json"
+    authority_path.write_text(json.dumps({
+        config.dataset_id: _authority(
+            dataset_id=config.dataset_id, data_through=window,
+            receipt_id=receipt["receipt_id"], receipt_sha256=row["envelope_proof_sha256"],
+            lineage_sha256=row["source_lineage_sha256"],
+        ),
+        "cn.equity.security_master": _authority(
+            dataset_id="cn.equity.security_master", data_through=company_window,
+            receipt_id="company-receipt", receipt_sha256=_sha("company"),
+            lineage_sha256=_sha("company-lineage"),
+        ),
+    }), encoding="utf-8")
+    monkeypatch.setattr(observation_worker, "load_minute_snapshot", lambda *a, **k: pytest.fail("query"))
+    monkeypatch.setattr(observation_worker, "publish_projection_batch", lambda *a, **k: pytest.fail("publish"))
+    batch = build_offline_projection_batch(
+        canary_receipt_path=canary_path, minute_manifest_path=manifest,
+        reference_facts_path=references_path, company_facts_path=company_path,
+        activity_authorities_path=authority_path,
+        generated_at=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        valid_until=datetime.fromisoformat("2026-07-29T09:00:00+08:00"),
+    )
+    assert batch["contractId"] == BATCH_INPUT_CONTRACT
+    assert batch["items"][0]["symbol"] == "600000.SH"
+    output_path = (tmp_path / "offline-batch.json").resolve()
+    rc = observation_worker.main([
+        "--minute-manifest", str(manifest),
+        "--reference-facts", str(references_path),
+        "--company-facts", str(company_path),
+        "--activity-authorities", str(authority_path),
+        "--decision-time", "2026-07-28T09:35:25+08:00",
+        "--evidence-use", "historical_display",
+        "--valid-until", "2026-07-29T09:00:00+08:00",
+        "--batch-output", str(output_path),
+        "--offline-canary-receipt", str(canary_path),
+    ])
+    assert rc == 0
+    persisted = json.loads(output_path.read_text(encoding="utf-8"))
+    assert persisted["contractId"] == BATCH_INPUT_CONTRACT
+
+    bad_company = json.loads(company_path.read_text(encoding="utf-8"))
+    bad_company["items"][0]["symbol"] = "000001.SZ"
+    bad_company_path = (tmp_path / "bad-company.json").resolve()
+    bad_company_path.write_text(json.dumps(bad_company), encoding="utf-8")
+    with pytest.raises(TradingCopilotObservationError, match="company_symbol_set"):
+        build_offline_projection_batch(
+            canary_receipt_path=canary_path, minute_manifest_path=manifest,
+            reference_facts_path=references_path, company_facts_path=bad_company_path,
+            activity_authorities_path=authority_path,
+            generated_at=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            valid_until=datetime.fromisoformat("2026-07-29T09:00:00+08:00"),
+        )
+
+    bad_authorities = json.loads(authority_path.read_text(encoding="utf-8"))
+    bad_authorities["cn.equity.security_master"]["source"]["receiptId"] = "wrong-receipt"
+    bad_authorities_path = (tmp_path / "bad-authorities.json").resolve()
+    bad_authorities_path.write_text(json.dumps(bad_authorities), encoding="utf-8")
+    with pytest.raises(TradingCopilotObservationError, match="authority_source_mismatch"):
+        build_offline_projection_batch(
+            canary_receipt_path=canary_path, minute_manifest_path=manifest,
+            reference_facts_path=references_path, company_facts_path=company_path,
+            activity_authorities_path=bad_authorities_path,
+            generated_at=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            valid_until=datetime.fromisoformat("2026-07-29T09:00:00+08:00"),
+        )
+
+    flagged_authorities = json.loads(authority_path.read_text(encoding="utf-8"))
+    flagged_authorities["cn.equity.security_master"]["source"]["realTradingEnabled"] = True
+    flagged_authorities_path = (tmp_path / "flagged-authorities.json").resolve()
+    flagged_authorities_path.write_text(json.dumps(flagged_authorities), encoding="utf-8")
+    with pytest.raises(TradingCopilotObservationError, match="activity_authority_present"):
+        build_offline_projection_batch(
+            canary_receipt_path=canary_path, minute_manifest_path=manifest,
+            reference_facts_path=references_path, company_facts_path=company_path,
+            activity_authorities_path=flagged_authorities_path,
+            generated_at=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            valid_until=datetime.fromisoformat("2026-07-29T09:00:00+08:00"),
+        )
+
+    bad_canary = json.loads(canary_path.read_text(encoding="utf-8"))
+    bad_canary["snapshot_rows"]["items"][0]["bar_end"] = "2026-07-28T09:40:00+08:00"
+    bad_canary_path = (tmp_path / "bad-canary.json").resolve()
+    bad_canary_path.write_text(json.dumps(bad_canary), encoding="utf-8")
+    with pytest.raises(TradingCopilotObservationError, match="sha256_mismatch"):
+        build_offline_projection_batch(
+            canary_receipt_path=bad_canary_path, minute_manifest_path=manifest,
+            reference_facts_path=references_path, company_facts_path=company_path,
+            activity_authorities_path=authority_path,
+            generated_at=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            valid_until=datetime.fromisoformat("2026-07-29T09:00:00+08:00"),
+        )
+
+    bad_flags = json.loads(company_path.read_text(encoding="utf-8"))
+    bad_flags["items"][0]["real_trading_enabled"] = True
+    bad_flags_path = (tmp_path / "bad-flags.json").resolve()
+    bad_flags_path.write_text(json.dumps(bad_flags), encoding="utf-8")
+    with pytest.raises(TradingCopilotObservationError, match="authority_present"):
+        build_offline_projection_batch(
+            canary_receipt_path=canary_path, minute_manifest_path=manifest,
+            reference_facts_path=references_path, company_facts_path=bad_flags_path,
+            activity_authorities_path=authority_path,
+            generated_at=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            valid_until=datetime.fromisoformat("2026-07-29T09:00:00+08:00"),
+        )
+
+
+def test_offline_projection_batch_rejects_legacy_canary_and_symbol_drift(tmp_path: Path) -> None:
+    legacy_path = (tmp_path / "legacy.json").resolve()
+    legacy_path.write_text(json.dumps({
+        "status": "pass", "authority_tier": "observation_only",
+    }), encoding="utf-8")
+    with pytest.raises(TradingCopilotObservationError, match="snapshot_rows"):
+        build_offline_projection_batch(
+            canary_receipt_path=legacy_path,
+            minute_manifest_path=(tmp_path / "minute.json").resolve(),
+            reference_facts_path=(tmp_path / "references.json").resolve(),
+            company_facts_path=(tmp_path / "company.json").resolve(),
+            activity_authorities_path=(tmp_path / "authorities.json").resolve(),
+            generated_at=datetime(2026, 7, 28, 1, 35, tzinfo=timezone.utc),
+            valid_until=datetime(2026, 7, 29, 1, tzinfo=timezone.utc),
+        )

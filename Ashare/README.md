@@ -761,6 +761,34 @@ the symbols present in the reference-fact manifest; returned receipt,
 `data_through`, lineage hashes and same-observation replay evidence remain
 bound to that slot. A missing symbol or mixed bar end fails closed.
 
+For a future retained exact-slot observation, the existing worker also has an
+explicit offline projection-batch mode. It accepts the complete canary receipt
+(`snapshot_rows`), its original minute manifest (including the catalog-derived
+profile), reference facts, company facts, and activity-authority manifests:
+
+```bash
+python3 -m Ashare.trading_copilot_observation_worker \
+  --offline-canary-receipt /absolute/runtime/minute-canary-receipt.json \
+  --minute-manifest /absolute/runtime/minute-profile.json \
+  --reference-facts /absolute/runtime/minute-reference-facts.json \
+  --company-facts /absolute/runtime/company-facts.json \
+  --activity-authorities /absolute/runtime/activity-authorities.json \
+  --decision-time 2026-07-28T09:35:25+08:00 \
+  --valid-until 2026-07-28T09:40:25+08:00 \
+  --batch-output /absolute/runtime/private/projection-batch-input.json
+```
+
+`--offline-event-artifact` may supply an existing typed event-evidence batch;
+without it, events are explicitly empty. This path performs no token read,
+TradingDatas/provider/catalog/query call, or projection publication, and writes
+only the caller-selected batch file. It is observation-only
+(`real_trading_enabled=false`) with no per-symbol retention or publication.
+Canary rows, company facts and activity authorities are independently bound to
+their own receipt, lineage and `dataThrough`; legacy canaries, mixed windows,
+missing/extra/duplicate symbols, mismatched authority, or any trading-authority
+flag fail closed. The minute and security-master sources therefore may have
+different valid cadences while remaining independently receipt-bound.
+
 The manifest and reference facts are runtime evidence, not repository defaults.
 TradingDatas formally froze `cn.dataset.rt_min` schema major 2 and began the
 ten-mainboard-symbol five-minute continuous canary on 2026-07-28. TA read back
