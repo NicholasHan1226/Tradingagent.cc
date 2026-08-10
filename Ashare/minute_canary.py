@@ -11,7 +11,9 @@ import argparse
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -20,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 from Ashare.minute_data import (
     MinuteDataContractError,
+    MinuteBarEvidence,
     MinuteBarSnapshot,
     MinuteDatasetProfile,
     MinuteEvidenceAuditLedger,
@@ -46,6 +49,38 @@ class MinuteCanaryConfigurationError(ValueError):
 TransportFactory = Callable[..., HTTPTransport]
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 FIVE_MINUTES = timedelta(minutes=5)
+SNAPSHOT_ROWS_CONTRACT = "tradingagent.ashare.minute_canary_snapshot_rows.v1"
+_SNAPSHOT_ROW_NUMERIC_FIELDS = (
+    "open_cny",
+    "high_cny",
+    "low_cny",
+    "close_cny",
+    "volume_shares",
+    "amount_cny",
+    "previous_close_cny",
+)
+_SNAPSHOT_ROW_FIELDS = frozenset(
+    {
+        "symbol",
+        "bar_start",
+        "bar_end",
+        *_SNAPSHOT_ROW_NUMERIC_FIELDS,
+        "suspended",
+        "market_session",
+        "dataset_id",
+        "catalog_version",
+        "receipt_id",
+        "data_through",
+        "observed_at",
+        "available_at",
+        "decision_time",
+        "source_lineage_sha256",
+        "envelope_proof_sha256",
+        "source_row_sha256",
+        "reference_evidence_sha256",
+        "evidence_use",
+    }
+)
 
 
 def _text(value: object, field_name: str) -> str:
@@ -70,6 +105,90 @@ def _optional_text(value: object, field_name: str) -> str | None:
     if value is None:
         return None
     return _text(value, field_name)
+
+
+def _canonical_sha256(value: object, field_name: str) -> str:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise MinuteCanaryConfigurationError(f"{field_name}_not_canonical") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _aware_iso(value: object, field_name: str) -> datetime:
+    raw = _text(value, field_name)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MinuteCanaryConfigurationError(f"{field_name}_invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise MinuteCanaryConfigurationError(f"{field_name}_timezone_required")
+    return parsed
+
+
+def _canonical_snapshot_row(bar: MinuteBarEvidence) -> dict[str, Any]:
+    payload = bar.canonical_payload()
+    if frozenset(payload) != _SNAPSHOT_ROW_FIELDS:
+        raise MinuteCanaryConfigurationError("minute_snapshot_row_fields_invalid")
+    for field_name in _SNAPSHOT_ROW_NUMERIC_FIELDS:
+        value = payload[field_name]
+        if (
+            type(value) is not float
+            or not math.isfinite(value)
+        ):
+            raise MinuteCanaryConfigurationError(
+                "minute_snapshot_row_numeric_not_canonical"
+            )
+    _canonical_sha256(payload, "minute_snapshot_row")
+    return payload
+
+
+def _snapshot_rows_payload(
+    snapshot: MinuteBarSnapshot,
+    *,
+    reference_facts: Mapping[str, MinuteReferenceFact],
+    selected_bar_end: datetime | None,
+) -> dict[str, Any]:
+    if selected_bar_end is None:
+        raise MinuteCanaryConfigurationError("minute_snapshot_exact_slot_required")
+    bars = snapshot.bars
+    symbols = [bar.symbol for bar in bars]
+    if len(symbols) != len(set(symbols)):
+        raise MinuteCanaryConfigurationError("minute_snapshot_duplicate_symbol")
+    if set(symbols) != set(reference_facts) or len(symbols) != len(reference_facts):
+        raise MinuteCanaryConfigurationError("minute_snapshot_universe_mismatch")
+    bar_ends = {bar.bar_end for bar in bars}
+    if len(bar_ends) != 1:
+        raise MinuteCanaryConfigurationError("minute_snapshot_bar_end_mismatch")
+    snapshot_bar_end = next(iter(bar_ends))
+    if selected_bar_end is not None and snapshot_bar_end != selected_bar_end:
+        raise MinuteCanaryConfigurationError("minute_snapshot_bar_end_mismatch")
+    for field_name, values in (
+        ("receipt", {bar.receipt_id for bar in bars}),
+        ("lineage", {bar.source_lineage_sha256 for bar in bars}),
+        ("envelope", {bar.envelope_proof_sha256 for bar in bars}),
+        ("data_through", {bar.data_through for bar in bars}),
+        ("catalog", {bar.catalog_version for bar in bars}),
+    ):
+        if len(values) != 1:
+            raise MinuteCanaryConfigurationError(
+                f"minute_snapshot_{field_name}_binding_mismatch"
+            )
+    rows = [_canonical_snapshot_row(bar) for bar in bars]
+    if len(rows) != snapshot.row_count:
+        raise MinuteCanaryConfigurationError("minute_snapshot_row_count_mismatch")
+    return {
+        "contractId": SNAPSHOT_ROWS_CONTRACT,
+        "count": len(rows),
+        "sha256": _canonical_sha256(rows, "minute_snapshot_rows"),
+        "items": rows,
+    }
 
 
 @dataclass(frozen=True)
@@ -372,6 +491,13 @@ def run_minute_canary(
             reference_facts=reference_facts,
             bar_end=selected_bar_end,
         )
+    snapshot_rows = None
+    if selected_bar_end is not None:
+        snapshot_rows = _snapshot_rows_payload(
+            snapshot,
+            reference_facts=reference_facts,
+            selected_bar_end=selected_bar_end,
+        )
     receipt_ids = sorted({bar.receipt_id for bar in snapshot.bars})
     data_through = sorted(
         {
@@ -387,7 +513,7 @@ def run_minute_canary(
     source_lineage_value = (
         source_lineage_sha256[0] if len(source_lineage_sha256) == 1 else None
     )
-    return {
+    receipt = {
         "status": "pass",
         "authority_tier": "observation_only",
         "evidence_use": evidence_use.value,
@@ -439,6 +565,242 @@ def run_minute_canary(
         ],
         "audit_rejections": len(audit.records()),
     }
+    if snapshot_rows is not None:
+        receipt["snapshot_rows"] = snapshot_rows
+    return receipt
+
+
+def snapshot_from_canary_receipt(
+    receipt: Mapping[str, Any],
+    *,
+    profile: MinuteDatasetProfile,
+) -> MinuteBarSnapshot:
+    """Rebuild one accepted snapshot from a v1 canary artifact without I/O.
+
+    The caller must provide the already-bound profile.  No catalog or provider
+    access is performed here; every profile, row, receipt and replay binding
+    is checked against the immutable artifact before a snapshot is returned.
+    """
+
+    value = _mapping(receipt, "minute_canary_receipt")
+    if value.get("status") != "pass":
+        raise MinuteCanaryConfigurationError("minute_canary_receipt_not_accepted")
+    if value.get("real_trading_enabled") is not False:
+        raise MinuteCanaryConfigurationError("real_trading_must_remain_disabled")
+    rows_value = _mapping(value.get("snapshot_rows"), "minute_snapshot_rows")
+    if rows_value.get("contractId") != SNAPSHOT_ROWS_CONTRACT:
+        raise MinuteCanaryConfigurationError("minute_snapshot_rows_contract_invalid")
+    items = rows_value.get("items")
+    if not isinstance(items, list) or not items:
+        raise MinuteCanaryConfigurationError("minute_snapshot_rows_items_invalid")
+    count = _positive_int(rows_value.get("count"), "minute_snapshot_rows_count")
+    if count != len(items):
+        raise MinuteCanaryConfigurationError("minute_snapshot_rows_count_mismatch")
+    rows_sha = _text(rows_value.get("sha256"), "minute_snapshot_rows_sha256")
+    if len(rows_sha) != 64 or any(c not in "0123456789abcdef" for c in rows_sha):
+        raise MinuteCanaryConfigurationError("minute_snapshot_rows_sha256_invalid")
+    if _canonical_sha256(items, "minute_snapshot_rows") != rows_sha:
+        raise MinuteCanaryConfigurationError("minute_snapshot_rows_sha256_mismatch")
+
+    try:
+        dataset_id = _text(value.get("dataset_id"), "minute_dataset_id")
+        if dataset_id != profile.dataset_id:
+            raise MinuteCanaryConfigurationError("minute_snapshot_profile_mismatch")
+        if (
+            _text(value.get("expected_catalog_version"), "minute_expected_catalog")
+            != profile.expected_catalog_version
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_profile_mismatch")
+        if (
+            _text(value.get("observed_catalog_version"), "minute_observed_catalog")
+            != profile.observed_catalog_version
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_profile_mismatch")
+        if (
+            _text(value.get("dataset_contract_fingerprint"), "minute_dataset_fingerprint")
+            != profile.dataset_contract_fingerprint
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_profile_mismatch")
+        if (
+            _text(value.get("consumer_profile_sha256"), "minute_consumer_profile")
+            != profile.consumer_profile_sha256
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_profile_mismatch")
+        row_count = _positive_int(value.get("row_count"), "minute_snapshot_row_count")
+        page_count = _positive_int(value.get("page_count"), "minute_snapshot_page_count")
+        if row_count != count:
+            raise MinuteCanaryConfigurationError("minute_snapshot_row_count_mismatch")
+        reference_symbols = value.get("reference_symbols")
+        if not isinstance(reference_symbols, list) or len(reference_symbols) != len(
+            set(reference_symbols)
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_reference_symbols_invalid")
+        reference_symbols = [
+            _text(symbol, "minute_snapshot_reference_symbol")
+            for symbol in reference_symbols
+        ]
+        if len(reference_symbols) != count:
+            raise MinuteCanaryConfigurationError("minute_snapshot_reference_symbols_invalid")
+        expected_bar_end = _aware_iso(value.get("bar_end"), "minute_snapshot_bar_end")
+        receipt_id = _text(value.get("receipt_id"), "minute_snapshot_receipt")
+        data_through = _aware_iso(value.get("data_through"), "minute_snapshot_data_through")
+        lineage_sha = _text(value.get("source_lineage_sha256"), "minute_snapshot_lineage")
+        if len(lineage_sha) != 64 or any(c not in "0123456789abcdef" for c in lineage_sha):
+            raise MinuteCanaryConfigurationError("minute_snapshot_lineage_invalid")
+        replay = _mapping(value.get("replay"), "minute_snapshot_replay")
+        if replay.get("same_observation") is not True:
+            raise MinuteCanaryConfigurationError("minute_same_observation_mismatch")
+        pagination_trace = _text(replay.get("pagination_trace_sha256"), "minute_pagination_trace")
+        first_semantic = _text(replay.get("first_semantic_sha256"), "minute_first_semantic")
+        replay_semantic = _text(replay.get("replay_semantic_sha256"), "minute_replay_semantic")
+        for field_name, digest in (
+            ("minute_pagination_trace", pagination_trace),
+            ("minute_first_semantic", first_semantic),
+            ("minute_replay_semantic", replay_semantic),
+        ):
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                raise MinuteCanaryConfigurationError(f"{field_name}_invalid")
+        if first_semantic != replay_semantic:
+            raise MinuteCanaryConfigurationError("minute_same_observation_mismatch")
+    except TypeError as exc:
+        raise MinuteCanaryConfigurationError("minute_snapshot_receipt_invalid") from exc
+
+    bars: list[MinuteBarEvidence] = []
+    for item in items:
+        row = _mapping(item, "minute_snapshot_row")
+        if frozenset(row) != _SNAPSHOT_ROW_FIELDS:
+            raise MinuteCanaryConfigurationError("minute_snapshot_row_fields_invalid")
+        for field_name in _SNAPSHOT_ROW_NUMERIC_FIELDS:
+            numeric = row.get(field_name)
+            if type(numeric) is not float or not math.isfinite(numeric):
+                raise MinuteCanaryConfigurationError(
+                    "minute_snapshot_row_numeric_not_canonical"
+                )
+        try:
+            evidence = MinuteBarEvidence(
+                symbol=_text(row.get("symbol"), "minute_snapshot_symbol").upper(),
+                bar_start=_aware_iso(row.get("bar_start"), "minute_snapshot_bar_start"),
+                bar_end=_aware_iso(row.get("bar_end"), "minute_snapshot_bar_end"),
+                open_cny=row.get("open_cny"),
+                high_cny=row.get("high_cny"),
+                low_cny=row.get("low_cny"),
+                close_cny=row.get("close_cny"),
+                volume_shares=row.get("volume_shares"),
+                amount_cny=row.get("amount_cny"),
+                previous_close_cny=row.get("previous_close_cny"),
+                suspended=row.get("suspended"),
+                market_session=_text(row.get("market_session"), "minute_snapshot_session"),
+                dataset_id=_text(row.get("dataset_id"), "minute_snapshot_dataset"),
+                catalog_version=_text(row.get("catalog_version"), "minute_snapshot_catalog"),
+                receipt_id=_text(row.get("receipt_id"), "minute_snapshot_receipt"),
+                data_through=_aware_iso(row.get("data_through"), "minute_snapshot_data_through"),
+                observed_at=_aware_iso(row.get("observed_at"), "minute_snapshot_observed_at"),
+                available_at=_aware_iso(row.get("available_at"), "minute_snapshot_available_at"),
+                decision_time=_aware_iso(row.get("decision_time"), "minute_snapshot_decision_time"),
+                source_lineage_sha256=_text(
+                    row.get("source_lineage_sha256"), "minute_snapshot_lineage"
+                ),
+                envelope_proof_sha256=_text(
+                    row.get("envelope_proof_sha256"), "minute_snapshot_envelope"
+                ),
+                source_row_sha256=_text(
+                    row.get("source_row_sha256"), "minute_snapshot_source_row"
+                ),
+                reference_evidence_sha256=_text(
+                    row.get("reference_evidence_sha256"),
+                    "minute_snapshot_reference_evidence",
+                ),
+                evidence_use=MinuteEvidenceUse(
+                    _text(row.get("evidence_use"), "minute_snapshot_evidence_use")
+                ),
+            )
+        except (MinuteDataContractError, ValueError, TypeError) as exc:
+            raise MinuteCanaryConfigurationError("minute_snapshot_row_invalid") from exc
+        if evidence.bar_end != expected_bar_end:
+            raise MinuteCanaryConfigurationError("minute_snapshot_bar_end_mismatch")
+        if (
+            evidence.dataset_id != dataset_id
+            or evidence.catalog_version != profile.observed_catalog_version
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_binding_mismatch")
+        if evidence.receipt_id != receipt_id or evidence.data_through != data_through:
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        if evidence.source_lineage_sha256 != lineage_sha:
+            raise MinuteCanaryConfigurationError("minute_snapshot_lineage_binding_mismatch")
+        bars.append(evidence)
+
+    if set(bar.symbol for bar in bars) != set(reference_symbols) or len(bars) != len(
+        reference_symbols
+    ):
+        raise MinuteCanaryConfigurationError("minute_snapshot_reference_symbols_mismatch")
+    if value.get("receipt_ids") != [receipt_id]:
+        raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+    data_through_values = value.get("data_through_values")
+    if not isinstance(data_through_values, list) or len(data_through_values) != 1:
+        raise MinuteCanaryConfigurationError("minute_snapshot_data_through_mismatch")
+    try:
+        if _aware_iso(data_through_values[0], "minute_snapshot_data_through") != data_through:
+            raise MinuteCanaryConfigurationError("minute_snapshot_data_through_mismatch")
+    except MinuteCanaryConfigurationError as exc:
+        if exc.args and exc.args[0] == "minute_snapshot_data_through_mismatch":
+            raise
+        raise MinuteCanaryConfigurationError(
+            "minute_snapshot_data_through_mismatch"
+        ) from exc
+    if value.get("source_lineage_sha256s") != [lineage_sha]:
+        raise MinuteCanaryConfigurationError("minute_snapshot_lineage_binding_mismatch")
+    legacy_rows = value.get("bars")
+    if not isinstance(legacy_rows, list) or len(legacy_rows) != len(bars):
+        raise MinuteCanaryConfigurationError("minute_snapshot_legacy_rows_mismatch")
+    for legacy, bar in zip(legacy_rows, bars):
+        legacy_row = _mapping(legacy, "minute_snapshot_legacy_row")
+        for field_name, expected in (
+            ("symbol", bar.symbol),
+            ("receipt_id", bar.receipt_id),
+            ("source_lineage_sha256", bar.source_lineage_sha256),
+            ("envelope_proof_sha256", bar.envelope_proof_sha256),
+            ("sha256", bar.sha256),
+        ):
+            if legacy_row.get(field_name) != expected:
+                raise MinuteCanaryConfigurationError(
+                    "minute_snapshot_legacy_rows_mismatch"
+                )
+        for field_name, expected in (
+            ("bar_end", bar.bar_end),
+            ("data_through", bar.data_through),
+            ("observed_at", bar.observed_at),
+        ):
+            try:
+                actual = _aware_iso(
+                    legacy_row.get(field_name),
+                    f"minute_snapshot_legacy_{field_name}",
+                )
+            except MinuteCanaryConfigurationError as exc:
+                raise MinuteCanaryConfigurationError(
+                    "minute_snapshot_legacy_rows_mismatch"
+                ) from exc
+            if actual != expected:
+                raise MinuteCanaryConfigurationError(
+                    "minute_snapshot_legacy_rows_mismatch"
+                )
+
+    try:
+        snapshot = MinuteBarSnapshot(
+            profile=profile,
+            bars=tuple(bars),
+            page_count=page_count,
+            row_count=row_count,
+            pagination_trace_sha256=pagination_trace,
+            first_semantic_sha256=first_semantic,
+            replay_semantic_sha256=replay_semantic,
+            same_observation=True,
+        )
+    except MinuteDataContractError as exc:
+        raise MinuteCanaryConfigurationError("minute_snapshot_invalid") from exc
+    snapshot_sha = _text(value.get("snapshot_sha256"), "minute_snapshot_sha256")
+    if len(snapshot_sha) != 64 or snapshot.sha256 != snapshot_sha:
+        raise MinuteCanaryConfigurationError("minute_snapshot_sha256_mismatch")
+    return snapshot
 
 
 def load_minute_snapshot(
@@ -590,9 +952,11 @@ if __name__ == "__main__":
 __all__ = [
     "MinuteCanaryConfig",
     "MinuteCanaryConfigurationError",
+    "SNAPSHOT_ROWS_CONTRACT",
     "load_minute_canary_config",
     "load_minute_snapshot",
     "load_reference_facts",
     "main",
     "run_minute_canary",
+    "snapshot_from_canary_receipt",
 ]

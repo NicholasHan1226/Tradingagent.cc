@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,7 @@ from Ashare.minute_canary import (
     load_minute_canary_config,
     load_reference_facts,
     run_minute_canary,
+    snapshot_from_canary_receipt,
 )
 from Ashare.minute_data import MinuteDataContractError, MinuteReferenceFact
 from shared.data.sharedsignals_v1 import HTTPResponse, SharedSignalsV1Client
@@ -25,8 +26,26 @@ DATASET = "fixture.cn.dataset.rt_min"
 
 
 class _Transport:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        rows: list[dict[str, Any]] | None = None,
+        max_page_size: int = 10,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.rows = rows or [
+            {
+                "ts_code": "600000.SH",
+                "time": "2026-07-28 09:35:00",
+                "open": 10.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "vol": 10_000,
+                "amount": 101_000,
+            }
+        ]
+        self.max_page_size = max_page_size
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(kwargs)
@@ -75,7 +94,7 @@ class _Transport:
                                 for field in fields
                             },
                             "limits": {
-                                "max_page_size": 10,
+                                "max_page_size": self.max_page_size,
                                 "max_lookback_days": 1,
                             },
                             "availability": {"activation_states": ["active"]},
@@ -90,18 +109,7 @@ class _Transport:
                 "catalog_version": CATALOG,
                 "request_id": f"query-{len(self.calls)}",
                 "dataset_id": DATASET,
-                "data": [
-                    {
-                        "ts_code": "600000.SH",
-                        "time": "2026-07-28 09:35:00",
-                        "open": 10.0,
-                        "high": 10.2,
-                        "low": 9.9,
-                        "close": 10.1,
-                        "vol": 10_000,
-                        "amount": 101_000,
-                    }
-                ],
+                "data": self.rows,
                 "next_cursor": None,
                 "metadata": {
                     "state": "ready",
@@ -124,7 +132,7 @@ class _Transport:
         )
 
 
-def _config() -> MinuteCanaryConfig:
+def _config(*, max_rows: int = 10, page_limit: int = 10) -> MinuteCanaryConfig:
     profile: dict[str, Any] = {
         "identity_fields": ["ts_code", "time"],
         "symbol_field": "ts_code",
@@ -145,8 +153,8 @@ def _config() -> MinuteCanaryConfig:
         "amount_multiplier_to_cny": 1,
         "price_adjustment": "raw_unadjusted",
         "max_pages": 1,
-        "max_rows": 10,
-        "page_limit": 10,
+        "max_rows": max_rows,
+        "page_limit": page_limit,
     }
     bootstrap = MinuteCanaryConfig(
         base_url="https://tradingdatas.fixture.invalid",
@@ -158,7 +166,9 @@ def _config() -> MinuteCanaryConfig:
         filters={"ts_code": {"in": ["600000.SH"]}},
         profile=profile,
     )
-    client = SharedSignalsV1Client(bootstrap.client_config(), transport=_Transport())
+    client = SharedSignalsV1Client(
+        bootstrap.client_config(), transport=_Transport(max_page_size=page_limit)
+    )
     bound = bootstrap.build_profile(client, require_declared_bindings=False)
     profile.update(
         {
@@ -216,6 +226,7 @@ def test_read_only_canary_uses_catalog_query_and_same_observation() -> None:
     assert receipt["real_trading_enabled"] is False
     assert receipt["row_count"] == 1
     assert receipt["same_observation"] is True
+    assert "snapshot_rows" not in receipt
     assert [call["method"] for call in transport.calls] == [
         "GET",
         "GET",
@@ -446,9 +457,9 @@ def test_canary_cli_passes_exact_bar_end_to_existing_entrypoint(
     )
 
     assert status == 0
-    assert json.loads(output.read_text(encoding="utf-8"))["bar_end"] == (
-        "2026-08-10T13:10:00+08:00"
-    )
+    persisted = json.loads(output.read_text(encoding="utf-8"))
+    assert persisted["bar_end"] == "2026-08-10T13:10:00+08:00"
+    assert persisted["snapshot_rows"]["count"] == 2
     assert len(transport.query_bodies) == 2
     assert "PASS" not in capsys.readouterr().out
 
@@ -597,3 +608,185 @@ def test_external_manifest_rejects_missing_catalog_version_keys(tmp_path: Path) 
         MinuteCanaryConfigurationError, match="expected_catalog_version_invalid"
     ):
         load_minute_canary_config(manifest)
+
+
+def _thirty_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "ts_code": f"{index:06d}.SZ",
+            "time": "2026-07-28 09:35:00",
+            "open": 10.0 + index,
+            "high": 10.2 + index,
+            "low": 9.9 + index,
+            "close": 10.1 + index,
+            "vol": 10_000.0 + index,
+            "amount": 101_000.0 + index,
+        }
+        for index in range(1, 31)
+    ]
+
+
+def _thirty_references() -> dict[str, MinuteReferenceFact]:
+    return {
+        row["ts_code"]: MinuteReferenceFact(
+            symbol=row["ts_code"],
+            trade_date=date(2026, 7, 28),
+            previous_close_cny=9.98 + int(row["ts_code"][:6]),
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for row in _thirty_rows()
+    }
+
+
+def test_exact_thirty_snapshot_rows_round_trip_without_second_query() -> None:
+    transport = _Transport(rows=_thirty_rows(), max_page_size=30)
+    config = _config(max_rows=30, page_limit=30)
+    references = _thirty_references()
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        trading_date=date(2026, 7, 28),
+        reference_facts=references,
+        bar_end="2026-07-28T09:35:00+08:00",
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+    profile = config.build_profile(
+        SharedSignalsV1Client(
+            config.client_config(), transport=_Transport(max_page_size=30)
+        ),
+    )
+
+    assert receipt["snapshot_rows"]["contractId"] == (
+        "tradingagent.ashare.minute_canary_snapshot_rows.v1"
+    )
+    assert receipt["snapshot_rows"]["count"] == 30
+    assert len(receipt["snapshot_rows"]["items"]) == 30
+    restored = snapshot_from_canary_receipt(receipt, profile=profile)
+    assert restored.row_count == 30
+    assert restored.sha256 == receipt["snapshot_sha256"]
+    assert [bar.symbol for bar in restored.bars] == receipt["reference_symbols"]
+    assert {bar.receipt_id for bar in restored.bars} == {receipt["receipt_id"]}
+    assert {bar.source_lineage_sha256 for bar in restored.bars} == {
+        receipt["source_lineage_sha256"]
+    }
+    assert {bar.bar_end for bar in restored.bars} == {
+        datetime.fromisoformat(receipt["bar_end"])
+    }
+    assert restored.catalog_version_drift == receipt["catalog_version_drift"]
+    assert [call["method"] for call in transport.calls] == [
+        "GET",
+        "GET",
+        "POST",
+        "POST",
+    ]
+
+
+def test_snapshot_rows_digest_binds_ohlcv_mutation() -> None:
+    transport = _Transport()
+    config = _config()
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        trading_date=date(2026, 7, 28),
+        reference_facts={
+            "600000.SH": MinuteReferenceFact(
+                symbol="600000.SH",
+                trade_date=date(2026, 7, 28),
+                previous_close_cny=9.98,
+                suspended=False,
+                evidence_sha256="a" * 64,
+            )
+        },
+        bar_end="2026-07-28T09:35:00+08:00",
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+    profile = config.build_profile(
+        SharedSignalsV1Client(config.client_config(), transport=_Transport()),
+    )
+    tampered = json.loads(json.dumps(receipt))
+    tampered["snapshot_rows"]["items"][0]["open_cny"] = 11.0
+    assert tampered["snapshot_rows"]["items"] != receipt["snapshot_rows"]["items"]
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="minute_snapshot_rows_sha256_mismatch"
+    ):
+        snapshot_from_canary_receipt(tampered, profile=profile)
+
+
+def test_legacy_timestamp_offsets_compare_by_instant() -> None:
+    transport = _Transport()
+    config = _config()
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        trading_date=date(2026, 7, 28),
+        reference_facts={
+            "600000.SH": MinuteReferenceFact(
+                symbol="600000.SH",
+                trade_date=date(2026, 7, 28),
+                previous_close_cny=9.98,
+                suspended=False,
+                evidence_sha256="a" * 64,
+            )
+        },
+        bar_end="2026-07-28T09:35:00+08:00",
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+    profile = config.build_profile(
+        SharedSignalsV1Client(config.client_config(), transport=_Transport()),
+    )
+    equivalent = json.loads(json.dumps(receipt))
+    observed = datetime.fromisoformat(equivalent["bars"][0]["observed_at"])
+    equivalent["bars"][0]["observed_at"] = observed.astimezone(
+        timezone.utc
+    ).isoformat()
+    through = datetime.fromisoformat(equivalent["data_through_values"][0])
+    equivalent["data_through_values"] = [through.astimezone(timezone.utc).isoformat()]
+    assert snapshot_from_canary_receipt(equivalent, profile=profile).sha256 == receipt[
+        "snapshot_sha256"
+    ]
+
+    different = json.loads(json.dumps(equivalent))
+    different["bars"][0]["observed_at"] = (
+        observed + timedelta(minutes=1)
+    ).isoformat()
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="minute_snapshot_legacy_rows_mismatch"
+    ):
+        snapshot_from_canary_receipt(different, profile=profile)
+
+
+def test_snapshot_rows_require_one_exact_slot_and_universe() -> None:
+    row = _thirty_rows()[0] | {"ts_code": "000333.SZ"}
+    transport = _Transport(rows=[row])
+    config = _config()
+    with pytest.raises(
+        MinuteDataContractError, match="minute_reference_universe_mismatch"
+    ):
+        run_minute_canary(
+            config,
+            token_file=Path("/run/secrets/fixture.token"),
+            decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            trading_date=date(2026, 7, 28),
+            reference_facts={
+                "000333.SZ": MinuteReferenceFact(
+                    symbol="000333.SZ",
+                    trade_date=date(2026, 7, 28),
+                    previous_close_cny=9.98,
+                    suspended=False,
+                    evidence_sha256="a" * 64,
+                ),
+                "600000.SH": MinuteReferenceFact(
+                    symbol="600000.SH",
+                    trade_date=date(2026, 7, 28),
+                    previous_close_cny=9.98,
+                    suspended=False,
+                    evidence_sha256="a" * 64,
+                ),
+            },
+            bar_end="2026-07-28T09:35:00+08:00",
+            transport_factory=lambda *args, **kwargs: transport,
+        )
