@@ -4,6 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _minute_second_points(timer: str) -> list[int]:
+    calendar = next(
+        line.split("=", 1)[1]
+        for line in timer.splitlines()
+        if line.startswith("OnCalendar=")
+    )
+    clock = calendar.split()[1]
+    _, minute_spec, second = clock.split(":")
+    start, step = (int(value) for value in minute_spec.split("/"))
+    return [minute * 60 + int(second) for minute in range(start, 60, step)]
+
+
 def test_round_trip_service_is_sim_only_and_keeps_g2_read_only() -> None:
     service = (
         ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-delayed-paper.service"
@@ -112,3 +124,30 @@ def test_g5_services_bind_only_the_g5_manifest_and_keep_g4_read_only() -> None:
     assert "ReadWritePaths=" not in health
     assert "IPAddressDeny=any" in health
     assert "RestrictAddressFamilies=AF_UNIX" in health
+
+
+def test_g5_health_timer_runs_between_observed_core_cadences() -> None:
+    core_timer = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g5-delayed-paper.timer"
+    ).read_text()
+    health_timer = (
+        ROOT / "Crypto/systemd/tradingagent-crypto-round-trip-g5-health.timer"
+    ).read_text()
+
+    core_points = _minute_second_points(core_timer)
+    health_points = _minute_second_points(health_timer)
+    assert "OnCalendar=*-*-* *:0/5:55" in core_timer
+    assert "OnCalendar=*-*-* *:4/15:30" in health_timer
+    assert health_points == [
+        4 * 60 + 30,
+        19 * 60 + 30,
+        34 * 60 + 30,
+        49 * 60 + 30,
+    ]
+
+    for point in health_points:
+        previous_core = max(
+            candidate for candidate in core_points if candidate < point
+        )
+        next_core = min(candidate for candidate in core_points if candidate > point)
+        assert previous_core < point < next_core
