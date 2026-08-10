@@ -31,7 +31,13 @@ from .minute_auto_runner import (
 )
 from .minute_data import MAX_DELAYED_PAPER_LATENCY, SHANGHAI
 from .minute_paper_runner import load_minute_research_universe
-from .minute_session_initializer import initialize_minute_session
+from .minute_session_initializer import (
+    SCALE500_COHORT_COUNT,
+    SCALE500_COHORT_SIZE,
+    SCALE500_REFERENCE_KEY,
+    build_scale500_reference_envelope,
+    initialize_minute_session,
+)
 from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
@@ -340,6 +346,89 @@ def _parse_bar_end_any(value: str) -> datetime:
     return parsed.astimezone(SHANGHAI)
 
 
+def _validate_scale500_reference_fragment(
+    value: object,
+    *,
+    universe_symbols: frozenset[str],
+    universe_sha256: str,
+    trading_date: str,
+    expected_bar_end: str | None,
+) -> None:
+    if not isinstance(value, Mapping):
+        raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+    if (
+        value.get("universe_sha256") != universe_sha256
+        or value.get("max_rows") != EXPECTED_UNIVERSE_COUNT
+        or value.get("row_count") != EXPECTED_UNIVERSE_COUNT
+        or value.get("cohort_count") != SCALE500_COHORT_COUNT
+        or value.get("cohort_size") != SCALE500_COHORT_SIZE
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+    raw_target = value.get("target_bar_end")
+    if not isinstance(raw_target, str):
+        raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+    try:
+        target = _parse_bar_end_any(raw_target)
+    except ValueError as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_reference_bundle_invalid"
+        ) from exc
+    if (
+        target.date().isoformat() != trading_date
+        or target.strftime("%Y-%m-%d %H:%M:%S") != raw_target
+        or expected_bar_end is not None
+        and raw_target != expected_bar_end
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+    cohorts = value.get("cohorts")
+    if not isinstance(cohorts, list) or len(cohorts) != SCALE500_COHORT_COUNT:
+        raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+    seen: set[str] = set()
+    for index, cohort in enumerate(cohorts):
+        if not isinstance(cohort, Mapping):
+            raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+        symbols = cohort.get("symbols")
+        if (
+            cohort.get("cohort_id") != f"scale500-{index:03d}"
+            or cohort.get("row_count") != SCALE500_COHORT_SIZE
+            or cohort.get("bar_end") != raw_target
+            or not isinstance(symbols, list)
+            or len(symbols) != SCALE500_COHORT_SIZE
+            or any(not isinstance(symbol, str) for symbol in symbols)
+            or len(set(symbols)) != SCALE500_COHORT_SIZE
+            or seen.intersection(symbols)
+        ):
+            raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+        seen.update(symbols)
+        for field in (
+            "receipt_id",
+            "source_lineage_sha256",
+            "snapshot_sha256",
+        ):
+            field_value = cohort.get(field)
+            if not isinstance(field_value, str) or not field_value.strip():
+                raise MinuteScale500RuntimeError(
+                    "minute_scale500_reference_bundle_invalid"
+                )
+        replay = cohort.get("replay")
+        if (
+            not isinstance(replay, Mapping)
+            or replay.get("same_observation") is not True
+            or any(
+                not isinstance(replay.get(name), str)
+                or not _SHA256_PATTERN.fullmatch(replay[name])
+                for name in (
+                    "pagination_trace_sha256",
+                    "first_semantic_sha256",
+                    "replay_semantic_sha256",
+                )
+            )
+        ):
+            raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+    if seen != set(universe_symbols):
+        raise MinuteScale500RuntimeError("minute_scale500_reference_bundle_invalid")
+
+
 def _validate_late_start_canary(
     *,
     canary_receipt: Path | str | None,
@@ -646,6 +735,8 @@ def _validate_published_session(
     trading_date: str,
     universe_sha256: str,
     require_no_state_bundle: bool,
+    expected_bar_end: str | None = None,
+    require_scale500_reference: bool = False,
 ) -> None:
     day_root = scale_root / trading_date.replace("-", "")
     manifest_path = day_root / "minute-manifest.json"
@@ -684,6 +775,18 @@ def _validate_published_session(
         or hashlib.sha256(_canonical_json(universe)).hexdigest() != universe_sha256
     ):
         raise MinuteScale500RuntimeError("minute_scale500_universe_digest_mismatch")
+    if require_scale500_reference or expected_bar_end is not None:
+        _validate_scale500_reference_fragment(
+            manifest.get(SCALE500_REFERENCE_KEY),
+            universe_symbols=frozenset(
+                row.get("symbol")
+                for row in universe
+                if isinstance(row, Mapping) and isinstance(row.get("symbol"), str)
+            ),
+            universe_sha256=universe_sha256,
+            trading_date=trading_date,
+            expected_bar_end=expected_bar_end,
+        )
     expected_symbols = {
         row.get("symbol") for row in universe if isinstance(row, Mapping)
     }
@@ -705,6 +808,8 @@ def initialize_scale500_session(
     universe_source: Path | str,
     expected_universe_sha256: str,
     now: datetime,
+    target_bar_end: str | None = None,
+    scale500_cohort_receipts: tuple[Path | str, ...] | list[Path | str] | None = None,
     initializer: Initializer = initialize_minute_session,
 ) -> dict[str, object]:
     """Initialize only the isolated 500-symbol session and acceptance gate."""
@@ -730,6 +835,8 @@ def initialize_scale500_session(
             token_file=token,
             now=now,
             universe_source=universe_path,
+            target_bar_end=target_bar_end,
+            scale500_cohort_receipts=scale500_cohort_receipts,
         )
         if (
             result.get("status") != "pass"
@@ -750,6 +857,8 @@ def initialize_scale500_session(
             trading_date=trading_date,
             universe_sha256=universe_sha256,
             require_no_state_bundle=True,
+            expected_bar_end=target_bar_end,
+            require_scale500_reference=target_bar_end is not None,
         )
         gate_path = _gate_path(scale, trading_date)
         if gate_path.exists():
@@ -859,6 +968,7 @@ def run_scale500_once(
     universe_source: Path | str,
     expected_universe_sha256: str,
     now: datetime,
+    target_bar_end: str | None = None,
     allow_late_start: bool = False,
     canary_receipt: Path | str | None = None,
     runner: Runner = run_current_delayed_minute_paper,
@@ -896,6 +1006,18 @@ def run_scale500_once(
             "real_trading_enabled": False,
         }
     trading_date = target.astimezone(SHANGHAI).date().isoformat()
+    expected_target = target.strftime("%Y-%m-%d %H:%M:%S")
+    if target_bar_end is not None:
+        try:
+            supplied_target = _parse_bar_end_any(target_bar_end).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except ValueError as exc:
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_target_bar_end_invalid"
+            ) from exc
+        if supplied_target != expected_target:
+            raise MinuteScale500RuntimeError("minute_scale500_target_bar_end_mismatch")
     gate_path = _gate_path(scale, trading_date)
     try:
         gate = _load_gate(
@@ -930,6 +1052,8 @@ def run_scale500_once(
             trading_date=trading_date,
             universe_sha256=universe_sha256,
             require_no_state_bundle=False,
+            expected_bar_end=target_bar_end,
+            require_scale500_reference=target_bar_end is not None,
         )
         result = runner(
             state_root=scale,
@@ -1056,6 +1180,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Required secret-free delayed-paper canary receipt for --allow-late-start.",
     )
     parser.add_argument(
+        "--target-bar-end",
+        help="Exact bar_end bound by the initializer's five-cohort reference envelope",
+    )
+    parser.add_argument(
+        "--scale500-cohort-receipt",
+        action="append",
+        type=Path,
+        dest="scale500_cohort_receipts",
+        help="One of exactly five existing 100-symbol canary receipts for initialize",
+    )
+    parser.add_argument(
         "--allow-late-start",
         action="store_true",
         help="Permit one partial-session run from the exact current completed bar.",
@@ -1079,10 +1214,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "initialize":
             if args.allow_late_start:
                 raise MinuteScale500RuntimeError("minute_scale500_late_start_run_only")
-            result = initialize_scale500_session(**kwargs)
+            result = initialize_scale500_session(
+                **kwargs,
+                target_bar_end=args.target_bar_end,
+                scale500_cohort_receipts=(
+                    tuple(args.scale500_cohort_receipts)
+                    if args.scale500_cohort_receipts is not None
+                    else None
+                ),
+            )
         else:
             result = run_scale500_once(
                 **kwargs,
+                target_bar_end=args.target_bar_end,
                 allow_late_start=args.allow_late_start,
                 canary_receipt=args.canary_receipt,
             )

@@ -11,12 +11,13 @@ bundle.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sys
 from typing import Any
@@ -28,6 +29,7 @@ from .minute_canary import (
 )
 from .minute_paper_runner import load_minute_research_universe
 from .minute_data import SHANGHAI
+from .minute_auto_runner import session_bar_ends
 from shared.data.evidence_gate import (
     DataEvidenceGate,
     DatasetEvidencePolicy,
@@ -57,6 +59,10 @@ MAX_SESSION_QUERY_LIMIT = 500
 MAX_QUERY_IN_VALUES = 100
 MAX_DAILY_PAGES_PER_BATCH = 5
 TRACKING_UNIVERSE_CONTRACT_ID = "tradingagent.trading_copilot_tracking_universe.v1"
+SCALE500_COHORT_COUNT = 5
+SCALE500_COHORT_SIZE = 100
+SCALE500_REFERENCE_KEY = "scale500_reference"
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 TransportFactory = Callable[..., HTTPTransport]
 
 
@@ -81,6 +87,202 @@ def _canonical_json(value: object) -> str:
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _parse_scale500_bar_end(value: object, *, trading_date: date) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise MinuteSessionInitializerError("minute_session_scale500_bar_end_invalid")
+    raw = value.strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MinuteSessionInitializerError(
+            "minute_session_scale500_bar_end_invalid"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI)
+    local = parsed.astimezone(SHANGHAI)
+    if local.date() != trading_date or local not in session_bar_ends(trading_date):
+        raise MinuteSessionInitializerError("minute_session_scale500_bar_end_invalid")
+    return local.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _load_scale500_receipt(path: Path) -> Mapping[str, Any]:
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise MinuteSessionInitializerError(
+            "minute_session_scale500_cohort_receipt_invalid"
+        )
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MinuteSessionInitializerError(
+            "minute_session_scale500_cohort_receipt_invalid"
+        ) from exc
+    if not isinstance(raw, Mapping):
+        raise MinuteSessionInitializerError(
+            "minute_session_scale500_cohort_receipt_invalid"
+        )
+    return raw
+
+
+def build_scale500_reference_envelope(
+    *,
+    universe_symbols: Sequence[str],
+    universe_sha256: str,
+    trading_date: date,
+    target_bar_end: str,
+    cohort_receipts: Sequence[Path | str],
+) -> dict[str, Any]:
+    """Bind five existing 100-symbol canary receipts to one exact 500 slot.
+
+    This is an offline validator only.  It reads already-retained canary JSON,
+    never calls TradingDatas, and stores only receipt/lineage/replay bindings
+    in the manifest (not provider rows or payloads).
+    """
+
+    symbols = tuple(sorted(universe_symbols))
+    if (
+        len(symbols) != SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE
+        or len(set(symbols)) != len(symbols)
+        or not _SHA256_PATTERN.fullmatch(universe_sha256)
+    ):
+        raise MinuteSessionInitializerError("minute_session_scale500_universe_invalid")
+    expected_bar_end = _parse_scale500_bar_end(
+        target_bar_end, trading_date=trading_date
+    )
+    paths = tuple(Path(value) for value in cohort_receipts)
+    if len(paths) != SCALE500_COHORT_COUNT:
+        raise MinuteSessionInitializerError(
+            "minute_session_scale500_cohort_count_invalid"
+        )
+    cohorts: list[dict[str, Any]] = []
+    for index, path in enumerate(paths):
+        receipt = _load_scale500_receipt(path)
+        try:
+            receipt_bar_end = _parse_scale500_bar_end(
+                receipt.get("bar_end"), trading_date=trading_date
+            )
+        except MinuteSessionInitializerError as exc:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_cohort_receipt_mismatch"
+            ) from exc
+        expected_symbols = list(
+            symbols[index * SCALE500_COHORT_SIZE : (index + 1) * SCALE500_COHORT_SIZE]
+        )
+        if (
+            receipt.get("status") != "pass"
+            or receipt.get("authority_tier") != "observation_only"
+            or receipt.get("evidence_use") != "delayed_paper"
+            or receipt.get("real_trading_enabled") is not False
+            or receipt_bar_end != expected_bar_end
+            or receipt.get("row_count") != SCALE500_COHORT_SIZE
+            or receipt.get("same_observation") is not True
+            or receipt.get("lineage_complete") is not True
+            or receipt.get("audit_rejections") != 0
+            or receipt.get("reference_symbols") != expected_symbols
+            or receipt.get("dataset_id") != MINUTE_DATASET_ID
+        ):
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_cohort_receipt_mismatch"
+            )
+        receipt_ids = receipt.get("receipt_ids")
+        lineages = receipt.get("source_lineage_sha256s")
+        replay = receipt.get("replay")
+        if (
+            not isinstance(receipt.get("receipt_id"), str)
+            or not receipt["receipt_id"].strip()
+            or not isinstance(receipt_ids, list)
+            or not receipt_ids
+            or any(not isinstance(value, str) or not value.strip() for value in receipt_ids)
+            or not isinstance(receipt.get("source_lineage_sha256"), str)
+            or not _SHA256_PATTERN.fullmatch(receipt["source_lineage_sha256"])
+            or not isinstance(lineages, list)
+            or not lineages
+            or any(
+                not isinstance(value, str) or not _SHA256_PATTERN.fullmatch(value)
+                for value in lineages
+            )
+            or not isinstance(receipt.get("snapshot_sha256"), str)
+            or not _SHA256_PATTERN.fullmatch(receipt["snapshot_sha256"])
+            or not isinstance(replay, Mapping)
+            or replay.get("same_observation") is not True
+            or any(
+                not isinstance(replay.get(name), str)
+                or not _SHA256_PATTERN.fullmatch(replay[name])
+                for name in (
+                    "pagination_trace_sha256",
+                    "first_semantic_sha256",
+                    "replay_semantic_sha256",
+                )
+            )
+        ):
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_cohort_proof_invalid"
+            )
+        bars = receipt.get("bars")
+        if not isinstance(bars, list) or len(bars) != SCALE500_COHORT_SIZE:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_cohort_rows_invalid"
+            )
+        for bar in bars:
+            try:
+                bar_end = _parse_scale500_bar_end(
+                    bar.get("bar_end") if isinstance(bar, Mapping) else None,
+                    trading_date=trading_date,
+                )
+            except MinuteSessionInitializerError as exc:
+                raise MinuteSessionInitializerError(
+                    "minute_session_scale500_cohort_rows_invalid"
+                ) from exc
+            if (
+                not isinstance(bar, Mapping)
+                or bar_end != expected_bar_end
+                or not isinstance(bar.get("symbol"), str)
+                or not isinstance(bar.get("receipt_id"), str)
+                or not bar["receipt_id"].strip()
+                or not isinstance(bar.get("source_lineage_sha256"), str)
+                or not _SHA256_PATTERN.fullmatch(bar["source_lineage_sha256"])
+                or not isinstance(bar.get("envelope_proof_sha256"), str)
+                or not _SHA256_PATTERN.fullmatch(bar["envelope_proof_sha256"])
+            ):
+                raise MinuteSessionInitializerError(
+                    "minute_session_scale500_cohort_rows_invalid"
+                )
+        if [bar["symbol"] for bar in bars] != expected_symbols:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_cohort_rows_invalid"
+            )
+        cohorts.append(
+            {
+                "cohort_id": f"scale500-{index:03d}",
+                "symbols": expected_symbols,
+                "row_count": SCALE500_COHORT_SIZE,
+                "bar_end": expected_bar_end,
+                "receipt_id": receipt["receipt_id"],
+                "receipt_ids": list(receipt_ids),
+                "source_lineage_sha256": receipt["source_lineage_sha256"],
+                "source_lineage_sha256s": list(lineages),
+                "snapshot_sha256": receipt["snapshot_sha256"],
+                "replay": {
+                    name: replay[name]
+                    for name in (
+                        "same_observation",
+                        "pagination_trace_sha256",
+                        "first_semantic_sha256",
+                        "replay_semantic_sha256",
+                    )
+                },
+            }
+        )
+    return {
+        "target_bar_end": expected_bar_end,
+        "universe_sha256": universe_sha256,
+        "max_rows": SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE,
+        "row_count": SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE,
+        "cohort_count": SCALE500_COHORT_COUNT,
+        "cohort_size": SCALE500_COHORT_SIZE,
+        "cohorts": cohorts,
+    }
 
 
 def _runtime_failure_code(error: Exception) -> str:
@@ -452,6 +654,8 @@ def initialize_minute_session(
     universe_source: Path | str | None = None,
     bootstrap_manifest: Path | str | None = None,
     tracking_universe_output: Path | str | None = None,
+    target_bar_end: str | None = None,
+    scale500_cohort_receipts: Sequence[Path | str] | None = None,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -534,6 +738,24 @@ def initialize_minute_session(
     ):
         raise MinuteSessionInitializerError("minute_session_universe_ineligible")
     symbols = tuple(sorted(universe.instruments))
+
+    scale500_reference = None
+    if target_bar_end is not None or scale500_cohort_receipts is not None:
+        if target_bar_end is None or scale500_cohort_receipts is None:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_reference_incomplete"
+            )
+        if len(symbols) != SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_universe_invalid"
+            )
+        scale500_reference = build_scale500_reference_envelope(
+            universe_symbols=symbols,
+            universe_sha256=_sha256(universe_raw),
+            trading_date=target,
+            target_bar_end=target_bar_end,
+            cohort_receipts=scale500_cohort_receipts,
+        )
 
     transport = transport_factory(
         transport_id,
@@ -753,6 +975,8 @@ def initialize_minute_session(
         "profile": bound_profile,
         "universe_sha256": _sha256(universe_raw),
     }
+    if scale500_reference is not None:
+        manifest[SCALE500_REFERENCE_KEY] = scale500_reference
     reused = _publish_day(
         state_root=root,
         target=target,
@@ -788,6 +1012,12 @@ def initialize_minute_session(
         "state_bundle_created": not reused,
         "tracking_universe_published": tracking_universe_count is not None,
         "tracking_universe_symbol_count": tracking_universe_count,
+        "target_bar_end": (
+            None if scale500_reference is None else scale500_reference["target_bar_end"]
+        ),
+        "scale500_reference_sha256": (
+            None if scale500_reference is None else _sha256(scale500_reference)
+        ),
         "capital_authority": False,
         "execution_authority": False,
         "real_trading_enabled": False,
@@ -818,6 +1048,17 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional absolute TradingCopilot symbol/name projection output",
     )
+    parser.add_argument(
+        "--target-bar-end",
+        help="Exact delayed-paper bar_end bound to five retained 100-symbol receipts",
+    )
+    parser.add_argument(
+        "--scale500-cohort-receipt",
+        action="append",
+        type=Path,
+        dest="scale500_cohort_receipts",
+        help="One of exactly five existing 100-symbol canary receipts",
+    )
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
     try:
@@ -847,6 +1088,8 @@ def main(argv: list[str] | None = None) -> int:
             universe_source=configured_universe_source,
             bootstrap_manifest=args.bootstrap_manifest,
             tracking_universe_output=configured_tracking_universe_output,
+            target_bar_end=args.target_bar_end,
+            scale500_cohort_receipts=args.scale500_cohort_receipts,
         )
     except MinuteSessionInitializerError as exc:
         print(f"minute session initializer failed closed: {exc}", file=sys.stderr)
@@ -876,6 +1119,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "MinuteSessionInitializerError",
+    "build_scale500_reference_envelope",
     "initialize_minute_session",
     "main",
 ]

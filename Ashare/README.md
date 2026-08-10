@@ -563,6 +563,20 @@ calendar and previous-session daily references through formal TradingDatas and
 publishes no state bundle. Post-close minute rows and a prior 30-symbol bundle
 are forbidden as opening evidence.
 
+For a Controller-held next-window transition, `initialize` may additionally
+receive one explicit `--target-bar-end` and exactly five repeated
+`--scale500-cohort-receipt` arguments. Each receipt must be an existing
+`minute_canary` observation-only, delayed-paper result for one deterministic
+100-symbol slice of the frozen 500 set. The initializer normalizes the canary's
+timezone-bearing ISO `bar_end`, requires all five receipts and all 500 embedded
+bars to bind the same formal session slot, and records only their secret-free
+symbol, receipt, lineage, snapshot, and replay bindings in
+`minute-manifest.json` (never provider rows). Mixed slots, later-bar
+selection, overlap, missing/extra/duplicate identities, incomplete lineage,
+replay drift, a non-500 `max_rows`, or any partial cohort fails closed. This is
+session preparation only; the two adjacent exact 500/500 observation gate still
+applies before either Scale500 timer may be enabled.
+
 Normally, the first accepted scale observations must be the adjacent 09:35 and
 09:40 500/500 bars. A one-time, manual `run --allow-late-start` is the only
 exception: it can start only from the runner's exact current completed formal
