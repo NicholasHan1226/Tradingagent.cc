@@ -731,6 +731,16 @@ pagination/identity checks and the full minute Evidence Gate, then writes a
 0600 observation-only receipt. It cannot create candidates, orders, fills,
 capital entries, schedules or trading authority.
 
+For a successful exact-slot canary, the same receipt also carries the
+versioned `snapshot_rows` object (`tradingagent.ashare.minute_canary_snapshot_rows.v1`).
+Its canonical rows preserve the accepted OHLCV/reference fields and each
+receipt, bar-end, data-through, lineage, replay and catalog binding; the row
+count and SHA-256 are checked before the atomic write. This is still an
+observation-only artifact and does not imply current, paper, Scale500 or
+execution readiness. Older receipts remain readable through their existing
+metadata fields but cannot be reconstructed as complete snapshots without the
+new row contract.
+
 Example after a formal non-secret TradingDatas handoff:
 
 ```bash
