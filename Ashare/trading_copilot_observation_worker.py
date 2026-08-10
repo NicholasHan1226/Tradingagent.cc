@@ -31,12 +31,21 @@ from Ashare.event_evidence import (
     write_event_evidence_batch_artifact,
 )
 from Ashare.minute_canary import (
+    MinuteCanaryConfigurationError,
     load_minute_canary_config,
     load_minute_snapshot,
     load_reference_facts,
+    snapshot_from_canary_receipt,
 )
 from Ashare.minute_auto_runner import PROVIDER_AVAILABILITY_LAG, session_bar_ends
-from Ashare.minute_data import MinuteBarEvidence, MinuteBarSnapshot, MinuteEvidenceUse
+from Ashare.minute_data import (
+    MinuteBarEvidence,
+    MinuteBarSnapshot,
+    MinuteDataContractError,
+    MinuteDatasetProfile,
+    MinuteEvidenceUse,
+    MinuteTimestampSemantics,
+)
 from Ashare.trading_copilot_projection import (
     BATCH_INPUT_CONTRACT,
     FIXED_SOURCE_TRANSPORT,
@@ -751,6 +760,273 @@ def _receipt_pairs(bars: Sequence[MinuteBarEvidence]) -> list[dict[str, str]]:
     ]
 
 
+_OFFLINE_AUTHORITY_FLAGS = (
+    "candidate_eligible",
+    "execution_eligible",
+    "training_eligible",
+    "promotion_eligible",
+    "capital_authority",
+    "execution_authority",
+    "risk_authority",
+    "position_authority",
+    "real_trading_enabled",
+    "candidateEligible",
+    "executionEligible",
+    "trainingEligible",
+    "promotionEligible",
+    "capitalAuthority",
+    "executionAuthority",
+    "riskAuthority",
+    "positionAuthority",
+    "realTradingEnabled",
+)
+
+
+def _reject_offline_authority_flags(value: object, reason: str) -> None:
+    if isinstance(value, Mapping):
+        if any(value.get(field_name) is True for field_name in _OFFLINE_AUTHORITY_FLAGS):
+            raise TradingCopilotObservationError(reason)
+        for nested in value.values():
+            _reject_offline_authority_flags(nested, reason)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            _reject_offline_authority_flags(nested, reason)
+
+
+def _offline_timestamp(value: object, reason: str) -> datetime:
+    raw = _text(value, reason)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise TradingCopilotObservationError(reason) from exc
+    return _aware(parsed, reason)
+
+
+def _offline_profile_from_manifest(
+    config: Any,
+    receipt: Mapping[str, Any],
+) -> MinuteDatasetProfile:
+    """Rebuild the already-bound minute profile without catalog access.
+
+    Offline projection is allowed only when the manifest carries the complete
+    catalog-derived profile that the live canary used.  A partial manifest is
+    not upgraded with local defaults or inferred operators.
+    """
+
+    values = _mapping(config.profile, "copilot_offline_minute_profile_invalid")
+    expected_catalog = _text(
+        config.expected_catalog_version,
+        "copilot_offline_minute_profile_invalid",
+    )
+    if _text(receipt.get("expected_catalog_version"), "copilot_offline_profile_binding_invalid") != expected_catalog:
+        raise TradingCopilotObservationError("copilot_offline_profile_binding_invalid")
+    observed_catalog = _text(
+        receipt.get("observed_catalog_version"),
+        "copilot_offline_profile_binding_invalid",
+    )
+    if _text(values.get("observed_catalog_version"), "copilot_offline_minute_profile_invalid") != observed_catalog:
+        raise TradingCopilotObservationError("copilot_offline_profile_binding_invalid")
+
+    def _strings(name: str, *, nonempty: bool = True) -> tuple[str, ...]:
+        raw = values.get(name)
+        if not isinstance(raw, (list, tuple)) or (nonempty and not raw):
+            raise TradingCopilotObservationError("copilot_offline_minute_profile_invalid")
+        result = tuple(
+            _text(item, "copilot_offline_minute_profile_invalid") for item in raw
+        )
+        if len(result) != len(set(result)):
+            raise TradingCopilotObservationError("copilot_offline_minute_profile_invalid")
+        return result
+
+    raw_operators = values.get("filter_operators")
+    if not isinstance(raw_operators, Mapping):
+        raise TradingCopilotObservationError("copilot_offline_minute_profile_invalid")
+    operators: list[tuple[str, tuple[str, ...]]] = []
+    for field_name in sorted(raw_operators):
+        field = _text(field_name, "copilot_offline_minute_profile_invalid")
+        raw_values = raw_operators[field_name]
+        if not isinstance(raw_values, (list, tuple)) or not raw_values:
+            raise TradingCopilotObservationError("copilot_offline_minute_profile_invalid")
+        normalized = tuple(
+            _text(item, "copilot_offline_minute_profile_invalid")
+            for item in raw_values
+        )
+        if len(normalized) != len(set(normalized)):
+            raise TradingCopilotObservationError("copilot_offline_minute_profile_invalid")
+        operators.append((field, normalized))
+
+    try:
+        profile = MinuteDatasetProfile(
+            expected_catalog_version=expected_catalog,
+            observed_catalog_version=observed_catalog,
+            dataset_id=_text(config.dataset_id, "copilot_offline_minute_profile_invalid"),
+            schema_major=values["schema_major"],
+            default_fields=_strings("default_fields"),
+            default_order=_strings("default_order", nonempty=False),
+            filter_operators=tuple(operators),
+            dataset_contract_fingerprint=_text(
+                values.get("dataset_contract_fingerprint"),
+                "copilot_offline_minute_profile_invalid",
+            ),
+            consumer_profile_sha256=_text(
+                values.get("consumer_profile_sha256"),
+                "copilot_offline_minute_profile_invalid",
+            ),
+            identity_fields=_strings("identity_fields"),
+            symbol_field=_text(values.get("symbol_field"), "copilot_offline_minute_profile_invalid"),
+            timestamp_field=_text(values.get("timestamp_field"), "copilot_offline_minute_profile_invalid"),
+            open_field=_text(values.get("open_field"), "copilot_offline_minute_profile_invalid"),
+            high_field=_text(values.get("high_field"), "copilot_offline_minute_profile_invalid"),
+            low_field=_text(values.get("low_field"), "copilot_offline_minute_profile_invalid"),
+            close_field=_text(values.get("close_field"), "copilot_offline_minute_profile_invalid"),
+            volume_field=_text(values.get("volume_field"), "copilot_offline_minute_profile_invalid"),
+            amount_field=_text(values.get("amount_field"), "copilot_offline_minute_profile_invalid"),
+            previous_close_field=(
+                None
+                if values.get("previous_close_field") is None
+                else _text(values.get("previous_close_field"), "copilot_offline_minute_profile_invalid")
+            ),
+            suspension_field=(
+                None
+                if values.get("suspension_field") is None
+                else _text(values.get("suspension_field"), "copilot_offline_minute_profile_invalid")
+            ),
+            frequency_field=(
+                None
+                if values.get("frequency_field") is None
+                else _text(values.get("frequency_field"), "copilot_offline_minute_profile_invalid")
+            ),
+            frequency_value=(
+                None
+                if values.get("frequency_value") is None
+                else _text(values.get("frequency_value"), "copilot_offline_minute_profile_invalid")
+            ),
+            timestamp_format=_text(values.get("timestamp_format"), "copilot_offline_minute_profile_invalid"),
+            timestamp_semantics=MinuteTimestampSemantics(
+                _text(values.get("timestamp_semantics"), "copilot_offline_minute_profile_invalid")
+            ),
+            volume_multiplier_to_shares=values["volume_multiplier_to_shares"],
+            amount_multiplier_to_cny=values["amount_multiplier_to_cny"],
+            price_adjustment=_text(values.get("price_adjustment"), "copilot_offline_minute_profile_invalid"),
+            max_pages=values["max_pages"],
+            max_rows=values["max_rows"],
+            page_limit=values["page_limit"],
+        )
+    except (KeyError, MinuteDataContractError, TypeError, ValueError) as exc:
+        raise TradingCopilotObservationError(
+            "copilot_offline_minute_profile_invalid"
+        ) from exc
+    if profile.dataset_contract_fingerprint != _text(
+        receipt.get("dataset_contract_fingerprint"),
+        "copilot_offline_profile_binding_invalid",
+    ) or profile.consumer_profile_sha256 != _text(
+        receipt.get("consumer_profile_sha256"),
+        "copilot_offline_profile_binding_invalid",
+    ):
+        raise TradingCopilotObservationError("copilot_offline_profile_binding_invalid")
+    return profile
+
+
+def build_offline_projection_batch(
+    *,
+    canary_receipt_path: Path | str,
+    minute_manifest_path: Path | str,
+    reference_facts_path: Path | str,
+    company_facts_path: Path | str,
+    activity_authorities_path: Path | str,
+    generated_at: datetime,
+    valid_until: datetime,
+    event_artifact_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Build one v2 batch from retained, receipt-bound files only.
+
+    This function deliberately has no token, transport, provider, or publisher
+    input.  It is the only offline bridge from a future exact-slot canary to
+    ``build_projection_batch``; all inputs are validated before the builder is
+    called and only the caller writes the resulting batch.
+    """
+
+    canary = _load_json(
+        Path(canary_receipt_path), "copilot_offline_canary_receipt_invalid"
+    )
+    _reject_offline_authority_flags(
+        canary, "copilot_offline_trading_authority_present"
+    )
+    if canary.get("authority_tier") != "observation_only":
+        raise TradingCopilotObservationError("copilot_offline_canary_authority_invalid")
+    if "snapshot_rows" not in canary:
+        raise TradingCopilotObservationError("copilot_offline_canary_snapshot_rows_required")
+    config = load_minute_canary_config(Path(minute_manifest_path))
+    profile = _offline_profile_from_manifest(config, canary)
+    try:
+        reference_facts = load_reference_facts(Path(reference_facts_path))
+        snapshot = snapshot_from_canary_receipt(canary, profile=profile)
+    except (MinuteCanaryConfigurationError, ValueError) as exc:
+        raise TradingCopilotObservationError(str(exc)) from exc
+    snapshot_symbols = {bar.symbol for bar in snapshot.bars}
+    if snapshot_symbols != set(reference_facts):
+        raise TradingCopilotObservationError("copilot_offline_symbol_set_mismatch")
+    minute_data_through = max(bar.data_through for bar in snapshot.bars)
+
+    company_facts = load_company_facts(Path(company_facts_path))
+    if set(company_facts) != snapshot_symbols:
+        raise TradingCopilotObservationError("copilot_offline_company_symbol_set_mismatch")
+    for company in company_facts.values():
+        _reject_offline_authority_flags(
+            company, "copilot_offline_company_authority_present"
+        )
+
+    activity_authorities = load_activity_authorities(Path(activity_authorities_path))
+    _reject_offline_authority_flags(
+        activity_authorities, "copilot_offline_activity_authority_present"
+    )
+    if "cn.equity.security_master" not in activity_authorities:
+        raise TradingCopilotObservationError(
+            "copilot_activity_authority_required:cn.equity.security_master"
+        )
+    minute_authority = activity_authorities.get(profile.dataset_id)
+    if minute_authority is None:
+        raise TradingCopilotObservationError(
+            f"copilot_activity_authority_required:{profile.dataset_id}"
+        )
+    _reject_offline_authority_flags(
+        minute_authority, "copilot_offline_activity_authority_present"
+    )
+    if _offline_timestamp(
+        minute_authority.get("dataThrough"), "copilot_offline_activity_window_invalid"
+    ) != minute_data_through:
+        raise TradingCopilotObservationError("copilot_offline_activity_window_invalid")
+    for company in company_facts.values():
+        source = _mapping(company.get("source"), "copilot_offline_company_source_invalid")
+        _bind_activity_authority(source, activity_authorities)
+
+    events: tuple[EventEvidenceSnapshot, ...] = ()
+    if event_artifact_path is not None:
+        try:
+            event_batch = load_event_evidence_batch_artifact(Path(event_artifact_path))
+        except AshareEvidenceContractError as exc:
+            raise TradingCopilotObservationError(str(exc)) from exc
+        events = event_batch.events
+        if any(event.symbol is not None and event.symbol not in snapshot_symbols for event in events):
+            raise TradingCopilotObservationError("copilot_offline_event_symbol_set_mismatch")
+        for event in events:
+            _reject_offline_authority_flags(
+                event.__dict__, "copilot_offline_event_authority_present"
+            )
+
+    try:
+        return build_projection_batch(
+            snapshot=snapshot,
+            company_facts=company_facts,
+            events=events,
+            activity_authorities=activity_authorities,
+            generated_at=generated_at,
+            valid_until=valid_until,
+        )
+    except (TradingCopilotObservationError, TradingCopilotProjectionError) as exc:
+        raise TradingCopilotObservationError(str(exc)) from exc
+
+
 def build_projection_batch(
     *,
     snapshot: MinuteBarSnapshot,
@@ -919,10 +1195,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--event-evidence-artifact-root", type=Path)
     parser.add_argument("--event-timeline-output-root", type=Path)
     parser.add_argument("--research-snapshot-store-root", type=Path)
-    parser.add_argument("--token-file", type=Path, required=True)
+    parser.add_argument("--token-file", type=Path)
     parser.add_argument("--activity-authorities", type=Path, required=True)
     parser.add_argument("--decision-time", required=True)
-    parser.add_argument("--trading-date", required=True)
+    parser.add_argument("--trading-date")
     parser.add_argument(
         "--evidence-use",
         choices=(
@@ -933,10 +1209,71 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--valid-until", required=True)
     parser.add_argument("--batch-output", type=Path, required=True)
-    parser.add_argument("--projection-output-root", type=Path, required=True)
-    parser.add_argument("--result-output", type=Path, required=True)
+    parser.add_argument("--projection-output-root", type=Path)
+    parser.add_argument("--result-output", type=Path)
+    parser.add_argument(
+        "--offline-canary-receipt",
+        type=Path,
+        help="Build one private v2 batch from an exact full-row canary without TD or publication.",
+    )
+    parser.add_argument(
+        "--offline-event-artifact",
+        type=Path,
+        help="Optional typed event-evidence artifact for --offline-canary-receipt.",
+    )
     arguments = parser.parse_args(argv)
     try:
+        if arguments.offline_canary_receipt is not None:
+            if arguments.observation_manifest or arguments.observation_state_root:
+                raise TradingCopilotObservationError(
+                    "copilot_offline_company_facts_file_required"
+                )
+            if arguments.load_current_events or arguments.event_bundle:
+                raise TradingCopilotObservationError(
+                    "copilot_offline_event_artifact_required"
+                )
+            if arguments.company_facts is None:
+                raise TradingCopilotObservationError(
+                    "copilot_offline_company_facts_file_required"
+                )
+            if not arguments.batch_output.is_absolute() or arguments.batch_output.is_symlink():
+                raise TradingCopilotObservationError("copilot_offline_batch_output_invalid")
+            decision_time = datetime.fromisoformat(
+                arguments.decision_time.replace("Z", "+00:00")
+            )
+            valid_until = datetime.fromisoformat(
+                arguments.valid_until.replace("Z", "+00:00")
+            )
+            batch = build_offline_projection_batch(
+                canary_receipt_path=arguments.offline_canary_receipt,
+                minute_manifest_path=arguments.minute_manifest,
+                reference_facts_path=arguments.reference_facts,
+                company_facts_path=arguments.company_facts,
+                activity_authorities_path=arguments.activity_authorities,
+                event_artifact_path=arguments.offline_event_artifact,
+                generated_at=decision_time,
+                valid_until=valid_until,
+            )
+            _atomic_json(arguments.batch_output, batch)
+            result = {
+                "status": "pass",
+                "mode": "offline_projection_batch",
+                "contractId": batch["contractId"],
+                "symbolCount": len(batch["items"]),
+                "eventCount": sum(len(item["events"]) for item in batch["items"]),
+                "publisherInvoked": False,
+                "realTradingEnabled": False,
+                "batchOutput": str(arguments.batch_output),
+            }
+            print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+            return 0
+        if (
+            arguments.token_file is None
+            or arguments.projection_output_root is None
+            or arguments.result_output is None
+            or arguments.trading_date is None
+        ):
+            raise TradingCopilotObservationError("copilot_worker_runtime_outputs_required")
         if bool(arguments.event_evidence_artifact_root) != bool(arguments.event_timeline_output_root):
             raise TradingCopilotObservationError("copilot_event_retention_roots_required")
         if (arguments.event_evidence_artifact_root or arguments.event_timeline_output_root) and not arguments.load_current_events:
