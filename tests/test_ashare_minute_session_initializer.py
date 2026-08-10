@@ -12,6 +12,7 @@ import Ashare.minute_session_initializer as initializer_module
 from Ashare.minute_session_initializer import (
     MinuteSessionInitializerError,
     _scaled_minute_profile,
+    build_scale500_reference_envelope,
     initialize_minute_session,
 )
 from shared.data.sharedsignals_v1 import HTTPResponse, SharedSignalsV1Error
@@ -361,6 +362,66 @@ def _large_universe(count: int) -> tuple[list[dict[str, Any]], list[dict[str, An
     return universe, daily
 
 
+def _scale500_receipt(
+    path: Path,
+    symbols: list[str],
+    *,
+    bar_end: str = "2026-07-29T13:10:00+08:00",
+    rows: int | None = None,
+) -> Path:
+    row_symbols = symbols if rows is None else symbols[:rows]
+    receipt = {
+        "status": "pass",
+        "authority_tier": "observation_only",
+        "evidence_use": "delayed_paper",
+        "real_trading_enabled": False,
+        "bar_end": bar_end,
+        "dataset_id": "cn.dataset.rt_min",
+        "reference_symbols": list(symbols),
+        "row_count": len(row_symbols),
+        "same_observation": True,
+        "lineage_complete": True,
+        "audit_rejections": 0,
+        "receipt_id": f"receipt-{path.stem}",
+        "receipt_ids": [f"receipt-{path.stem}"],
+        "source_lineage_sha256": "a" * 64,
+        "source_lineage_sha256s": ["a" * 64],
+        "snapshot_sha256": "b" * 64,
+        "replay": {
+            "same_observation": True,
+            "pagination_trace_sha256": "c" * 64,
+            "first_semantic_sha256": "d" * 64,
+            "replay_semantic_sha256": "e" * 64,
+        },
+        "bars": [
+            {
+                "symbol": symbol,
+                "bar_end": bar_end,
+                "receipt_id": f"receipt-{path.stem}",
+                "source_lineage_sha256": "a" * 64,
+                "envelope_proof_sha256": "f" * 64,
+            }
+            for symbol in row_symbols
+        ],
+    }
+    path.write_text(json.dumps(receipt), encoding="utf-8")
+    return path
+
+
+def _scale500_receipts(tmp_path: Path) -> tuple[list[str], str, list[Path]]:
+    universe, _ = _large_universe(500)
+    symbols = sorted(item["symbol"] for item in universe)
+    digest = "1" * 64
+    receipts = [
+        _scale500_receipt(
+            tmp_path / f"cohort-{index}.json",
+            symbols[index * 100 : (index + 1) * 100],
+        )
+        for index in range(5)
+    ]
+    return symbols, digest, receipts
+
+
 def _factory(transport: FixtureTransport):
     def build(
         transport_id: str,
@@ -387,6 +448,91 @@ def _daily_requests(transport: FixtureTransport) -> list[dict[str, Any]]:
         if isinstance(call["json_body"], dict)
         and call["json_body"].get("dataset_id") == "cn.equity.daily"
     ]
+
+
+def test_scale500_reference_envelope_binds_five_exact_cohorts_and_slot(
+    tmp_path: Path,
+) -> None:
+    symbols, digest, receipts = _scale500_receipts(tmp_path)
+
+    envelope = build_scale500_reference_envelope(
+        universe_symbols=symbols,
+        universe_sha256=digest,
+        trading_date=datetime.fromisoformat("2026-07-29T09:20:00+08:00").date(),
+        target_bar_end="2026-07-29 13:10:00",
+        cohort_receipts=receipts,
+    )
+
+    assert envelope["target_bar_end"] == "2026-07-29 13:10:00"
+    assert envelope["max_rows"] == envelope["row_count"] == 500
+    assert [c["symbols"][0] for c in envelope["cohorts"]] == [
+        "600000.SH",
+        "600100.SH",
+        "600200.SH",
+        "600300.SH",
+        "600400.SH",
+    ]
+
+
+def test_scale500_reference_rejects_later_bar_in_exact_slot_receipt(
+    tmp_path: Path,
+) -> None:
+    symbols, digest, receipts = _scale500_receipts(tmp_path)
+    raw = json.loads(receipts[0].read_text())
+    raw["bars"][0]["bar_end"] = "2026-07-29 13:15:00"
+    receipts[0].write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(
+        MinuteSessionInitializerError,
+        match="minute_session_scale500_cohort_rows_invalid",
+    ):
+        build_scale500_reference_envelope(
+            universe_symbols=symbols,
+            universe_sha256=digest,
+            trading_date=datetime.fromisoformat(
+                "2026-07-29T09:20:00+08:00"
+            ).date(),
+            target_bar_end="2026-07-29 13:10:00",
+            cohort_receipts=receipts,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation,reason",
+    [
+        ("overlap", "minute_session_scale500_cohort_receipt_mismatch"),
+        ("mixed_slot", "minute_session_scale500_cohort_receipt_mismatch"),
+        ("reference", "minute_session_scale500_cohort_receipt_mismatch"),
+        ("duplicate", "minute_session_scale500_cohort_rows_invalid"),
+    ],
+)
+def test_scale500_reference_rejects_cohort_identity_or_slot_drift(
+    tmp_path: Path,
+    mutation: str,
+    reason: str,
+) -> None:
+    symbols, digest, receipts = _scale500_receipts(tmp_path)
+    raw = json.loads(receipts[1].read_text())
+    if mutation == "overlap":
+        raw["reference_symbols"][0] = symbols[0]
+    elif mutation == "mixed_slot":
+        raw["bar_end"] = "2026-07-29 13:15:00"
+    elif mutation == "reference":
+        raw["reference_symbols"][0] = "000001.SZ"
+    else:
+        raw["bars"][1]["symbol"] = raw["bars"][0]["symbol"]
+    receipts[1].write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(MinuteSessionInitializerError, match=reason):
+        build_scale500_reference_envelope(
+            universe_symbols=symbols,
+            universe_sha256=digest,
+            trading_date=datetime.fromisoformat(
+                "2026-07-29T09:20:00+08:00"
+            ).date(),
+            target_bar_end="2026-07-29 13:10:00",
+            cohort_receipts=receipts,
+        )
 
 
 def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) -> None:
@@ -432,6 +578,43 @@ def test_initializer_writes_three_inputs_without_state_bundle(tmp_path: Path) ->
         "trade_date": {"eq": "20260728"},
         "ts_code": {"in": ["000001.SZ", "600000.SH"]},
     }
+
+
+def test_initializer_publishes_scale500_reference_boundary(
+    tmp_path: Path,
+) -> None:
+    template = _template(tmp_path)
+    universe, daily = _large_universe(500)
+    (template / "universe.json").write_text(json.dumps(universe), encoding="utf-8")
+    manifest = json.loads((template / "minute-manifest.json").read_text())
+    manifest["profile"].update({"max_rows": 500, "page_limit": 500, "max_pages": 1})
+    (template / "minute-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    symbols = sorted(item["symbol"] for item in universe)
+    receipts = [
+        _scale500_receipt(
+            tmp_path / f"bound-{index}.json",
+            symbols[index * 100 : (index + 1) * 100],
+        )
+        for index in range(5)
+    ]
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        target_bar_end="2026-07-29 13:10:00",
+        scale500_cohort_receipts=receipts,
+        transport_factory=_factory(FixtureTransport(daily_rows=daily)),
+    )
+
+    assert result["target_bar_end"] == "2026-07-29 13:10:00"
+    published = json.loads(
+        (tmp_path / "20260729" / "minute-manifest.json").read_text()
+    )
+    reference = published["scale500_reference"]
+    assert reference["max_rows"] == reference["row_count"] == 500
+    assert reference["target_bar_end"] == "2026-07-29 13:10:00"
+    assert len(reference["cohorts"]) == 5
 
 
 def test_initializer_atomically_publishes_a_named_copilot_tracking_universe(

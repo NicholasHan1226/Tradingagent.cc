@@ -18,6 +18,7 @@ from Ashare.minute_scale500_runtime import (
     main,
     run_scale500_once,
 )
+from Ashare.minute_scale500_runtime import _validate_scale500_reference_fragment
 from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 
 
@@ -1206,3 +1207,26 @@ def test_scale500_module_has_no_duplicate_literal_dict_keys() -> None:
             if isinstance(key, ast.Constant) and isinstance(key.value, str)
         ]
         assert len(keys) == len(set(keys))
+
+
+def test_scale500_reference_fragment_rejects_non_500_budget() -> None:
+    fragment = {
+        "target_bar_end": "2026-07-31 13:10:00",
+        "universe_sha256": "a" * 64,
+        "max_rows": 499,
+        "row_count": 500,
+        "cohort_count": 5,
+        "cohort_size": 100,
+        "cohorts": [],
+    }
+    with pytest.raises(
+        MinuteScale500RuntimeError,
+        match="minute_scale500_reference_bundle_invalid",
+    ):
+        _validate_scale500_reference_fragment(
+            fragment,
+            universe_symbols=frozenset(),
+            universe_sha256="a" * 64,
+            trading_date="2026-07-31",
+            expected_bar_end="2026-07-31 13:10:00",
+        )
