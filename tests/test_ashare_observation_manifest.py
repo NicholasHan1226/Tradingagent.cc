@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
+import stat
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,8 @@ from shared.runtime.ashare_observation_manifest import (
     build_ashare_observation_manifest,
 )
 from shared.runtime_test.sharedsignals_v1_integration_probe import load_probe_manifest
+from Ashare.trading_copilot_observation_worker import build_td_projection_batch
+import Ashare.trading_copilot_observation_worker as observation_worker
 
 
 CATALOG_VERSION = "v1-dynamic-fixture"
@@ -127,11 +131,19 @@ def _metadata(dataset_id: str, *, degraded: bool = False) -> dict[str, Any]:
     return {
         "state": state,
         "degraded": degraded,
-        "freshness": {"state": "unknown" if degraded else "fresh"},
-        "quality": {"state": "degraded" if degraded else "valid"},
+        "freshness": {
+            "state": "unknown" if degraded else "fresh",
+            "stale": degraded,
+        },
+        "quality": {
+            "state": "degraded" if degraded else "valid",
+            "valid": not degraded,
+            "evidence": ["fixture_partial"] if degraded else [],
+        },
         "lineage": {
             "complete": True,
             "provider_neutral": True,
+            "dataset_id": dataset_id,
             "provider": "fixture-provider",
             "transport_service": "fixture-transport",
         },
@@ -273,6 +285,74 @@ def _config(tmp_path: Path) -> AshareObservationManifestBuildConfig:
     )
 
 
+def _sha(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _activity_source(dataset_id: str) -> dict[str, str]:
+    metadata = _metadata(dataset_id)
+    binding = {
+        "dataset_id": dataset_id,
+        "catalog_version": CATALOG_VERSION,
+        "receipt_id": metadata["receipt_id"],
+        "data_through": metadata["data_through"],
+        "observed_at": metadata["observed_at"],
+        "freshness": metadata["freshness"],
+        "quality": metadata["quality"],
+        "lineage": metadata["lineage"],
+    }
+    return {
+        "receiptId": metadata["receipt_id"],
+        "receiptSha256": _sha(binding),
+        "lineageSha256": _sha(metadata["lineage"]),
+        "dataThrough": metadata["data_through"],
+    }
+
+
+def _calendar_authority() -> dict[str, object]:
+    source = _activity_source("cn.market.trade_calendar")
+    return {
+        "calendar": {
+            "id": "sse-calendar",
+            "version": "2026.08.v1",
+            "sourceDatasetId": "cn.market.trade_calendar",
+            **source,
+            "calendarSha256": _sha("calendar-content"),
+        },
+        "session": {
+            "state": "closed",
+            "asOf": "2026-07-26T10:00:00+08:00",
+        },
+    }
+
+
+def _worker_envelope(dataset_id: str, rows: list[dict[str, object]]) -> dict[str, object]:
+    metadata = _metadata(dataset_id)
+    return {
+        "api_version": "v1",
+        "catalog_version": CATALOG_VERSION,
+        "data": rows,
+        "dataset_id": dataset_id,
+        "metadata": {
+            **metadata,
+            "requested_as_of": None,
+            "resolved_as_of": None,
+            "runtime_state": "success",
+        },
+        "next_cursor": None,
+        "request_id": f"request:{dataset_id}",
+        "schema_version": "2.0.0",
+    }
+
+
 def test_dynamic_catalog_builds_core_manifest_and_accounts_for_all_active_rows(
     tmp_path: Path,
 ) -> None:
@@ -339,6 +419,124 @@ def test_dynamic_catalog_builds_core_manifest_and_accounts_for_all_active_rows(
     )
 
 
+def test_same_transaction_emits_authorities_for_existing_worker_readback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    authorities_path = (tmp_path / "private" / "activity-authorities.json").resolve()
+    base = _config(tmp_path)
+    config = AshareObservationManifestBuildConfig(
+        base_url=base.base_url,
+        access_policy_id=base.access_policy_id,
+        transport_id=base.transport_id,
+        timeout_seconds=base.timeout_seconds,
+        manifest_root=base.manifest_root,
+        decision_as_of=base.decision_as_of,
+        activity_authorities_output=authorities_path,
+        activity_calendar_authority=_calendar_authority(),
+        real_trading_enabled=False,
+    )
+    result = build_ashare_observation_manifest(
+        config,
+        transport=FixtureTransport(),
+    )
+
+    assert result.activity_authorities_path == authorities_path
+    assert authorities_path.is_file()
+    assert stat.S_IMODE(authorities_path.stat().st_mode) == 0o600
+    authorities = json.loads(authorities_path.read_text(encoding="utf-8"))
+    assert set(authorities) == {
+        "cn.market.trade_calendar",
+        "cn.equity.security_master",
+        "cn.equity.daily",
+    }
+    assert authorities["cn.market.trade_calendar"]["calendar"]["id"] == "sse-calendar"
+    assert authorities["cn.equity.daily"]["dataThrough"] == _metadata(
+        "cn.equity.daily"
+    )["data_through"]
+
+    envelopes = {
+        "cn.equity.daily": _worker_envelope(
+            "cn.equity.daily",
+            [
+                {
+                    "ts_code": "600000.SH",
+                    "trade_date": "20260724",
+                    "open": 10.0,
+                    "high": 10.2,
+                    "low": 9.8,
+                    "close": 10.1,
+                    "pre_close": 9.9,
+                    "vol": 100.0,
+                    "amount": 1000.0,
+                }
+            ],
+        ),
+        "cn.equity.security_master": _worker_envelope(
+            "cn.equity.security_master",
+            [
+                {
+                    "ts_code": "600000.SH",
+                    "name": "浦发银行",
+                    "area": "上海",
+                    "industry": "银行",
+                    "list_date": "19991110",
+                }
+            ],
+        ),
+        "cn.market.trade_calendar": _worker_envelope(
+            "cn.market.trade_calendar",
+            [
+                {
+                    "exchange": "SSE",
+                    "cal_date": "20260724",
+                    "is_open": 1,
+                    "pretrade_date": "20260723",
+                }
+            ],
+        ),
+    }
+    paths: dict[str, Path] = {}
+    for dataset_id, envelope in envelopes.items():
+        path = (tmp_path / f"{dataset_id.replace('.', '_')}.json").resolve()
+        path.write_text(json.dumps(envelope, ensure_ascii=False), encoding="utf-8")
+        paths[dataset_id] = path
+
+    batch = build_td_projection_batch(
+        daily_envelope_path=paths["cn.equity.daily"],
+        security_master_envelope_path=paths["cn.equity.security_master"],
+        trade_calendar_envelope_path=paths["cn.market.trade_calendar"],
+        activity_authorities_path=authorities_path,
+        generated_at=datetime(2026, 7, 26, 12, 0, tzinfo=DECISION_AS_OF.tzinfo),
+        valid_until=datetime(2026, 7, 27, 12, 0, tzinfo=DECISION_AS_OF.tzinfo),
+    )
+    assert batch["contractId"] == "tradingagent.trading_copilot_projection_batch_input.v2"
+    assert batch["items"][0]["symbol"] == "600000.SH"
+    cli_batch_path = (tmp_path / "cli-batch.json").resolve()
+    assert observation_worker.main(
+        [
+            "--td-daily-envelope",
+            str(paths["cn.equity.daily"]),
+            "--td-security-master-envelope",
+            str(paths["cn.equity.security_master"]),
+            "--td-trade-calendar-envelope",
+            str(paths["cn.market.trade_calendar"]),
+            "--activity-authorities",
+            str(authorities_path),
+            "--decision-time",
+            "2026-07-26T04:00:00+00:00",
+            "--valid-until",
+            "2026-07-27T04:00:00+00:00",
+            "--batch-output",
+            str(cli_batch_path),
+        ]
+    ) == 0
+    output = capsys.readouterr().out
+    assert '"publisherInvoked": false' in output
+    assert '"publication": false' in output
+    assert '"retention": false' in output
+
+
 def test_degraded_core_dataset_blocks_without_publishing_manifest(
     tmp_path: Path,
 ) -> None:
@@ -354,6 +552,32 @@ def test_degraded_core_dataset_blocks_without_publishing_manifest(
         )
 
     assert not (_config(tmp_path).manifest_root / "current.json").exists()
+
+
+def test_activity_authority_binding_mismatch_blocks_before_manifest_write(
+    tmp_path: Path,
+) -> None:
+    authority = _calendar_authority()
+    authority["calendar"]["receiptId"] = "receipt:wrong"
+    base = _config(tmp_path)
+    config = AshareObservationManifestBuildConfig(
+        base_url=base.base_url,
+        access_policy_id=base.access_policy_id,
+        transport_id=base.transport_id,
+        timeout_seconds=base.timeout_seconds,
+        manifest_root=base.manifest_root,
+        decision_as_of=base.decision_as_of,
+        activity_authorities_output=(tmp_path / "private" / "authorities.json").resolve(),
+        activity_calendar_authority=authority,
+        real_trading_enabled=False,
+    )
+    with pytest.raises(
+        AshareObservationManifestBlocked,
+        match="activity_calendar_binding_mismatch",
+    ):
+        build_ashare_observation_manifest(config, transport=FixtureTransport())
+    assert not (base.manifest_root / "current.json").exists()
+    assert not config.activity_authorities_output.exists()
 
 
 def test_paused_core_dataset_blocks_before_any_query(tmp_path: Path) -> None:

@@ -73,6 +73,25 @@ def _failure(reason_code: str) -> dict[str, object]:
     }
 
 
+def _load_calendar_authority(path: Path) -> dict[str, object]:
+    path = _absolute_path(path, field_name="calendar_authority_input")
+    if path.is_symlink() or not path.is_file():
+        raise AshareObservationManifestConfigurationError(
+            "calendar_authority_input_invalid"
+        )
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AshareObservationManifestConfigurationError(
+            "calendar_authority_input_invalid"
+        ) from exc
+    if not isinstance(value, dict):
+        raise AshareObservationManifestConfigurationError(
+            "calendar_authority_input_invalid"
+        )
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -84,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--access-policy-id", required=True)
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--manifest-root", type=Path, required=True)
+    parser.add_argument("--activity-authorities-output", type=Path)
+    parser.add_argument("--calendar-authority-input", type=Path)
     parser.add_argument("--decision-as-of")
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--json", action="store_true")
@@ -106,6 +127,19 @@ def main(argv: list[str] | None = None) -> int:
                 field_name="manifest_root",
             ),
             decision_as_of=_decision_time(args.decision_as_of),
+            activity_authorities_output=(
+                None
+                if args.activity_authorities_output is None
+                else _absolute_path(
+                    args.activity_authorities_output,
+                    field_name="activity_authorities_output",
+                )
+            ),
+            activity_calendar_authority=(
+                None
+                if args.calendar_authority_input is None
+                else _load_calendar_authority(args.calendar_authority_input)
+            ),
             real_trading_enabled=False,
         )
         transport = build_runtime_transport(

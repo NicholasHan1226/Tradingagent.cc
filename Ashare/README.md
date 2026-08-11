@@ -295,6 +295,18 @@ TD evidence only; TA analysis remains optional read-only input. Degraded,
 stale, partial, empty, duplicate, catalog-drifted, or lineage-incomplete
 envelopes fail closed per dataset.
 
+The existing `tools/build_ashare_observation_manifest.py` transaction can
+optionally emit that same mapping after its bounded calendar,
+`security_master`, and daily reads by supplying both
+`--calendar-authority-input <absolute-json-path>` (an already verified
+`{calendar,session}` binding) and
+`--activity-authorities-output <absolute-json-path>`. The transaction checks
+the supplied calendar receipt/lineage against the observed envelope, derives
+only per-dataset source receipt bindings, and writes one immutable 0600 private
+artifact. Omitting either option leaves the existing manifest-only behavior;
+missing or mismatched calendar/session facts fail before any manifest or
+authority artifact is written.
+
 For optional offline LLM review, an instant-proven event can be projected into
 the existing shared `EvidenceArtifact` / `LLMEvidenceRequest` schema. This
 projection only constructs an immutable request object; it does not instantiate

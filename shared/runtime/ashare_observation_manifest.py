@@ -135,6 +135,8 @@ class AshareObservationManifestBuildConfig:
     timeout_seconds: float
     manifest_root: Path
     decision_as_of: datetime
+    activity_authorities_output: Path | None = None
+    activity_calendar_authority: Mapping[str, Any] | None = None
     real_trading_enabled: bool = False
 
     def __post_init__(self) -> None:
@@ -175,6 +177,24 @@ class AshareObservationManifestBuildConfig:
             "manifest_root",
             _absolute_external_directory(Path(self.manifest_root)),
         )
+        if self.activity_authorities_output is not None:
+            object.__setattr__(
+                self,
+                "activity_authorities_output",
+                _absolute_external_directory(Path(self.activity_authorities_output)),
+            )
+        if (self.activity_authorities_output is None) != (
+            self.activity_calendar_authority is None
+        ):
+            raise AshareObservationManifestConfigurationError(
+                "activity_authority_output_and_calendar_binding_must_be_paired"
+            )
+        if self.activity_calendar_authority is not None and not isinstance(
+            self.activity_calendar_authority, Mapping
+        ):
+            raise AshareObservationManifestConfigurationError(
+                "activity_calendar_authority_invalid"
+            )
         try:
             probe = SharedSignalsV1Config(
                 base_url=self.base_url,
@@ -203,6 +223,7 @@ class AshareObservationManifestBuildResult:
     archive_manifest_path: Path
     catalog_snapshot_path: Path
     build_receipt_path: Path
+    activity_authorities_path: Path | None
     reused: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -218,6 +239,11 @@ class AshareObservationManifestBuildResult:
             "archive_manifest_path": str(self.archive_manifest_path),
             "catalog_snapshot_path": str(self.catalog_snapshot_path),
             "build_receipt_path": str(self.build_receipt_path),
+            "activity_authorities_path": (
+                None
+                if self.activity_authorities_path is None
+                else str(self.activity_authorities_path)
+            ),
             "reused": self.reused,
             "historical_pit_eligible": False,
             "execution_authority": False,
@@ -428,6 +454,137 @@ def _accept_core(envelope: QueryEnvelope) -> None:
         raise AshareObservationManifestBlocked(
             f"core_dataset_evidence_rejected:{envelope.dataset_id}"
         )
+
+
+def _activity_source_binding(envelope: QueryEnvelope) -> dict[str, str]:
+    metadata = envelope.metadata
+    if (
+        metadata.receipt_id is None
+        or metadata.data_through is None
+        or metadata.observed_at is None
+        or metadata.lineage is None
+    ):
+        raise AshareObservationManifestBlocked(
+            f"activity_authority_receipt_lineage_missing:{envelope.dataset_id}"
+        )
+    binding = {
+        "dataset_id": envelope.dataset_id,
+        "catalog_version": envelope.catalog_version,
+        "receipt_id": metadata.receipt_id,
+        "data_through": metadata.data_through,
+        "observed_at": metadata.observed_at,
+        "freshness": metadata.freshness,
+        "quality": metadata.quality,
+        "lineage": metadata.lineage,
+    }
+    return {
+        "receiptId": metadata.receipt_id,
+        "receiptSha256": _sha256(binding),
+        "lineageSha256": _sha256(metadata.lineage),
+        "dataThrough": metadata.data_through,
+    }
+
+
+def _sha256_text(value: object, *, reason: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise AshareObservationManifestBlocked(reason)
+    return value
+
+
+def _aware_timestamp(value: object, *, reason: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise AshareObservationManifestBlocked(reason)
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise AshareObservationManifestBlocked(reason) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise AshareObservationManifestBlocked(reason)
+    return value
+
+
+def _activity_authorities_payload(
+    *,
+    core_envelopes: Mapping[str, QueryEnvelope],
+    calendar_authority: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Bind one explicit calendar/session proof to the same three envelopes.
+
+    The calendar binding is caller-supplied because TD query rows do not carry
+    a verifier-owned calendar id/version.  This function only checks its
+    receipt/lineage against the observed calendar envelope and derives the
+    per-dataset source bindings; it never invents calendar authority.
+    """
+
+    if not isinstance(calendar_authority, Mapping):
+        raise AshareObservationManifestBlocked("activity_calendar_authority_invalid")
+    calendar = calendar_authority.get("calendar")
+    session = calendar_authority.get("session")
+    if not isinstance(calendar, Mapping) or not isinstance(session, Mapping):
+        raise AshareObservationManifestBlocked("activity_calendar_authority_invalid")
+    if calendar.get("sourceDatasetId") != _CORE_DATASETS["trade_calendar"]:
+        raise AshareObservationManifestBlocked("activity_calendar_dataset_invalid")
+    for field in ("id", "version", "receiptId"):
+        if not isinstance(calendar.get(field), str) or not calendar[field].strip():
+            raise AshareObservationManifestBlocked("activity_calendar_authority_invalid")
+    calendar_receipt_sha = _sha256_text(
+        calendar.get("receiptSha256"), reason="activity_calendar_receipt_sha_invalid"
+    )
+    calendar_lineage_sha = _sha256_text(
+        calendar.get("lineageSha256"), reason="activity_calendar_lineage_sha_invalid"
+    )
+    calendar_content_sha = _sha256_text(
+        calendar.get("calendarSha256"), reason="activity_calendar_content_sha_invalid"
+    )
+    state = session.get("state")
+    if state not in {"open", "closed", "halted"}:
+        raise AshareObservationManifestBlocked("activity_session_state_invalid")
+    session_as_of = _aware_timestamp(
+        session.get("asOf"), reason="activity_session_as_of_invalid"
+    )
+
+    sources = {
+        _CORE_DATASETS[role]: _activity_source_binding(core_envelopes[role])
+        for role in ("trade_calendar", "security_master", "daily_bars")
+    }
+    calendar_source = sources[_CORE_DATASETS["trade_calendar"]]
+    if (
+        calendar.get("receiptId") != calendar_source["receiptId"]
+        or calendar_receipt_sha != calendar_source["receiptSha256"]
+        or calendar_lineage_sha != calendar_source["lineageSha256"]
+    ):
+        raise AshareObservationManifestBlocked("activity_calendar_binding_mismatch")
+    calendar_payload = {
+        "id": calendar["id"],
+        "version": calendar["version"],
+        "sourceDatasetId": _CORE_DATASETS["trade_calendar"],
+        "receiptId": calendar_source["receiptId"],
+        "receiptSha256": calendar_receipt_sha,
+        "lineageSha256": calendar_lineage_sha,
+        "calendarSha256": calendar_content_sha,
+    }
+    session_payload = {"state": state, "asOf": session_as_of}
+    return {
+        dataset_id: {
+            "datasetId": dataset_id,
+            "market": "ashare",
+            "timezone": "Asia/Shanghai",
+            "calendar": calendar_payload,
+            "session": session_payload,
+            "dataThrough": source["dataThrough"],
+            "source": {
+                "receiptId": source["receiptId"],
+                "receiptSha256": source["receiptSha256"],
+                "lineageSha256": source["lineageSha256"],
+            },
+        }
+        for dataset_id, source in sources.items()
+    }
 
 
 def _latest_completed_session(
@@ -660,6 +817,17 @@ def _write_new(path: Path, payload: Mapping[str, Any]) -> None:
     _fsync_directory(path.parent)
 
 
+def _assert_private_artifact_slot(path: Path, payload: Mapping[str, Any]) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    encoded = (_canonical_json(payload) + "\n").encode("utf-8")
+    if _read_private_artifact(
+        path,
+        invalid_reason="activity_authorities_output_invalid",
+    ) != encoded:
+        raise AshareObservationManifestBlocked("immutable_artifact_conflict")
+
+
 def _replace_current(path: Path, payload: Mapping[str, Any]) -> None:
     if path.exists() or path.is_symlink():
         _validate_private_artifact(
@@ -816,22 +984,52 @@ def build_ashare_observation_manifest(
                 else config.decision_as_of.isoformat()
             ),
             order=order,
-            limit=1,
+            limit=(
+                contracts[role][3]
+                if config.activity_authorities_output is not None
+                else 1
+            ),
         )
-        envelope = client.query_uncached(request)
+        if config.activity_authorities_output is not None:
+            envelope = collect_query_pages(
+                client=client,
+                request=request,
+                identity_fields=_IDENTITY_FIELDS[role],
+                max_pages=_MAX_PAGES[role],
+                max_rows=_MAX_ROWS[role],
+            ).envelope
+        else:
+            envelope = client.query_uncached(request)
         _accept_core(envelope)
-        if len(envelope.data) != 1:
+        if (
+            not envelope.data
+            or (
+                config.activity_authorities_output is None
+                and len(envelope.data) != 1
+            )
+        ):
             raise AshareObservationManifestBlocked(
                 f"core_dataset_probe_empty:{envelope.dataset_id}"
             )
-        if (
-            role == "daily_bars"
-            and envelope.data[0].get("trade_date") != session
+        if role == "daily_bars" and any(
+            row.get("trade_date") != session for row in envelope.data
         ):
             raise AshareObservationManifestBlocked(
                 "daily_bars_session_probe_mismatch"
             )
         core_envelopes[role] = envelope
+
+    activity_authorities_payload: dict[str, dict[str, Any]] | None = None
+    if config.activity_authorities_output is not None:
+        assert config.activity_calendar_authority is not None
+        activity_authorities_payload = _activity_authorities_payload(
+            core_envelopes=core_envelopes,
+            calendar_authority=config.activity_calendar_authority,
+        )
+        _assert_private_artifact_slot(
+            config.activity_authorities_output,
+            activity_authorities_payload,
+        )
 
     payload = _manifest_payload(
         config=config,
@@ -938,6 +1136,17 @@ def build_ashare_observation_manifest(
                 "published_manifest_hash_mismatch"
             )
 
+    activity_authorities_path: Path | None = None
+    if config.activity_authorities_output is not None:
+        assert activity_authorities_payload is not None
+        _ensure_private_directory(config.activity_authorities_output.parent)
+        _write_new(config.activity_authorities_output, activity_authorities_payload)
+        _validate_private_artifact(
+            config.activity_authorities_output,
+            invalid_reason="activity_authorities_publish_invalid",
+        )
+        activity_authorities_path = config.activity_authorities_output
+
     return AshareObservationManifestBuildResult(
         observation_session=session,
         catalog_version=catalog_version,
@@ -948,6 +1157,7 @@ def build_ashare_observation_manifest(
         archive_manifest_path=archive_path,
         catalog_snapshot_path=catalog_snapshot_path,
         build_receipt_path=build_receipt_path,
+        activity_authorities_path=activity_authorities_path,
         reused=reused,
     )
 
