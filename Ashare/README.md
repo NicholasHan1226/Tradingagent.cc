@@ -268,6 +268,33 @@ An explicit caller may project an accepted record only into the existing
 scale-500 runtime, timer, production release, or any order path pending its
 own formal TradingDatas shadow-parity handoff. `REAL_TRADING_ENABLED=false`.
 
+### TD facts to private Copilot projection batch
+
+`Ashare.trading_copilot_observation_worker` exposes one A-share-only,
+TD-direct producer for already observed `cn.equity.daily`,
+`cn.equity.security_master`, and `cn.market.trade_calendar` query envelopes:
+
+```bash
+PYTHONPATH=. python3 -m Ashare.trading_copilot_observation_worker \
+  --td-daily-envelope /abs/daily.json \
+  --td-security-master-envelope /abs/security-master.json \
+  --td-trade-calendar-envelope /abs/trade-calendar.json \
+  --activity-authorities /abs/activity-authorities.json \
+  --decision-time 2026-08-12T01:00:00+00:00 \
+  --valid-until 2026-08-13T01:00:00+00:00 \
+  --batch-output /abs/private-projection-batch.json
+```
+
+The producer performs no TD query, provider call, retention, publication,
+timer, or runtime mutation. The authority file is caller-supplied and must
+bind each consumed source to an explicit trade-calendar `id/version` and
+receipt/lineage/content proof; calendar authority is never reconstructed from
+rows or catalog metadata. The output is the existing
+`tradingagent.trading_copilot_projection_batch_input.v2` and contains factual
+TD evidence only; TA analysis remains optional read-only input. Degraded,
+stale, partial, empty, duplicate, catalog-drifted, or lineage-incomplete
+envelopes fail closed per dataset.
+
 For optional offline LLM review, an instant-proven event can be projected into
 the existing shared `EvidenceArtifact` / `LLMEvidenceRequest` schema. This
 projection only constructs an immutable request object; it does not instantiate
