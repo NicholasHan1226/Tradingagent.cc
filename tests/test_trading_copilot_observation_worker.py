@@ -31,6 +31,7 @@ from Ashare.trading_copilot_observation_worker import (
     _pinned_snapshot_plan,
     build_projection_batch,
     build_offline_projection_batch,
+    build_td_projection_batch,
     company_facts_from_verified_observation,
     load_event_bundle,
     load_company_facts,
@@ -1132,4 +1133,186 @@ def test_offline_projection_batch_rejects_legacy_canary_and_symbol_drift(tmp_pat
             activity_authorities_path=(tmp_path / "authorities.json").resolve(),
             generated_at=datetime(2026, 7, 28, 1, 35, tzinfo=timezone.utc),
             valid_until=datetime(2026, 7, 29, 1, tzinfo=timezone.utc),
+        )
+
+def _td_envelope(dataset_id: str, rows: list[dict], *, data_through: str, observed_at: str) -> dict:
+    return {
+        "api_version": "v1",
+        "catalog_version": "catalog-td-v1",
+        "data": rows,
+        "dataset_id": dataset_id,
+        "metadata": {
+            "data_through": data_through,
+            "degraded": False,
+            "freshness": {"sla_seconds": 604800, "stale": False, "state": "fresh"},
+            "lineage": {
+                "authority": "sqlite_ingest_receipts", "complete": True,
+                "dataset_id": dataset_id, "provider_neutral": True,
+                "receipt_watermark": _sha(f"{dataset_id}:watermark"),
+                "state": "complete", "transport_profile_id": "td-v1",
+                "transport_profile_sha256": _sha("td-profile"),
+                "transport_service": "quicksync",
+            },
+            "observed_at": observed_at,
+            "quality": {"evidence": [], "state": "valid", "valid": True},
+            "reasons": [], "receipt_id": f"receipt:{dataset_id}",
+            "requested_as_of": None, "resolved_as_of": None,
+            "runtime_state": "success", "state": "ready",
+        },
+        "next_cursor": None,
+        "request_id": _sha(f"{dataset_id}:request")[:24],
+        "schema_version": "2.0.0",
+    }
+
+
+def _td_authorities(envelopes: dict[str, dict]) -> dict[str, dict]:
+    def source(dataset_id: str) -> dict[str, str]:
+        envelope = envelopes[dataset_id]
+        metadata = envelope["metadata"]
+        binding = {
+            "dataset_id": dataset_id,
+            "catalog_version": envelope["catalog_version"],
+            "receipt_id": metadata["receipt_id"],
+            "data_through": metadata["data_through"],
+            "observed_at": metadata["observed_at"],
+            "freshness": metadata["freshness"],
+            "quality": metadata["quality"],
+            "lineage": metadata["lineage"],
+        }
+        return {
+            "receiptId": metadata["receipt_id"],
+            "receiptSha256": observation_worker._canonical_sha256(binding),
+            "lineageSha256": observation_worker._canonical_sha256(metadata["lineage"]),
+        }
+
+    calendar = envelopes["cn.market.trade_calendar"]
+    calendar_source = source("cn.market.trade_calendar")
+    calendar_binding = {
+        "id": "sse-calendar",
+        "version": "2026.08.v1",
+        "sourceDatasetId": "cn.market.trade_calendar",
+        **calendar_source,
+        "calendarSha256": _sha("calendar-content"),
+    }
+    result = {
+        "cn.market.trade_calendar": {
+            "datasetId": "cn.market.trade_calendar",
+            "market": "ashare",
+            "timezone": "Asia/Shanghai",
+            "calendar": calendar_binding,
+            "session": {"state": "closed", "asOf": calendar["metadata"]["observed_at"]},
+            "dataThrough": calendar["metadata"]["data_through"],
+            "source": calendar_source,
+        }
+    }
+    for dataset_id in ("cn.equity.daily", "cn.equity.security_master"):
+        result[dataset_id] = {
+            "datasetId": dataset_id,
+            "market": "ashare",
+            "timezone": "Asia/Shanghai",
+            "calendar": calendar_binding,
+            "session": {"state": "closed", "asOf": calendar["metadata"]["observed_at"]},
+            "dataThrough": envelopes[dataset_id]["metadata"]["data_through"],
+            "source": source(dataset_id),
+        }
+    return result
+
+
+def test_build_td_projection_batch_and_validate_with_existing_publisher(tmp_path: Path) -> None:
+    envelopes = {
+        "cn.equity.daily": _td_envelope(
+            "cn.equity.daily",
+            [{"ts_code": "600000.SH", "trade_date": "20260811", "open": 9.27,
+              "high": 9.34, "low": 9.18, "close": 9.21, "pre_close": 9.29,
+              "vol": 509424.33, "amount": 470381.696}],
+            data_through="2026-08-11T00:00:00+08:00",
+            observed_at="2026-08-11T08:31:26.100730+00:00",
+        ),
+        "cn.equity.security_master": _td_envelope(
+            "cn.equity.security_master",
+            [{"ts_code": "600000.SH", "symbol": "600000", "name": "浦发银行",
+              "area": "上海", "industry": "银行", "market": "主板",
+              "list_date": "19991110", "list_status": "L"}],
+            data_through="2026-08-11T10:35:04.025706+00:00",
+            observed_at="2026-08-11T10:40:11.953029+00:00",
+        ),
+        "cn.market.trade_calendar": _td_envelope(
+            "cn.market.trade_calendar",
+            [{"exchange": "SSE", "cal_date": "20260811", "is_open": 1,
+              "pretrade_date": "20260810"}],
+            data_through="2026-08-10T16:30:28.787756+00:00",
+            observed_at="2026-08-10T16:30:28.787756+00:00",
+        ),
+    }
+    paths = {}
+    for dataset_id, envelope in envelopes.items():
+        path = (tmp_path / f"{dataset_id.replace('.', '_')}.json").resolve()
+        path.write_text(json.dumps(envelope, ensure_ascii=False), encoding="utf-8")
+        paths[dataset_id] = path
+    authorities = (tmp_path / "activity-authorities.json").resolve()
+    authorities.write_text(json.dumps(_td_authorities(envelopes), ensure_ascii=False), encoding="utf-8")
+    batch_path = (tmp_path / "batch.json").resolve()
+    batch = build_td_projection_batch(
+        daily_envelope_path=paths["cn.equity.daily"],
+        security_master_envelope_path=paths["cn.equity.security_master"],
+        trade_calendar_envelope_path=paths["cn.market.trade_calendar"],
+        activity_authorities_path=authorities,
+        generated_at=datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc),
+        valid_until=datetime(2026, 8, 13, 1, 0, tzinfo=timezone.utc),
+    )
+    assert batch["contractId"] == "tradingagent.trading_copilot_projection_batch_input.v2"
+    assert batch["items"][0]["symbol"] == "600000.SH"
+    cli_batch_path = (tmp_path / "cli-batch.json").resolve()
+    assert observation_worker.main([
+        "--td-daily-envelope", str(paths["cn.equity.daily"]),
+        "--td-security-master-envelope", str(paths["cn.equity.security_master"]),
+        "--td-trade-calendar-envelope", str(paths["cn.market.trade_calendar"]),
+        "--activity-authorities", str(authorities),
+        "--decision-time", "2026-08-12T01:00:00+00:00",
+        "--valid-until", "2026-08-13T01:00:00+00:00",
+        "--batch-output", str(cli_batch_path),
+    ]) == 0
+    assert json.loads(cli_batch_path.read_text(encoding="utf-8"))["contractId"] == batch["contractId"]
+    batch_path.write_text(json.dumps(batch, ensure_ascii=False), encoding="utf-8")
+    result = publish_projection_batch(
+        input_path=batch_path,
+        output_root=(tmp_path / "private-publisher-output").resolve(),
+        now=datetime(2026, 8, 12, 2, 0, tzinfo=timezone.utc),
+    )
+    assert result["status"] == "pass"
+    assert result["authority"]["realTradingEnabled"] is False
+
+
+def test_td_projection_requires_explicit_calendar_authority(tmp_path: Path) -> None:
+    envelopes = {
+        "cn.equity.daily": _td_envelope(
+            "cn.equity.daily", [{"ts_code": "600000.SH", "trade_date": "20260811", "open": 9.27,
+                                  "high": 9.34, "low": 9.18, "close": 9.21, "pre_close": 9.29, "vol": 1}],
+            data_through="2026-08-11T00:00:00+08:00", observed_at="2026-08-11T08:31:26+00:00"),
+        "cn.equity.security_master": _td_envelope(
+            "cn.equity.security_master", [{"ts_code": "600000.SH", "name": "浦发银行", "area": "上海",
+                                            "industry": "银行", "market": "主板", "list_date": "19991110"}],
+            data_through="2026-08-11T10:35:04+00:00", observed_at="2026-08-11T10:40:11+00:00"),
+        "cn.market.trade_calendar": _td_envelope(
+            "cn.market.trade_calendar", [{"exchange": "SSE", "cal_date": "20260811", "is_open": 1}],
+            data_through="2026-08-10T16:30:28+00:00", observed_at="2026-08-10T16:30:28+00:00"),
+    }
+    paths = {}
+    for dataset_id, envelope in envelopes.items():
+        path = (tmp_path / f"{dataset_id.replace('.', '_')}.json").resolve()
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        paths[dataset_id] = path
+    authorities = (tmp_path / "authorities.json").resolve()
+    authorities.write_text(json.dumps({}), encoding="utf-8")
+    with pytest.raises(
+        TradingCopilotObservationError,
+        match="copilot_td_activity_authorities_invalid",
+    ):
+        build_td_projection_batch(
+            daily_envelope_path=paths["cn.equity.daily"],
+            security_master_envelope_path=paths["cn.equity.security_master"],
+            trade_calendar_envelope_path=paths["cn.market.trade_calendar"],
+            activity_authorities_path=authorities,
+            generated_at=datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc),
+            valid_until=datetime(2026, 8, 13, 1, 0, tzinfo=timezone.utc),
         )

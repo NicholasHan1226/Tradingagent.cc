@@ -15,6 +15,7 @@ from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -113,6 +114,172 @@ def _load_json(path: Path, reason: str) -> Mapping[str, Any]:
         return _mapping(json.loads(path.read_text(encoding="utf-8")), reason)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TradingCopilotObservationError(reason) from exc
+
+
+def _canonical_sha256(value: object) -> str:
+    try:
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise TradingCopilotObservationError(
+            "copilot_td_envelope_not_canonical"
+        ) from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _parse_td_timestamp(value: object, reason: str) -> datetime:
+    raw = _text(value, reason)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise TradingCopilotObservationError(reason) from exc
+    return _aware(parsed, reason)
+
+
+def _load_td_query_envelope(
+    path: Path | str,
+    *,
+    dataset_id: str,
+    identity_fields: tuple[str, ...],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load one complete, bounded TD query envelope without querying TD."""
+
+    raw = dict(_load_json(Path(path), "copilot_td_query_envelope_invalid"))
+    if raw.get("api_version") != "v1":
+        raise TradingCopilotObservationError(
+            f"copilot_td_query_api_version_invalid:{dataset_id}"
+        )
+    if raw.get("dataset_id") != dataset_id:
+        raise TradingCopilotObservationError(
+            f"copilot_td_query_dataset_mismatch:{dataset_id}"
+        )
+    if not _text(raw.get("schema_version"), f"copilot_td_schema_version_invalid:{dataset_id}").startswith("2."):
+        raise TradingCopilotObservationError(
+            f"copilot_td_schema_version_invalid:{dataset_id}"
+        )
+    _text(raw.get("catalog_version"), f"copilot_td_catalog_version_invalid:{dataset_id}")
+    _text(raw.get("request_id"), f"copilot_td_request_id_invalid:{dataset_id}")
+    if raw.get("next_cursor") is not None:
+        raise TradingCopilotObservationError(
+            f"copilot_td_query_pagination_incomplete:{dataset_id}"
+        )
+    rows = raw.get("data")
+    if not isinstance(rows, list) or not rows:
+        raise TradingCopilotObservationError(f"copilot_td_rows_empty:{dataset_id}")
+    metadata = raw.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_invalid:{dataset_id}"
+        )
+    if metadata.get("state") != "ready" or metadata.get("runtime_state") != "success":
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_not_ready:{dataset_id}"
+        )
+    if metadata.get("degraded") is not False:
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_degraded:{dataset_id}"
+        )
+    freshness = metadata.get("freshness")
+    if (
+        not isinstance(freshness, Mapping)
+        or freshness.get("state") != "fresh"
+        or freshness.get("stale") is not False
+    ):
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_not_fresh:{dataset_id}"
+        )
+    quality = metadata.get("quality")
+    if (
+        not isinstance(quality, Mapping)
+        or quality.get("state") != "valid"
+        or quality.get("valid") is not True
+        or quality.get("evidence") != []
+    ):
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_quality_invalid:{dataset_id}"
+        )
+    lineage = metadata.get("lineage")
+    if (
+        not isinstance(lineage, Mapping)
+        or lineage.get("dataset_id") != dataset_id
+        or lineage.get("complete") is not True
+        or lineage.get("provider_neutral") is not True
+    ):
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_lineage_incomplete:{dataset_id}"
+        )
+    data_through = _parse_td_timestamp(
+        metadata.get("data_through"), f"copilot_td_data_through_invalid:{dataset_id}"
+    )
+    observed_at = _parse_td_timestamp(
+        metadata.get("observed_at"), f"copilot_td_observed_at_invalid:{dataset_id}"
+    )
+    if data_through > observed_at:
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_time_order_invalid:{dataset_id}"
+        )
+    receipt_id = _text(
+        metadata.get("receipt_id"), f"copilot_td_receipt_invalid:{dataset_id}"
+    )
+    reasons = metadata.get("reasons")
+    if reasons != []:
+        raise TradingCopilotObservationError(
+            f"copilot_td_metadata_reasons_present:{dataset_id}"
+        )
+    seen: set[tuple[str, ...]] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise TradingCopilotObservationError(
+                f"copilot_td_row_invalid:{dataset_id}"
+            )
+        identity = tuple(_text(row.get(field), f"copilot_td_identity_invalid:{dataset_id}") for field in identity_fields)
+        if identity in seen:
+            raise TradingCopilotObservationError(
+                f"copilot_td_duplicate_identity:{dataset_id}"
+            )
+        seen.add(identity)
+    envelope_binding = {
+        "dataset_id": dataset_id,
+        "catalog_version": raw["catalog_version"],
+        "receipt_id": receipt_id,
+        "data_through": metadata["data_through"],
+        "observed_at": metadata["observed_at"],
+        "freshness": freshness,
+        "quality": quality,
+        "lineage": lineage,
+    }
+    source = {
+        "transportContract": FIXED_SOURCE_TRANSPORT,
+        "datasetId": dataset_id,
+        "receiptId": receipt_id,
+        "receiptSha256": _canonical_sha256(envelope_binding),
+        "lineageSha256": _canonical_sha256(lineage),
+        "dataThrough": metadata["data_through"],
+        "retrievedAt": metadata["observed_at"],
+        "freshness": "fresh",
+        "adjustment": "unknown",
+    }
+    return raw, source
+
+
+def _load_td_activity_authorities(path: Path | str) -> dict[str, dict[str, Any]]:
+    try:
+        authorities = load_activity_authorities(Path(path))
+    except TradingCopilotObservationError as exc:
+        raise TradingCopilotObservationError(
+            f"copilot_td_activity_authorities_invalid:{exc}"
+        ) from exc
+    for dataset_id in ("cn.equity.daily", "cn.equity.security_master"):
+        if dataset_id not in authorities:
+            raise TradingCopilotObservationError(
+                f"copilot_td_activity_authority_required:{dataset_id}"
+            )
+    return authorities
 
 
 def load_company_facts(path: Path | str) -> dict[str, dict[str, Any]]:
@@ -1164,6 +1331,192 @@ def build_projection_batch(
     }
 
 
+def build_td_projection_batch(
+    *,
+    daily_envelope_path: Path | str,
+    security_master_envelope_path: Path | str,
+    trade_calendar_envelope_path: Path | str,
+    activity_authorities_path: Path | str,
+    generated_at: datetime,
+    valid_until: datetime,
+) -> dict[str, Any]:
+    """Build one factual A-share batch from complete TD envelopes only.
+
+    This producer is deliberately independent of TA minute/model output.  The
+    caller must provide an explicit activity-authority artifact; calendar
+    authority is never reconstructed from rows or catalog metadata here.
+    """
+
+    generated_at = _aware(generated_at, "copilot_generated_at_timezone_required")
+    valid_until = _aware(valid_until, "copilot_valid_until_timezone_required")
+    if valid_until <= generated_at:
+        raise TradingCopilotObservationError("copilot_projection_time_invalid")
+    daily, daily_source = _load_td_query_envelope(
+        daily_envelope_path,
+        dataset_id="cn.equity.daily",
+        identity_fields=("ts_code", "trade_date"),
+    )
+    master, master_source = _load_td_query_envelope(
+        security_master_envelope_path,
+        dataset_id="cn.equity.security_master",
+        identity_fields=("ts_code",),
+    )
+    calendar, calendar_source = _load_td_query_envelope(
+        trade_calendar_envelope_path,
+        dataset_id="cn.market.trade_calendar",
+        identity_fields=("exchange", "cal_date"),
+    )
+    catalog_versions = {
+        daily["catalog_version"], master["catalog_version"], calendar["catalog_version"]
+    }
+    if len(catalog_versions) != 1:
+        raise TradingCopilotObservationError("copilot_td_catalog_version_drift")
+    authorities = _load_td_activity_authorities(activity_authorities_path)
+    calendar_authority = authorities.get("cn.market.trade_calendar")
+    if calendar_authority is None:
+        raise TradingCopilotObservationError(
+            "copilot_td_activity_authority_required:cn.market.trade_calendar"
+        )
+    calendar_rows = calendar["data"]
+    calendar_receipt = calendar_source["receiptId"]
+    calendar_receipt_sha = calendar_source["receiptSha256"]
+    calendar_lineage_sha = calendar_source["lineageSha256"]
+    calendar_mapping = _mapping(
+        _mapping(calendar_authority, "copilot_td_calendar_authority_invalid").get("calendar"),
+        "copilot_td_calendar_authority_invalid",
+    )
+    if (
+        calendar_mapping.get("sourceDatasetId") != "cn.market.trade_calendar"
+        or calendar_mapping.get("receiptId") != calendar_receipt
+        or calendar_mapping.get("receiptSha256") != calendar_receipt_sha
+        or calendar_mapping.get("lineageSha256") != calendar_lineage_sha
+    ):
+        raise TradingCopilotObservationError("copilot_td_calendar_authority_mismatch")
+    if not calendar_rows:
+        raise TradingCopilotObservationError("copilot_td_rows_empty:cn.market.trade_calendar")
+    _bind_activity_authority(calendar_source, authorities)
+    master_by_symbol = {row["ts_code"]: row for row in master["data"]}
+    daily_symbols = {row["ts_code"] for row in daily["data"]}
+    if set(master_by_symbol) != daily_symbols:
+        raise TradingCopilotObservationError("copilot_td_symbol_set_mismatch")
+
+    daily_bound = _bind_activity_authority(daily_source, authorities)
+    master_bound = _bind_activity_authority(master_source, authorities)
+    items: list[dict[str, Any]] = []
+    for row in sorted(daily["data"], key=lambda value: value["ts_code"]):
+        symbol = _text(row.get("ts_code"), "copilot_td_daily_symbol_invalid").upper()
+        master_row = master_by_symbol[symbol]
+        name = _text(master_row.get("name"), "copilot_td_security_master_name_invalid")
+        industry = _text(master_row.get("industry"), "copilot_td_security_master_industry_invalid")
+        area = _text(master_row.get("area"), "copilot_td_security_master_area_invalid")
+        listing_raw = _text(master_row.get("list_date"), "copilot_td_security_master_listing_invalid")
+        try:
+            listing_date = datetime.strptime(listing_raw.replace("-", "")[:8], "%Y%m%d").date().isoformat()
+        except ValueError as exc:
+            raise TradingCopilotObservationError(
+                "copilot_td_security_master_listing_invalid"
+            ) from exc
+        close = row.get("close")
+        previous_close = row.get("pre_close")
+        opening = row.get("open")
+        high = row.get("high")
+        low = row.get("low")
+        volume = row.get("vol")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in (close, previous_close, opening, high, low, volume)
+        ):
+            raise TradingCopilotObservationError("copilot_td_daily_quote_invalid")
+        if any(float(value) <= 0 for value in (close, previous_close, opening, high, low)) or float(volume) < 0:
+            raise TradingCopilotObservationError("copilot_td_daily_quote_invalid")
+        trade_date = _text(row.get("trade_date"), "copilot_td_daily_trade_date_invalid")
+        if len(trade_date) != 8 or not trade_date.isdigit():
+            raise TradingCopilotObservationError("copilot_td_daily_trade_date_invalid")
+        point_stamp = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}T00:00:00+08:00"
+        exchange = symbol[-2:]
+        market = master_row.get("market")
+        board = {
+            "主板": "main", "创业板": "gem", "科创板": "star", "北交所": "beijing"
+        }.get(market, "unknown")
+        change = float(close) - float(previous_close)
+        direction = "上涨" if change >= 0 else "下跌"
+        company_source = dict(master_bound)
+        items.append({
+            "symbol": symbol,
+            "name": name,
+            "source": dict(daily_bound),
+            "sourceReceipts": [{
+                "receiptId": daily_bound["receiptId"],
+                "receiptSha256": daily_bound["receiptSha256"],
+            }],
+            "marketRules": {
+                "board": board,
+                "lotSize": 100,
+                "tPlusOne": True,
+                "priceLimitPct": None,
+                "stStatus": "unknown",
+                "tradingStatus": "unknown",
+                "session": "unknown",
+                "corporateActionAdjusted": None,
+            },
+            "quote": {
+                "price": float(close),
+                "previousClose": float(previous_close),
+                "open": float(opening),
+                "high": float(high),
+                "low": float(low),
+                "volume": float(volume),
+                "turnoverRate": None,
+                "peTtm": None,
+                "marketCapCny": None,
+            },
+            "company": {
+                "exchange": exchange,
+                "industry": industry,
+                "area": area,
+                "listingDate": listing_date,
+                "description": "TD security_master 未提供公司简介；此字段保持不可用。",
+                "source": company_source,
+            },
+            "series": {
+                "1D": [{
+                    "key": point_stamp,
+                    "label": trade_date,
+                    "price": float(close),
+                    "volume": float(volume),
+                    "forecastMedian": None,
+                    "forecastNarrowEnvelope": None,
+                    "forecastWideEnvelope": None,
+                }],
+                "5D": [], "1M": [], "6M": [], "YTD": [], "1Y": [],
+            },
+            "events": [],
+            "summary": "仅投影已验收 TD 事实；无 TA 模型、概率或订单 authority。",
+            "support": [{
+                "title": "TD 日线事实",
+                "detail": f"已验收日线收盘较前收{direction} {abs(change):.2f}。",
+                "sourceRef": f"td-v1:{daily_bound['datasetId']}:{daily_bound['receiptId']}",
+                "knownAt": daily_bound["retrievedAt"],
+            }],
+            "oppose": [{
+                "title": "事实范围限制",
+                "detail": "当前输入不包含样本外校准预测、事件解释或执行授权。",
+                "sourceRef": f"td-v1:{master_bound['datasetId']}:{master_bound['receiptId']}",
+                "knownAt": master_bound["retrievedAt"],
+            }],
+            "buyConditions": ["仅供人工观察；任何行动须另行完成规则、风险和新鲜度复核。"],
+            "invalidation": ["任一 TD receipt、lineage、freshness 或 activity authority 失效时停止采用。"],
+        })
+    return {
+        "contractId": BATCH_INPUT_CONTRACT,
+        "generatedAt": generated_at.isoformat(),
+        "validUntil": valid_until.isoformat(),
+        "items": items,
+    }
+
+
 def _atomic_json(path: Path, value: object) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     payload = (json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n").encode()
@@ -1182,9 +1535,9 @@ def _atomic_json(path: Path, value: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--minute-manifest", type=Path, required=True)
-    parser.add_argument("--reference-facts", type=Path, required=True)
-    company_group = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument("--minute-manifest", type=Path)
+    parser.add_argument("--reference-facts", type=Path)
+    company_group = parser.add_mutually_exclusive_group()
     company_group.add_argument("--company-facts", type=Path)
     company_group.add_argument("--observation-manifest", type=Path)
     parser.add_argument("--observation-state-root", type=Path)
@@ -1221,8 +1574,86 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Optional typed event-evidence artifact for --offline-canary-receipt.",
     )
+    parser.add_argument("--td-daily-envelope", type=Path)
+    parser.add_argument("--td-security-master-envelope", type=Path)
+    parser.add_argument("--td-trade-calendar-envelope", type=Path)
     arguments = parser.parse_args(argv)
     try:
+        td_mode = any(
+            value is not None
+            for value in (
+                arguments.td_daily_envelope,
+                arguments.td_security_master_envelope,
+                arguments.td_trade_calendar_envelope,
+            )
+        )
+        if td_mode:
+            if not all(
+                value is not None
+                for value in (
+                    arguments.td_daily_envelope,
+                    arguments.td_security_master_envelope,
+                    arguments.td_trade_calendar_envelope,
+                    arguments.activity_authorities,
+                    arguments.decision_time,
+                    arguments.valid_until,
+                    arguments.batch_output,
+                )
+            ):
+                raise TradingCopilotObservationError(
+                    "copilot_td_producer_arguments_required"
+                )
+            if any(
+                value
+                for value in (
+                    arguments.minute_manifest,
+                    arguments.reference_facts,
+                    arguments.company_facts,
+                    arguments.observation_manifest,
+                    arguments.load_current_events is True,
+                    arguments.event_bundle,
+                    arguments.event_evidence_artifact_root,
+                    arguments.event_timeline_output_root,
+                    arguments.projection_output_root,
+                    arguments.result_output,
+                    arguments.token_file,
+                    arguments.offline_canary_receipt,
+                    arguments.offline_event_artifact,
+                    arguments.research_snapshot_store_root,
+                    arguments.trading_date,
+                )
+            ):
+                raise TradingCopilotObservationError(
+                    "copilot_td_producer_mixed_mode"
+                )
+            if arguments.batch_output.is_absolute() is not True or arguments.batch_output.is_symlink():
+                raise TradingCopilotObservationError("copilot_td_batch_output_invalid")
+            generated_at = datetime.fromisoformat(
+                arguments.decision_time.replace("Z", "+00:00")
+            )
+            valid_until = datetime.fromisoformat(
+                arguments.valid_until.replace("Z", "+00:00")
+            )
+            batch = build_td_projection_batch(
+                daily_envelope_path=arguments.td_daily_envelope,
+                security_master_envelope_path=arguments.td_security_master_envelope,
+                trade_calendar_envelope_path=arguments.td_trade_calendar_envelope,
+                activity_authorities_path=arguments.activity_authorities,
+                generated_at=generated_at,
+                valid_until=valid_until,
+            )
+            _atomic_json(arguments.batch_output, batch)
+            print(json.dumps({
+                "status": "pass",
+                "mode": "td_observed_projection_batch",
+                "contractId": batch["contractId"],
+                "symbolCount": len(batch["items"]),
+                "publisherInvoked": False,
+                "publication": False,
+                "retention": False,
+                "batchOutput": str(arguments.batch_output.resolve()),
+            }, ensure_ascii=False, sort_keys=True))
+            return 0
         if arguments.offline_canary_receipt is not None:
             if arguments.observation_manifest or arguments.observation_state_root:
                 raise TradingCopilotObservationError(
