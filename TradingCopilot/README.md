@@ -1,6 +1,6 @@
 # TradingCopilot
 
-TradingCopilot 是 TradingAgent 仓库内独立的 A 股人工决策辅助产品域。它服务个人主观实盘，把用户申报资金/持仓、关注股、TradingAgent 已验证证据和人工判断组织成可审计的行动卡。
+TradingCopilot 是 TradingAgent 仓库内独立、过渡性的 A 股实盘辅助、解释、观察与人工接管产品域。它在 TA 尚未接管全部获授权决策与执行时，把用户申报资金/持仓、关注股、TradingAgent 已验证证据和人工判断组织成可审计的行动卡。它不是终局交易系统，不是 TA 必经下游，也不扩展为 Crypto 或预测市场 Copilot；长期可保留为监控、解释和人工接管面。
 
 ## 与量化核心的区别
 

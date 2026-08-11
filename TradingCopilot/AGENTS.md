@@ -4,9 +4,10 @@
 
 ## 定位
 
-- TradingCopilot 是 Nicholas 及少量受控协作者使用的 A 股人工决策辅助领域，不是第二套量化交易系统。
+- TradingCopilot 是 TA 成熟过程中的过渡性 A 股实盘辅助、解释、观察与人工接管领域，不是第二套量化交易系统，也不是 Finance 的终局交易产品。长期方向是 TradingAgent 在逐市场明确授权后接管决策与执行，Copilot 退回监控、解释和人工接管面。
 - 它可以读取 TradingAgent 已发布的只读研究、候选、风险与市场证据，结合用户申报的资金、持仓、关注股和人工决定形成行动卡。
 - 它不拥有量化 Champion、模型晋级、资本预约、量化订单、BrokerAdapter、真实交易或风险扩张 authority。
+- 它不是 TradingAgent 的必经下游，不扩展到 Crypto 或预测市场；这些市场的量化闭环属于各自隔离的 TA/Quant Core lane。
 - 未获得 TradingAgent 正式覆盖的股票必须显示 `analysis_unavailable`；演示数据必须显示 `demo_fixture`，不得冒充实时分析。
 
 ## 共享底座与领域所有权
