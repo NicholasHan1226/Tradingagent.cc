@@ -1,15 +1,15 @@
 # TradingAgent
 
-TradingAgent 是候选研判、风险控制、模拟执行、样本记录和复盘系统。当前目标是在真实数据、费用、滑点和小账户约束下形成可学习闭环，逐步检验是否存在费用后正期望；这不是收益承诺。
+TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统。它通过证据门禁下的自我学习、自我迭代、自我更新和自我修复，在真实数据、费用、滑点和小账户约束下持续改善费用后胜率、净投资回报、回撤和执行可靠性；这不是收益承诺。当前开发市场是 A股和 Crypto；美股与 A股期权是未来隔离范围；预测市场与 CNFutures 当前暂停。
 
 > 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。
 
-## 双产品定位
+## 终局系统与过渡工具
 
 本仓采用共享证据、分离 authority 的两层结构：
 
-- **TradingAgent Quant Core**：面向系统化量化，核心价值是全量一致扫描、可重复规则、多因子联合、组合级风险、执行纪律、成本控制和样本外迭代；分钟级只是可选运行频率，不是优势本身。当前仍是 simulation/shadow，不代表已证明 alpha 或已具备真实交易权限。
-- **TradingCopilot**：面向 Nicholas 的 A 股主观实盘辅助。网页允许手工维护申报资金、可用现金、持仓和关注股，并把支持买入、反对买入、最终判断、强度、触发与失效条件放在同一行动卡。最终决定永远由人作出，当前不连接券商。
+- **TradingAgent Quant Core**：终局的个人自动量化决策与执行系统。核心价值是全量一致扫描、可重复规则、多因子联合、组合级风险、执行纪律、成本控制、样本外迭代和可验证的自我更新；分钟级只是可选运行频率，不是优势本身。当前仍是 simulation/shadow，不代表已证明 alpha 或已具备真实交易权限。
+- **TradingCopilot**：TA 成熟过程中的过渡性 A 股实盘辅助、解释、观察和人工接管工具。网页允许手工维护申报资金、可用现金、持仓和关注股，并把支持/反对证据、判断、强度、触发与失效条件放在同一行动卡。当前决定仍由人作出且不连接券商；长期方向是 TA 在逐市场明确授权后接管决策与执行，Copilot 退回监控、解释和人工接管面。
 
 两者共享的是经过验证的只读研究证据，不共享账户、资本、订单、绩效或模型晋级。TradingCopilot 领域合同见 [TradingCopilot/README.md](TradingCopilot/README.md)，网页入口为 `/?product=copilot`。
 
@@ -46,7 +46,7 @@ flowchart LR
 
 - TradingDatas 提供统一只读数据；TradingAgent 不直读兄弟仓数据库，也不现场采集行情。
 - MarketGraph 只作可开关增强，不阻塞基础样本闭环，也没有资金或执行权。
-- A股和 CNFutures 各自拥有独立的 50,000 CNY 模拟账户；Crypto 当前只有隔离的 10,000 USDT 本地 fixture opening candidate，尚无 current/runtime/live capital authority。三者不换汇、不相加、不净额抵消或互相补资；All Markets 只汇总非货币计数与健康状态。
+- A股拥有独立的 50,000 CNY 当前模拟账户；CNFutures 的独立 50,000 CNY 模拟 authority 只读保留且该市场当前暂停；Crypto 当前只有隔离的 10,000 USDT 本地 fixture opening candidate，尚无 current/runtime/live capital authority。三者不换汇、不相加、不净额抵消或互相补资；All Markets 只汇总非货币计数与健康状态。
 - 所有流程保持 `REAL_TRADING_ENABLED=false`。邮件、同花顺人工实盘和 broker gateway 都未在本仓实现。
 
 ## 资本与风险
@@ -54,7 +54,7 @@ flowchart LR
 | 市场 | 初始权益 | 主要容量 | 独立风险状态 |
 |---|---:|---|---|
 | A股 | 50,000 CNY | 股票总敞口90%；单票15%；买入100股整数倍，卖出含完整零股/全退例外；最多8仓并支持至少7个不同股票 | 5% 回撤收紧，7% 暂停 |
-| CNFutures | 50,000 CNY | 保证金使用率 50%；最小一手与止损损失预算另行校验 | 5% 回撤收紧，7% 暂停 |
+| CNFutures（用户暂停） | 50,000 CNY 既有模拟 authority | 不启动新开发、回放、模拟或 runtime | 保留合同与证据，等待 Nicholas 明确恢复 |
 | Crypto | 10,000 USDT | 本地fixture opening baseline；单仓15%；最多10仓；小数数量与最小名义金额由Crypto fixture校验 | generation 1非current authority；无scheduler/Testnet/Live |
 
 A股不设固定保护现金：全部资金可服务合格机会，但弱市、没有通过冻结rank/成本/风险门禁的合格候选，或硬门禁未过时不强制部署。当前rank score尚不能证明正期望；资金计划必须展示利用率和未部署原因，现金管理收益与股票 alpha 分账。
@@ -70,7 +70,7 @@ A股不设固定保护现金：全部资金可服务合格机会，但弱市、�
 - `ValidationPlan` 已把标签期限、最大特征回看、purge/embargo、事件簇隔离、试验预算、PBO/DSR、冻结 OOS receipt，以及独立复核且冻结于预测前的 A股交易会话 calendar proof 纳入不可变合同。SampleJournal 和 A股 label/sample ops 调用链都必须显式传入该计划；两个 CLI 只通过 `--validation-plan-path` 加载预先生成、内容寻址的 `ashare_validation_plan_v1` artifact，不在运行时调用verifier或自签proof。A股 `close/1d/3d/5d` target 必须来自同一会话证明，调用方只能断言同一时点，不能顺延缺失日线。这仍只是本地合同与fixture verifier，真实上游 calendar authority、artifact registry、walk-forward、PBO 和 DSR 实证均未完成。
 - metrics v2 数值产物不能自报 lineage；本地 verifier 固定 implementation trust root，重读 canonical artifact 与完整 detached receipt，并复核 label/cost/source、窗口/horizon/regime、journal/model 和独立样本数。该 proof 仍只是本地完整性绑定，不是数字签名或外部独立重算 authority。持久 drift latch 会在每次风险评估及网络关闭的模拟副作用前重读，capital commit还在时钟校验后做最终authority重读；模拟提交和资本提交分别从显式 `TrustedExecutionClock` 获取不截断时点并再次验证 quote，强制`quote <= submit <= fill/terminal <= commit <= reconcile`。TOCTOU或坏时钟时释放预约且不提交账务，日循环与对账复用严格零成交失败合同。它阻断 open/increase、保留已验证 reduce/exit，并把无新增订单日明确结束为 `completed_with_blocks`；健康重启不会自动清除 latch。未来真实broker/scheduler仍须接入生产时钟、市场证据、原子化authority+commit和独立metrics authority。
 - 可执行自动闭环只在网络关闭的冻结 fixture 中得到验证；相同输入的业务 bundle 已验证不受本机输出根绝对路径影响，同根 replay 不重放 transport。另有 canonical-capital composition 的测试候选证明单一模拟账本、人工选择Champion、动态generation/lineage、capital outbox与reconcile可组合，但它还没有 CLI/scheduler/live sample。真实 TradingDatas V1、市场日历 scheduler 和 20 个交易日运行尚未验收。旧四风格、exploration/exploitation 路径仍是 time-boxed legacy，不是 V1 当前路由。
-- CNFutures 维持独立市场专属契约和独立 50k CNY authority；Crypto 保持独立 10k USDT 本地fixture opening candidate；A股重构不能隐式改变其行为。A股、CNFutures、Crypto 只能共享机械 `BrokerPort`/幂等/回执原语，模拟 API、外部测试 API、未来 live adapter、账户、凭据和订单语义均分别实现；当前全部 live 关闭。
+- CNFutures 维持独立市场专属契约和独立 50k CNY 既有模拟 authority，但用户暂停期间不启动新工作；Crypto 保持独立 10k USDT 本地fixture opening candidate；A股重构不能隐式改变其行为。各市场只能共享机械 `BrokerPort`/幂等/回执原语，模拟 API、外部测试 API、未来 live adapter、账户、凭据和订单语义均分别实现；当前全部 live 关闭。
 
 SampleJournal/KPI 仍是正式演化 authority。Decision Ledger、fixture、paper、shadow 和 LLM evidence 都不能自行晋级、扩风险或切实盘。
 

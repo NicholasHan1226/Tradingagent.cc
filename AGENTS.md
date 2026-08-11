@@ -4,10 +4,10 @@
 
 ## 项目定位
 
-- TradingAgent Quant Core 负责候选、预测、组合决策、风险门禁、模拟执行、样本与复盘；长期目标是在各市场合规且逐项获授权后运行可审计的量化交易。`TradingCopilot/` 是同仓、独立 namespace 的 A 股人工决策辅助产品域，不是第二套量化系统。
+- TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统，负责候选、预测、组合决策、风险门禁、执行、样本与复盘，并通过证据门禁下的自我学习、自我迭代、自我更新和自我修复持续提升费用后胜率与净投资回报，同时控制回撤、流动性和运行风险。当前开发市场是 A股与 Crypto；美股和 A股期权是未来隔离范围；预测市场与 CNFutures 当前暂停。`TradingCopilot/` 是同仓、独立 namespace 的过渡性 A 股实盘辅助、解释、观察与人工接管工具，不是第二套量化系统，也不是终局交易产品。
 - TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。认证只允许最终HTTP transport从仓外、绝对路径、可信owner、精确`0600`且无symlink/硬链接别名的TA专用token file注入Bearer header；禁止明文token环境变量、manifest/日志/回执泄露、401/403重试和任何legacy/provider fallback。TradingDatas fresh handoff 前只允许 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID。
 - MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
-- 当前目标是验证工程闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。
+- 当前目标是验证可持续自我改进的自动量化闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。长期方向是在逐市场明确授权后由 TA 接管决策与执行，而不是把人工计划永久作为核心流程。
 
 ## TradingDatas 消费分层
 
@@ -19,7 +19,7 @@
 
 ## 当前唯一资本事实
 
-- A股和 CNFutures 各有一个独立、fresh-start、50,000 CNY 的 simulated authority：`ashare-capital-v1` 与 `cn-futures-capital-v1`。generation 1 只是历史 fresh-start 基线；消费者每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
+- A股拥有独立、fresh-start、50,000 CNY 的当前 simulated authority `ashare-capital-v1`。CNFutures 的 `cn-futures-capital-v1` 只保留为既有隔离模拟事实；Nicholas 已暂停该市场，不得据此启动新开发、回放、模拟或 runtime。generation 1 只是历史 fresh-start 基线；适用消费者每轮必须读取、验证并传播 current snapshot 的正整数 generation，禁止写死。
 - Crypto 的 `Crypto/capital_policy.py` 只定义独立 10,000 USDT 本地 fixture opening baseline；generation 1 固定为 `local_fixture_opening_baseline_only`，不是可轮换 current snapshot、execution、durable receipt、production 或 live capital authority。`Crypto/config.yaml` 只声明币种与风险参数，`shared/markets/sim_capital.py` 只派生兼容读侧数值；当前没有 current/live exchange authority。
 - 三个账户的现金、持仓/保证金、预约、盈亏、回撤、风控、execution lineage 和样本归因完全分离。总览只可并列；All Markets 只可汇总非货币计数和健康状态，禁止跨 market/currency 金额、收益率或回撤相加、净额抵消或互相补资。
 - A股政策：股票总敞口上限 90%（45,000 CNY），单一标的累计上限 15%（7,500 CNY），买入100股整数倍；卖出只允许100股整数倍、完整不足100股余额或全部退出，且受T+1可卖量约束。组合容量 8 且至少支持 7 个不同股票；全部 50,000 CNY 有资格服务合格机会，但不强制满仓。
@@ -35,7 +35,7 @@
 - A股首 1–2 周只跑模拟；第 5、10 个交易日是人工复核点，不是自动实盘日期。
 - 自动 champion 晋级、自动风险扩张和自动 live transition 永久关闭。即使 `promotion_evidence_ready=true`，也只表示证据检查通过，不构成授权。
 - 未来量化 A股实盘只能在 named strategy、数据、样本外、成本、风控、账户、券商适配和合规门禁分别通过且 Nicholas 明确确认后启用；自动晋级和自动切实盘继续永久关闭。TradingCopilot 的人工计划与个人申报账户不构成量化实盘过渡，也不得发送邮件或连接券商。
-- CNFutures 长期模拟，无实盘日期，不绑定 A股进度。
+- CNFutures 当前暂停；既有模拟合同与证据只读保留，无实盘日期，也不绑定或阻塞 A股/Crypto 进度。
 
 ## A股样本与组合执行
 
@@ -86,7 +86,7 @@
 
 ## 长期多市场开发 lane
 
-- A股、CNFutures 与 Crypto 使用三个长期固定 Git worktree 和三个独立分支；工作树提供物理隔离，`shared/governance/market_lanes.yaml` 定义机器可读的单写者路径边界。
+- A股与 Crypto 使用各自长期固定 Git worktree 和独立分支；CNFutures 保留隔离 worktree/分支作为暂停边界，不得在 Nicholas 明确恢复前启动写入。`shared/governance/market_lanes.yaml` 定义机器可读的单写者路径边界。
 - `shared/governance/runtime_topology.yaml` 定义机器可读的运行放置边界。当前可使用单机进程隔离；未来拆分服务器时只改变 deployment profile 和仓外 endpoint/credential provisioning，不改变市场领域合同、资本 authority、状态 namespace 或 TradingDatas catalog/query 协议。
 - 每个市场最多一个 active writer，使用独立 fault domain、writer identity、state namespace 和 service prefix；故障切换必须先人工 fencing 再激活备用节点。禁止多个主机同时写同一市场账本、通过 NFS/共享 SQLite 形成隐式双写，或让只读前端成为资本/订单/模型 authority。
 - 市场 core 与离线 learning 是两个故障域：学习失败不能使五分钟/会话核心失败；learning 只生成 Challenger/校准/研究 artifact，自动 promotion 和风险扩张继续关闭。单机 profile 可同机运行；拆分 profile 可按市场迁移，也可把三市场 learning 放到独立共享计算主机，但各市场输出 namespace 继续分离且研究主机不得拥有资本、订单或账本写权限。
@@ -100,6 +100,7 @@
 ## 验收与发布边界
 
 - 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)。
+- GitHub 传输优先使用 Nicholas 已登录的 `gh` HTTPS 凭据链：先核对 `gh auth status`，仓库 `origin` 固定为 `https://github.com/NicholasHan1226/Tradingagent.cc.git`。若 `git@github.com` 的 SSH/22 端口失败一次，不重复重试或上报为长期 blocker；立即验证 HTTPS `git ls-remote`，切换现有 remote 后 fetch。不得输出 token，也不得另建凭据或绕过 host-key 校验。
 - 当前事实只写 [STATUS.md](STATUS.md)。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
 - 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
 - Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、测试与独立审计通过且 release preflight/回滚路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路或项目既定部署与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、安装或启用 cron/service、真实模型网络调用、邮件/GUI 外部写入、broker 或真实交易；这些动作仍须由当期任务明确包含并通过各自门禁。
