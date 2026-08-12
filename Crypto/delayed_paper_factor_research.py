@@ -278,7 +278,7 @@ def _ensure_root(root: Path) -> Path:
     if parent.exists() and (parent.is_symlink() or not parent.is_dir()):
         raise CryptoFactorProjectionError("factor_projection_directory_invalid")
     if not parent.exists():
-        parent.mkdir(mode=0o700)
+        parent.mkdir(mode=0o700, parents=True)
     evolution = _root(root)
     for directory in (
         evolution,
@@ -723,15 +723,16 @@ def _learning_eligible_samples(
 
 
 def run_crypto_delayed_paper_factor_research_full_scrub(
-    *, output_root: Path | str
+    *, output_root: Path | str, input_root: Path | str | None = None
 ) -> dict[str, Any]:
     """Full-scrub independent contiguous segments without crossing a gap."""
 
     _assert_simulation_only()
     root = Path(output_root)
+    source_root = Path(input_root) if input_root is not None else root
     policy = _segmented_learning_policy()
     consumer_profile = _segmented_learning_consumer_profile()
-    _, sources = _sources(root)
+    _, sources = _sources(source_root)
     if not sources:
         return _result(status="deferred_core_pending")
     continuous = _latest_continuous(sources)

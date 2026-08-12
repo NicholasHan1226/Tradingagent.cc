@@ -126,6 +126,29 @@ def test_full_scrub_is_idempotent_and_does_not_mutate_core(
     assert len(list((root / "receipts").glob("*.json"))) == 1
 
 
+def test_full_scrub_can_separate_immutable_input_and_private_output_roots(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    _complete(input_root)
+    before = _core_bytes(input_root)
+
+    first = run_crypto_delayed_paper_factor_research_full_scrub(
+        input_root=input_root, output_root=output_root
+    )
+    second = run_crypto_delayed_paper_factor_research_full_scrub(
+        input_root=input_root, output_root=output_root
+    )
+
+    assert first["status"] == "recovered"
+    assert second["status"] == "scrubbed"
+    assert first["completion_count"] == second["completion_count"] == 1
+    assert first["label_count"] == second["label_count"] == 0
+    assert _core_bytes(input_root) == before
+    assert (output_root / "evolution" / "factor_research").is_dir()
+
+
 def test_incremental_requires_a_full_scrub_then_is_idempotently_up_to_date(
     tmp_path: Path,
 ) -> None:
