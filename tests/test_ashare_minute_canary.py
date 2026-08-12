@@ -18,7 +18,14 @@ from Ashare.minute_canary import (
     snapshot_from_canary_receipt,
 )
 from Ashare.minute_data import MinuteDataContractError, MinuteReferenceFact
-from shared.data.sharedsignals_v1 import HTTPResponse, SharedSignalsV1Client
+from shared.data.sharedsignals_v1 import (
+    HTTPResponse,
+    HTTPStatusError,
+    SharedSignalsV1Client,
+    TransportNotConfigured,
+)
+from shared.data.tradingdatas_pagination import PaginationContractError
+from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 
 
 CATALOG = "fixture-rt-min-v1"
@@ -130,6 +137,96 @@ class _Transport:
                 },
             },
         )
+
+
+def test_canary_cli_persists_redacted_failure_stage_without_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-invocation request failure leaves a bounded, secret-free receipt."""
+
+    def fail(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        try:
+            raise HTTPStatusError("redacted provider status")
+        except HTTPStatusError as cause:
+            raise MinuteDataContractError("minute_tradingdatas_request_failed") from cause
+
+    monkeypatch.setattr(minute_canary_module, "run_minute_canary", fail)
+    monkeypatch.setattr(minute_canary_module, "load_minute_canary_config", lambda _: _config())
+    references = {
+        f"600{index:03d}.SH": MinuteReferenceFact(
+            symbol=f"600{index:03d}.SH",
+            trade_date=date(2026, 8, 12),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for index in range(500)
+    }
+    monkeypatch.setattr(minute_canary_module, "load_reference_facts", lambda _: references)
+    output = tmp_path / "canary-output.json"
+
+    assert minute_canary_module.main(
+        [
+            "--manifest", str(tmp_path / "manifest.json"),
+            "--reference-facts", str(tmp_path / "references.json"),
+            "--token-file", str(tmp_path / "token"),
+            "--decision-time", "2026-08-12T13:07:25+08:00",
+            "--trading-date", "2026-08-12",
+            "--bar-end", "2026-08-12 13:00:00",
+            "--evidence-use", "delayed_paper",
+            "--output", str(output),
+        ]
+    ) == 2
+
+    receipt = json.loads(output.read_text(encoding="utf-8"))
+    assert receipt == {
+        "accepted": 0,
+        "dataset_id": DATASET,
+        "execution_authority": False,
+        "execution_eligible": False,
+        "failure_class": "unknown",
+        "failure_count": 1,
+        "failure_stage": "unknown",
+        "learning_eligible": False,
+        "promotion_authorized": False,
+        "reason_code": "minute_tradingdatas_request_failed",
+        "requested": 500,
+        "slot": "2026-08-12 13:00:00",
+        "receipt_lineage": False,
+        "real_trading_enabled": False,
+        "status": "failed_closed",
+    }
+    assert "redacted provider status" not in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("error", "stage", "failure_class"),
+    [
+        (
+            TradingDatasAuthenticationError("redacted"),
+            "auth",
+            "TradingDatasAuthenticationError",
+        ),
+        (
+            PaginationContractError("redacted"),
+            "pagination",
+            "PaginationContractError",
+        ),
+        (TransportNotConfigured("redacted"), "transport", "TransportNotConfigured"),
+    ],
+)
+def test_canary_preserves_distinct_allow_list_failure_stages(
+    error: BaseException, stage: str, failure_class: str
+) -> None:
+    assert minute_canary_module._failure_stage(error) == stage
+    assert minute_canary_module._failure_class(error) == failure_class
+
+
+def test_canary_unknown_failure_is_literal_unknown() -> None:
+    error = RuntimeError("must not be emitted")
+    assert minute_canary_module._failure_stage(error) == "unknown"
+    assert minute_canary_module._failure_class(error) == "unknown"
 
 
 def _config(*, max_rows: int = 10, page_limit: int = 10) -> MinuteCanaryConfig:

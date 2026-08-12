@@ -22,14 +22,22 @@ from zoneinfo import ZoneInfo
 
 from shared.data.sharedsignals_v1 import (
     CatalogEnvelope,
+    CatalogContractError,
+    ContractViolation,
+    HTTPStatusError,
     QueryRequest,
     SharedSignalsV1Client,
     SharedSignalsV1Error,
+    TransportNotConfigured,
 )
 from shared.data.tradingdatas_pagination import (
     PagedQueryRun,
     PaginationContractError,
     collect_query_pages,
+)
+from shared.data.tradingdatas_transport import (
+    RuntimeGateConfigurationError,
+    TradingDatasAuthenticationError,
 )
 from shared.governance.evidence_readiness import (
     dataset_contract_fingerprint,
@@ -50,9 +58,78 @@ _SHA256_HEX = frozenset("0123456789abcdef")
 class MinuteDataContractError(ValueError):
     """Fail-closed minute-data contract failure with a stable reason code."""
 
-    def __init__(self, reason_code: str) -> None:
+    def __init__(
+        self,
+        reason_code: str,
+        *,
+        failure_stage: str = "unknown",
+        failure_class: str = "unknown",
+    ) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
+        self.failure_stage = failure_stage
+        self.failure_class = failure_class
+
+
+_FAILURE_CLASSES = frozenset(
+    {
+        "CatalogContractError",
+        "ContractViolation",
+        "HTTPStatusError",
+        "PaginationContractError",
+        "RuntimeGateConfigurationError",
+        "SharedSignalsV1Error",
+        "TradingDatasAuthenticationError",
+        "TransportNotConfigured",
+        "unknown",
+    }
+)
+
+
+def _bounded_failure_class(error: BaseException) -> str:
+    known = (
+        TradingDatasAuthenticationError,
+        HTTPStatusError,
+        PaginationContractError,
+        CatalogContractError,
+        RuntimeGateConfigurationError,
+        TransportNotConfigured,
+        ContractViolation,
+        SharedSignalsV1Error,
+    )
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for candidate in known:
+            if isinstance(current, candidate):
+                name = candidate.__name__
+                return name if name in _FAILURE_CLASSES else "unknown"
+        current = current.__cause__ or current.__context__
+    return "unknown"
+
+
+def _request_failure_stage(error: BaseException, *, phase: str) -> str:
+    if isinstance(error, TradingDatasAuthenticationError):
+        return "auth"
+    if isinstance(error, RuntimeGateConfigurationError):
+        return "configuration"
+    if isinstance(error, (TransportNotConfigured, OSError)):
+        return "transport"
+    if isinstance(error, HTTPStatusError):
+        return f"{phase}_request"
+    if isinstance(error, (CatalogContractError, ContractViolation)):
+        return f"{phase}_contract"
+    return f"{phase}_contract" if phase in {"catalog", "query"} else "unknown"
+
+
+def _marked_request_failure(error: BaseException, *, phase: str) -> MinuteDataContractError:
+    stage = _request_failure_stage(error, phase=phase)
+    return MinuteDataContractError(
+        "minute_tradingdatas_request_failed",
+        failure_stage=stage,
+        failure_class=_bounded_failure_class(error),
+    )
 
 
 def _delayed_paper_latency_limit() -> timedelta:
@@ -1220,7 +1297,10 @@ class TradingDatasMinuteMarketDataPort:
         try:
             if self._client.config.catalog_version_policy != "evidence_only":
                 raise MinuteDataContractError("minute_catalog_version_policy_invalid")
-            catalog = self._client.get_catalog()
+            try:
+                catalog = self._client.get_catalog()
+            except SharedSignalsV1Error as exc:
+                raise _marked_request_failure(exc, phase="catalog") from exc
             runtime_catalog_version = catalog.catalog_version
             matches = [
                 item
@@ -1262,20 +1342,25 @@ class TradingDatasMinuteMarketDataPort:
                 order=profile.default_order or None,
                 limit=profile.page_limit,
             )
-            first = collect_query_pages(
-                client=self._client,
-                request=request,
-                identity_fields=profile.identity_fields,
-                max_pages=profile.max_pages,
-                max_rows=profile.max_rows,
-            )
-            replay = collect_query_pages(
-                client=self._client,
-                request=request,
-                identity_fields=profile.identity_fields,
-                max_pages=profile.max_pages,
-                max_rows=profile.max_rows,
-            )
+            try:
+                first = collect_query_pages(
+                    client=self._client,
+                    request=request,
+                    identity_fields=profile.identity_fields,
+                    max_pages=profile.max_pages,
+                    max_rows=profile.max_rows,
+                )
+                replay = collect_query_pages(
+                    client=self._client,
+                    request=request,
+                    identity_fields=profile.identity_fields,
+                    max_pages=profile.max_pages,
+                    max_rows=profile.max_rows,
+                )
+            except PaginationContractError:
+                raise
+            except SharedSignalsV1Error as exc:
+                raise _marked_request_failure(exc, phase="query") from exc
             return snapshot_from_runs(
                 profile=profile,
                 first=first,
@@ -1326,7 +1411,11 @@ class TradingDatasMinuteMarketDataPort:
                     ),
                 )
             )
-            raise MinuteDataContractError(reason) from exc
+            raise MinuteDataContractError(
+                reason,
+                failure_stage="pagination",
+                failure_class="PaginationContractError",
+            ) from exc
         except SharedSignalsV1Error as exc:
             reason = "minute_tradingdatas_request_failed"
             audit_ledger.append(
@@ -1339,13 +1428,17 @@ class TradingDatasMinuteMarketDataPort:
                     ),
                     rejected_payload_sha256=_sha256(
                         {
-                            "failure_class": type(exc).__name__,
+                            "failure_class": _bounded_failure_class(exc),
                             "dataset_id": profile.dataset_id,
                         }
                     ),
                 )
             )
-            raise MinuteDataContractError(reason) from exc
+            raise MinuteDataContractError(
+                reason,
+                failure_stage="unknown",
+                failure_class=_bounded_failure_class(exc),
+            ) from exc
 
 
 __all__ = [

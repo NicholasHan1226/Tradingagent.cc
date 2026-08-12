@@ -721,6 +721,15 @@ python3 tools/run_ashare_observation.py \
 `Ashare.minute_auto_runner` 只为已初始化的当日私有目录选择一根当前应到达的
 5分钟K线，并委托同一个 `minute_paper_runner`。目录固定为：
 
+分钟 canary 在 catalog、query、认证、传输、分页或合同阶段失败时，仍保持原有
+`minute_tradingdatas_request_failed`/fail-closed 对外语义，但会原子写入一个
+secret-free 的失败回执。`failure_stage` 只允许
+`catalog_request`、`catalog_contract`、`query_request`、`query_contract`、
+`pagination`、`auth`、`transport`、`configuration` 或 `unknown`；
+`failure_class` 也只使用源代码定义的有限枚举，未知异常固定为 `unknown`。
+回执不含 token、Authorization、请求/响应正文或异常文本；没有完整 500/500
+receipt-lineage 证据时不得启动 Scale500 late-start。
+
 ```text
 /var/lib/tradingagent/ashare-minute-paper/YYYYMMDD/
 ├── minute-manifest.json

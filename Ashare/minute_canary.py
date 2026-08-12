@@ -32,12 +32,19 @@ from Ashare.minute_data import (
     TradingDatasMinuteMarketDataPort,
 )
 from shared.data.sharedsignals_v1 import (
+    CatalogContractError,
+    ContractViolation,
     HTTPTransport,
+    HTTPStatusError,
+    SharedSignalsV1Error,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
+    TransportNotConfigured,
 )
+from shared.data.tradingdatas_pagination import PaginationContractError
 from shared.data.tradingdatas_transport import (
     RuntimeGateConfigurationError,
+    TradingDatasAuthenticationError,
     build_runtime_transport,
 )
 
@@ -105,6 +112,130 @@ def _optional_text(value: object, field_name: str) -> str | None:
     if value is None:
         return None
     return _text(value, field_name)
+
+
+_FAILURE_STAGES = frozenset(
+    {
+        "catalog_request",
+        "catalog_contract",
+        "query_request",
+        "query_contract",
+        "pagination",
+        "auth",
+        "transport",
+        "configuration",
+        "unknown",
+    }
+)
+_FAILURE_CLASSES = frozenset(
+    {
+        "CatalogContractError",
+        "ContractViolation",
+        "HTTPStatusError",
+        "PaginationContractError",
+        "RuntimeGateConfigurationError",
+        "SharedSignalsV1Error",
+        "TradingDatasAuthenticationError",
+        "TransportNotConfigured",
+        "unknown",
+    }
+)
+
+
+def _failure_stage(error: BaseException) -> str:
+    """Return the explicit bounded phase marker, never exception text."""
+
+    marked = getattr(error, "failure_stage", None)
+    if isinstance(marked, str) and marked in _FAILURE_STAGES:
+        return marked
+    if isinstance(error, MinuteDataContractError):
+        return "unknown"
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, TradingDatasAuthenticationError):
+            return "auth"
+        if isinstance(current, HTTPStatusError):
+            return "unknown"
+        if isinstance(current, PaginationContractError):
+            return "pagination"
+        if isinstance(current, CatalogContractError):
+            return "unknown"
+        if isinstance(current, RuntimeGateConfigurationError):
+            return "configuration"
+        if isinstance(current, TransportNotConfigured):
+            return "transport"
+        if isinstance(current, OSError):
+            return "transport"
+        if isinstance(current, ContractViolation):
+            return "unknown"
+        current = current.__cause__ or current.__context__
+    if isinstance(error, SharedSignalsV1Error):
+        return "unknown"
+    return "unknown"
+
+
+def _failure_class(error: BaseException) -> str:
+    """Return only an allow-listed source class, never arbitrary type names."""
+
+    marked = getattr(error, "failure_class", None)
+    if isinstance(marked, str) and marked in _FAILURE_CLASSES:
+        return marked
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                TradingDatasAuthenticationError,
+                HTTPStatusError,
+                PaginationContractError,
+                CatalogContractError,
+                RuntimeGateConfigurationError,
+                TransportNotConfigured,
+                ContractViolation,
+                SharedSignalsV1Error,
+            ),
+        ):
+            name = type(current).__name__
+            return name if name in _FAILURE_CLASSES else "unknown"
+        current = current.__cause__ or current.__context__
+    return "unknown"
+
+
+def _failure_receipt(
+    *,
+    error: BaseException,
+    dataset_id: str | None,
+    requested: int,
+    slot: str | None,
+) -> dict[str, object]:
+    reason = (
+        error.reason_code
+        if isinstance(error, MinuteDataContractError)
+        else "minute_tradingdatas_request_failed"
+    )
+    return {
+        "status": "failed_closed",
+        "dataset_id": dataset_id,
+        "reason_code": reason,
+        "failure_stage": _failure_stage(error),
+        "failure_class": _failure_class(error),
+        "failure_count": 1,
+        "requested": requested,
+        "accepted": 0,
+        "slot": slot,
+        "receipt_lineage": False,
+        "execution_authority": False,
+        "execution_eligible": False,
+        "learning_eligible": False,
+        "promotion_authorized": False,
+        "real_trading_enabled": False,
+    }
 
 
 def _canonical_sha256(value: object, field_name: str) -> str:
@@ -913,15 +1044,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    requested = 0
+    dataset_id: str | None = None
     try:
         if not args.token_file.is_absolute():
             raise MinuteCanaryConfigurationError("token_file_must_be_absolute")
+        manifest = load_minute_canary_config(args.manifest)
+        dataset_id = manifest.dataset_id
+        reference_facts = load_reference_facts(args.reference_facts)
+        requested = len(reference_facts)
         receipt = run_minute_canary(
-            load_minute_canary_config(args.manifest),
+            manifest,
             token_file=args.token_file,
             decision_time=datetime.fromisoformat(args.decision_time),
             trading_date=date.fromisoformat(args.trading_date),
-            reference_facts=load_reference_facts(args.reference_facts),
+            reference_facts=reference_facts,
             bar_end=args.bar_end,
             evidence_use=MinuteEvidenceUse(args.evidence_use),
         )
@@ -929,10 +1066,21 @@ def main(argv: list[str] | None = None) -> int:
     except (
         MinuteCanaryConfigurationError,
         MinuteDataContractError,
+        SharedSignalsV1Error,
         RuntimeGateConfigurationError,
         OSError,
         ValueError,
-    ):
+    ) as exc:
+        failure = _failure_receipt(
+            error=exc,
+            dataset_id=dataset_id,
+            requested=requested,
+            slot=args.bar_end,
+        )
+        try:
+            _write_receipt(args.output, failure)
+        except (OSError, MinuteCanaryConfigurationError):
+            pass
         print("minute canary failed closed", file=sys.stderr)
         return 2
     if args.json:

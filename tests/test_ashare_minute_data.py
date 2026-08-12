@@ -18,6 +18,7 @@ from Ashare.minute_data import (
 )
 from shared.data.sharedsignals_v1 import (
     HTTPResponse,
+    HTTPStatusError,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
 )
@@ -509,6 +510,47 @@ def _load(
         evidence_use=evidence_use,
     )
     return snapshot, audit
+
+
+def test_catalog_http_failure_has_catalog_request_phase_and_bounded_class() -> None:
+    good_client = _client(_Transport())
+    profile = _profile(good_client)
+
+    class CatalogFailureTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return HTTPResponse(503, {"error": "redacted"})
+            return super().__call__(**kwargs)
+
+    client = _client(CatalogFailureTransport())
+    with pytest.raises(MinuteDataContractError) as caught:
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=MinuteEvidenceAuditLedger(),
+        )
+    assert caught.value.reason_code == "minute_tradingdatas_request_failed"
+    assert caught.value.failure_stage == "catalog_request"
+    assert caught.value.failure_class == "HTTPStatusError"
+
+
+def test_query_http_failure_has_query_request_phase_not_catalog_phase() -> None:
+    good_client = _client(_Transport())
+    profile = _profile(good_client)
+    client = _client(_Transport(query_status=503))
+    with pytest.raises(MinuteDataContractError) as caught:
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=MinuteEvidenceAuditLedger(),
+        )
+    assert caught.value.reason_code == "minute_tradingdatas_request_failed"
+    assert caught.value.failure_stage == "query_request"
+    assert caught.value.failure_class == "HTTPStatusError"
 
 
 def test_profile_is_frozen_from_active_catalog_and_query_uses_only_fixed_routes() -> (
