@@ -19,6 +19,21 @@ describe('dataset activity', () => {
       datasetId: 'cn.dataset.rt_min',
       state: 'coverage_gap',
       reason: 'dataset_activity_authority_missing',
+      quality: 'unavailable',
+    })
+  })
+
+  it('keeps receipt-bound factual data usable when session authority is absent', () => {
+    expect(resolveDatasetActivity({
+      datasetId: 'cn.dataset.daily',
+      dataThrough: '2026-08-03T01:00:00.000Z',
+      freshness: 'fresh',
+      authority: null,
+      receiptBound: true,
+    })).toMatchObject({
+      state: 'coverage_gap',
+      quality: 'usable_degraded',
+      missingFields: ['calendar.id', 'calendar.version', 'calendar.receiptId', 'calendar.receiptSha256', 'calendar.lineageSha256', 'calendar.calendarSha256', 'session.state', 'session.asOf'],
     })
   })
 

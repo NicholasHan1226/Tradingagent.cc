@@ -27,7 +27,22 @@
         "retrievedAt": { "type": "string", "format": "date-time" },
         "freshness": { "enum": ["fresh", "stale", "degraded"] },
         "adjustment": { "enum": ["none", "forward", "backward", "unknown"] },
-        "activityAuthority": { "$ref": "#/$defs/activityAuthority" }
+        "activityAuthority": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/activityAuthority" }
+          ]
+        },
+        "activityAuthorityStatus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["quality", "reason", "missingFields"],
+          "properties": {
+            "quality": { "enum": ["usable", "usable_degraded"] },
+            "reason": { "type": ["string", "null"] },
+            "missingFields": { "type": "array", "uniqueItems": true, "items": { "enum": ["calendar.id", "calendar.version", "calendar.receiptId", "calendar.receiptSha256", "calendar.lineageSha256", "calendar.calendarSha256", "session.state", "session.asOf"] } }
+          }
+        }
       }
     },
     "receipt": {

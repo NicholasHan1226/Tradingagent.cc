@@ -33,6 +33,16 @@ VERIFIER_ID = "tradingagent.trading_copilot_projection_publisher"
 VERIFIER_VERSION = "1"
 FIXED_SOURCE_TRANSPORT = "tradingdatas_v1_catalog_query"
 FIXED_RANGES = ("1D", "5D", "1M", "6M", "YTD", "1Y")
+ACTIVITY_AUTHORITY_MISSING_FIELDS = (
+    "calendar.id",
+    "calendar.version",
+    "calendar.receiptId",
+    "calendar.receiptSha256",
+    "calendar.lineageSha256",
+    "calendar.calendarSha256",
+    "session.state",
+    "session.asOf",
+)
 _SYMBOL = re.compile(r"^(?:0|3|6)\d{5}\.(?:SZ|SH)$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LOCK_NAME = ".projection-publish.lock"
@@ -189,6 +199,88 @@ def _activity_authority(
     }
 
 
+def _activity_authority_status(
+    value: object,
+    *,
+    dataset_id: str,
+    data_through: str,
+    receipt_id: str,
+    receipt_sha256: str,
+    lineage_sha256: str,
+) -> dict[str, Any]:
+    """Describe a missing activity authority without inventing one.
+
+    Receipt-bound factual fields remain consumable when the calendar/session
+    authority is absent.  A supplied but mismatched or malformed authority is
+    still an integrity failure; only genuinely absent exact fields become a
+    usable-degraded status.
+    """
+
+    if value is None:
+        return {
+            "quality": "usable_degraded",
+            "reason": "activity_authority_incomplete",
+            "missingFields": list(ACTIVITY_AUTHORITY_MISSING_FIELDS),
+        }
+    authority = _mapping(value, "projection_activity_authority_invalid")
+    if _text(authority.get("datasetId"), "projection_activity_authority_invalid") != dataset_id:
+        raise TradingCopilotProjectionError("projection_activity_authority_dataset_mismatch")
+    if _text(authority.get("market"), "projection_activity_authority_invalid") != "ashare":
+        raise TradingCopilotProjectionError("projection_activity_authority_market_invalid")
+    if _text(authority.get("timezone"), "projection_activity_authority_invalid") != "Asia/Shanghai":
+        raise TradingCopilotProjectionError("projection_activity_authority_timezone_invalid")
+    if _timestamp(authority.get("dataThrough"), "projection_activity_authority_time_invalid") != data_through:
+        raise TradingCopilotProjectionError("projection_activity_authority_data_through_mismatch")
+    source = authority.get("source")
+    if source is None:
+        raise TradingCopilotProjectionError("projection_activity_authority_source_invalid")
+    source_mapping = _mapping(source, "projection_activity_authority_source_invalid")
+    if (
+        _text(source_mapping.get("receiptId"), "projection_activity_authority_source_invalid")
+        != receipt_id
+        or _sha_text(source_mapping.get("receiptSha256"), "projection_activity_authority_source_invalid")
+        != receipt_sha256
+        or _sha_text(source_mapping.get("lineageSha256"), "projection_activity_authority_source_invalid")
+        != lineage_sha256
+    ):
+        raise TradingCopilotProjectionError("projection_activity_authority_source_mismatch")
+    missing: list[str] = []
+    calendar = authority.get("calendar")
+    calendar_mapping = calendar if isinstance(calendar, Mapping) else {}
+    if calendar is not None and not isinstance(calendar, Mapping):
+        raise TradingCopilotProjectionError("projection_activity_authority_calendar_invalid")
+    if calendar_mapping.get("sourceDatasetId") not in (None, "cn.market.trade_calendar"):
+        raise TradingCopilotProjectionError("projection_activity_authority_calendar_dataset_invalid")
+    for field in ACTIVITY_AUTHORITY_MISSING_FIELDS[:6]:
+        key = field.split(".", 1)[1]
+        raw = calendar_mapping.get(key)
+        if raw is None or raw == "":
+            missing.append(field)
+        elif key.endswith("Sha256"):
+            _sha_text(raw, "projection_activity_authority_calendar_invalid")
+        elif not isinstance(raw, str) or not raw.strip():
+            raise TradingCopilotProjectionError("projection_activity_authority_calendar_invalid")
+    session = authority.get("session")
+    session_mapping = session if isinstance(session, Mapping) else {}
+    if session is not None and not isinstance(session, Mapping):
+        raise TradingCopilotProjectionError("projection_activity_authority_session_invalid")
+    state = session_mapping.get("state")
+    if state is None or state == "":
+        missing.append("session.state")
+    elif state not in {"open", "closed", "halted"}:
+        raise TradingCopilotProjectionError("projection_activity_authority_session_invalid")
+    as_of = session_mapping.get("asOf")
+    if as_of is None or as_of == "":
+        missing.append("session.asOf")
+    else:
+        _timestamp(as_of, "projection_activity_authority_session_invalid")
+    return {
+        "quality": "usable" if not missing else "usable_degraded",
+        "reason": None if not missing else "activity_authority_incomplete",
+        "missingFields": missing,
+    }
+
+
 def _load_batch(path: Path) -> Mapping[str, Any]:
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise TradingCopilotProjectionError("projection_input_path_invalid")
@@ -214,6 +306,24 @@ def _source(value: object) -> dict[str, Any]:
     receipt_sha256 = _sha_text(source.get("receiptSha256"), "projection_source_receipt_sha_invalid")
     lineage_sha256 = _sha_text(source.get("lineageSha256"), "projection_source_lineage_invalid")
     data_through = _timestamp(source.get("dataThrough"), "projection_source_time_invalid")
+    authority_status = _activity_authority_status(
+        source.get("activityAuthority"),
+        dataset_id=dataset_id,
+        data_through=data_through,
+        receipt_id=receipt_id,
+        receipt_sha256=receipt_sha256,
+        lineage_sha256=lineage_sha256,
+    )
+    normalized_authority = None
+    if authority_status["quality"] == "usable":
+        normalized_authority = _activity_authority(
+            source.get("activityAuthority"),
+            dataset_id=dataset_id,
+            data_through=data_through,
+            receipt_id=receipt_id,
+            receipt_sha256=receipt_sha256,
+            lineage_sha256=lineage_sha256,
+        )
     return {
         "transportContract": FIXED_SOURCE_TRANSPORT,
         "datasetId": dataset_id,
@@ -224,14 +334,8 @@ def _source(value: object) -> dict[str, Any]:
         "retrievedAt": _timestamp(source.get("retrievedAt"), "projection_source_time_invalid"),
         "freshness": freshness,
         "adjustment": adjustment,
-        "activityAuthority": _activity_authority(
-            source.get("activityAuthority"),
-            dataset_id=dataset_id,
-            data_through=data_through,
-            receipt_id=receipt_id,
-            receipt_sha256=receipt_sha256,
-            lineage_sha256=lineage_sha256,
-        ),
+        "activityAuthority": normalized_authority,
+        "activityAuthorityStatus": authority_status,
     }
 
 
@@ -479,7 +583,9 @@ def _evidence_items(value: object, *, direction: str) -> list[dict[str, Any]]:
     return result
 
 
-def _calendar_receipt(authority: Mapping[str, Any]) -> dict[str, str]:
+def _calendar_receipt(authority: Mapping[str, Any] | None) -> dict[str, str] | None:
+    if authority is None:
+        return None
     calendar = _mapping(
         authority.get("calendar"), "projection_activity_authority_calendar_invalid"
     )
@@ -515,7 +621,7 @@ def _normalize_item(raw: object, generated_at: str) -> tuple[dict[str, Any], lis
         raise TradingCopilotProjectionError("projection_decision_conditions_required")
     source_refs = sorted({entry["sourceRef"] for entry in (*support, *oppose)})
     completeness = min(100, 45 + min(20, len(series["1D"])) + min(15, len(source_refs) * 3) + min(20, len(events) * 5))
-    actionable = source["freshness"] == "fresh" and rules["tradingStatus"] == "trading" and rules["priceLimitPct"] is not None and rules["stStatus"] != "unknown" and source["adjustment"] != "unknown"
+    actionable = source["freshness"] == "fresh" and rules["tradingStatus"] == "trading" and rules["priceLimitPct"] is not None and rules["stStatus"] != "unknown" and source["adjustment"] != "unknown" and source["activityAuthorityStatus"]["quality"] == "usable"
     verdict = "积极观察" if actionable and len(support) >= len(oppose) + 2 else "暂不参与" if len(oppose) >= len(support) + 2 else "等待条件"
     analysis = {
         "symbol": symbol,
@@ -535,7 +641,7 @@ def _normalize_item(raw: object, generated_at: str) -> tuple[dict[str, Any], lis
             "evidence": "typed",
             "model": "not_applicable",
             "action": "eligible_for_human_review" if actionable else "observe_only",
-            "reasons": ["正式行情与双向证据已绑定独立回执"] if actionable else ["正式证据可读，但交易状态、复权或规则字段尚未全部满足人工计划门禁"],
+            "reasons": ["正式行情与双向证据已绑定独立回执"] if actionable else ["正式证据可读，但交易状态、复权、规则或会话 authority 字段尚未全部满足人工计划门禁"],
         },
         "verdict": verdict,
         "summary": _text(item.get("summary"), "projection_summary_invalid"),
@@ -567,7 +673,11 @@ def _normalize_item(raw: object, generated_at: str) -> tuple[dict[str, Any], lis
         *(value[1] for value in events_and_receipts),
         *(_calendar_receipt(value[0]["dataCapability"]["activityAuthority"]) for value in events_and_receipts),
     ]
-    unique = {(entry["receiptId"], entry["receiptSha256"]): entry for entry in receipts}
+    unique = {
+        (entry["receiptId"], entry["receiptSha256"]): entry
+        for entry in receipts
+        if entry is not None
+    }
     return projection, [unique[key] for key in sorted(unique)]
 
 

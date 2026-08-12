@@ -1283,7 +1283,7 @@ def test_build_td_projection_batch_and_validate_with_existing_publisher(tmp_path
     assert result["authority"]["realTradingEnabled"] is False
 
 
-def test_td_projection_requires_explicit_calendar_authority(tmp_path: Path) -> None:
+def test_td_projection_preserves_facts_without_calendar_authority(tmp_path: Path) -> None:
     envelopes = {
         "cn.equity.daily": _td_envelope(
             "cn.equity.daily", [{"ts_code": "600000.SH", "trade_date": "20260811", "open": 9.27,
@@ -1304,15 +1304,17 @@ def test_td_projection_requires_explicit_calendar_authority(tmp_path: Path) -> N
         paths[dataset_id] = path
     authorities = (tmp_path / "authorities.json").resolve()
     authorities.write_text(json.dumps({}), encoding="utf-8")
-    with pytest.raises(
-        TradingCopilotObservationError,
-        match="copilot_td_activity_authorities_invalid",
-    ):
-        build_td_projection_batch(
-            daily_envelope_path=paths["cn.equity.daily"],
-            security_master_envelope_path=paths["cn.equity.security_master"],
-            trade_calendar_envelope_path=paths["cn.market.trade_calendar"],
-            activity_authorities_path=authorities,
-            generated_at=datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc),
-            valid_until=datetime(2026, 8, 13, 1, 0, tzinfo=timezone.utc),
-        )
+    batch = build_td_projection_batch(
+        daily_envelope_path=paths["cn.equity.daily"],
+        security_master_envelope_path=paths["cn.equity.security_master"],
+        trade_calendar_envelope_path=paths["cn.market.trade_calendar"],
+        activity_authorities_path=authorities,
+        generated_at=datetime(2026, 8, 12, 1, 0, tzinfo=timezone.utc),
+        valid_until=datetime(2026, 8, 13, 1, 0, tzinfo=timezone.utc),
+    )
+    item = batch["items"][0]
+    assert item["source"]["datasetId"] == "cn.equity.daily"
+    assert item["source"]["activityAuthority"] is None
+    assert item["source"]["activityAuthorityStatus"]["quality"] == "usable_degraded"
+    assert len(item["source"]["activityAuthorityStatus"]["missingFields"]) == 8
+    assert item["company"]["source"]["datasetId"] == "cn.equity.security_master"

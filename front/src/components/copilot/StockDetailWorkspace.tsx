@@ -235,7 +235,7 @@ function MarketRulesStrip({ intelligence }: { intelligence: StockIntelligence })
 function DatasetActivityStrip({ intelligence }: { intelligence: StockIntelligence }) {
   const activities = collectDatasetActivities(intelligence)
   if (!activities.length) return <div className="market-rules-strip blocked" aria-label="数据集活跃状态"><ShieldAlert size={15} /><span>未交付可消费数据集，无法判定各市场活跃状态。</span></div>
-  return <div className="market-rules-strip blocked" aria-label="数据集活跃状态"><ShieldAlert size={15} />{activities.map((activity) => <span key={activity.datasetId} title={`数据截至 ${formatDateTime(activity.dataThrough)}`}><strong>{activity.datasetId}</strong> · {activity.state === 'coverage_gap' ? '时钟覆盖缺口' : activity.state === 'live' ? '活跃' : activity.state === 'closed' ? '已收市' : '已滞后'}</span>)}</div>
+  return <div className="market-rules-strip blocked" aria-label="数据集活跃状态"><ShieldAlert size={15} />{activities.map((activity) => <span key={activity.datasetId} title={`数据截至 ${formatDateTime(activity.dataThrough)}${activity.missingFields.length ? `；缺失 ${activity.missingFields.join('、')}` : ''}`}><strong>{activity.datasetId}</strong> · {activity.quality === 'usable_degraded' && activity.state !== 'coverage_gap' ? '可用但会话 authority 降级' : activity.state === 'coverage_gap' ? '时钟覆盖缺口' : activity.state === 'live' ? '活跃' : activity.state === 'closed' ? '已收市' : '已滞后'}</span>)}</div>
 }
 
 function EventMeta({ event }: { event: StockEvent }) {

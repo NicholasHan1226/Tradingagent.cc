@@ -268,17 +268,21 @@ def _load_td_query_envelope(
 
 
 def _load_td_activity_authorities(path: Path | str) -> dict[str, dict[str, Any]]:
+    """Load optional explicit authorities; absence is a field-level gap."""
     try:
-        authorities = load_activity_authorities(Path(path))
+        raw = _load_json(Path(path), "copilot_td_activity_authorities_invalid")
+        if not isinstance(raw, dict):
+            raise TradingCopilotObservationError("copilot_td_activity_authorities_invalid")
+        authorities = {
+            _text(dataset_id, "copilot_td_activity_authorities_invalid"): dict(
+                _mapping(authority, "copilot_td_activity_authorities_invalid")
+            )
+            for dataset_id, authority in raw.items()
+        }
     except TradingCopilotObservationError as exc:
         raise TradingCopilotObservationError(
             f"copilot_td_activity_authorities_invalid:{exc}"
         ) from exc
-    for dataset_id in ("cn.equity.daily", "cn.equity.security_master"):
-        if dataset_id not in authorities:
-            raise TradingCopilotObservationError(
-                f"copilot_td_activity_authority_required:{dataset_id}"
-            )
     return authorities
 
 
@@ -1372,36 +1376,39 @@ def build_td_projection_batch(
     if len(catalog_versions) != 1:
         raise TradingCopilotObservationError("copilot_td_catalog_version_drift")
     authorities = _load_td_activity_authorities(activity_authorities_path)
-    calendar_authority = authorities.get("cn.market.trade_calendar")
-    if calendar_authority is None:
-        raise TradingCopilotObservationError(
-            "copilot_td_activity_authority_required:cn.market.trade_calendar"
-        )
     calendar_rows = calendar["data"]
     calendar_receipt = calendar_source["receiptId"]
     calendar_receipt_sha = calendar_source["receiptSha256"]
     calendar_lineage_sha = calendar_source["lineageSha256"]
-    calendar_mapping = _mapping(
-        _mapping(calendar_authority, "copilot_td_calendar_authority_invalid").get("calendar"),
-        "copilot_td_calendar_authority_invalid",
-    )
-    if (
-        calendar_mapping.get("sourceDatasetId") != "cn.market.trade_calendar"
-        or calendar_mapping.get("receiptId") != calendar_receipt
-        or calendar_mapping.get("receiptSha256") != calendar_receipt_sha
-        or calendar_mapping.get("lineageSha256") != calendar_lineage_sha
-    ):
-        raise TradingCopilotObservationError("copilot_td_calendar_authority_mismatch")
+    calendar_authority = authorities.get("cn.market.trade_calendar")
+    if calendar_authority is not None:
+        calendar_mapping = _mapping(
+            _mapping(calendar_authority, "copilot_td_calendar_authority_invalid").get("calendar"),
+            "copilot_td_calendar_authority_invalid",
+        )
+        for key, expected in (
+            ("sourceDatasetId", "cn.market.trade_calendar"),
+            ("receiptId", calendar_receipt),
+            ("receiptSha256", calendar_receipt_sha),
+            ("lineageSha256", calendar_lineage_sha),
+        ):
+            if calendar_mapping.get(key) is not None and calendar_mapping.get(key) != expected:
+                raise TradingCopilotObservationError("copilot_td_calendar_authority_mismatch")
     if not calendar_rows:
         raise TradingCopilotObservationError("copilot_td_rows_empty:cn.market.trade_calendar")
-    _bind_activity_authority(calendar_source, authorities)
     master_by_symbol = {row["ts_code"]: row for row in master["data"]}
     daily_symbols = {row["ts_code"] for row in daily["data"]}
     if set(master_by_symbol) != daily_symbols:
         raise TradingCopilotObservationError("copilot_td_symbol_set_mismatch")
 
-    daily_bound = _bind_activity_authority(daily_source, authorities)
-    master_bound = _bind_activity_authority(master_source, authorities)
+    def bind_optional(source: dict[str, Any]) -> dict[str, Any]:
+        dataset_id = source["datasetId"]
+        value = dict(source)
+        value["activityAuthority"] = authorities.get(dataset_id)
+        return _source(value)
+
+    daily_bound = bind_optional(daily_source)
+    master_bound = bind_optional(master_source)
     items: list[dict[str, Any]] = []
     for row in sorted(daily["data"], key=lambda value: value["ts_code"]):
         symbol = _text(row.get("ts_code"), "copilot_td_daily_symbol_invalid").upper()

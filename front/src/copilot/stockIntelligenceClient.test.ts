@@ -40,15 +40,17 @@ describe('stock intelligence client', () => {
     await expect(loadStockIntelligence('000400.SZ', fetcher)).resolves.toMatchObject({ mode: 'tradingagent_observation' })
   })
 
-  it('requires a receipt-bound activity authority and maps it per dataset', async () => {
+  it('maps complete and degraded receipt-bound activity evidence per dataset', async () => {
     const fetcher = vi.fn(async () => Response.json(projection)) as unknown as typeof fetch
     const loaded = await loadStockIntelligence('000400.SZ', fetcher)
     expect(loaded).not.toBeNull()
     expect(collectDatasetActivities(loaded!).find((activity) => activity.datasetId === 'daily')).toMatchObject({ state: 'live', clockKey: 'ashare/Asia/Shanghai/sse' })
 
-    const missing = { ...projection, source: { ...projection.source, activityAuthority: undefined } }
+    const missing = { ...projection, source: { ...projection.source, activityAuthority: null, activityAuthorityStatus: { quality: 'usable_degraded', reason: 'activity_authority_incomplete', missingFields: ['calendar.id', 'calendar.version', 'calendar.receiptId', 'calendar.receiptSha256', 'calendar.lineageSha256', 'calendar.calendarSha256', 'session.state', 'session.asOf'] } } }
     const missingFetcher = vi.fn(async () => Response.json(missing)) as unknown as typeof fetch
-    await expect(loadStockIntelligence('000400.SZ', missingFetcher)).resolves.toBeNull()
+    const degraded = await loadStockIntelligence('000400.SZ', missingFetcher)
+    expect(degraded).not.toBeNull()
+    expect(collectDatasetActivities(degraded!).find((activity) => activity.datasetId === 'daily')).toMatchObject({ quality: 'usable_degraded', missingFields: ['calendar.id', 'calendar.version', 'calendar.receiptId', 'calendar.receiptSha256', 'calendar.lineageSha256', 'calendar.calendarSha256', 'session.state', 'session.asOf'] })
   })
 
   it.each([
