@@ -73,7 +73,12 @@ ROUND_TRIP_LEARNING_FAILURE_REASONS = frozenset(
 )
 
 
-def _failure_event(*, mode: str, exc: Exception | None = None) -> dict[str, str]:
+def _failure_event(
+    *,
+    mode: str,
+    exc: Exception | None = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Return the public, secret-free failure provenance for one CLI invocation."""
 
     reason = "round_trip_learning_failed"
@@ -84,24 +89,75 @@ def _failure_event(*, mode: str, exc: Exception | None = None) -> dict[str, str]
         and exc.args[0] in ROUND_TRIP_LEARNING_FAILURE_REASONS
     ):
         reason = exc.args[0]
-    return {
+    event: dict[str, Any] = {
         "contract": "tradingagent.crypto.round_trip_learning_worker_failure.v1",
         "status": "failed_closed",
         "failure_phase": mode.replace("-", "_"),
         "failure_reason": reason,
     }
+    if context:
+        for key in (
+            "stage",
+            "epoch_generation",
+            "epoch_manifest_sha256",
+            "checkpoint_head_sha256",
+            "checkpoint_source_completion_sha256",
+            "checkpoint_projection_receipt_sha256",
+            "projected_completion_count",
+            "core_completion_count",
+        ):
+            value = context.get(key)
+            if value is not None:
+                event[key] = value
+    return event
 
 
-def _emit_failure(*, mode: str, exc: Exception | None = None) -> None:
+def _emit_failure(
+    *, mode: str, exc: Exception | None = None, context: dict[str, Any] | None = None
+) -> None:
     print(
         json.dumps(
-            _failure_event(mode=mode, exc=exc),
+            _failure_event(mode=mode, exc=exc, context=context),
             allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,
         )
     )
+
+
+def _read_failure_context(root: Path, context: dict[str, Any]) -> None:
+    """Add only non-secret checkpoint/core counters to a failure event."""
+
+    try:
+        state_path = root / "delayed_paper" / "observation_state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        context.setdefault("core_completion_count", state.get("completion_count"))
+        evolution = root / "evolution" / "round_trip_learning"
+        worker_path = evolution / "worker_state.json"
+        if worker_path.is_file():
+            worker = json.loads(worker_path.read_text(encoding="utf-8"))
+            context.setdefault(
+                "projected_completion_count", worker.get("projected_completion_count")
+            )
+            context.setdefault("checkpoint_head_sha256", worker.get("checkpoint_head_sha256"))
+        head = context.get("checkpoint_head_sha256")
+        if isinstance(head, str):
+            checkpoint_path = evolution / "checkpoints" / (
+                f"{context.get('projected_completion_count', 0):012d}.json"
+            )
+            if checkpoint_path.is_file():
+                checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                context.setdefault(
+                    "checkpoint_source_completion_sha256",
+                    checkpoint.get("source_completion_sha256"),
+                )
+                context.setdefault(
+                    "checkpoint_projection_receipt_sha256",
+                    checkpoint.get("projection_receipt_sha256"),
+                )
+    except (OSError, TypeError, ValueError):
+        return
 
 
 def _manifest_generation(path: Path) -> int:
@@ -156,23 +212,34 @@ def _validated_epoch_root(context: Any, *, expected_generation: int) -> None:
 
 
 def run_round_trip_learning_worker_once(
-    *, mode: str, epoch_manifest: Path | str
+    *, mode: str, epoch_manifest: Path | str, failure_context: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Run an isolated projection after binding it to one exact G4/G5 epoch."""
 
     _assert_simulation_only()
-    manifest_path = _validated_manifest_path(epoch_manifest)
-    expected_generation = _manifest_generation(manifest_path)
+    context_data = failure_context if failure_context is not None else {}
+    context_data["stage"] = "manifest_validation"
     try:
-        context = load_round_trip_epoch_manifest(manifest_path)
-        if context.epoch_generation != expected_generation:
+        manifest_path = _validated_manifest_path(epoch_manifest)
+        expected_generation = _manifest_generation(manifest_path)
+        epoch_context = load_round_trip_epoch_manifest(manifest_path)
+        if epoch_context.epoch_generation != expected_generation:
             raise CryptoRoundTripLearningError(
                 "round_trip_learning_epoch_generation_invalid"
             )
-        _validated_epoch_root(context, expected_generation=expected_generation)
-        _existing_epoch_root(context)
-        prepared = prepare_round_trip_epoch_candidate(context)
+        context_data.update(
+            {
+                "stage": "epoch_manifest_loaded",
+                "epoch_generation": epoch_context.epoch_generation,
+                "epoch_manifest_sha256": getattr(epoch_context, "manifest_sha256", None),
+            }
+        )
+        _validated_epoch_root(epoch_context, expected_generation=expected_generation)
+        _existing_epoch_root(epoch_context)
+        context_data["stage"] = "epoch_root_validated"
+        prepared = prepare_round_trip_epoch_candidate(epoch_context)
         identity_before = prepared.identity_path.read_bytes()
+        context_data["stage"] = "projection_started"
         if mode == "incremental":
             result = run_crypto_delayed_paper_round_trip_learning_incremental(
                 output_root=prepared.output_root
@@ -183,21 +250,33 @@ def run_round_trip_learning_worker_once(
             )
         else:
             raise CryptoRoundTripLearningError("round_trip_learning_mode_invalid")
-        prepared_after = prepare_round_trip_epoch_candidate(context)
+        context_data.update(
+            {
+                "stage": "projection_returned",
+                "projected_completion_count": result.get("projected_completion_count"),
+                "core_completion_count": result.get("completion_count"),
+                "checkpoint_head_sha256": result.get("checkpoint_head_sha256"),
+            }
+        )
+        prepared_after = prepare_round_trip_epoch_candidate(epoch_context)
         if prepared_after.identity_path.read_bytes() != identity_before:
             raise CryptoRoundTripLearningError(
                 "round_trip_learning_epoch_identity_changed"
             )
-    except CryptoRoundTripLearningError:
-        raise
-    except (CryptoRoundTripEpochError, OSError) as exc:
+    except (CryptoRoundTripLearningError, CryptoRoundTripEpochError, OSError) as exc:
+        root = locals().get("prepared", None) or locals().get("epoch_context", None)
+        output_root = getattr(root, "output_root", None)
+        if isinstance(output_root, Path):
+            _read_failure_context(output_root, context_data)
+        if isinstance(exc, CryptoRoundTripLearningError):
+            raise
         raise CryptoRoundTripLearningError("round_trip_learning_epoch_invalid") from exc
     return {
         **result,
-        "epoch_id": context.epoch_id,
-        "epoch_generation": context.epoch_generation,
-        "epoch_output_root": str(context.output_root),
-        "epoch_manifest_sha256": context.manifest_sha256,
+        "epoch_id": epoch_context.epoch_id,
+        "epoch_generation": epoch_context.epoch_generation,
+        "epoch_output_root": str(epoch_context.output_root),
+        "epoch_manifest_sha256": epoch_context.manifest_sha256,
     }
 
 
@@ -208,16 +287,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("incremental", "full-scrub"), required=True)
     parser.add_argument("--epoch-manifest", type=Path, required=True)
     args = parser.parse_args(argv)
+    failure_context: dict[str, Any] = {}
     try:
         result = run_round_trip_learning_worker_once(
-            mode=args.mode, epoch_manifest=args.epoch_manifest
+            mode=args.mode,
+            epoch_manifest=args.epoch_manifest,
+            failure_context=failure_context,
         )
     except Exception as exc:
-        _emit_failure(mode=args.mode, exc=exc)
+        _emit_failure(mode=args.mode, exc=exc, context=failure_context)
         print("crypto round-trip learning worker failed closed", file=sys.stderr)
         return 2
     if round_trip_learning_exit_code(result):
-        _emit_failure(mode=args.mode)
+        failure_context.update(
+            {
+                "stage": "projection_returned",
+                "projected_completion_count": result.get("projected_completion_count"),
+                "core_completion_count": result.get("completion_count"),
+                "checkpoint_head_sha256": result.get("checkpoint_head_sha256"),
+            }
+        )
+        output_root = result.get("epoch_output_root")
+        if isinstance(output_root, str):
+            _read_failure_context(Path(output_root), failure_context)
+        _emit_failure(mode=args.mode, context=failure_context)
         print("crypto round-trip learning worker failed closed", file=sys.stderr)
         return 2
     print(
