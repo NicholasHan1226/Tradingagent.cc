@@ -12,6 +12,7 @@ Type=oneshot
 User=tradingagent
 Group=tradingagent
 WorkingDirectory=/opt/investment/releases/tradingagent/current
+ExecCondition=/bin/sh -c 'case "$$(systemctl show --property=ActiveState --value tradingagent-crypto-round-trip-g5-acceptance.service)" in inactive|failed) exit 0;; *) exit 1;; esac'
 Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
