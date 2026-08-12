@@ -400,7 +400,9 @@ Decision Ledger checksum 连续性和 round-trip capital head。缺 lock、缺 s
 state mtime 漂移、pending、账本链/守恒异常都会失败关闭，绝不重建索引、创建 lock、
 修复 head、查询 TradingDatas 或改变订单/资金。报告的样本指标仅是已完成
 observation、验证 decision event、capital cycle 与 receipt 分布，不是收益、胜率或
-策略晋级结论。
+策略晋级结论。序列化 payload 的 `failure_count` 仅统计同一次 checksum-verified
+Decision Ledger 读取中的持久化 `data_reject` 事件；它不代表 journal-only runtime
+failure，也不统计 `data_gap`、`risk_reject` 或普通 `decision` 事件。
 
 `tradingagent-crypto-round-trip-g4-health.service/.timer` 是该读侧的 tracked
 候选：每 15 分钟运行一次，默认不启用、无 token/网络权限、无 ReadWritePaths，
@@ -460,6 +462,14 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 验收后启用 timer。
 G5 acceptance 仍只报告 `not_ready` 或 `eligible`，并沿用 288 根连续 closed-5m
 completion 的 learning maturity 门槛；它不因 epoch generation 改变而放宽门禁。
+为避免日常只读 gate 与核心 writer 争用同一 append-only ledger，G5 acceptance unit
+使用 `After=` 排在 accumulator 之后；若 accumulator 已在运行，acceptance 只排队等待，
+不会终止正在运行的 writer。反向地，accumulator unit 以 `ExecCondition=` 读取
+acceptance 的 `ActiveState`：若 acceptance 已处于 `active`、`activating` 或
+`deactivating`，本次五分钟 occurrence 以跳过方式结束，绝不停止 acceptance；若
+accumulator 先启动，acceptance 的 `After=` 关系使其等待 writer 完成。两种启动顺序都
+保持下一自然 cadence 可继续；定时器计划本身不变，但冲突的五分钟 occurrence 允许
+安全跳过。该机制不授予 acceptance 任何写入、学习或交易 authority。
 
 G5 的 learning projection 使用独立的
 `tradingagent-crypto-round-trip-g5-learning` 与 daily

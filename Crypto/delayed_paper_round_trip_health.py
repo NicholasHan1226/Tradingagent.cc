@@ -4,6 +4,11 @@ This module is deliberately separate from the five-minute accumulator.  It
 never queries TradingDatas, never creates an epoch/root/lock, and never writes
 learning, capital, order, completion, or decision evidence.  A failed health
 read is therefore an alert only; it cannot repair, restart, or alter a run.
+
+``failure_count`` is the count of durable ``data_reject`` facts in the same
+checksum-verified runtime ledger read for this snapshot.  It deliberately does
+not represent journal-only runtime failures, ``data_gap`` audit events,
+``risk_reject`` decisions, or ordinary ``decision`` events.
 """
 
 from __future__ import annotations
@@ -121,6 +126,12 @@ def _receipt_counts(orders: Mapping[str, Any]) -> dict[str, int]:
     return counts
 
 
+def _failure_count(ledger_rows: list[Mapping[str, Any]]) -> int:
+    """Count only durable data-reject facts from the verified runtime ledger."""
+
+    return sum(1 for row in ledger_rows if row.get("event_type") == "data_reject")
+
+
 def build_crypto_delayed_paper_round_trip_health(
     *,
     output_root: Path | str,
@@ -160,6 +171,7 @@ def build_crypto_delayed_paper_round_trip_health(
             raise CryptoRoundTripHealthError(
                 "round_trip_health_decision_identity_invalid"
             )
+        failure_count = _failure_count(decisions)
         capital = RoundTripCapitalLedger(root / "round_trip_capital").state_read_only()
     except CryptoRoundTripHealthError:
         raise
@@ -211,6 +223,7 @@ def build_crypto_delayed_paper_round_trip_health(
             "latest_market_slot": observation.get("market_slot"),
             "latest_completion_sha256": completion.get("completion_sha256"),
         },
+        "failure_count": failure_count,
         "freshness": {
             "checked_at": checked_at.isoformat().replace("+00:00", "Z"),
             "completion_lag_seconds": lag_seconds,
