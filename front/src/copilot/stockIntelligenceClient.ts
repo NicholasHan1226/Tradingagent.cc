@@ -1,4 +1,5 @@
 import { assessForecastReadiness, forecastHorizons } from './forecastReadiness.ts'
+import { ACTIVITY_AUTHORITY_MISSING_FIELDS, inspectActivityAuthority } from './datasetActivity.ts'
 import type { StockIntelligence } from './stockIntelligence.ts'
 
 export const TRADING_COPILOT_STOCK_INTELLIGENCE_ROUTE = '/api/trading-copilot/stock-intelligence'
@@ -53,7 +54,12 @@ function assertProjectionSource(source: StockIntelligence['source'] | undefined)
     receiptSha256: source.receiptSha256,
     lineageSha256: source.lineageSha256,
   }
-  if (!hasVerifiedActivityAuthority(source.activityAuthority, binding)) throw new Error('stock_intelligence_source_activity_authority_invalid')
+  const inspection = inspectActivityAuthority(source.activityAuthority, binding)
+  if (!inspection.valid) throw new Error('stock_intelligence_source_activity_authority_invalid')
+  if (!inspection.complete) {
+    const status = source.activityAuthorityStatus
+    if (status?.quality !== 'usable_degraded' || JSON.stringify(status.missingFields) !== JSON.stringify(inspection.missingFields) || !inspection.missingFields.every((field) => ACTIVITY_AUTHORITY_MISSING_FIELDS.includes(field as never))) throw new Error('stock_intelligence_source_activity_authority_invalid')
+  }
 }
 
 function hasVerifiedEventCapability(event: StockIntelligence['events'][number]) {

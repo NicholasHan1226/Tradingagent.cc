@@ -86,7 +86,12 @@ export type StockProjectionSource = {
   retrievedAt: string
   freshness: 'fresh' | 'stale' | 'degraded' | 'demo'
   adjustment: 'none' | 'forward' | 'backward' | 'unknown'
-  activityAuthority?: DatasetActivityAuthority
+  activityAuthority?: DatasetActivityAuthority | null
+  activityAuthorityStatus?: {
+    quality: 'usable' | 'usable_degraded'
+    reason: string | null
+    missingFields: string[]
+  }
 }
 
 export type AshareMarketRules = {

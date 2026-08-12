@@ -594,6 +594,7 @@ function ResearchFocusCard({ analysis, intelligence }: { analysis: CopilotAnalys
   const hasFormalCoverage = intelligence.mode === 'tradingagent_observation'
     && intelligence.verification.status === 'verified'
     && intelligence.source?.freshness === 'fresh'
+    && intelligence.source.activityAuthorityStatus?.quality !== 'usable_degraded'
   const eventSummary = summarizeStockSentiment(intelligence.events)
   const primaryCondition = hasFormalCoverage
     ? analysis.buyConditions[0] ?? '等待正式研究条件。'
@@ -608,7 +609,7 @@ function ResearchFocusCard({ analysis, intelligence }: { analysis: CopilotAnalys
     ? analysis.readiness.action === 'eligible_for_human_review'
       ? '可进入人工复核'
       : '保持观察，不形成计划'
-    : '等待正式覆盖'
+    : intelligence.source?.activityAuthorityStatus?.quality === 'usable_degraded' ? '事实可读，会话 authority 降级' : '等待正式覆盖'
 
   return <section className="panel research-focus-card" aria-label="个股研究建议与条件">
     <div className="rail-card-title"><BookOpenCheck size={15} /><span>研究建议与条件</span></div>

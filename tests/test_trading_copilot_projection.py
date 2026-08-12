@@ -153,20 +153,30 @@ def test_publishes_exact_projection_and_detached_receipt(tmp_path: Path) -> None
     assert json.loads((root / "batch-receipt.json").read_text())["authority"]["orders"] is False
 
 
-def test_rejects_unbound_dataset_activity_authority(tmp_path: Path) -> None:
-    """A detached projection cannot infer session state from a local clock."""
+def test_preserves_receipt_bound_facts_when_activity_authority_is_missing(tmp_path: Path) -> None:
+    """Missing calendar/session authority degrades only session-sensitive fields."""
 
     item = _item()
     del item["source"]["activityAuthority"]
-    with pytest.raises(
-        TradingCopilotProjectionError,
-        match="projection_activity_authority_required",
-    ):
-        publish_projection_batch(
-            input_path=_write(tmp_path / "input.json", _batch([item])),
-            output_root=(tmp_path / "projection").resolve(),
-            now=NOW,
-        )
+    result = publish_projection_batch(
+        input_path=_write(tmp_path / "input.json", _batch([item])),
+        output_root=(tmp_path / "projection").resolve(),
+        now=NOW,
+    )
+    projection = json.loads((tmp_path / "projection" / "000400.SZ.json").read_text())
+    assert result["status"] == "pass"
+    assert projection["source"]["receiptId"] == "receipt-000400.SZ"
+    assert projection["source"]["activityAuthority"] is None
+    assert projection["source"]["activityAuthorityStatus"] == {
+        "quality": "usable_degraded",
+        "reason": "activity_authority_incomplete",
+        "missingFields": [
+            "calendar.id", "calendar.version", "calendar.receiptId",
+            "calendar.receiptSha256", "calendar.lineageSha256",
+            "calendar.calendarSha256", "session.state", "session.asOf",
+        ],
+    }
+    assert projection["analysis"]["readiness"]["action"] == "observe_only"
 
 
 @pytest.mark.parametrize(
