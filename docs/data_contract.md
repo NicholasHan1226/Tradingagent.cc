@@ -651,6 +651,29 @@ Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的
 
 ### A股5分钟 fixture research contract
 
+### `rt_min_daily` receipt-bound current-observation contract
+
+`Ashare.rt_min_daily_pit.build_rt_min_daily_pit_feature_contract` consumes a
+complete, already validated `PagedQueryRun` from the existing
+`SharedSignalsV1Client`/`collect_query_pages` path. It is an offline adapter:
+it does not query, persist, rank, learn, promote, execute, or create live
+authority. The dataset is the provider's intraday cumulative observation, so
+the contract always records `observation_mode=current_observation` through the
+underlying research snapshot and `historical_pit_eligible=false`.
+
+The projection binds the exact dataset, schema major, catalog version,
+receipt ID, complete provider-neutral lineage, `data_through`, `observed_at`,
+snapshot hash, requested/accepted/missing symbol sets and a
+`quality_status` of `usable` or `usable_degraded`. A degraded subset retains
+the valid rows and is scoped to the accepted symbols; it is not a full-cohort
+claim. `calibrated_probability`, `expected_return_bps`, learning,
+promotion and execution authority remain disabled. A missing receipt/lineage,
+future observation, out-of-request symbol, duplicate identity or malformed
+provider field fails closed before a feature projection is returned. The
+existing runtime caller must supply the page run and may persist only through
+the existing snapshot/artifact store; this module adds no route, table,
+service or timer.
+
 该合同只用于 `Ashare/minute_data.py`、`Ashare/minute_research.py`、
 `Ashare/minute_paper.py` 与 `Ashare/minute_loop.py` 的网络关闭 fixture/mock
 验证。它不写 `MarketCapitalLedger`、durable outbox、正式 SampleJournal 或
