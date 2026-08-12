@@ -292,7 +292,8 @@ def _snapshot_rows_payload(
     symbols = [bar.symbol for bar in bars]
     if len(symbols) != len(set(symbols)):
         raise MinuteCanaryConfigurationError("minute_snapshot_duplicate_symbol")
-    if set(symbols) != set(reference_facts) or len(symbols) != len(reference_facts):
+    reference_symbols = set(reference_facts)
+    if not set(symbols) <= reference_symbols:
         raise MinuteCanaryConfigurationError("minute_snapshot_universe_mismatch")
     bar_ends = {bar.bar_end for bar in bars}
     if len(bar_ends) != 1:
@@ -584,7 +585,8 @@ def _validate_exact_selection(
     reference_facts: Mapping[str, MinuteReferenceFact],
     bar_end: datetime | None,
 ) -> None:
-    if set(bar.symbol for bar in snapshot.bars) != set(reference_facts):
+    observed_symbols = {bar.symbol for bar in snapshot.bars}
+    if not observed_symbols <= set(reference_facts):
         raise MinuteDataContractError("minute_reference_universe_mismatch")
     if bar_end is not None and any(bar.bar_end != bar_end for bar in snapshot.bars):
         raise MinuteDataContractError("minute_bar_end_mismatch")
@@ -629,6 +631,9 @@ def run_minute_canary(
             reference_facts=reference_facts,
             selected_bar_end=selected_bar_end,
         )
+    requested_symbols = set(reference_facts)
+    accepted_symbols = {bar.symbol for bar in snapshot.bars}
+    missing_symbols = sorted(requested_symbols - accepted_symbols)
     receipt_ids = sorted({bar.receipt_id for bar in snapshot.bars})
     data_through = sorted(
         {
@@ -657,7 +662,9 @@ def run_minute_canary(
         "bar_end": (
             selected_bar_end.isoformat() if selected_bar_end is not None else None
         ),
-        "reference_symbols": sorted(reference_facts),
+        "reference_symbols": sorted(accepted_symbols),
+        "accepted_symbols": sorted(accepted_symbols),
+        "requested_symbols": sorted(requested_symbols),
         "dataset_id": profile.dataset_id,
         "expected_catalog_version": profile.expected_catalog_version,
         "observed_catalog_version": snapshot.observed_catalog_version,
@@ -665,6 +672,13 @@ def run_minute_canary(
         "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
         "consumer_profile_sha256": profile.consumer_profile_sha256,
         "row_count": snapshot.row_count,
+        "quality_status": (
+            "usable" if not missing_symbols else "usable_degraded"
+        ),
+        "requested_count": len(requested_symbols),
+        "accepted_count": len(accepted_symbols),
+        "missing_count": len(missing_symbols),
+        "missing_symbols": missing_symbols,
         "page_count": snapshot.page_count,
         "same_observation": snapshot.same_observation,
         "lineage_complete": True,

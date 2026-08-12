@@ -857,12 +857,10 @@ def test_legacy_timestamp_offsets_compare_by_instant() -> None:
 
 
 def test_snapshot_rows_require_one_exact_slot_and_universe() -> None:
-    row = _thirty_rows()[0] | {"ts_code": "000333.SZ"}
+    row = _thirty_rows()[0] | {"ts_code": "999999.SZ"}
     transport = _Transport(rows=[row])
     config = _config()
-    with pytest.raises(
-        MinuteDataContractError, match="minute_reference_universe_mismatch"
-    ):
+    with pytest.raises(MinuteDataContractError, match="minute_reference_fact_missing"):
         run_minute_canary(
             config,
             token_file=Path("/run/secrets/fixture.token"),
@@ -887,3 +885,43 @@ def test_snapshot_rows_require_one_exact_slot_and_universe() -> None:
             bar_end="2026-07-28T09:35:00+08:00",
             transport_factory=lambda *args, **kwargs: transport,
         )
+
+
+def test_partial_symbol_coverage_is_retained_as_usable_degraded() -> None:
+    transport = _Transport()
+    config = _config()
+    references = {
+        "600000.SH": MinuteReferenceFact(
+            symbol="600000.SH",
+            trade_date=date(2026, 7, 28),
+            previous_close_cny=9.98,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        ),
+        "000001.SZ": MinuteReferenceFact(
+            symbol="000001.SZ",
+            trade_date=date(2026, 7, 28),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="b" * 64,
+        ),
+    }
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        trading_date=date(2026, 7, 28),
+        reference_facts=references,
+        bar_end="2026-07-28T09:35:00+08:00",
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+
+    assert receipt["quality_status"] == "usable_degraded"
+    assert receipt["requested_count"] == 2
+    assert receipt["accepted_count"] == 1
+    assert receipt["missing_count"] == 1
+    assert receipt["missing_symbols"] == ["000001.SZ"]
+    assert receipt["requested_symbols"] == ["000001.SZ", "600000.SH"]
+    assert receipt["accepted_symbols"] == ["600000.SH"]
+    assert receipt["lineage_complete"] is True
+    assert receipt["snapshot_rows"]["count"] == 1
