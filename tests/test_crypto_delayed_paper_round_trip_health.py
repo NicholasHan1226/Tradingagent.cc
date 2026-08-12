@@ -9,6 +9,7 @@ import pytest
 
 import Crypto.delayed_paper_round_trip_health as health_module
 import Crypto.delayed_paper_round_trip_runtime as runtime_module
+from Crypto.delayed_paper_runner import _data_reject
 from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_health import (
@@ -60,6 +61,49 @@ def test_round_trip_health_is_read_only_and_reports_sample_kpis(tmp_path: Path) 
     assert _tree_bytes(tmp_path) == before
     assert result["status"] == "healthy"
     assert result["core"]["pending"] is False
+    assert result["failure_count"] == 0
+    assert result["read_only"] is True
+
+
+def test_round_trip_health_failure_count_counts_only_data_reject_events(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    transport = FixtureTradingDatasTransport()
+    tradingdatas_client = client(transport)
+    store = CryptoDelayedPaperObservationStore(tmp_path)
+    _data_reject(
+        store=store,
+        profile=profile(tradingdatas_client),
+        request=window_request(),
+        reason_code="crypto_5m_window_incomplete",
+    )
+    store.append_event(
+        runtime_module._round_trip_data_gap_event(
+            prior_market_slot=WINDOW_END,
+            reason_code="crypto_5m_observation_after_cutoff",
+            recorded_at=WINDOW_END + timedelta(minutes=10),
+        )
+    )
+
+    result = build_crypto_delayed_paper_round_trip_health(
+        output_root=tmp_path,
+        now=WINDOW_END + timedelta(minutes=5),
+    )
+
+    assert result["failure_count"] == 1
+
+
+def test_round_trip_health_failure_count_definition_is_durable_data_rejects() -> None:
+    assert health_module._failure_count(
+        [
+            {"event_type": "data_reject"},
+            {"event_type": "data_gap"},
+            {"event_type": "risk_reject"},
+            {"event_type": "decision"},
+            {"event_type": "runtime_failure"},
+        ]
+    ) == 1
 
 
 def test_round_trip_health_tolerates_ledger_data_gap_events(
@@ -92,6 +136,7 @@ def test_round_trip_health_tolerates_ledger_data_gap_events(
     }
     assert result["capital"]["balanced"] is True
     assert result["capital"]["receipt_counts"]["buy"] == 2
+    assert result["failure_count"] == 0
     assert result["execution_authority"] is False
     assert result["real_trading_enabled"] is False
     assert result["network_used"] is False
@@ -231,4 +276,5 @@ def test_round_trip_health_runner_rechecks_prepared_versioned_epoch_without_writ
     assert _tree_bytes(tmp_path) == before
     assert result["epoch_id"] == context.epoch_id
     assert result["epoch_generation"] == 4
+    assert result["epoch_manifest_sha256"] == context.manifest_sha256
     assert result["status"] == "healthy"

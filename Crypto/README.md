@@ -400,7 +400,9 @@ Decision Ledger checksum 连续性和 round-trip capital head。缺 lock、缺 s
 state mtime 漂移、pending、账本链/守恒异常都会失败关闭，绝不重建索引、创建 lock、
 修复 head、查询 TradingDatas 或改变订单/资金。报告的样本指标仅是已完成
 observation、验证 decision event、capital cycle 与 receipt 分布，不是收益、胜率或
-策略晋级结论。
+策略晋级结论。序列化 payload 的 `failure_count` 仅统计同一次 checksum-verified
+Decision Ledger 读取中的持久化 `data_reject` 事件；它不代表 journal-only runtime
+failure，也不统计 `data_gap`、`risk_reject` 或普通 `decision` 事件。
 
 `tradingagent-crypto-round-trip-g4-health.service/.timer` 是该读侧的 tracked
 候选：每 15 分钟运行一次，默认不启用、无 token/网络权限、无 ReadWritePaths，
