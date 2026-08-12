@@ -730,6 +730,14 @@ secret-free 的失败回执。`failure_stage` 只允许
 回执不含 token、Authorization、请求/响应正文或异常文本；没有完整 500/500
 receipt-lineage 证据时不得启动 Scale500 late-start。
 
+当请求的证券集合只获得部分、但每个已接受标的仍具备一致的时间、schema/key 与
+receipt lineage 时，canary 回执会保留这些有效行并标记
+`quality_status=usable_degraded`，同时写入 `requested_count`、`accepted_count`、
+`missing_count`、`missing_symbols` 以及请求/接受标的集合。该降级证据只支持有明确
+范围的已覆盖标的或 shard；Scale500 late-start 仍是其自身的 claim-specific gate，
+必须另有同一请求的完整 500/500 canary 与 receipt-lineage，部分回执不得被当作完整
+cohort，也不会打开 learning、promotion 或 execution。
+
 ```text
 /var/lib/tradingagent/ashare-minute-paper/YYYYMMDD/
 ├── minute-manifest.json

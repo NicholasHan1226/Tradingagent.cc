@@ -423,6 +423,52 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
     assert list(rollback_root.iterdir()) == [sentinel]
 
 
+def test_partial_canary_cannot_satisfy_scale500_claim_gate(tmp_path: Path) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    canary_path = _canary_receipt(
+        tmp_path / "partial-canary.json",
+        universe_source=universe_source,
+        bar_end="2026-07-31T09:35:00+08:00",
+    )
+    raw = json.loads(canary_path.read_text(encoding="utf-8"))
+    raw["row_count"] = EXPECTED_UNIVERSE_COUNT - 1
+    raw["bars"] = raw["bars"][:-1]
+    canary_path.write_text(json.dumps(raw), encoding="utf-8")
+    runner_calls = 0
+
+    def runner(**_: object) -> dict[str, object]:
+        nonlocal runner_calls
+        runner_calls += 1
+        return _receipt("2026-07-31 09:35:00")
+
+    with pytest.raises(
+        MinuteScale500RuntimeError,
+        match="minute_scale500_late_start_canary_invalid",
+    ):
+        run_scale500_once(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T09:42:00"),
+            allow_late_start=True,
+            canary_receipt=canary_path,
+            runner=runner,
+        )
+
+    assert runner_calls == 0
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gate["status"] == "fallback30_selected"
+    assert gate["failure_reason"] == "minute_scale500_late_start_canary_invalid"
+
+
 def test_legacy_pending_gate_defaults_to_non_late_start(tmp_path: Path) -> None:
     scale_root, rollback_root, token_file, universe_source, digest = _initialize(
         tmp_path
