@@ -324,6 +324,38 @@ def test_worker_cli_maps_unexpected_failure_to_generic_reason(
     assert "do not disclose this text" not in captured.out + captured.err
 
 
+def test_worker_cli_emits_structured_stage_and_checkpoint_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(**kwargs: object) -> None:
+        context = kwargs["failure_context"]
+        assert isinstance(context, dict)
+        context.update(
+            {
+                "stage": "projection_started",
+                "epoch_generation": 5,
+                "epoch_manifest_sha256": "a" * 64,
+                "projected_completion_count": 792,
+                "core_completion_count": 2367,
+                "checkpoint_head_sha256": "b" * 64,
+                "checkpoint_source_completion_sha256": "c" * 64,
+                "checkpoint_projection_receipt_sha256": "d" * 64,
+            }
+        )
+        raise CryptoRoundTripLearningError("round_trip_learning_checkpoint_source_mismatch")
+
+    monkeypatch.setattr(worker_module, "run_round_trip_learning_worker_once", fail)
+    assert worker_module.main(
+        ["--mode", "full-scrub", "--epoch-manifest", str(tmp_path / "epoch.json")]
+    ) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failure_reason"] == "round_trip_learning_checkpoint_source_mismatch"
+    assert payload["stage"] == "projection_started"
+    assert payload["projected_completion_count"] == 792
+    assert payload["core_completion_count"] == 2367
+    assert payload["checkpoint_source_completion_sha256"] == "c" * 64
+
+
 def test_worker_cli_invalid_arguments_do_not_emit_failure_event(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
