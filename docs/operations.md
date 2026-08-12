@@ -64,9 +64,9 @@ gh pr checks '<pr-url>' --watch
 gh pr ready '<pr-url>'
 gh pr merge '<pr-url>' --merge
 
-git -C /Users/nicholashan/Projects/Finance/TradingAgent fetch origin main
-git -C /Users/nicholashan/Projects/Finance/TradingAgent merge --ff-only origin/main
-git -C /Users/nicholashan/Projects/Finance/TradingAgent rev-parse HEAD origin/main
+git -C /Users/nicholashan/Projects/Finance/Tradingagent.cc fetch origin main
+git -C /Users/nicholashan/Projects/Finance/Tradingagent.cc merge --ff-only origin/main
+git -C /Users/nicholashan/Projects/Finance/Tradingagent.cc rev-parse HEAD origin/main
 ```
 
 不删除远程分支，不强推，不改写历史。PR CI 同时覆盖 Python 全量测试与前端
@@ -97,7 +97,7 @@ git -C /Users/nicholashan/Projects/Finance/TradingAgent rev-parse HEAD origin/ma
 - 现役未跟踪运行资产、回滚目录和磁盘余量；
 - 候选远端分支的精确SHA、工作树干净状态和回退目录。
 
-生产仓可能包含不受Git跟踪的append-only运行证据和前端回滚副本。禁止`git clean`、`reset --hard`、覆盖式checkout或`rsync --delete`；也禁止把现役仓切到候选分支。只允许从精确SHA创建detached worktree，例如：
+生产仓可能包含不受Git跟踪的append-only运行证据和前端回滚副本。禁止`git clean`、`reset --hard`、覆盖式checkout或`rsync --delete`；也禁止把现役仓切到候选分支。source sync 先独立上传已验 hash 的 bundle/archive，再用只含 fetch/fast-forward 的命令更新；不要把 `rm`、通配清理或其它破坏性清理塞进同一 compound 命令。只允许从精确SHA创建detached worktree，例如：
 
 ```bash
 set -euo pipefail
@@ -249,6 +249,12 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 `WorkingDirectory`、可读取 `ExecStart` 与所需 Python 入口。前端重启后应以有界重试读取
 `127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
+
+不可变 staging 不能把 Git tree 中的 executable bit 统一抹成 `0444`。目录权限归一后，
+普通文件可设为只读，但每个 Git mode `100755`（或经已验旧 immutable release 精确同路径
+确认的可执行文件）必须保留 owner execute；切换前同时断言 release tree 无 group/other
+写权限并逐个读取 systemd `ExecStart`/脚本入口。不要用递归 `chmod` 的“全文件同 mode”结果
+冒充 immutable 验证。
 
 只读API canary必须使用非现役、loopback-only端口，显式保持`REAL_TRADING_ENABLED=false`，记录精确PID并在停止前核对其cmdline指向候选`dist-server`。禁止通配`pkill`或占用8787。以下生命周期在同一个fail-fast Bash进程中执行；`FINANCE_WORKSPACE_ROOT`只指向候选的显式别名，不读取现役workspace：
 
