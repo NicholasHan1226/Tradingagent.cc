@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -112,63 +111,34 @@ def _existing_epoch_root(context: CryptoRoundTripEpochContext) -> None:
         raise CryptoRoundTripHealthError("round_trip_health_root_incomplete")
 
 
-def _epoch_read_anchor(context: CryptoRoundTripEpochContext) -> tuple[Any, ...]:
-    """Bind the mutable file identities health relies on after epoch verification."""
+def _epoch_identity_bytes(path: Path) -> bytes:
+    """Read the bounded immutable epoch identity without following aliases."""
 
-    paths = (
-        context.manifest_path,
-        context.identity_path,
-        context.output_root / "delayed_paper" / "observation_state.json",
-        context.output_root / "round_trip_capital" / "head.json",
-    )
-    anchor: list[Any] = []
-    for path in paths:
-        descriptor: int | None = None
-        try:
-            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            node = os.fstat(descriptor)
-            if not stat.S_ISREG(node.st_mode) or node.st_nlink != 1:
-                raise CryptoRoundTripHealthError(
-                    "round_trip_health_epoch_anchor_invalid"
-                )
-            encoded = os.read(descriptor, 64 * 1024 + 1)
-            if len(encoded) > 64 * 1024 or os.read(descriptor, 1):
-                raise CryptoRoundTripHealthError(
-                    "round_trip_health_epoch_anchor_invalid"
-                )
-            after = os.fstat(descriptor)
-            if (
-                after.st_dev,
-                after.st_ino,
-                after.st_size,
-                after.st_mtime_ns,
-            ) != (
-                node.st_dev,
-                node.st_ino,
-                node.st_size,
-                node.st_mtime_ns,
-            ):
-                raise CryptoRoundTripHealthError(
-                    "round_trip_health_epoch_anchor_changed"
-                )
-        except OSError as exc:
-            raise CryptoRoundTripHealthError(
-                "round_trip_health_epoch_anchor_invalid"
-            ) from exc
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
-        anchor.extend(
-            (
-                str(path),
-                node.st_dev,
-                node.st_ino,
-                node.st_size,
-                node.st_mtime_ns,
-                hashlib.sha256(encoded).hexdigest(),
-            )
-        )
-    return tuple(anchor)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        node = os.fstat(descriptor)
+        if not stat.S_ISREG(node.st_mode) or node.st_nlink != 1:
+            raise CryptoRoundTripHealthError("round_trip_health_epoch_identity_invalid")
+        encoded = os.read(descriptor, 64 * 1024 + 1)
+        if len(encoded) > 64 * 1024 or os.read(descriptor, 1):
+            raise CryptoRoundTripHealthError("round_trip_health_epoch_identity_invalid")
+        after = os.fstat(descriptor)
+        if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
+            node.st_dev,
+            node.st_ino,
+            node.st_size,
+            node.st_mtime_ns,
+        ):
+            raise CryptoRoundTripHealthError("round_trip_health_epoch_identity_changed")
+        return encoded
+    except OSError as exc:
+        raise CryptoRoundTripHealthError(
+            "round_trip_health_epoch_identity_invalid"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _receipt_counts(orders: Mapping[str, Any]) -> dict[str, int]:
@@ -440,12 +410,12 @@ def run_crypto_delayed_paper_round_trip_health_once(
         context = load_round_trip_epoch_manifest(manifest_path)
         _existing_epoch_root(context)
         prepared = prepare_round_trip_epoch_candidate(context)
-        anchor_before = _epoch_read_anchor(context)
+        identity_before = _epoch_identity_bytes(context.identity_path)
         result = build_crypto_delayed_paper_round_trip_health(
             output_root=prepared.output_root,
             now=now,
         )
-        if _epoch_read_anchor(context) != anchor_before:
+        if _epoch_identity_bytes(context.identity_path) != identity_before:
             raise CryptoRoundTripHealthError("round_trip_health_identity_changed")
     except CryptoRoundTripHealthError:
         raise
