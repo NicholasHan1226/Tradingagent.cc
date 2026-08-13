@@ -29,6 +29,7 @@ from Ashare.minute_data import (
     MinuteEvidenceUse,
     MinuteReferenceFact,
     MinuteTimestampSemantics,
+    MinuteValidatedProofSummary,
     TradingDatasMinuteMarketDataPort,
 )
 from Ashare.rt_min_daily_pit import (
@@ -93,6 +94,21 @@ _SNAPSHOT_ROW_FIELDS = frozenset(
         "evidence_use",
     }
 )
+
+
+def _proof_summary_payload(summary: MinuteValidatedProofSummary) -> dict[str, Any]:
+    data_through = datetime.fromisoformat(summary.data_through)
+    if data_through.tzinfo is None:
+        data_through = data_through.replace(tzinfo=SHANGHAI)
+    return {
+        "dataset_id": summary.dataset_id,
+        "provider": summary.provider,
+        "execution_id": summary.execution_id,
+        "config_hash": summary.config_hash,
+        "data_through": data_through.isoformat(),
+        "receipt_ids": list(summary.receipt_ids),
+        "content_sha256": summary.content_sha256,
+    }
 
 
 def _text(value: object, field_name: str) -> str:
@@ -758,6 +774,11 @@ def run_minute_canary(
         receipt["selected_receipt_ids_sha256"] = _canonical_sha256(
             receipt_ids, "selected_receipt_ids"
         )
+        summary_payload = _proof_summary_payload(proof_summary)
+        receipt["validated_proof_summary"] = summary_payload
+        receipt["validated_proof_summary_sha256"] = _canonical_sha256(
+            summary_payload, "validated_proof_summary"
+        )
     if snapshot_rows is not None:
         receipt["snapshot_rows"] = snapshot_rows
     return receipt
@@ -795,6 +816,32 @@ def snapshot_from_canary_receipt(
     if _canonical_sha256(items, "minute_snapshot_rows") != rows_sha:
         raise MinuteCanaryConfigurationError("minute_snapshot_rows_sha256_mismatch")
 
+    validated_proof_summary = None
+    raw_proof_summary = value.get("validated_proof_summary")
+    raw_proof_summary_sha = value.get("validated_proof_summary_sha256")
+    if (raw_proof_summary is None) != (raw_proof_summary_sha is None):
+        raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid")
+    if raw_proof_summary is not None:
+        summary = _mapping(raw_proof_summary, "minute_snapshot_proof_summary")
+        if (
+            not isinstance(raw_proof_summary_sha, str)
+            or len(raw_proof_summary_sha) != 64
+            or raw_proof_summary_sha
+            != _canonical_sha256(summary, "validated_proof_summary")
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid")
+        try:
+            validated_proof_summary = MinuteValidatedProofSummary(
+                dataset_id=_text(summary.get("dataset_id"), "minute_snapshot_proof_dataset_id"),
+                provider=_text(summary.get("provider"), "minute_snapshot_proof_provider"),
+                execution_id=_text(summary.get("execution_id"), "minute_snapshot_proof_execution_id"),
+                config_hash=_text(summary.get("config_hash"), "minute_snapshot_proof_config_hash"),
+                data_through=_text(summary.get("data_through"), "minute_snapshot_proof_data_through"),
+                receipt_ids=tuple(summary.get("receipt_ids", ())),
+                content_sha256=_text(summary.get("content_sha256"), "minute_snapshot_proof_content_sha256"),
+            )
+        except (MinuteDataContractError, TypeError, ValueError) as exc:
+            raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid") from exc
     try:
         dataset_id = _text(value.get("dataset_id"), "minute_dataset_id")
         if dataset_id != profile.dataset_id:
@@ -951,6 +998,17 @@ def snapshot_from_canary_receipt(
         raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
     if {bar.source_lineage_sha256 for bar in bars} != set(lineage_values):
         raise MinuteCanaryConfigurationError("minute_snapshot_lineage_binding_mismatch")
+    if validated_proof_summary is not None:
+        if (
+            validated_proof_summary.dataset_id != dataset_id
+            or set(validated_proof_summary.receipt_ids) != set(receipt_ids)
+            or _aware_iso(
+                validated_proof_summary.data_through,
+                "minute_snapshot_proof_data_through",
+            )
+            != _aware_iso(data_through_values[0], "minute_snapshot_data_through")
+        ):
+            raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid")
     selected_receipt_count = value.get("selected_receipt_count")
     selected_receipt_hash = value.get("selected_receipt_ids_sha256")
     if selected_receipt_count is not None or selected_receipt_hash is not None:
@@ -1007,6 +1065,7 @@ def snapshot_from_canary_receipt(
             first_semantic_sha256=first_semantic,
             replay_semantic_sha256=replay_semantic,
             same_observation=True,
+            validated_proof_summary=validated_proof_summary,
         )
     except MinuteDataContractError as exc:
         raise MinuteCanaryConfigurationError("minute_snapshot_invalid") from exc
