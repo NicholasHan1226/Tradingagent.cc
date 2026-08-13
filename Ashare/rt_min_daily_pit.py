@@ -29,6 +29,7 @@ from shared.data.research_snapshot import (
     ResearchDataSnapshot,
     build_research_data_snapshot,
 )
+from shared.data.sharedsignals_v1 import QueryEnvelope, QueryRequest, SharedSignalsV1Client
 from shared.data.tradingdatas_pagination import PagedQueryRun
 
 
@@ -47,12 +48,66 @@ RT_MIN_DAILY_FIELDS = (
 )
 RT_MIN_DAILY_IDENTITY_FIELDS = ("ts_code", "freq", "time")
 RT_MIN_DAILY_CONTRACT_ID = "tradingagent.ashare.rt_min_daily.pit.v1"
+RT_MIN_DATASET_ID = "cn.dataset.rt_min"
+RT_MIN_EXACT_SLOT_CONTRACT_ID = "tradingagent.ashare.rt_min.exact_slot_proof.v1"
 _SYMBOL_RE = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class RtMinDailyPITContractError(ValueError):
     """Raised when receipt-bound current-observation evidence is unsafe."""
+
+
+@dataclass(frozen=True)
+class RtMinExactSlotProofEnvelope:
+    """TA read model for one exact closed-slot, proof-bound 30-row envelope."""
+
+    contract_id: str
+    dataset_id: str
+    requested_slot: str
+    decision_as_of: str
+    requested_symbols: tuple[str, ...]
+    accepted_symbols: tuple[str, ...]
+    quality_status: str
+    rows: tuple[dict[str, Any], ...]
+    row_receipt_proofs: tuple[dict[str, Any], ...]
+    receipt_ids: tuple[str, ...]
+    provider: str
+    execution_id: str
+    config_hash: str
+    data_through: str
+    receipt_lineage: bool
+    historical_pit_eligible: bool
+    learning_eligible: bool
+    promotion_eligible: bool
+    execution_authority: bool
+    real_trading_enabled: bool
+    content_sha256: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_id": self.contract_id,
+            "dataset_id": self.dataset_id,
+            "requested_slot": self.requested_slot,
+            "decision_as_of": self.decision_as_of,
+            "requested_symbols": list(self.requested_symbols),
+            "accepted_symbols": list(self.accepted_symbols),
+            "quality_status": self.quality_status,
+            "rows": [dict(row) for row in self.rows],
+            "row_receipt_proofs": [dict(proof) for proof in self.row_receipt_proofs],
+            "receipt_ids": list(self.receipt_ids),
+            "provider": self.provider,
+            "execution_id": self.execution_id,
+            "config_hash": self.config_hash,
+            "data_through": self.data_through,
+            "receipt_lineage": self.receipt_lineage,
+            "historical_pit_eligible": self.historical_pit_eligible,
+            "learning_eligible": self.learning_eligible,
+            "promotion_eligible": self.promotion_eligible,
+            "execution_authority": self.execution_authority,
+            "real_trading_enabled": self.real_trading_enabled,
+            "content_sha256": self.content_sha256,
+        }
 
 
 def _canonical_json(value: object) -> str:
@@ -109,6 +164,186 @@ def _row_time(value: object, *, field_name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         parsed = parsed.replace(tzinfo=_SHANGHAI)
     return parsed.astimezone(timezone.utc)
+
+
+def _proof_text(proof: Mapping[str, Any], name: str) -> str:
+    value = proof.get(name)
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
+        raise RtMinDailyPITContractError(f"row_receipt_proof_{name}_invalid")
+    return value
+
+
+def _proof_hash(value: object, *, field_name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise RtMinDailyPITContractError(f"row_receipt_proof_{field_name}_invalid")
+    return value
+
+
+def _exact_slot(value: object, *, field_name: str) -> tuple[str, datetime]:
+    instant = _row_time(value, field_name=field_name)
+    local = instant.astimezone(_SHANGHAI).replace(microsecond=0)
+    return local.strftime("%Y-%m-%d %H:%M:%S"), instant
+
+
+def build_rt_min_exact_slot_proof_envelope(
+    *,
+    envelope: QueryEnvelope | PagedQueryRun,
+    requested_symbols: Sequence[str],
+    requested_slot: str,
+    decision_as_of: datetime,
+) -> RtMinExactSlotProofEnvelope:
+    """Validate one TD opt-in response before TA feature consumption.
+
+    The proof list is intentionally independent metadata and must be in the
+    same order and length as ``data``.  This function never infers a receipt
+    from envelope metadata or a latest runtime state.
+    """
+
+    if isinstance(envelope, PagedQueryRun):
+        envelope = envelope.envelope
+    if not isinstance(envelope, QueryEnvelope):
+        raise RtMinDailyPITContractError("query_envelope_invalid")
+    if envelope.dataset_id != RT_MIN_DATASET_ID:
+        raise RtMinDailyPITContractError("dataset_id_mismatch")
+    requested = _normalize_symbols(requested_symbols, field_name="requested_symbols")
+    if len(requested) != 30:
+        raise RtMinDailyPITContractError("governed_symbol_count_invalid")
+    slot_text, slot_instant = _exact_slot(requested_slot, field_name="requested_slot")
+    decision = _timestamp(decision_as_of, field_name="decision_as_of")
+    if slot_instant > decision:
+        raise RtMinDailyPITContractError("requested_slot_after_decision_as_of")
+
+    metadata = envelope.metadata
+    if metadata.state.strip().lower() not in {"ready", "healthy", "ok", "available"}:
+        raise RtMinDailyPITContractError("query_state_not_ready")
+    if metadata.degraded is not False:
+        raise RtMinDailyPITContractError("query_degraded")
+    lineage = metadata.lineage
+    if not isinstance(lineage, Mapping) or lineage.get("complete") is not True:
+        raise RtMinDailyPITContractError("query_lineage_incomplete")
+    rows = envelope.data
+    proofs = metadata.row_receipt_proofs
+    if len(rows) != 30 or len(proofs) != len(rows):
+        raise RtMinDailyPITContractError("row_receipt_proof_alignment_invalid")
+
+    accepted: list[str] = []
+    normalized_proofs: list[dict[str, Any]] = []
+    common: dict[str, str] | None = None
+    for index, (row, proof) in enumerate(zip(rows, proofs, strict=True)):
+        if not isinstance(row, Mapping) or not isinstance(proof, Mapping):
+            raise RtMinDailyPITContractError("row_receipt_proof_entry_invalid")
+        symbol = _symbol(row.get("ts_code"), field_name=f"row_{index}_ts_code")
+        if row.get("freq") != "1MIN":
+            raise RtMinDailyPITContractError("row_freq_invalid")
+        row_slot, row_instant = _exact_slot(row.get("time"), field_name=f"row_{index}_time")
+        if row_slot != slot_text or row_instant > decision:
+            raise RtMinDailyPITContractError("row_time_slot_mismatch")
+        if proof.get("page_index") != index:
+            raise RtMinDailyPITContractError("row_receipt_proof_page_index_mismatch")
+        _proof_hash(proof.get("row_identity_sha256"), field_name="row_identity_sha256")
+        provider = _proof_text(proof, "provider")
+        source = _proof_text(proof, "source")
+        if source != provider:
+            raise RtMinDailyPITContractError("row_receipt_proof_provider_mismatch")
+        receipt_id = _proof_text(proof, "receipt_id")
+        dataset_id = _proof_text(proof, "dataset_id")
+        execution_id = _proof_text(proof, "execution_id")
+        config_hash = _proof_hash(proof.get("config_hash"), field_name="config_hash")
+        if proof.get("status") != "success":
+            raise RtMinDailyPITContractError("row_receipt_proof_not_success")
+        request_window = proof.get("request_window")
+        if request_window != {}:
+            raise RtMinDailyPITContractError("row_receipt_proof_request_window_invalid")
+        proof_slot, proof_instant = _exact_slot(
+            proof.get("data_through"), field_name="data_through"
+        )
+        if proof_slot != slot_text or proof_instant != slot_instant or proof_instant > decision:
+            raise RtMinDailyPITContractError("row_receipt_proof_data_through_mismatch")
+        finished_at = _timestamp(proof.get("finished_at"), field_name="finished_at")
+        if finished_at > decision:
+            raise RtMinDailyPITContractError("row_receipt_proof_after_decision_as_of")
+        if dataset_id != RT_MIN_DATASET_ID:
+            raise RtMinDailyPITContractError("row_receipt_proof_dataset_mismatch")
+        if common is None:
+            common = {
+                "provider": provider,
+                "execution_id": execution_id,
+                "config_hash": config_hash,
+                "data_through": proof_slot,
+            }
+        elif any(common[key] != value for key, value in {
+            "provider": provider,
+            "execution_id": execution_id,
+            "config_hash": config_hash,
+            "data_through": proof_slot,
+        }.items()):
+            raise RtMinDailyPITContractError("row_receipt_proof_cohort_mismatch")
+        accepted.append(symbol)
+        normalized_proofs.append(dict(proof))
+
+    if len(set(accepted)) != len(accepted) or set(accepted) != set(requested):
+        raise RtMinDailyPITContractError("governed_symbol_coverage_invalid")
+    assert common is not None
+    payload = {
+        "contract_id": RT_MIN_EXACT_SLOT_CONTRACT_ID,
+        "dataset_id": RT_MIN_DATASET_ID,
+        "requested_slot": slot_text,
+        "decision_as_of": decision.isoformat(),
+        "rows": list(rows),
+        "row_receipt_proofs": normalized_proofs,
+        "receipt_ids": [proof["receipt_id"] for proof in normalized_proofs],
+    }
+    return RtMinExactSlotProofEnvelope(
+        contract_id=RT_MIN_EXACT_SLOT_CONTRACT_ID,
+        dataset_id=RT_MIN_DATASET_ID,
+        requested_slot=slot_text,
+        decision_as_of=decision.isoformat(),
+        requested_symbols=requested,
+        accepted_symbols=tuple(accepted),
+        quality_status="usable",
+        rows=tuple(dict(row) for row in rows),
+        row_receipt_proofs=tuple(normalized_proofs),
+        receipt_ids=tuple(proof["receipt_id"] for proof in normalized_proofs),
+        provider=common["provider"],
+        execution_id=common["execution_id"],
+        config_hash=common["config_hash"],
+        data_through=common["data_through"],
+        receipt_lineage=True,
+        historical_pit_eligible=False,
+        learning_eligible=False,
+        promotion_eligible=False,
+        execution_authority=False,
+        real_trading_enabled=False,
+        content_sha256=_sha256(payload),
+    )
+
+
+def load_rt_min_exact_slot_proof_envelope(
+    *,
+    client: SharedSignalsV1Client,
+    request: QueryRequest,
+    requested_symbols: Sequence[str],
+    requested_slot: str,
+    decision_as_of: datetime,
+) -> RtMinExactSlotProofEnvelope:
+    """Read one existing TD query and bind it to the exact-slot TA contract."""
+
+    if not isinstance(client, SharedSignalsV1Client):
+        raise TypeError("client must be SharedSignalsV1Client")
+    if not isinstance(request, QueryRequest) or request.include_receipt_proofs is not True:
+        raise RtMinDailyPITContractError("receipt_proofs_opt_in_required")
+    client.get_catalog()
+    envelope = client.query_uncached(request)
+    return build_rt_min_exact_slot_proof_envelope(
+        envelope=envelope,
+        requested_symbols=requested_symbols,
+        requested_slot=requested_slot,
+        decision_as_of=decision_as_of,
+    )
 
 
 @dataclass(frozen=True)
@@ -395,9 +630,14 @@ def build_rt_min_daily_pit_feature_contract(
 __all__ = [
     "RT_MIN_DAILY_CONTRACT_ID",
     "RT_MIN_DAILY_DATASET_ID",
+    "RT_MIN_DATASET_ID",
+    "RT_MIN_EXACT_SLOT_CONTRACT_ID",
     "RT_MIN_DAILY_FIELDS",
     "RT_MIN_DAILY_IDENTITY_FIELDS",
     "RtMinDailyPITContractError",
     "RtMinDailyPITFeatureContract",
+    "RtMinExactSlotProofEnvelope",
     "build_rt_min_daily_pit_feature_contract",
+    "build_rt_min_exact_slot_proof_envelope",
+    "load_rt_min_exact_slot_proof_envelope",
 ]

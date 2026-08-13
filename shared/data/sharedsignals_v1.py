@@ -230,6 +230,7 @@ class QueryRequest:
     order: tuple[str, ...] | None = None
     limit: int = 1_000
     cursor: str | None = None
+    include_receipt_proofs: bool = False
     _filters_json: str | None = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -290,6 +291,8 @@ class QueryRequest:
                 "cursor",
                 _native_nonempty_string(self.cursor, field_name="cursor"),
             )
+        if type(self.include_receipt_proofs) is not bool:
+            raise ContractViolation("include_receipt_proofs must be a boolean")
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -307,6 +310,8 @@ class QueryRequest:
             payload["order"] = list(self.order)
         if self.cursor is not None:
             payload["cursor"] = self.cursor
+        if self.include_receipt_proofs:
+            payload["include_receipt_proofs"] = True
         return payload
 
     @property
@@ -357,6 +362,7 @@ class QueryMetadata:
     data_through: str | None
     observed_at: str | None
     reasons: tuple[str, ...]
+    _row_receipt_proofs_json: str = field(repr=False)
     _freshness_json: str = field(repr=False)
     _quality_json: str = field(repr=False)
     _lineage_json: str | None = field(repr=False)
@@ -373,6 +379,7 @@ class QueryMetadata:
         data_through: str | None,
         observed_at: str | None,
         reasons: tuple[str, ...],
+        row_receipt_proofs: tuple[dict[str, Any], ...] = (),
     ) -> None:
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "degraded", degraded)
@@ -380,6 +387,14 @@ class QueryMetadata:
         object.__setattr__(self, "data_through", data_through)
         object.__setattr__(self, "observed_at", observed_at)
         object.__setattr__(self, "reasons", tuple(reasons))
+        object.__setattr__(
+            self,
+            "_row_receipt_proofs_json",
+            _canonical_json(
+                [dict(item) for item in row_receipt_proofs],
+                field_name="query metadata row_receipt_proofs",
+            ),
+        )
         object.__setattr__(
             self,
             "_freshness_json",
@@ -411,6 +426,10 @@ class QueryMetadata:
     @property
     def lineage(self) -> dict[str, Any] | None:
         return None if self._lineage_json is None else json.loads(self._lineage_json)
+
+    @property
+    def row_receipt_proofs(self) -> tuple[dict[str, Any], ...]:
+        return tuple(json.loads(self._row_receipt_proofs_json))
 
 
 @dataclass(frozen=True, init=False)
@@ -625,6 +644,13 @@ def parse_query_envelope(payload: Mapping[str, Any]) -> QueryEnvelope:
         _native_nonempty_string(item, field_name="metadata.reasons item")
         for item in raw_reasons
     )
+    raw_row_receipt_proofs = metadata.get("row_receipt_proofs", [])
+    if not isinstance(raw_row_receipt_proofs, list):
+        raise ContractViolation("metadata.row_receipt_proofs must be a list")
+    row_receipt_proofs = tuple(
+        _copy_mapping(item, field_name=f"metadata.row_receipt_proofs[{index}]")
+        for index, item in enumerate(raw_row_receipt_proofs)
+    )
 
     return QueryEnvelope(
         api_version=api_version,
@@ -643,6 +669,7 @@ def parse_query_envelope(payload: Mapping[str, Any]) -> QueryEnvelope:
             data_through=data_through,
             observed_at=observed_at,
             reasons=reasons,
+            row_receipt_proofs=row_receipt_proofs,
         ),
     )
 
