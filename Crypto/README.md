@@ -249,11 +249,12 @@ service 同时静态钉住现役
 冲突立即失败关闭；未来切换 epoch 必须人工更新并复核 unit，不扫描 `latest`、
 不自动换 generation、不回退旧 root。
 
-增量模式只读取核心当前 completion state、自己的 checkpoint 头，以及至多一条
-新增 completion 对应的 receipt/segments，正常单轮工作量与新增量相关。若 worker
-落后超过一条，它返回 `full_scrub_required`，不在每 5 分钟路径扫描历史。写入
-projection receipt 后再写 append-only checkpoint，最后原子更新
-`worker_state.json`；checkpoint 已落盘而 state 尚未更新的崩溃可确定性恢复。
+增量模式只读取核心当前 completion state、自己的 checkpoint 头，以及有界的新增
+completion 对应的 receipt/segments；每轮最多处理 8 条，并受现有 90 秒预算约束。
+它按 append-only、可恢复顺序写入 projection receipt、checkpoint 和
+`worker_state.json`，返回 `projected`、`backlog_remaining` 或 `current` 及处理/剩余
+数量；首轮没有既有 baseline 时仍返回 `full_scrub_required`，不会绕过全量完整性边界。
+预算中断或 backlog 会在下一轮从下一个序号继续，checkpoint 已落盘而 state 尚未更新的崩溃可确定性恢复。
 
 每日 full scrub 独立遍历全部
 `completion → projection receipt → sample/KPI/Challenger segments` 和完整
@@ -420,8 +421,10 @@ checksum-bound decision event，再在 `g4/evolution/round_trip_learning/` 追�
 `production_eligible=false`、`manual_review_required=true`，没有自动 Champion
 替换或风险扩张。
 
-incremental worker 最多处理一条新增 completion，且必须先有一次成功 full scrub；
-有 backlog 时只返回 `full_scrub_required`。full scrub 遍历所有
+incremental worker 在现有 90 秒预算内每轮最多处理 8 条新增 completion，并从已有
+checkpoint 头 append-only、可恢复地继续；有 backlog 时返回 `backlog_remaining`，并
+报告已处理与剩余数量。没有既有 baseline 时仍返回 `full_scrub_required`，且必须先有
+一次成功 full scrub；full scrub 仍遍历所有
 completion→receipt→checkpoint 映射；已被较早 checkpoint 声明的 receipt/segment
 若缺失或变更，必须 fail closed，绝不重建。tracked G4 learning 与 daily scrub unit
 静态绑定当前 G4 epoch，并只能写入该 epoch 的 `evolution/`。两组 timer 默认

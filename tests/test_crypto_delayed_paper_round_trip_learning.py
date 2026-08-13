@@ -78,6 +78,10 @@ def test_incremental_requires_full_scrub_then_is_idempotent(tmp_path: Path) -> N
         output_root=tmp_path
     )
     assert required["status"] == "full_scrub_required"
+    assert required["processed_count"] == 0
+    assert required["remaining_backlog_count"] == 1
+    assert required["projected_completion_count"] == 0
+    assert required["core_completion_count"] == 1
 
     run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
     before = {
@@ -94,6 +98,11 @@ def test_incremental_requires_full_scrub_then_is_idempotent(tmp_path: Path) -> N
         if path.is_file()
     }
     assert current["status"] == "current"
+    assert current["processed_count"] == 0
+    assert current["remaining_backlog_count"] == 0
+    assert current["projected_completion_count"] == 1
+    assert current["latest_projected_observation_id"]
+    assert current["checkpoint_head_sha256"]
     assert before == after
 
 
@@ -460,6 +469,158 @@ def test_full_scrub_budget_stop_is_append_only_and_resume_matches_uninterrupted(
     )
     assert uninterrupted["status"] == "recovered"
     assert _learning_files(interrupted_root) == _learning_files(uninterrupted_root)
+
+
+def test_incremental_backlog_is_bounded_and_resume_matches_uninterrupted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observations = ["first", "second", "third"]
+    core_count = 1
+
+    def core_snapshot(_root: Path):
+        return (
+            object(),
+            {"pending": None, "completion_count": core_count, "observation_count": core_count},
+            {"latest_observation_id": observations[core_count - 1]},
+        )
+
+    monkeypatch.setattr(learning_module, "_core_snapshot", core_snapshot)
+    monkeypatch.setattr(
+        learning_module, "_completion_inventory", lambda *args, **kwargs: observations
+    )
+    monkeypatch.setattr(learning_module, "_verify_or_project", _stub_projection)
+    monkeypatch.setattr(
+        learning_module, "ROUND_TRIP_LEARNING_INCREMENTAL_MAX_RECORDS", 1
+    )
+
+    interrupted_root = tmp_path / "incremental-interrupted"
+    interrupted_root.mkdir()
+    monkeypatch.setattr(learning_module, "_completion_inventory", lambda *args, **kwargs: observations[:1])
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0)
+    assert run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=interrupted_root
+    )["status"] == "recovered"
+    core_count = 3
+    monkeypatch.setattr(
+        learning_module, "_completion_inventory", lambda *args, **kwargs: observations
+    )
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0)
+    first = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=interrupted_root
+    )
+    assert first["status"] == "backlog_remaining"
+    assert first["processed_count"] == 1
+    assert first["remaining_backlog_count"] == 1
+    assert first["projected_completion_count"] == 2
+
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0)
+    resumed = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=interrupted_root
+    )
+    assert resumed["status"] == "projected"
+    assert resumed["processed_count"] == 1
+    assert resumed["remaining_backlog_count"] == 0
+
+    uninterrupted_root = tmp_path / "incremental-uninterrupted"
+    uninterrupted_root.mkdir()
+    core_count = 1
+    monkeypatch.setattr(
+        learning_module, "_completion_inventory", lambda *args, **kwargs: observations[:1]
+    )
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0)
+    assert run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=uninterrupted_root
+    )["status"] == "recovered"
+    core_count = 3
+    monkeypatch.setattr(
+        learning_module, "_completion_inventory", lambda *args, **kwargs: observations
+    )
+    monkeypatch.setattr(
+        learning_module, "ROUND_TRIP_LEARNING_INCREMENTAL_MAX_RECORDS", 8
+    )
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0)
+    uninterrupted = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=uninterrupted_root
+    )
+    assert uninterrupted["status"] == "projected"
+    assert _learning_files(interrupted_root) == _learning_files(uninterrupted_root)
+
+
+def test_incremental_backlog_preserves_pending_core_deferral(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        learning_module,
+        "_core_snapshot",
+        lambda _: (object(), {"pending": {"observation_id": "pending"}}, {}),
+    )
+    result = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+    assert result["status"] == "deferred_core_pending"
+    assert result["processed_count"] == 0
+    assert result["remaining_backlog_count"] == 0
+
+
+def test_incremental_fails_closed_for_tampered_prior_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observations = ["first"]
+    core_count = 1
+    monkeypatch.setattr(
+        learning_module,
+        "_core_snapshot",
+        lambda _: (
+            object(),
+            {"pending": None, "completion_count": core_count, "observation_count": core_count},
+            {"latest_observation_id": observations[-1]},
+        ),
+    )
+    monkeypatch.setattr(
+        learning_module, "_completion_inventory", lambda *args, **kwargs: observations
+    )
+    monkeypatch.setattr(learning_module, "_verify_or_project", _stub_projection)
+    root = tmp_path / "tampered-checkpoint"
+    root.mkdir()
+    assert run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=root
+    )["status"] == "recovered"
+    checkpoint = next((root / "evolution" / "round_trip_learning" / "checkpoints").glob("*.json"))
+    checkpoint.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        CryptoRoundTripLearningError, match="round_trip_learning_checkpoint_invalid"
+    ):
+        run_crypto_delayed_paper_round_trip_learning_incremental(output_root=root)
+
+
+def test_incremental_fails_closed_for_core_regression(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observations = ["first"]
+    core_count = 1
+
+    def core_snapshot(_root: Path):
+        return (
+            object(),
+            {"pending": None, "completion_count": core_count, "observation_count": core_count},
+            {"latest_observation_id": observations[-1]},
+        )
+
+    monkeypatch.setattr(learning_module, "_core_snapshot", core_snapshot)
+    monkeypatch.setattr(
+        learning_module, "_completion_inventory", lambda *args, **kwargs: observations
+    )
+    monkeypatch.setattr(learning_module, "_verify_or_project", _stub_projection)
+    root = tmp_path / "core-regression"
+    root.mkdir()
+    assert run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=root
+    )["status"] == "recovered"
+    core_count = 0
+    with pytest.raises(
+        CryptoRoundTripLearningError, match="round_trip_learning_core_regressed"
+    ):
+        run_crypto_delayed_paper_round_trip_learning_incremental(output_root=root)
 
 
 def test_full_scrub_inventory_budget_stop_writes_no_learning_artifacts(
