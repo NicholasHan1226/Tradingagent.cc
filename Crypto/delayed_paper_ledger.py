@@ -343,7 +343,7 @@ class CryptoDelayedPaperObservationStore:
             yield
 
     @contextmanager
-    def _read_only_locked(self) -> Iterator[None]:
+    def _read_only_locked(self, *, nonblocking: bool = False) -> Iterator[None]:
         """Take a shared lock without creating or modifying a lock file.
 
         Runtime recovery may create a missing lock and rebuild the O(1) state
@@ -363,7 +363,13 @@ class CryptoDelayedPaperObservationStore:
             metadata = os.fstat(descriptor)
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise CryptoDelayedPaperLedgerError("delayed_paper_lock_file_invalid")
-            fcntl.flock(descriptor, fcntl.LOCK_SH)
+            flags = fcntl.LOCK_SH | (fcntl.LOCK_NB if nonblocking else 0)
+            try:
+                fcntl.flock(descriptor, flags)
+            except BlockingIOError as exc:
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_readonly_lock_busy"
+                ) from exc
             yield
         finally:
             try:
@@ -614,10 +620,12 @@ class CryptoDelayedPaperObservationStore:
                 "completion_count": state.get("completion_count"),
             }
 
-    def runtime_checkpoint_read_only(self) -> dict[str, Any]:
+    def runtime_checkpoint_read_only(
+        self, *, nonblocking: bool = False
+    ) -> dict[str, Any]:
         """Return the verified checkpoint without creating or repairing state."""
 
-        with self._read_only_locked():
+        with self._read_only_locked(nonblocking=nonblocking):
             state = self._observation_state_read_only()
             pending_id = state.get("pending_observation_id")
             pending = (

@@ -25,6 +25,7 @@ from Crypto.delayed_paper_ledger import (
     CryptoDelayedPaperObservationStore,
     _market_slot,
     _read_json,
+    _sha256,
 )
 from Crypto.delayed_paper_round_trip_epoch import (
     ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
@@ -132,6 +133,81 @@ def _failure_count(ledger_rows: list[Mapping[str, Any]]) -> int:
     return sum(1 for row in ledger_rows if row.get("event_type") == "data_reject")
 
 
+def _iso(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def _state_snapshot_fast(store: CryptoDelayedPaperObservationStore) -> dict[str, Any]:
+    raw = _read_json(store.observation_state_path)
+    material = dict(raw)
+    if raw.get("contract") != "tradingagent.crypto.delayed_paper_state.v1":
+        raise CryptoRoundTripHealthError("round_trip_health_source_invalid")
+    if material.pop("state_sha256", None) != _sha256(material):
+        raise CryptoRoundTripHealthError("round_trip_health_source_invalid")
+    counts = (raw.get("observation_count"), raw.get("completion_count"))
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts):
+        raise CryptoRoundTripHealthError("round_trip_health_source_invalid")
+    if counts[1] > counts[0]:
+        raise CryptoRoundTripHealthError("round_trip_health_source_invalid")
+    return raw
+
+
+def _pending_writer_overlap_health(
+    *, root: Path, state: Mapping[str, Any], checked_at: datetime
+) -> dict[str, Any]:
+    """Return the last validated state without reading any runtime history."""
+
+    observed_at = checked_at.isoformat().replace("+00:00", "Z")
+    observation_count = state.get("observation_count")
+    completion_count = state.get("completion_count")
+    if (
+        isinstance(observation_count, bool)
+        or not isinstance(observation_count, int)
+        or isinstance(completion_count, bool)
+        or not isinstance(completion_count, int)
+        or completion_count > observation_count
+    ):
+        raise CryptoRoundTripHealthError("round_trip_health_source_invalid")
+    latest_completed_market_slot = (
+        state.get("latest_market_slot")
+        if observation_count == completion_count
+        else None
+    )
+    return {
+        "contract": ROUND_TRIP_HEALTH_CONTRACT,
+        "status": "pending",
+        "health_outcome": "pending_writer_overlap",
+        "authoritative": False,
+        "non_authoritative_reason": "writer_lock_busy",
+        "market": "crypto",
+        "market_session": "24x7",
+        "epoch_output_root": str(root),
+        "observed_at": observed_at,
+        "effective_release": "unavailable",
+        "core": {
+            "observed_at": observed_at,
+            "observation_count": observation_count,
+            "completion_count": completion_count,
+            "pending": True,
+            "latest_observation_id": state.get("latest_observation_id"),
+            "latest_market_slot": state.get("latest_market_slot"),
+            "latest_completed_market_slot": latest_completed_market_slot,
+            "latest_completion_sha256": state.get("latest_completion_sha256"),
+        },
+        "failure_count": "unavailable",
+        "freshness": {"checked_at": observed_at, "state": "pending"},
+        "sample_kpis": {
+            "usable_completed_observations": completion_count,
+            "verified_decision_events": None,
+            "expected_decision_events": completion_count * 2,
+            "capital_cycle_events": None,
+            "symbol_decisions_per_observation": 2,
+        },
+        "capital": {"status": "unavailable_due_to_pending_writer"},
+        **_non_authority_fields(),
+    }
+
+
 def build_crypto_delayed_paper_round_trip_health(
     *,
     output_root: Path | str,
@@ -144,9 +220,20 @@ def build_crypto_delayed_paper_round_trip_health(
     if not root.exists() or root.is_symlink() or not root.is_dir():
         raise CryptoRoundTripHealthError("round_trip_health_root_incomplete")
     _existing_runtime_root(root)
+    checked_at = _utc_now(now)
     try:
         store = CryptoDelayedPaperObservationStore(root)
-        checkpoint = store.runtime_checkpoint_read_only()
+        try:
+            checkpoint = store.runtime_checkpoint_read_only(nonblocking=True)
+        except CryptoDelayedPaperLedgerError as exc:
+            if str(exc) != "delayed_paper_readonly_lock_busy":
+                raise
+            state = _state_snapshot_fast(store)
+            return _pending_writer_overlap_health(
+                root=root,
+                state=state,
+                checked_at=checked_at,
+            )
         state = store._observation_state_read_only()
         observation_id = state.get("latest_observation_id")
         if (
@@ -201,7 +288,6 @@ def build_crypto_delayed_paper_round_trip_health(
     ):
         raise CryptoRoundTripHealthError("round_trip_health_capital_invalid")
     latest_slot = _market_slot(observation.get("market_slot"))
-    checked_at = _utc_now(now)
     lag_seconds = int((checked_at - latest_slot).total_seconds())
     if lag_seconds < 0:
         raise CryptoRoundTripHealthError("round_trip_health_market_slot_future")
@@ -295,7 +381,7 @@ def run_crypto_delayed_paper_round_trip_health_once(
 
 
 def health_exit_code(result: Mapping[str, Any]) -> int:
-    if not isinstance(result, Mapping) or result.get("status") != "healthy":
+    if not isinstance(result, Mapping) or result.get("status") not in {"healthy", "pending"}:
         return 2
     return (
         int(
