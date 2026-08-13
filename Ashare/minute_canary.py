@@ -31,11 +31,16 @@ from Ashare.minute_data import (
     MinuteTimestampSemantics,
     TradingDatasMinuteMarketDataPort,
 )
+from Ashare.rt_min_daily_pit import (
+    RT_MIN_DATASET_ID,
+    build_rt_min_exact_slot_proof_envelope,
+)
 from shared.data.sharedsignals_v1 import (
     CatalogContractError,
     ContractViolation,
     HTTPTransport,
     HTTPStatusError,
+    QueryRequest,
     SharedSignalsV1Error,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
@@ -978,6 +983,14 @@ def load_minute_snapshot(
     )
     if selected_bar_end is not None and selected_bar_end.date() != trading_date:
         raise MinuteCanaryConfigurationError("bar_end_trade_date_mismatch")
+    proof_validator = None
+    if selected_bar_end is not None and profile.dataset_id == RT_MIN_DATASET_ID and len(reference_facts) == 30:
+        proof_validator = lambda envelope: build_rt_min_exact_slot_proof_envelope(
+            envelope=envelope,
+            requested_symbols=tuple(reference_facts),
+            requested_slot=selected_bar_end.strftime("%Y-%m-%d %H:%M:%S"),
+            decision_as_of=decision_time,
+        )
     snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
         profile=profile,
         filters=_exact_slot_filters(
@@ -991,6 +1004,8 @@ def load_minute_snapshot(
         audit_ledger=audit,
         reference_facts=reference_facts,
         evidence_use=evidence_use,
+        include_receipt_proofs=proof_validator is not None,
+        envelope_validator=proof_validator,
     )
     if selected_bar_end is not None:
         _validate_exact_selection(
