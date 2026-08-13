@@ -173,6 +173,41 @@ def test_rt_min_exact_slot_adapter_uses_existing_client_query_opt_in() -> None:
     assert len(result.rows) == len(result.row_receipt_proofs) == 30
 
 
+def test_rt_min_exact_slot_ignores_latest_failed_runtime_metadata() -> None:
+    rows, proofs, symbols = _exact_rows_and_proofs()
+    envelope = parse_query_envelope(
+        {
+            "api_version": "v1",
+            "catalog_version": "catalog-20260813",
+            "request_id": "query-latest-failed",
+            "dataset_id": RT_MIN_DATASET_ID,
+            "data": rows,
+            "next_cursor": None,
+            "metadata": {
+                "state": "failed",
+                "degraded": True,
+                "freshness": {"state": "failed"},
+                "quality": {"state": "degraded"},
+                "lineage": {"complete": True},
+                "receipt_id": "later-failed-receipt",
+                "data_through": "2026-08-13T01:40:00+00:00",
+                "observed_at": "2026-08-13T05:00:00+00:00",
+                "reasons": ["latest_runtime_failed"],
+                "row_receipt_proofs": proofs,
+            },
+        }
+    )
+    result = build_rt_min_exact_slot_proof_envelope(
+        envelope=envelope,
+        requested_symbols=symbols,
+        requested_slot="2026-08-13 09:40:00",
+        decision_as_of=datetime(2026, 8, 13, 2, 0, tzinfo=timezone.utc),
+    )
+    assert result.accepted_symbols == symbols
+    assert result.receipt_lineage is True
+    assert result.execution_authority is False
+
+
 @pytest.mark.parametrize(
     "mutation,reason",
     [
