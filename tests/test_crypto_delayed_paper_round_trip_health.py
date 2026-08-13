@@ -783,6 +783,22 @@ def test_round_trip_health_runner_rechecks_prepared_versioned_epoch_without_writ
         "prepare_round_trip_epoch_candidate",
         lambda _: prepared,
     )
+    prepare_calls = {"count": 0}
+
+    def prepare_once(_: object) -> object:
+        prepare_calls["count"] += 1
+        return prepared
+
+    monkeypatch.setattr(
+        health_module,
+        "prepare_round_trip_epoch_candidate",
+        prepare_once,
+    )
+    monkeypatch.setattr(
+        health_module,
+        "_epoch_identity_bytes",
+        lambda _: (identity.read_bytes(),),
+    )
     before = _tree_bytes(tmp_path)
 
     result = run_crypto_delayed_paper_round_trip_health_once(
@@ -791,7 +807,92 @@ def test_round_trip_health_runner_rechecks_prepared_versioned_epoch_without_writ
     )
 
     assert _tree_bytes(tmp_path) == before
+    assert prepare_calls["count"] == 1
     assert result["epoch_id"] == context.epoch_id
     assert result["epoch_generation"] == 4
     assert result["epoch_manifest_sha256"] == context.manifest_sha256
+    assert result["status"] == "healthy"
+
+
+def test_round_trip_health_runner_rejects_anchor_change_without_second_prepare(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    identity = tmp_path / ".round_trip_epoch_identity.json"
+    identity.write_text('{"epoch":"g4"}\n', encoding="utf-8")
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    manifest = manifests / "crypto-delayed-paper-round-trip-epoch-g4-test.json"
+    context = SimpleNamespace(
+        output_root=tmp_path,
+        identity_path=identity,
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-test",
+        epoch_generation=4,
+        manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=tmp_path, identity_path=identity)
+    monkeypatch.setattr(health_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifests)
+    monkeypatch.setattr(health_module, "load_round_trip_epoch_manifest", lambda _: context)
+    prepare_calls = {"count": 0}
+
+    def prepare_once(_: object) -> object:
+        prepare_calls["count"] += 1
+        return prepared
+
+    monkeypatch.setattr(health_module, "prepare_round_trip_epoch_candidate", prepare_once)
+    identities = iter((b"before", b"after"))
+    monkeypatch.setattr(health_module, "_epoch_identity_bytes", lambda _: next(identities))
+
+    with pytest.raises(
+        CryptoRoundTripHealthError, match="round_trip_health_identity_changed"
+    ):
+        run_crypto_delayed_paper_round_trip_health_once(
+            epoch_manifest=manifest,
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+
+    assert prepare_calls["count"] == 1
+
+
+def test_round_trip_health_runner_allows_mutable_runtime_change_after_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    identity = tmp_path / ".round_trip_epoch_identity.json"
+    identity.write_text('{"epoch":"g4"}\n', encoding="utf-8")
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    manifest = manifests / "crypto-delayed-paper-round-trip-epoch-g4-test.json"
+    context = SimpleNamespace(
+        output_root=tmp_path,
+        identity_path=identity,
+        epoch_id="crypto-delayed-paper-round-trip-epoch-g4-test",
+        epoch_generation=4,
+        manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=tmp_path, identity_path=identity)
+    monkeypatch.setattr(health_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifests)
+    monkeypatch.setattr(health_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(health_module, "prepare_round_trip_epoch_candidate", lambda _: prepared)
+    real_build = health_module.build_crypto_delayed_paper_round_trip_health
+
+    def build_then_writer_progress(**kwargs: object) -> dict:
+        result = real_build(**kwargs)
+        os.utime(tmp_path / "delayed_paper" / "observation_state.json", None)
+        os.utime(tmp_path / "round_trip_capital" / "head.json", None)
+        return result
+
+    monkeypatch.setattr(
+        health_module,
+        "build_crypto_delayed_paper_round_trip_health",
+        build_then_writer_progress,
+    )
+
+    result = run_crypto_delayed_paper_round_trip_health_once(
+        epoch_manifest=manifest,
+        now=WINDOW_END + timedelta(minutes=5),
+    )
+
     assert result["status"] == "healthy"
