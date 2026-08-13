@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
+import fcntl
+import time
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +13,10 @@ import pytest
 import Crypto.delayed_paper_round_trip_health as health_module
 import Crypto.delayed_paper_round_trip_runtime as runtime_module
 from Crypto.delayed_paper_runner import _data_reject
-from Crypto.delayed_paper_ledger import CryptoDelayedPaperObservationStore
+from Crypto.delayed_paper_ledger import (
+    CryptoDelayedPaperObservationStore,
+    _sha256,
+)
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_health import (
     CryptoRoundTripHealthError,
@@ -63,6 +69,100 @@ def test_round_trip_health_is_read_only_and_reports_sample_kpis(tmp_path: Path) 
     assert result["core"]["pending"] is False
     assert result["failure_count"] == 0
     assert result["read_only"] is True
+
+
+def test_round_trip_health_writer_overlap_is_nonblocking_and_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    original_glob = Path.glob
+
+    def reject_completion_scan(path: Path, pattern: str):
+        if path.name == "completions":
+            raise AssertionError("completion directory scan is forbidden")
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(Path, "glob", reject_completion_scan)
+    started = time.monotonic()
+    with (tmp_path / "delayed_paper" / ".lock").open("r") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        result = build_crypto_delayed_paper_round_trip_health(
+            output_root=tmp_path,
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    assert time.monotonic() - started < 0.5
+
+    assert result["status"] == "pending"
+    assert result["health_outcome"] == "pending_writer_overlap"
+    assert result["non_authoritative_reason"] == "writer_lock_busy"
+    assert result["failure_count"] == "unavailable"
+    assert result["effective_release"] == "unavailable"
+    assert health_exit_code(result) == 0
+
+
+def test_round_trip_health_writer_overlap_does_not_promote_pending_slot_to_completed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    state_path = tmp_path / "delayed_paper" / "observation_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["observation_count"] = state["completion_count"] + 1
+    state["pending_observation_id"] = "crypto-delayed-observation-pending-health"
+    state["latest_market_slot"] = "2026-07-19T01:05:00Z"
+    material = dict(state)
+    material.pop("state_sha256", None)
+    state["state_sha256"] = _sha256(material)
+    state_path.write_text(
+        json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    original_glob = Path.glob
+
+    def reject_completion_scan(path: Path, pattern: str):
+        if path.name == "completions":
+            raise AssertionError("completion directory scan is forbidden")
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(Path, "glob", reject_completion_scan)
+    with (tmp_path / "delayed_paper" / ".lock").open("r") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        result = build_crypto_delayed_paper_round_trip_health(
+            output_root=tmp_path,
+            now=WINDOW_END + timedelta(minutes=5),
+        )
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+    assert result["status"] == "pending"
+    assert result["authoritative"] is False
+    assert result["core"]["observation_count"] == result["core"]["completion_count"] + 1
+    assert result["core"]["latest_market_slot"] == "2026-07-19T01:05:00Z"
+    assert result["core"]["latest_completed_market_slot"] is None
+    assert result["failure_count"] == "unavailable"
+
+
+def test_round_trip_health_writer_overlap_still_fails_closed_on_state_tamper(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    state_path = tmp_path / "delayed_paper" / "observation_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["observation_count"] = 2
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+
+    with (tmp_path / "delayed_paper" / ".lock").open("r") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        with pytest.raises(
+            CryptoRoundTripHealthError, match="round_trip_health_source_invalid"
+        ):
+            build_crypto_delayed_paper_round_trip_health(
+                output_root=tmp_path,
+                now=WINDOW_END + timedelta(minutes=5),
+            )
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def test_round_trip_health_failure_count_counts_only_data_reject_events(
