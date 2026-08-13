@@ -92,7 +92,7 @@
 - 市场 core 与离线 learning 是两个故障域：学习失败不能使五分钟/会话核心失败；learning 只生成 Challenger/校准/研究 artifact，自动 promotion 和风险扩张继续关闭。单机 profile 可同机运行；拆分 profile 可按市场迁移，也可把三市场 learning 放到独立共享计算主机，但各市场输出 namespace 继续分离且研究主机不得拥有资本、订单或账本写权限。
 - 三个市场的模拟撮合合同和未来实盘适配器族必须各自独立：A股保留现金股票/T+1/整手语义，CNFutures保留多空/开平/保证金/夜盘语义，Crypto保留小数数量/最小名义金额/Testnet与Live分账语义。共享内核只可提供BrokerPort、outbox、幂等、审计和对账接口，禁止共享provider payload、账户、密钥、订单状态机、风险或资本authority。
 - 市场 owner 只能修改本市场目录、同前缀测试和局部文档。`shared/**`、根文档、前端和其它市场目录一律只可提交 handoff 提案，由共享内核单写者统一实现。
-- 每轮开工、交接和提交前都必须运行 `python3 scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`；错误 worktree、错误分支、落后当前 `main` 或越权路径必须 fail closed。输出的 `base_head/lane_head/ahead/behind` 是同步证据，`behind` 必须为零才能开始市场开发。
+- 每个 slice 开工前必须运行 `python3 scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`，并要求当时的 `main` 为 `behind=0`；错误 worktree、错误分支、开工时已落后或越权路径必须 fail closed。Controller 随派单记录该次通过校验的完整 commit 作为冻结 base。开发中无关 `main` 前进不得迫使 lane 重做；交接和提交前改用 `--base-ref <controller-recorded-full-sha>` 校验精确 patch 与路径所有权，禁止 lane 自选旧 SHA。Controller 验收时仍须在最新 `main` 上一次重放精确 patch、处理冲突并复测。输出的 `base_head/lane_head/ahead/behind` 只描述本次所选验证 base，不得冒充当前主线同步证据。
 - 共享运行拓扑改动还必须运行 `python3 scripts/validate_runtime_topology.py`；未知市场、第二 active writer、跨市场状态 namespace、provider 专用 route、直读数据库、共享可写文件系统或 host profile 中市场 core 共置都必须 fail closed。
 - 三个稳定 market worktree 不随单次任务清理。共享变更先经独立候选合入 `main`，市场 lane 只在工作树干净的检查点同步 `main`；禁止市场分支之间互相 cherry-pick 或直接复制公共实现。
 - 每批变更保持小范围、独立测试和独立文档。candidate、`main`、远端、服务器文件、runtime、真实数据和真实交易权限继续分别验收。
