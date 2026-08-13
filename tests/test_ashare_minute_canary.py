@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from datetime import date, datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,12 @@ from Ashare.minute_canary import (
     run_minute_canary,
     snapshot_from_canary_receipt,
 )
-from Ashare.minute_data import MinuteDataContractError, MinuteReferenceFact
+from Ashare.minute_data import (
+    MinuteDataContractError,
+    MinuteEvidenceUse,
+    MinuteReferenceFact,
+)
+from Ashare.rt_min_daily_pit import RT_MIN_DATASET_ID
 from shared.data.sharedsignals_v1 import (
     HTTPResponse,
     HTTPStatusError,
@@ -461,6 +467,8 @@ def test_canary_selects_exact_historical_slot_and_reference_universe() -> None:
     assert receipt["reference_symbols"] == ["000333.SZ", "600000.SH"]
     assert receipt["receipt_id"] == "receipt-exact-slot"
     assert receipt["receipt_ids"] == ["receipt-exact-slot"]
+    assert "selected_receipt_count" not in receipt
+    assert "selected_receipt_ids_sha256" not in receipt
     assert receipt["data_through"] == "2026-08-10T13:10:00+08:00"
     assert receipt["source_lineage_sha256"] == receipt["bars"][0][
         "source_lineage_sha256"
@@ -761,6 +769,7 @@ def test_exact_thirty_snapshot_rows_round_trip_without_second_query() -> None:
     assert receipt["snapshot_rows"]["count"] == 30
     assert len(receipt["snapshot_rows"]["items"]) == 30
     restored = snapshot_from_canary_receipt(receipt, profile=profile)
+    assert isinstance(restored.validated_proof_summary, type(None))
     assert restored.row_count == 30
     assert restored.sha256 == receipt["snapshot_sha256"]
     assert [bar.symbol for bar in restored.bars] == receipt["reference_symbols"]
@@ -778,6 +787,285 @@ def test_exact_thirty_snapshot_rows_round_trip_without_second_query() -> None:
         "POST",
         "POST",
     ]
+
+
+def _real_rt_min_rows() -> list[dict[str, Any]]:
+    symbols = [
+        *(f"{index:06d}.SZ" for index in range(1, 16)),
+        *(f"{index:06d}.SH" for index in range(600000, 600015)),
+    ]
+    return [
+        {
+            "ts_code": symbol,
+            "freq": "5MIN",
+            "time": "2026-08-13 09:40:00",
+            "open": 10.0 + index,
+            "high": 10.2 + index,
+            "low": 9.9 + index,
+            "close": 10.1 + index,
+            "vol": 10_000.0 + index,
+            "amount": 101_000.0 + index,
+        }
+        for index, symbol in enumerate(symbols)
+    ]
+
+
+def _real_rt_min_references(
+    rows: list[dict[str, Any]],
+) -> dict[str, MinuteReferenceFact]:
+    return {
+        row["ts_code"]: MinuteReferenceFact(
+            symbol=row["ts_code"],
+            trade_date=date(2026, 8, 13),
+            previous_close_cny=9.98 + index,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for index, row in enumerate(rows)
+    }
+
+
+def _real_rt_min_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+class _RealRtMinTransport:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, **kwargs: Any) -> HTTPResponse:
+        self.calls.append(kwargs)
+        if kwargs["method"] == "GET":
+            fields = ["ts_code", "freq", "time", "open", "high", "low", "close", "vol", "amount"]
+            return HTTPResponse(
+                200,
+                {
+                    "api_version": "v1",
+                    "catalog_version": "td-20260813",
+                    "request_id": "catalog-rt-min",
+                    "data": [
+                        {
+                            "dataset_id": RT_MIN_DATASET_ID,
+                            "schema_major": 1,
+                            "default_fields": fields,
+                            "default_order": ["ts_code:asc", "time:asc"],
+                            "identity_fields": ["ts_code", "time"],
+                            "fields": [
+                                {
+                                    "name": field,
+                                    "selectable": True,
+                                    "filterable": True,
+                                    "sortable": True,
+                                    "operators": ["eq", "in", "gte", "lte", "between"],
+                                }
+                                for field in fields
+                            ],
+                            "filter_operators": {
+                                field: ["eq", "in", "gte", "lte", "between"]
+                                for field in fields
+                            },
+                            "limits": {"max_page_size": 30, "max_lookback_days": 1},
+                            "availability": {"activation_states": ["active"]},
+                        }
+                    ],
+                },
+            )
+        proofs: list[dict[str, Any]] = []
+        for index, row in enumerate(self.rows):
+            proof = {
+                "page_index": index,
+                "row_identity_sha256": _real_rt_min_digest(row),
+                "provider": "tushare",
+                "source": "tushare",
+                "execution_id": "exec-0940",
+                "config_hash": "b" * 64,
+                "receipt_id": f"receipt-0940-{index // 6}",
+                "dataset_id": RT_MIN_DATASET_ID,
+                "status": "success",
+                "request_window": {},
+                "data_through": "2026-08-13 09:40:00",
+                "finished_at": "2026-08-13T09:45:00+08:00",
+            }
+            proof["receipt_proof_sha256"] = _real_rt_min_digest(proof)
+            proofs.append(proof)
+        return HTTPResponse(
+            200,
+            {
+                "api_version": "v1",
+                "catalog_version": "td-20260813",
+                "request_id": f"query-rt-min-{len(self.calls)}",
+                "dataset_id": RT_MIN_DATASET_ID,
+                "data": self.rows,
+                "next_cursor": None,
+                "metadata": {
+                    "state": "failed",
+                    "runtime_state": "failed",
+                    "degraded": True,
+                    "freshness": {"state": "failed", "stale": True},
+                    "quality": {"state": "degraded", "valid": False},
+                    "lineage": {
+                        "complete": True,
+                        "provider_neutral": True,
+                        "providers": ["tushare"],
+                        "transport_service": "quicksync",
+                    },
+                    "receipt_id": "later-failed-1110",
+                    "data_through": "2026-08-13T13:50:00+08:00",
+                    "observed_at": "2026-08-13T13:55:30+08:00",
+                    "reasons": ["latest_runtime_failed"],
+                    "row_receipt_proofs": proofs,
+                },
+            },
+        )
+
+
+def _real_rt_min_config() -> MinuteCanaryConfig:
+    profile: dict[str, Any] = {
+        "identity_fields": ["ts_code", "time"],
+        "symbol_field": "ts_code",
+        "timestamp_field": "time",
+        "open_field": "open",
+        "high_field": "high",
+        "low_field": "low",
+        "close_field": "close",
+        "volume_field": "vol",
+        "amount_field": "amount",
+        "previous_close_field": None,
+        "suspension_field": None,
+        "frequency_field": "freq",
+        "frequency_value": "5MIN",
+        "timestamp_format": "%Y-%m-%d %H:%M:%S",
+        "timestamp_semantics": "bar_end",
+        "volume_multiplier_to_shares": 1,
+        "amount_multiplier_to_cny": 1,
+        "price_adjustment": "raw_unadjusted",
+        "max_pages": 1,
+        "max_rows": 30,
+        "page_limit": 30,
+    }
+    bootstrap = MinuteCanaryConfig(
+        base_url="https://tradingdatas.fixture.invalid",
+        expected_catalog_version="td-20260813",
+        dataset_id=RT_MIN_DATASET_ID,
+        access_policy_id="fixture-ta-read",
+        transport_id="http-json-v1",
+        timeout_seconds=5,
+        filters={"time": {"eq": "2026-08-13 09:40:00"}},
+        profile=profile,
+    )
+    rows = _real_rt_min_rows()
+    bound = bootstrap.build_profile(
+        SharedSignalsV1Client(
+            bootstrap.client_config(),
+            transport=_RealRtMinTransport(rows),
+        ),
+        require_declared_bindings=False,
+    )
+    profile.update(
+        {
+            "dataset_contract_fingerprint": bound.dataset_contract_fingerprint,
+            "consumer_profile_sha256": bound.consumer_profile_sha256,
+        }
+    )
+    return MinuteCanaryConfig(
+        base_url=bootstrap.base_url,
+        expected_catalog_version=bootstrap.expected_catalog_version,
+        dataset_id=bootstrap.dataset_id,
+        access_policy_id=bootstrap.access_policy_id,
+        transport_id=bootstrap.transport_id,
+        timeout_seconds=bootstrap.timeout_seconds,
+        filters=bootstrap.filters,
+        profile=profile,
+    )
+
+
+def test_exact_thirty_multi_receipt_proof_snapshot_round_trip_and_corruption_fails(
+) -> None:
+    rows = _real_rt_min_rows()
+    transport = _RealRtMinTransport(rows)
+    config = _real_rt_min_config()
+    references = _real_rt_min_references(rows)
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-08-13T13:50:00+08:00"),
+        trading_date=date(2026, 8, 13),
+        reference_facts=references,
+        bar_end="2026-08-13 09:40:00",
+        evidence_use=MinuteEvidenceUse.HISTORICAL_DISPLAY,
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+
+    assert receipt["accepted_count"] == 30
+    assert receipt["selected_receipt_count"] == 5
+    assert receipt["receipt_id"] is None
+    assert len(receipt["receipt_ids"]) == 5
+    assert len({row["receipt_id"] for row in receipt["snapshot_rows"]["items"]}) == 5
+    profile = config.build_profile(
+        SharedSignalsV1Client(
+            config.client_config(), transport=_RealRtMinTransport(rows)
+        )
+    )
+    restored = snapshot_from_canary_receipt(receipt, profile=profile)
+    assert {bar.receipt_id for bar in restored.bars} == set(receipt["receipt_ids"])
+    assert [bar.receipt_id for bar in restored.bars] == [
+        item["receipt_id"] for item in receipt["snapshot_rows"]["items"]
+    ]
+    assert [
+        (
+            bar.receipt_id,
+            bar.source_lineage_sha256,
+            bar.envelope_proof_sha256,
+            bar.source_row_sha256,
+        )
+        for bar in restored.bars
+    ] == [
+        (
+            item["receipt_id"],
+            item["source_lineage_sha256"],
+            item["envelope_proof_sha256"],
+            item["source_row_sha256"],
+        )
+        for item in receipt["snapshot_rows"]["items"]
+    ]
+
+    corrupted = json.loads(json.dumps(receipt))
+    corrupted["receipt_ids"][0] = "receipt-other"
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="minute_snapshot_receipt_binding_mismatch"
+    ):
+        snapshot_from_canary_receipt(corrupted, profile=profile)
+    corrupted_row = json.loads(json.dumps(receipt))
+    corrupted_row["snapshot_rows"]["items"][0]["receipt_id"] = receipt["receipt_ids"][1]
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="minute_snapshot_rows_sha256_mismatch"
+    ):
+        snapshot_from_canary_receipt(corrupted_row, profile=profile)
+    unused_receipt = json.loads(json.dumps(receipt))
+    unused_receipt["receipt_ids"].append("receipt-unused")
+    unused_receipt["selected_receipt_count"] = len(unused_receipt["receipt_ids"])
+    unused_receipt["selected_receipt_ids_sha256"] = minute_canary_module._canonical_sha256(
+        unused_receipt["receipt_ids"], "selected_receipt_ids"
+    )
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="minute_snapshot_receipt_binding_mismatch"
+    ):
+        snapshot_from_canary_receipt(unused_receipt, profile=profile)
+    unused_lineage = json.loads(json.dumps(receipt))
+    unused_lineage["source_lineage_sha256s"].append("d" * 64)
+    with pytest.raises(
+        MinuteCanaryConfigurationError, match="minute_snapshot_lineage_binding_mismatch"
+    ):
+        snapshot_from_canary_receipt(unused_lineage, profile=profile)
 
 
 def test_snapshot_rows_digest_binds_ohlcv_mutation() -> None:

@@ -840,6 +840,43 @@ class MinuteReferenceFact:
 
 
 @dataclass(frozen=True)
+class MinuteValidatedProofSummary:
+    """Immutable, bounded summary of a validated exact-slot proof cohort."""
+
+    dataset_id: str
+    provider: str
+    execution_id: str
+    config_hash: str
+    data_through: str
+    receipt_ids: tuple[str, ...]
+    content_sha256: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("dataset_id", "provider", "execution_id", "data_through"):
+            _text(getattr(self, field_name), f"minute_snapshot_proof_{field_name}_invalid")
+        for field_name in ("config_hash", "content_sha256"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in _SHA256_HEX for character in value)
+            ):
+                raise MinuteDataContractError(
+                    f"minute_snapshot_proof_{field_name}_invalid"
+                )
+        if (
+            not isinstance(self.receipt_ids, tuple)
+            or not self.receipt_ids
+            or any(
+                not isinstance(receipt_id, str) or not receipt_id.strip()
+                for receipt_id in self.receipt_ids
+            )
+            or len(self.receipt_ids) != len(set(self.receipt_ids))
+        ):
+            raise MinuteDataContractError("minute_snapshot_proof_receipts_invalid")
+
+
+@dataclass(frozen=True)
 class MinuteBarSnapshot:
     """One replay-proven, bounded set of accepted minute bars."""
 
@@ -851,6 +888,7 @@ class MinuteBarSnapshot:
     first_semantic_sha256: str
     replay_semantic_sha256: str
     same_observation: bool
+    validated_proof_summary: MinuteValidatedProofSummary | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.profile, MinuteDatasetProfile):
@@ -897,6 +935,10 @@ class MinuteBarSnapshot:
             raise MinuteDataContractError("minute_same_observation_mismatch")
         if self.first_semantic_sha256 != self.replay_semantic_sha256:
             raise MinuteDataContractError("minute_same_observation_mismatch")
+        if self.validated_proof_summary is not None and not isinstance(
+            self.validated_proof_summary, MinuteValidatedProofSummary
+        ):
+            raise MinuteDataContractError("minute_snapshot_proof_summary_invalid")
 
     @property
     def sha256(self) -> str:
@@ -1365,6 +1407,37 @@ def snapshot_from_runs(
         )
         if [bar.sha256 for bar in bars] != [bar.sha256 for bar in replay_bars]:
             raise MinuteDataContractError("minute_same_observation_mismatch")
+        proof_summary = None
+        if envelope_validator is not None:
+            proof_summary = MinuteValidatedProofSummary(
+                dataset_id=_text(
+                    getattr(first_proof_envelope, "dataset_id", None),
+                    "minute_snapshot_proof_dataset_id_invalid",
+                ),
+                provider=_text(
+                    getattr(first_proof_envelope, "provider", None),
+                    "minute_snapshot_proof_provider_invalid",
+                ),
+                execution_id=_text(
+                    getattr(first_proof_envelope, "execution_id", None),
+                    "minute_snapshot_proof_execution_id_invalid",
+                ),
+                config_hash=_text(
+                    getattr(first_proof_envelope, "config_hash", None),
+                    "minute_snapshot_proof_config_hash_invalid",
+                ),
+                data_through=_text(
+                    getattr(first_proof_envelope, "data_through", None),
+                    "minute_snapshot_proof_data_through_invalid",
+                ),
+                receipt_ids=tuple(
+                    dict.fromkeys(getattr(first_proof_envelope, "receipt_ids", ()))
+                ),
+                content_sha256=_text(
+                    getattr(first_proof_envelope, "content_sha256", None),
+                    "minute_snapshot_proof_content_sha256_invalid",
+                ),
+            )
         return MinuteBarSnapshot(
             profile=profile,
             bars=bars,
@@ -1374,6 +1447,7 @@ def snapshot_from_runs(
             first_semantic_sha256=first.semantic_sha256,
             replay_semantic_sha256=replay.semantic_sha256,
             same_observation=True,
+            validated_proof_summary=proof_summary,
         )
     except MinuteDataContractError as exc:
         audit_ledger.append(
@@ -1577,6 +1651,7 @@ __all__ = [
     "MinuteEvidenceUse",
     "MinuteMarketDataPort",
     "MinuteReferenceFact",
+    "MinuteValidatedProofSummary",
     "MinuteTimestampSemantics",
     "TradingDatasMinuteMarketDataPort",
     "snapshot_from_runs",
