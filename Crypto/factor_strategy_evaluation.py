@@ -89,6 +89,7 @@ def _sample_binding_sha256(sample: Mapping[str, Any]) -> str:
         "future_segment_id": sample.get("future_segment_id"),
         "source_completion_sha256": sample.get("source_completion_sha256"),
         "future_completion_sha256": sample.get("future_completion_sha256"),
+        "future_observation_id": sample.get("future_observation_id"),
         "cost_policy": cost_policy,
     }
     return _sha(material)
@@ -122,7 +123,7 @@ def _resolved(sample: Mapping[str, Any], evaluation_as_of: datetime) -> tuple[di
     future_slot = _utc(label.get("future_market_slot"), "future_market_slot")
     for role, expected_id, expected_slot in (
         ("source", snapshot.get("observation_id"), _utc(snapshot.get("market_slot"), "market_slot")),
-        ("future", label.get("observation_id"), future_slot),
+        ("future", sample.get("future_observation_id"), future_slot),
     ):
         digest_key = f"{role}_completion_sha256"
         proof = sample.get(f"{role}_completion_proof")
