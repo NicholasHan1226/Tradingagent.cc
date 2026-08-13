@@ -50,6 +50,12 @@ class CryptoRoundTripHealthError(RuntimeError):
     """Stable fail-closed error for non-authoritative health evidence."""
 
 
+def _failure_count(ledger_rows: list[Mapping[str, Any]]) -> int:
+    """Legacy pure helper retained for the failure-count definition test."""
+
+    return sum(1 for row in ledger_rows if row.get("event_type") == "data_reject")
+
+
 def _non_authority_fields() -> dict[str, Any]:
     return {
         "authority": "none",
@@ -125,12 +131,6 @@ def _receipt_counts(orders: Mapping[str, Any]) -> dict[str, int]:
         counts[str(side)] += 1
         counts[str(status)] += 1
     return counts
-
-
-def _failure_count(ledger_rows: list[Mapping[str, Any]]) -> int:
-    """Count only durable data-reject facts from the verified runtime ledger."""
-
-    return sum(1 for row in ledger_rows if row.get("event_type") == "data_reject")
 
 
 def _iso(value: datetime) -> str:
@@ -224,7 +224,9 @@ def build_crypto_delayed_paper_round_trip_health(
     try:
         store = CryptoDelayedPaperObservationStore(root)
         try:
-            checkpoint = store.runtime_checkpoint_read_only(nonblocking=True)
+            checkpoint = store.runtime_checkpoint_read_only(
+                nonblocking=True, include_ledger=True
+            )
         except CryptoDelayedPaperLedgerError as exc:
             if str(exc) != "delayed_paper_readonly_lock_busy":
                 raise
@@ -247,23 +249,35 @@ def build_crypto_delayed_paper_round_trip_health(
         store._verify_observation(observation)
         completion = _read_json(store._completion_path(observation_id))
         store._verify_completion(completion, observation=observation)
-        decisions = store._read_ledger()
-        expected_decisions = int(checkpoint["completion_count"]) * 2
-        decision_rows = [
-            row for row in decisions if row.get("event_type") == "decision"
-        ]
-        if len(decision_rows) != expected_decisions:
-            raise CryptoRoundTripHealthError("round_trip_health_decision_count_invalid")
-        if len({row.get("event_id") for row in decisions}) != len(decisions):
+        ledger_state = checkpoint.get("ledger_state")
+        if not isinstance(ledger_state, Mapping):
             raise CryptoRoundTripHealthError(
-                "round_trip_health_decision_identity_invalid"
+                "round_trip_health_ledger_aggregate_missing"
             )
-        failure_count = _failure_count(decisions)
+        expected_decisions = int(checkpoint["completion_count"]) * 2
+        decision_count = ledger_state.get("decision_count")
+        if decision_count != expected_decisions:
+            raise CryptoRoundTripHealthError("round_trip_health_decision_count_invalid")
+        failure_count = ledger_state.get("failure_count")
         capital = RoundTripCapitalLedger(root / "round_trip_capital").state_read_only()
     except CryptoRoundTripHealthError:
         raise
+    except CryptoDelayedPaperLedgerError as exc:
+        reason = str(exc)
+        if reason.endswith("aggregate_missing"):
+            raise CryptoRoundTripHealthError(
+                "round_trip_health_ledger_aggregate_missing"
+            ) from exc
+        if reason.endswith("aggregate_invalid"):
+            raise CryptoRoundTripHealthError(
+                "round_trip_health_ledger_aggregate_invalid"
+            ) from exc
+        if reason.endswith("current_file_invalid"):
+            raise CryptoRoundTripHealthError(
+                "round_trip_health_ledger_current_file_invalid"
+            ) from exc
+        raise CryptoRoundTripHealthError("round_trip_health_source_invalid") from exc
     except (
-        CryptoDelayedPaperLedgerError,
         CryptoRoundTripError,
         OSError,
         ValueError,
@@ -318,7 +332,7 @@ def build_crypto_delayed_paper_round_trip_health(
         },
         "sample_kpis": {
             "usable_completed_observations": checkpoint["completion_count"],
-            "verified_decision_events": len(decision_rows),
+            "verified_decision_events": decision_count,
             "expected_decision_events": expected_decisions,
             "capital_cycle_events": int(capital["head_sequence"]) - 1,
             "symbol_decisions_per_observation": 2,
