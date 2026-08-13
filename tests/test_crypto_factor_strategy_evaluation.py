@@ -64,8 +64,9 @@ def _sample(slot: datetime = START, rising: bool = True) -> dict[str, object]:
         "segment_id": "crypto-5m-segment-20260801T000000Z",
         "future_segment_id": "crypto-5m-segment-20260801T000000Z",
         "source_completion_sha256": "1" * 64, "future_completion_sha256": "2" * 64,
+        "future_observation_id": "future-observation-1h",
         "source_completion_proof": {"completion_sha256": "1" * 64, "observation_id": snapshot["observation_id"], "market_slot": snapshot["market_slot"]},
-        "future_completion_proof": {"completion_sha256": "2" * 64, "observation_id": label["observation_id"], "market_slot": label["future_market_slot"]},
+        "future_completion_proof": {"completion_sha256": "2" * 64, "observation_id": "future-observation-1h", "market_slot": label["future_market_slot"]},
         "cost_policy": {"cost_policy_id": "crypto-round-trip-taker-v1", "fee_rate": "0.001", "slippage_bps_each_side": "2"},
     }
     sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
@@ -120,6 +121,14 @@ def test_same_length_completion_digest_tamper_fails_closed() -> None:
     sample = _sample()
     sample["source_completion_sha256"] = "9" * 64
     with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_sample_binding_invalid"):
+        build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
+
+
+def test_future_completion_observation_mismatch_fails_closed() -> None:
+    sample = _sample()
+    sample["future_observation_id"] = "different-future-observation"
+    sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_source_binding_invalid"):
         build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
 
 
