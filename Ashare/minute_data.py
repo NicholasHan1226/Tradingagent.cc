@@ -204,6 +204,20 @@ def _parse_aware_iso(value: object, reason: str) -> datetime:
     return _aware(parsed, reason)
 
 
+def _parse_proof_timestamp(value: object, reason: str) -> datetime:
+    raw = _text(value, reason)
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+        except ValueError as exc:
+            raise MinuteDataContractError(reason) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI)
+    return parsed
+
+
 def _finite(value: object, reason: str, *, positive: bool = False) -> float:
     if (
         isinstance(value, bool)
@@ -1021,10 +1035,12 @@ def _map_run(
     trading_dates: frozenset[date],
     reference_facts: Mapping[str, MinuteReferenceFact] | None,
     evidence_use: MinuteEvidenceUse,
+    row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None,
 ) -> tuple[MinuteBarEvidence, ...]:
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
     metadata = envelope.metadata
+    proof_bound = row_proof_metadata is not None
     if envelope.dataset_id != profile.dataset_id:
         raise MinuteDataContractError("minute_query_binding_mismatch")
     historical_display = evidence_use is MinuteEvidenceUse.HISTORICAL_DISPLAY
@@ -1039,20 +1055,21 @@ def _map_run(
         evidence_use is MinuteEvidenceUse.DELAYED_PAPER
         and freshness_only_degraded
     )
-    if historical_display:
-        if not (
-            (state == "ready" and metadata.degraded is False)
-            or freshness_only_degraded
-        ):
-            raise MinuteDataContractError("minute_metadata_not_displayable")
-    else:
-        if not (
-            (state == "ready" and metadata.degraded is False)
-            or delayed_paper_freshness_tolerated
-        ):
-            raise MinuteDataContractError("minute_metadata_not_ready")
-        if not delayed_paper_freshness_tolerated and not _fresh(metadata.freshness):
-            raise MinuteDataContractError("minute_metadata_not_fresh")
+    if not proof_bound:
+        if historical_display:
+            if not (
+                (state == "ready" and metadata.degraded is False)
+                or freshness_only_degraded
+            ):
+                raise MinuteDataContractError("minute_metadata_not_displayable")
+        else:
+            if not (
+                (state == "ready" and metadata.degraded is False)
+                or delayed_paper_freshness_tolerated
+            ):
+                raise MinuteDataContractError("minute_metadata_not_ready")
+            if not delayed_paper_freshness_tolerated and not _fresh(metadata.freshness):
+                raise MinuteDataContractError("minute_metadata_not_fresh")
     quality = metadata.quality
     quality_evidence = quality.get("evidence")
     freshness_only_quality = (
@@ -1065,24 +1082,25 @@ def _map_run(
         and all(isinstance(item, str) for item in quality_evidence)
         and set(quality_evidence) <= {"freshness_sla_exceeded"}
     )
-    if not _valid_quality(quality) and not freshness_only_quality:
+    if not proof_bound and not _valid_quality(quality) and not freshness_only_quality:
         raise MinuteDataContractError("minute_metadata_quality_invalid")
     if not _complete_lineage(metadata.lineage):
         raise MinuteDataContractError("minute_metadata_lineage_incomplete")
-    if not all(
-        isinstance(value, str) and bool(value)
-        for value in (
-            metadata.receipt_id,
-            metadata.data_through,
-            metadata.observed_at,
-        )
-    ):
-        raise MinuteDataContractError("minute_metadata_proof_incomplete")
     decision = _aware(decision_time, "minute_decision_time_timezone_required")
-    data_through = _parse_aware_iso(
-        metadata.data_through, "minute_data_through_invalid"
-    )
-    observed = _parse_aware_iso(metadata.observed_at, "minute_observed_at_invalid")
+    if not proof_bound:
+        if not all(
+            isinstance(value, str) and bool(value)
+            for value in (
+                metadata.receipt_id,
+                metadata.data_through,
+                metadata.observed_at,
+            )
+        ):
+            raise MinuteDataContractError("minute_metadata_proof_incomplete")
+        data_through = _parse_aware_iso(
+            metadata.data_through, "minute_data_through_invalid"
+        )
+        observed = _parse_aware_iso(metadata.observed_at, "minute_observed_at_invalid")
     assert metadata.lineage is not None
     lineage_sha = _sha256(metadata.lineage)
     envelope_proof_sha = _sha256(
@@ -1099,7 +1117,18 @@ def _map_run(
     )
     bars: list[MinuteBarEvidence] = []
     seen: dict[tuple[str, datetime], str] = {}
-    for row in envelope.data:
+    if row_proof_metadata is not None and len(row_proof_metadata) != len(envelope.data):
+        raise MinuteDataContractError("minute_exact_slot_receipt_proof_failed")
+    if row_proof_metadata:
+        data_through = _parse_proof_timestamp(
+            row_proof_metadata[0].get("data_through"),
+            "minute_exact_slot_receipt_proof_failed",
+        )
+        observed = _parse_proof_timestamp(
+            row_proof_metadata[0].get("finished_at"),
+            "minute_exact_slot_receipt_proof_failed",
+        )
+    for index, row in enumerate(envelope.data):
         symbol = _text(
             row.get(profile.symbol_field), "minute_row_symbol_missing"
         ).upper()
@@ -1114,6 +1143,56 @@ def _map_run(
             if actual_frequency != str(profile.frequency_value).lower():
                 raise MinuteDataContractError("minute_row_frequency_mismatch")
         source_row_sha = _sha256(row)
+        row_proof = (
+            row_proof_metadata[index] if row_proof_metadata is not None else None
+        )
+        if row_proof is not None:
+            receipt_id = _text(
+                row_proof.get("receipt_id"),
+                "minute_exact_slot_receipt_proof_failed",
+            )
+            proof_data_through = _parse_proof_timestamp(
+                row_proof.get("data_through"),
+                "minute_exact_slot_receipt_proof_failed",
+            )
+            proof_finished_at = _parse_proof_timestamp(
+                row_proof.get("finished_at"),
+                "minute_exact_slot_receipt_proof_failed",
+            )
+            if proof_finished_at > decision or proof_data_through > decision:
+                raise MinuteDataContractError(
+                    "minute_exact_slot_receipt_proof_failed"
+                )
+            proof_lineage = _sha256(
+                {
+                    "dataset_id": envelope.dataset_id,
+                    "provider": row_proof.get("provider"),
+                    "source": row_proof.get("source"),
+                    "execution_id": row_proof.get("execution_id"),
+                    "config_hash": row_proof.get("config_hash"),
+                    "receipt_id": receipt_id,
+                    "data_through": row_proof.get("data_through"),
+                    "finished_at": row_proof.get("finished_at"),
+                    "receipt_proof_sha256": row_proof.get("receipt_proof_sha256"),
+                }
+            )
+            row_data_through = proof_data_through
+            row_observed_at = proof_finished_at
+            row_envelope_proof = _sha256(
+                {
+                    "dataset_id": envelope.dataset_id,
+                    "row_identity_sha256": row_proof.get("row_identity_sha256"),
+                    "receipt_proof_sha256": row_proof.get("receipt_proof_sha256"),
+                    "receipt_id": receipt_id,
+                }
+            )
+            row_lineage = proof_lineage
+        else:
+            receipt_id = str(metadata.receipt_id)
+            row_data_through = data_through
+            row_observed_at = observed
+            row_envelope_proof = envelope_proof_sha
+            row_lineage = lineage_sha
         if profile.previous_close_field is None:
             reference = (
                 reference_facts.get(symbol)
@@ -1169,13 +1248,13 @@ def _map_run(
             market_session=_session_for_bar(bar_start, bar_end),
             dataset_id=envelope.dataset_id,
             catalog_version=envelope.catalog_version,
-            receipt_id=str(metadata.receipt_id),
-            data_through=data_through,
-            observed_at=observed,
-            available_at=observed,
+            receipt_id=receipt_id,
+            data_through=row_data_through,
+            observed_at=row_observed_at,
+            available_at=row_observed_at,
             decision_time=decision,
-            source_lineage_sha256=lineage_sha,
-            envelope_proof_sha256=envelope_proof_sha,
+            source_lineage_sha256=row_lineage,
+            envelope_proof_sha256=row_envelope_proof,
             source_row_sha256=source_row_sha,
             reference_evidence_sha256=reference_evidence_sha,
             evidence_use=evidence_use,
@@ -1231,14 +1310,37 @@ def snapshot_from_runs(
             or first.semantic_trace_sha256 != replay.semantic_trace_sha256
         ):
             raise MinuteDataContractError("minute_same_observation_mismatch")
+        row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None
         if envelope_validator is not None:
             try:
-                envelope_validator(first.envelope)
-                envelope_validator(replay.envelope)
+                first_proof_envelope = envelope_validator(first.envelope)
+                replay_proof_envelope = envelope_validator(replay.envelope)
             except (SharedSignalsV1Error, ValueError) as exc:
                 raise MinuteDataContractError(
                     "minute_exact_slot_receipt_proof_failed"
                 ) from exc
+            first_proofs = getattr(first_proof_envelope, "row_receipt_proofs", None)
+            replay_proofs = getattr(replay_proof_envelope, "row_receipt_proofs", None)
+            first_content = getattr(first_proof_envelope, "content_sha256", None)
+            replay_content = getattr(replay_proof_envelope, "content_sha256", None)
+            if (
+                not isinstance(first_proofs, tuple)
+                or not isinstance(replay_proofs, tuple)
+                or len(first_proofs) != len(first.envelope.data)
+                or len(replay_proofs) != len(replay.envelope.data)
+                or not isinstance(first_content, str)
+                or len(first_content) != 64
+                or not isinstance(replay_content, str)
+                or len(replay_content) != 64
+                or first_content != replay_content
+                or _sha256(list(first_proofs)) != _sha256(list(replay_proofs))
+                or any(not isinstance(item, Mapping) for item in first_proofs)
+                or any(not isinstance(item, Mapping) for item in replay_proofs)
+            ):
+                raise MinuteDataContractError(
+                    "minute_exact_slot_receipt_proof_failed"
+                )
+            row_proof_metadata = tuple(first_proofs)
         bars = _map_run(
             profile=profile,
             run=first,
@@ -1246,6 +1348,7 @@ def snapshot_from_runs(
             trading_dates=trading_dates,
             reference_facts=reference_facts,
             evidence_use=evidence_use,
+            row_proof_metadata=row_proof_metadata,
         )
         replay_bars = _map_run(
             profile=profile,
@@ -1254,6 +1357,11 @@ def snapshot_from_runs(
             trading_dates=trading_dates,
             reference_facts=reference_facts,
             evidence_use=evidence_use,
+            row_proof_metadata=(
+                tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
+                if envelope_validator is not None
+                else None
+            ),
         )
         if [bar.sha256 for bar in bars] != [bar.sha256 for bar in replay_bars]:
             raise MinuteDataContractError("minute_same_observation_mismatch")

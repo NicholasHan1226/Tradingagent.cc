@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from dataclasses import replace
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from Ashare.minute_data import (
     MinuteTimestampSemantics,
     TradingDatasMinuteMarketDataPort,
 )
+from Ashare.rt_min_daily_pit import RtMinExactSlotProofEnvelope
 from shared.data.sharedsignals_v1 import (
     HTTPResponse,
     HTTPStatusError,
@@ -467,7 +469,11 @@ class _Transport:
         )
 
 
-def _client(transport: _Transport) -> SharedSignalsV1Client:
+def _client(
+    transport: _Transport,
+    *,
+    max_limit: int = 2,
+) -> SharedSignalsV1Client:
     return SharedSignalsV1Client(
         SharedSignalsV1Config(
             base_url="https://minute.fixture.invalid",
@@ -475,7 +481,7 @@ def _client(transport: _Transport) -> SharedSignalsV1Client:
             dataset_ids=frozenset({DATASET}),
             access_policy_id="fixture-read",
             catalog_version_policy="evidence_only",
-            max_limit=2,
+            max_limit=max_limit,
             cache_ttl_seconds=0,
         ),
         transport=transport,
@@ -520,19 +526,184 @@ def _load(
     *,
     decision_time: str = "2026-07-27T09:40:25+08:00",
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    include_receipt_proofs: bool = False,
+    envelope_validator: Any = None,
+    profile_overrides: dict[str, Any] | None = None,
+    filter_time: str = "20260727 09:35:00",
+    trading_date: date = date(2026, 7, 27),
 ) -> tuple[Any, MinuteEvidenceAuditLedger]:
-    client = _client(transport)
-    profile = _profile(client)
+    client = _client(
+        transport,
+        max_limit=(profile_overrides or {}).get("page_limit", 2),
+    )
+    profile = _profile(client, **(profile_overrides or {}))
     audit = MinuteEvidenceAuditLedger()
     snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
         profile=profile,
-        filters={"bar_time": {"gte": "20260727 09:35:00"}},
+        filters={"bar_time": {"gte": filter_time}},
         decision_time=datetime.fromisoformat(decision_time),
-        trading_dates=frozenset({date(2026, 7, 27)}),
+        trading_dates=frozenset({trading_date}),
         audit_ledger=audit,
         evidence_use=evidence_use,
+        include_receipt_proofs=include_receipt_proofs,
+        envelope_validator=envelope_validator,
     )
     return snapshot, audit
+
+
+def test_exact_proof_mapping_uses_selected_row_receipts_not_latest_runtime_metadata() -> None:
+    latest = _metadata(
+        state="failed",
+        degraded=True,
+        freshness={"state": "stale", "stale": True},
+        quality={"state": "degraded", "valid": False},
+        receipt_id="latest-failed",
+        data_through="2026-08-13T13:50:00+08:00",
+        observed_at="2026-08-13T13:55:30+08:00",
+    )
+    symbols = tuple(
+        [f"{600000 + index:06d}.SH" for index in range(15)]
+        + [f"{1 + index:06d}.SZ" for index in range(15)]
+    )
+    rows = [_row(symbol, "20260813 09:40:00") for symbol in symbols]
+    proofs = tuple(
+        {
+            "page_index": index,
+            "row_identity_sha256": "a" * 64,
+            "provider": "tushare",
+            "execution_id": "exec-0940",
+            "config_hash": "b" * 64,
+            "receipt_id": f"receipt-0940-{index // 6}",
+            "dataset_id": DATASET,
+            "status": "success",
+            "data_through": "2026-08-13 09:40:00",
+            "finished_at": "2026-08-13T09:45:00+08:00",
+            "receipt_proof_sha256": "c" * 64,
+        }
+        for index in range(30)
+    )
+
+    validated = RtMinExactSlotProofEnvelope(
+        contract_id="tradingagent.ashare.rt_min.exact_slot_proof.v1",
+        dataset_id=DATASET,
+        requested_slot="2026-08-13 09:40:00",
+        decision_as_of="2026-08-13T13:55:30+08:00",
+        requested_symbols=symbols,
+        accepted_symbols=symbols,
+        quality_status="usable",
+        rows=tuple(rows),
+        row_receipt_proofs=proofs,
+        receipt_ids=tuple(proof["receipt_id"] for proof in proofs),
+        provider="tushare",
+        execution_id="exec-0940",
+        config_hash="b" * 64,
+        data_through="2026-08-13 09:40:00",
+        receipt_lineage=True,
+        historical_pit_eligible=False,
+        learning_eligible=False,
+        promotion_eligible=False,
+        execution_authority=False,
+        real_trading_enabled=False,
+        content_sha256="d" * 64,
+    )
+
+    def validator(_envelope: Any) -> RtMinExactSlotProofEnvelope:
+        return validated
+
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 30, "max_lookback_days": 30}
+    )
+    snapshot, audit = _load(
+        _Transport(
+            first_rows=rows[:15],
+            second_rows=rows[15:],
+            metadata=latest,
+            catalog_row=catalog_row,
+        ),
+        decision_time="2026-08-13T13:50:00+08:00",
+        include_receipt_proofs=True,
+        envelope_validator=validator,
+        evidence_use=MinuteEvidenceUse.HISTORICAL_DISPLAY,
+        profile_overrides={"page_limit": 30, "max_rows": 60},
+        filter_time="20260813 09:35:00",
+        trading_date=date(2026, 8, 13),
+    )
+
+    assert audit.records() == ()
+    assert len(snapshot.bars) == 30
+    assert [bar.receipt_id for bar in snapshot.bars] == [
+        f"receipt-0940-{index // 6}" for index in range(30)
+    ]
+    assert all(
+        bar.data_through == datetime.fromisoformat("2026-08-13T09:40:00+08:00")
+        for bar in snapshot.bars
+    )
+    assert all(
+        bar.observed_at == datetime.fromisoformat("2026-08-13T09:45:00+08:00")
+        for bar in snapshot.bars
+    )
+    assert all(bar.receipt_id != "latest-failed" for bar in snapshot.bars)
+
+    with pytest.raises(MinuteDataContractError, match="minute_metadata_not_ready"):
+        _load(
+            _Transport(
+                first_rows=rows[:15],
+                second_rows=rows[15:],
+                metadata=latest,
+                catalog_row=catalog_row,
+            ),
+            decision_time="2026-08-13T13:50:00+08:00",
+            profile_overrides={"page_limit": 30, "max_rows": 60},
+            filter_time="20260813 09:35:00",
+            trading_date=date(2026, 8, 13),
+        )
+
+
+def test_exact_proof_mapping_rejects_first_replay_validator_drift() -> None:
+    proofs = tuple(
+        {
+            "page_index": index,
+            "receipt_id": f"receipt-{index}",
+            "data_through": "2026-07-27T09:40:00+08:00",
+            "finished_at": "2026-07-27T09:40:20+08:00",
+        }
+        for index in range(2)
+    )
+    calls = 0
+
+    def validator(_envelope: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(
+            row_receipt_proofs=proofs,
+            content_sha256=("a" if calls == 1 else "b") * 64,
+        )
+
+    with pytest.raises(MinuteDataContractError, match="exact_slot_receipt_proof_failed"):
+        _load(_Transport(), include_receipt_proofs=True, envelope_validator=validator)
+
+
+def test_exact_proof_mapping_rejects_selected_proof_after_decision() -> None:
+    proofs = tuple(
+        {
+            "page_index": index,
+            "receipt_id": f"receipt-{index}",
+            "data_through": "2026-07-27T09:40:00+08:00",
+            "finished_at": "2026-07-27T09:45:01+08:00",
+        }
+        for index in range(2)
+    )
+
+    def validator(_envelope: Any) -> Any:
+        return SimpleNamespace(row_receipt_proofs=proofs, content_sha256="a" * 64)
+
+    with pytest.raises(MinuteDataContractError, match="exact_slot_receipt_proof_failed"):
+        _load(
+            _Transport(),
+            decision_time="2026-07-27T09:45:00+08:00",
+            include_receipt_proofs=True,
+            envelope_validator=validator,
+        )
 
 
 def test_catalog_http_failure_has_catalog_request_phase_and_bounded_class() -> None:
