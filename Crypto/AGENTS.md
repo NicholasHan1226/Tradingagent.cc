@@ -143,8 +143,9 @@
   研究。历史回填不具备 PIT 证明时只能用于工程/定义检查，不得进入晋级证据。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
-  不接受自由 output root，最近连续 288 根 completion 前不得创建投影。它必须 full
-  scrub source→record/receipt/checkpoint 与可用的未来标签；缺失、篡改或链断裂
-  必须 fail closed。没有 service/timer、核心/capital/order/Champion 或
-  `round_trip_learning` 写权限，50 标签初筛也不构成 edge 或晋级授权。
+  不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached
+  offline projection/evaluation；缺失、篡改或链断裂必须 fail closed。最近连续 288 根
+  completion 只约束 automatic runtime maturity 及后续 promotion、风险扩张和执行，
+  不阻断完整 segment 的离线投影/评估。没有 service/timer、核心/capital/order/Champion
+  或 `round_trip_learning` 写权限，50 标签初筛也不构成 edge 或晋级授权。
 - 旧 `/opt/investment/Crypto/tools/` 名称清单已从仓库删除；历史实现只从 Git 或独立只读归档审计，不再维护第二份 manifest。
