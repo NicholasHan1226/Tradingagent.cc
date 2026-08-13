@@ -3,9 +3,6 @@ from __future__ import annotations
 import os
 import json
 import fcntl
-import importlib.util
-import subprocess
-import sys
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -76,6 +73,51 @@ def _rebind_ledger_aggregate(state: dict) -> None:
         if key != "aggregate_sha256"
     }
     state["aggregate_sha256"] = _sha256(aggregate)
+
+
+def _legacy_v1_state_payload(state: dict) -> dict:
+    """Reproduce the prior writer's exact state shape without Git history access."""
+
+    legacy = {
+        key: value
+        for key, value in state.items()
+        if key
+        not in {
+            *ledger_module.LEDGER_AGGREGATE_FIELDS,
+            "aggregate_contract",
+            "rotation_in_progress",
+            "state_sha256",
+        }
+    }
+    legacy["state_sha256"] = _sha256(legacy)
+    return legacy
+
+
+def _legacy_v1_reader_accepts(state: dict) -> bool:
+    """Mirror the prior reader's checksum/base-field acceptance of extra keys."""
+
+    material = dict(state)
+    claimed = material.pop("state_sha256", None)
+    integers = (
+        state.get("sequence"),
+        state.get("segment_count"),
+        state.get("current_start_sequence"),
+        state.get("current_row_count"),
+    )
+    return (
+        state.get("contract") == ledger_module.DECISION_LEDGER_STATE_CONTRACT
+        and claimed == _sha256(material)
+        and not any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in integers
+        )
+        and state.get("current_start_sequence")
+        == state.get("sequence") - state.get("current_row_count") + 1
+        and isinstance(state.get("last_checksum"), str)
+        and len(state["last_checksum"]) == 64
+        and isinstance(state.get("current_start_previous_checksum"), str)
+        and len(state["current_start_previous_checksum"]) == 64
+    )
 
 
 def test_round_trip_health_is_read_only_and_reports_sample_kpis(tmp_path: Path) -> None:
@@ -357,20 +399,9 @@ def test_legacy_reader_accepts_extended_checksum_bound_state(tmp_path: Path) -> 
         **ledger_module._non_authority_fields(),
     }
     store.append_event(event)
-    source = subprocess.check_output(
-        ["git", "show", "43d99d3:Crypto/delayed_paper_ledger.py"],
-        cwd=Path(__file__).parents[1],
-        text=True,
-    )
-    legacy_path = tmp_path / "legacy_delayed_paper_ledger.py"
-    legacy_path.write_text(source, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("legacy_ledger", legacy_path)
-    assert spec and spec.loader
-    legacy = importlib.util.module_from_spec(spec)
-    sys.modules["legacy_ledger"] = legacy
-    spec.loader.exec_module(legacy)
-    legacy_state = legacy.CryptoDelayedPaperObservationStore(tmp_path)._ledger_runtime_state()
-    assert legacy_state["aggregate_contract"] == ledger_module.LEDGER_AGGREGATE_CONTRACT
+    state = json.loads(store.ledger_state_path.read_text(encoding="utf-8"))
+    assert state["aggregate_contract"] == ledger_module.LEDGER_AGGREGATE_CONTRACT
+    assert _legacy_v1_reader_accepts(state) is True
 
 
 def test_mixed_version_old_writer_downgrade_fails_health_closed(tmp_path: Path) -> None:
@@ -385,20 +416,13 @@ def test_mixed_version_old_writer_downgrade_fails_health_closed(tmp_path: Path) 
         **ledger_module._non_authority_fields(),
     }
     store.append_event(event)
-    source = subprocess.check_output(
-        ["git", "show", "43d99d3:Crypto/delayed_paper_ledger.py"],
-        cwd=Path(__file__).parents[1],
-        text=True,
+    state_path = root / "delayed_paper" / "decision_ledger_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state_path.write_text(
+        json.dumps(_legacy_v1_state_payload(state), sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
     )
-    legacy_path = root / "legacy_writer.py"
-    legacy_path.write_text(source, encoding="utf-8")
-    spec = importlib.util.spec_from_file_location("legacy_writer", legacy_path)
-    assert spec and spec.loader
-    legacy = importlib.util.module_from_spec(spec)
-    sys.modules["legacy_writer"] = legacy
-    spec.loader.exec_module(legacy)
-    legacy_store = legacy.CryptoDelayedPaperObservationStore(root)
-    legacy_store.append_event({**event, "event_id": "mixed-version-old-writer"})
     with pytest.raises(
         ledger_module.CryptoDelayedPaperLedgerError,
         match="delayed_paper_decision_ledger_aggregate_missing",
