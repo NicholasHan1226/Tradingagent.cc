@@ -313,6 +313,96 @@ def test_writer_cycle_reuses_one_validated_capital_replay(
     assert replay_count == 2
 
 
+def test_runtime_state_legacy_upgrade_is_writer_owned(tmp_path: Path) -> None:
+    payload = _direct_payload(fixture_id="runtime-legacy", slot="2026-07-30T00:00:00Z")
+    first = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+    ledger_root = tmp_path / "round_trip_capital"
+    runtime_path = ledger_root / "runtime_state.json"
+    runtime_path.unlink()
+    ledger = RoundTripCapitalLedger(
+        ledger_root, _capability=capital_module._WRITE_CAPABILITY
+    )
+    row = json.loads(
+        (ledger_root / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()[-1]
+    )
+    with ledger.cycle():
+        state = ledger.state_for_writer()
+        assert state["initialized"] is True
+        _, replayed = ledger.append(
+            event_type=row["event_type"],
+            reference_id=row["reference_id"],
+            payload=row["payload"],
+        )
+    assert replayed is True
+    assert json.loads(runtime_path.read_text(encoding="utf-8"))["sequence"] == 2
+
+
+def test_runtime_state_missing_or_stale_fails_closed_without_history_scan(
+    tmp_path: Path,
+) -> None:
+    payload = _direct_payload(fixture_id="runtime-stale", slot="2026-07-30T00:00:00Z")
+    run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+    root = tmp_path / "round_trip_capital"
+    runtime = root / "runtime_state.json"
+    state = json.loads(runtime.read_text(encoding="utf-8"))
+    state["events_fingerprint"][2] += 1
+    state["state_sha256"] = capital_module._sha256(
+        {k: v for k, v in state.items() if k != "state_sha256"}
+    )
+    runtime.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+    with pytest.raises(CryptoRoundTripError, match="runtime_state_invalid"):
+        RoundTripCapitalLedger(root).state_read_only()
+    runtime.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(CryptoRoundTripError, match="runtime_state_invalid"):
+        RoundTripCapitalLedger(root).state_read_only()
+
+
+def test_legacy_reader_ignores_adjacent_runtime_state(tmp_path: Path) -> None:
+    run_round_trip_fixture_cycle(
+        _direct_payload(fixture_id="rollback", slot="2026-07-30T00:00:00Z"),
+        output_root=tmp_path,
+    )
+    # Legacy v1 semantics read only events/head and never inspect the
+    # adjacent runtime-state file.  Keep this proof local so shallow clones
+    # do not require historical Git objects.
+    ledger = RoundTripCapitalLedger(tmp_path / "round_trip_capital")
+    rows = ledger._read_rows()
+    state, checksum = ledger._replay(rows)
+    ledger._validate_head(rows, checksum)
+    assert len(rows) == 2
+    assert checksum == json.loads(
+        ledger.head_path.read_text(encoding="utf-8")
+    )["checksum"]
+    assert state["initialized"] is True
+
+
+def test_crash_after_events_and_head_before_runtime_state_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_round_trip_fixture_cycle(
+        _direct_payload(fixture_id="crash-before-state", slot="2026-07-30T00:00:00Z"),
+        output_root=tmp_path,
+    )
+    original = RoundTripCapitalLedger._write_runtime_state
+
+    def crash(self: RoundTripCapitalLedger, **kwargs: Any) -> dict[str, Any]:
+        raise OSError("injected_after_head")
+
+    monkeypatch.setattr(RoundTripCapitalLedger, "_write_runtime_state", crash)
+    with pytest.raises(OSError, match="injected_after_head"):
+        run_round_trip_fixture_cycle(
+            _direct_payload(fixture_id="crash-before-state-2", slot="2026-07-30T00:05:00Z"),
+            output_root=tmp_path,
+        )
+    with pytest.raises(
+        CryptoRoundTripError, match="runtime_state_invalid|runtime_state_stale"
+    ):
+        RoundTripCapitalLedger(tmp_path / "round_trip_capital").state_read_only()
+    monkeypatch.setattr(RoundTripCapitalLedger, "_write_runtime_state", original)
+
+
 def test_writer_cycle_invalidates_cache_after_external_ledger_change(
     tmp_path: Path,
 ) -> None:
