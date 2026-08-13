@@ -50,6 +50,7 @@ RT_MIN_DAILY_IDENTITY_FIELDS = ("ts_code", "freq", "time")
 RT_MIN_DAILY_CONTRACT_ID = "tradingagent.ashare.rt_min_daily.pit.v1"
 RT_MIN_DATASET_ID = "cn.dataset.rt_min"
 RT_MIN_EXACT_SLOT_CONTRACT_ID = "tradingagent.ashare.rt_min.exact_slot_proof.v1"
+RT_MIN_EXACT_SLOT_FREQUENCIES = frozenset({"5MIN", "1MIN"})
 _SYMBOL_RE = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -229,11 +230,17 @@ def build_rt_min_exact_slot_proof_envelope(
     accepted: list[str] = []
     normalized_proofs: list[dict[str, Any]] = []
     common: dict[str, str] | None = None
+    normalized_frequency: str | None = None
     for index, (row, proof) in enumerate(zip(rows, proofs, strict=True)):
         if not isinstance(row, Mapping) or not isinstance(proof, Mapping):
             raise RtMinDailyPITContractError("row_receipt_proof_entry_invalid")
         symbol = _symbol(row.get("ts_code"), field_name=f"row_{index}_ts_code")
-        if row.get("freq") != "1MIN":
+        frequency = row.get("freq")
+        if not isinstance(frequency, str) or frequency.upper() not in RT_MIN_EXACT_SLOT_FREQUENCIES:
+            raise RtMinDailyPITContractError("row_freq_invalid")
+        if normalized_frequency is None:
+            normalized_frequency = frequency.upper()
+        elif frequency.upper() != normalized_frequency:
             raise RtMinDailyPITContractError("row_freq_invalid")
         row_slot, row_instant = _exact_slot(row.get("time"), field_name=f"row_{index}_time")
         if row_slot != slot_text or row_instant > decision:
@@ -628,6 +635,7 @@ __all__ = [
     "RT_MIN_DAILY_DATASET_ID",
     "RT_MIN_DATASET_ID",
     "RT_MIN_EXACT_SLOT_CONTRACT_ID",
+    "RT_MIN_EXACT_SLOT_FREQUENCIES",
     "RT_MIN_DAILY_FIELDS",
     "RT_MIN_DAILY_IDENTITY_FIELDS",
     "RtMinDailyPITContractError",
