@@ -179,6 +179,29 @@ def test_dataset_fingerprint_is_canonical_while_global_version_is_evidence() -> 
     assert snapshot.catalog_version_drift is True
 
 
+def test_minute_port_proof_opt_in_is_forwarded_and_validator_blocks() -> None:
+    transport = _Transport()
+    client = _client(transport)
+    profile = _profile(client)
+    audit = MinuteEvidenceAuditLedger()
+
+    with pytest.raises(MinuteDataContractError, match="minute_exact_slot_receipt_proof_failed"):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={},
+            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=audit,
+            include_receipt_proofs=True,
+            envelope_validator=lambda _envelope: (_ for _ in ()).throw(
+                ValueError("proof rejected")
+            ),
+        )
+    query_calls = [call for call in transport.calls if call["method"] == "POST"]
+    assert query_calls
+    assert all(call["json_body"]["include_receipt_proofs"] is True for call in query_calls)
+
+
 @pytest.mark.parametrize(
     "catalog_identity,consumer_identity,reason",
     [

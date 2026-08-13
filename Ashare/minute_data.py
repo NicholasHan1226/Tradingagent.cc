@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from zoneinfo import ZoneInfo
 
 from shared.data.sharedsignals_v1 import (
@@ -1205,6 +1205,7 @@ def snapshot_from_runs(
     audit_ledger: MinuteEvidenceAuditLedger,
     reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    envelope_validator: Callable[[Any], object] | None = None,
 ) -> MinuteBarSnapshot:
     """Map two bounded reads and require identical same-observation semantics."""
 
@@ -1230,6 +1231,14 @@ def snapshot_from_runs(
             or first.semantic_trace_sha256 != replay.semantic_trace_sha256
         ):
             raise MinuteDataContractError("minute_same_observation_mismatch")
+        if envelope_validator is not None:
+            try:
+                envelope_validator(first.envelope)
+                envelope_validator(replay.envelope)
+            except (SharedSignalsV1Error, ValueError) as exc:
+                raise MinuteDataContractError(
+                    "minute_exact_slot_receipt_proof_failed"
+                ) from exc
         bars = _map_run(
             profile=profile,
             run=first,
@@ -1291,6 +1300,8 @@ class TradingDatasMinuteMarketDataPort:
         audit_ledger: MinuteEvidenceAuditLedger,
         reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
         evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+        include_receipt_proofs: bool = False,
+        envelope_validator: Callable[[Any], object] | None = None,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
         runtime_catalog_version = "unobserved"
@@ -1341,6 +1352,7 @@ class TradingDatasMinuteMarketDataPort:
                 filters=filters,
                 order=profile.default_order or None,
                 limit=profile.page_limit,
+                include_receipt_proofs=include_receipt_proofs,
             )
             try:
                 first = collect_query_pages(
@@ -1370,6 +1382,7 @@ class TradingDatasMinuteMarketDataPort:
                 audit_ledger=audit_ledger,
                 reference_facts=reference_facts,
                 evidence_use=evidence_use,
+                envelope_validator=envelope_validator,
             )
         except MinuteDataContractError as exc:
             if len(audit_ledger.records()) == audit_count_before:
