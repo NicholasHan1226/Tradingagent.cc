@@ -1,10 +1,12 @@
-# TradingAgent 当前状态
+# TradingAgent 历史状态快照
 
-> 综合核验：2026-08-02 CST；A股/TradingCopilot 发布与运行态增量读回：2026-08-03
-> 22:50 CST。本文只保留当前运行事实、证据边界和下一停止线；已合入
-> 候选、历史事故与旧读回通过 Git 历史及仓外 release-evidence 追溯，不在此重复。
+> 本文件冻结于 2026-08-02/03，以下 commit、timer、receipt 和“下一停止线”仅是
+> 当时的历史快照，不再代表当前运行事实。当前跨线状态以
+> `../autodev-control/AUTODEV_STATE.json` 为机器入口，并且每个 release、service/timer、
+> receipt/API、consumer/evaluation 结论都必须由本轮新鲜读回确认；状态文件本身也不能
+> 替代运行证据。保留本文是为了审计旧边界，禁止据此派单、发布或宣称当前完成。
 
-## 当前版本与运行面
+## 2026-08-02/03 版本与运行面（历史）
 
 | 层级 | 当前事实 | 证据边界 |
 | --- | --- | --- |
@@ -80,7 +82,7 @@ TradingDatas 已提供通用 `windowed_unique_primary_key` 与有界 fanout 完�
 宏观 shadow 观察。新闻、资金流与其它日频接口仍必须逐项满足自己的 fresh metadata
 与 formal API readback，不能由这个单项结果代替。
 
-## 下一停止线
+## 当时的下一停止线（历史，不再调度）
 
 1. **Crypto**：从最近连续 completion 段自然累积至 288 根；随后先运行 disabled
    full scrub 与同槽幂等 replay，再单独决定是否安装离线 learning worker。核心数据、
@@ -96,8 +98,7 @@ TradingDatas 已提供通用 `windowed_unique_primary_key` 与有界 fanout 完�
 
 ## 维护规则
 
-- `STATUS.md` 只写当前事实与下一停止线；历史候选、失败与临时数字写入对应 readback
-  报告、仓外 evidence 或 Git 历史。
+- 新鲜当前事实写入 AutoDev 状态并由同轮运行读回验证；本历史快照只保留审计语境。
 - `current-v1` 只指固定 catalog/query 的当前消费者；旧 reader 属于
   `active-compatibility` 或 `retirement-pending`，已阻断的旧运行入口保持
   `hard-blocked`，不得成为 fallback。

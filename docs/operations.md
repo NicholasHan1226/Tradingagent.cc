@@ -1,6 +1,6 @@
 # TradingAgent 多市场 fixture 与服务器旁路运行、验收及回滚
 
-> 本文是 A股、CNFutures 与 Crypto **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。Nicholas 已授予正常代码发布的 standing authorization；范围明确且通过测试、独立审计、preflight与回滚检查后，提交、PR/merge、push和版本化loopback-only sidecar不再等待逐次确认。该授权不自动扩展到现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron、公开入口或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据只见 [STATUS.md](../STATUS.md)。
+> 本文是 A股、CNFutures 与 Crypto **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。Nicholas 已授予正常代码发布的 standing authorization；范围明确且通过测试、独立审计、preflight与回滚检查后，提交、PR/merge、push和版本化loopback-only sidecar不再等待逐次确认。该授权不自动扩展到现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron、公开入口或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据以 AutoDev 状态为入口并由本轮运行读回验证；[STATUS.md](../STATUS.md) 仅为历史快照。
 
 ## 1. 不可突破的边界
 

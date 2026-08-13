@@ -2,7 +2,7 @@
 
 TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统。它通过证据门禁下的自我学习、自我迭代、自我更新和自我修复，在真实数据、费用、滑点和小账户约束下持续改善费用后胜率、净投资回报、回撤和执行可靠性；这不是收益承诺。当前开发市场是 A股和 Crypto；美股与 A股期权是未来隔离范围；预测市场与 CNFutures 当前暂停。
 
-> 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。
+> 接手顺序：[AGENTS.md](AGENTS.md) → `../autodev-control/AUTODEV_STATE.json` + 本轮新鲜运行读回 → [STATUS.md](STATUS.md) 历史快照 → [docs/AGENTS.md](docs/AGENTS.md)。
 
 ## 终局系统与过渡工具
 
@@ -20,7 +20,7 @@ TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统。�
 - **active-compatibility**：旧 reader、筛选和非 A 股兼容消费者仅保留为有清单、有退出条件的历史兼容面，不进入 A股 V1 Champion、风险、订单或调度链。
 - **hard-blocked / retirement-pending**：旧 A股 wrapper、cron 和机会漏斗 writer 已阻断；物理删除须等待安装态、消费者引用、同 `as_of` parity 与回滚证据清零，不能靠长期双轨代替退役。
 
-系统只供 Nicholas 内部使用。默认保持 loopback、simulation-only、`REAL_TRADING_ENABLED=false`；当前验证层级、远端与服务器事实只记录在 [STATUS.md](STATUS.md)。
+系统只供 Nicholas 内部使用。默认保持 loopback、simulation-only、`REAL_TRADING_ENABLED=false`；当前跨线状态以 AutoDev 状态为入口，远端与服务器事实仍须本轮直接读回。[STATUS.md](STATUS.md) 只保留 2026-08-02/03 历史快照。
 
 ## 当前架构
 
@@ -94,7 +94,12 @@ SampleJournal/KPI 仍是正式演化 authority。Decision Ledger、fixture、pap
 
 是否适合 50,000 CNY 不是行业属性，更不是“小市值股票”标签，而是逐证券可执行性。至少要求一手预留金额加保守费用不超过 7,500 CNY 单票上限（因此未计缓冲前股价通常也需低于约 75 CNY）、有效订单达到 2,000 CNY 最低经济金额、流动性和 T+1/涨跌停风险可重放，并且不会形成同一产业论点集中。无法满足时现金胜出；在真实 TradingDatas V1 `as_of` 筛选完成前，本规划不列固定股票代码。
 
-## 分阶段目标
+## A股市场路线图（执行成熟度，不是 Factor/Strategy MVP-1）
+
+下表的 Phase 1 是 A股自动模拟日闭环的执行成熟度，需要连续 20 个交易日；它不阻断
+更小的 receipt/PIT 安全子集先完成 Factor/Strategy MVP-1，也不构成 TD、Crypto 或
+Copilot 的全局阶段。Factor/Strategy MVP-1 只证明最小费用后评估管线已跑通，不能
+替代下表的持续运行、样本外、风控或执行证据。
 
 | 阶段 | 范围 | 出口证据 |
 |---|---|---|
@@ -138,7 +143,7 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 - [样本与成熟度验收](docs/capital_growth_validation.md)
 - [运行、验收与回滚](docs/operations.md)
 - [冻结范围后的 Backlog](docs/BACKLOG.md)
-- [当前状态](STATUS.md)
+- [历史状态快照](STATUS.md)
 
 本地通过、候选远端分支、远端主线、服务器旁路、生产文件、生产 runtime、cron 生效和真实市场样本是不同层级；任何一层都不能替代其它层。Nicholas 已授予正常代码发布 standing authorization：范围明确且 release gate 通过后，主助手默认继续完成 commit、普通 PR/merge、push、版本化 loopback-only sidecar 和逐层读回。该默认不包含 force-push/历史重写、删除或覆盖运行数据、密钥/账号/权限、破坏性数据库迁移、现役源码或入口切换、安装/启用 cron/service、真实模型网络、邮件/GUI、broker 或真实交易；这些高风险动作必须由当期任务明确包含并通过专用门禁。
 
