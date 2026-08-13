@@ -1,6 +1,6 @@
 # TradingAgent 数据与事实契约
 
-> 本文是 TradingDatas/MarketGraph 输入、按市场与原生币种隔离的资本、执行、样本、标签、KPI 与成熟度字段的 canonical contract。架构见 [architecture.md](architecture.md)，当前状态见 [STATUS.md](../STATUS.md)。
+> 本文是 TradingDatas/MarketGraph 输入、按市场与原生币种隔离的资本、执行、样本、标签、KPI 与成熟度字段的 canonical contract。架构见 [architecture.md](architecture.md)；当前状态以 AutoDev 状态和本轮新鲜读回为准，[STATUS.md](../STATUS.md) 是历史快照。
 
 ## 通用安全与 lineage
 
@@ -878,6 +878,12 @@ canonical generation ID 由唯一跨语言算法计算：取 `projection_input_s
 不适配一手时 `quantity=0`、`counterfactual_only=true`。适配成交必须有 explicit `execution_eligible=true`、actual fill、capital commit identity 和 complete PIT lineage；正数量本身不能证明 execution-eligible。
 
 ## KPI 与成熟度 projections
+
+策略 JSON 的 `maturity` 是配置生命周期标签：现有 `training` 仅表示该策略已配置、可被
+离线评估，不表示已有 resolved outcome、训练完成、自我学习闭环、OOS 通过或可晋级。
+任何“已评估/已学习”声明必须另有同市场、同期限的 `evaluated_status`、非零
+`resolved_count` 和内容寻址 `artifact_sha256`；运行/晋级还必须分别满足各自证据门禁。
+该解释不改变现有 JSON schema 或策略文件。
 
 同一轮三份投影必须共享相同 `projection_input_sha256`，并通过内容寻址 generation 发布。完整 generation 写入 `projection_generations/<generation_id>/` 后，最后只原子替换 `projection_current.json`；pointer 必须保存 `generation_manifest_sha256`。canonical reader 先按该 SHA 校验 manifest 原始内容，成功后才信任 manifest 中的 projection SHA、共同 input SHA、run metadata 和 sim-only 字段，再校验三个文件。任一步在 pointer swap 前失败时，reader 继续看到上一完整 generation。generation 体系已存在或配置要求 canonical 时，current 缺失/非法必须 fail closed；`*_latest.json`/log 仅保留为向后兼容镜像，不是事务提交点。明确的 pre-generation legacy 健康检查回退必须标记 `legacy_compatibility_degraded`，不能输出成熟度绿或可晋级；活跃前端 reader 不使用该回退。
 

@@ -1,6 +1,6 @@
 # TradingAgent 架构
 
-> 本文定义长期系统边界与当前 capital-growth 架构。当前完成度见 [STATUS.md](../STATUS.md)，字段见 [data_contract.md](data_contract.md)，运行和回滚见 [operations.md](operations.md)。
+> 本文定义长期系统边界与当前 capital-growth 架构。当前完成度以 AutoDev 状态和本轮新鲜读回为准；[STATUS.md](../STATUS.md) 是历史快照。字段见 [data_contract.md](data_contract.md)，运行和回滚见 [operations.md](operations.md)。
 
 ## 目标与非目标
 

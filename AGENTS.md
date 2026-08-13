@@ -1,6 +1,6 @@
 # TradingAgent 项目规则
 
-> 阅读顺序：本文件 → [STATUS.md](STATUS.md) → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。
+> 阅读顺序：本文件 → `../autodev-control/AUTODEV_STATE.json` 与本轮新鲜运行读回 → [STATUS.md](STATUS.md) 历史快照 → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。
 
 ## 项目定位
 
@@ -101,6 +101,6 @@
 
 - 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)。
 - GitHub 传输优先使用 Nicholas 已登录的 `gh` HTTPS 凭据链：先核对 `gh auth status`，仓库 `origin` 固定为 `https://github.com/NicholasHan1226/Tradingagent.cc.git`。若 `git@github.com` 的 SSH/22 端口失败一次，不重复重试或上报为长期 blocker；立即验证 HTTPS `git ls-remote`，切换现有 remote 后 fetch。不得输出 token，也不得另建凭据或绕过 host-key 校验。
-- 当前事实只写 [STATUS.md](STATUS.md)。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
+- 当前跨线机器事实写入 `../autodev-control/AUTODEV_STATE.json`，但每个运行结论仍须由本轮新鲜读回验证；[STATUS.md](STATUS.md) 是 2026-08-02/03 历史快照。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
 - 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
 - Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、测试与独立审计通过且 release preflight/回滚路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路或项目既定部署与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、安装或启用 cron/service、真实模型网络调用、邮件/GUI 外部写入、broker 或真实交易；这些动作仍须由当期任务明确包含并通过各自门禁。
