@@ -20,7 +20,11 @@ from pathlib import Path
 import sys
 from typing import Any, Iterator, Mapping
 
-from .minute_data import SHANGHAI
+from .minute_canary import (
+    MinuteCanaryConfigurationError,
+    snapshot_from_canary_receipt,
+)
+from .minute_data import MinuteDatasetProfile, SHANGHAI
 from .minute_day_report import MinuteDayReportError, build_minute_day_report
 from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
@@ -28,6 +32,10 @@ from shared.governance.evidence_readiness import load_evidence_readiness_contrac
 JOURNAL_NAME = "minute_fixture_learning_journal.jsonl"
 LATEST_NAME = "minute_fixture_learning_latest.json"
 SCHEMA = "tradingagent.ashare.minute_fixture_learning.v1"
+OBSERVATION_OUTCOME_JOURNAL_NAME = "minute_observation_outcomes.jsonl"
+OBSERVATION_OUTCOME_LATEST_NAME = "minute_observation_outcome_latest.json"
+OBSERVATION_OUTCOME_SCHEMA = "tradingagent.ashare.minute_observation_outcome.v1"
+FORWARD_LABEL_HORIZONS = ("m30", "m60", "close", "1d", "3d", "5d")
 _SHA256_HEX = frozenset("0123456789abcdef")
 
 
@@ -55,6 +63,22 @@ LOCAL_CONTIGUOUS_LEARNING_PROFILE = LocalContiguousLearningProfile(
 
 class MinuteOfflineLearningError(ValueError):
     """Raised when fixture learning evidence is unsafe to project."""
+
+
+def _observation_stamp(value: object, reason: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise MinuteOfflineLearningError(reason)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise MinuteOfflineLearningError(reason) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI)
+    return parsed
+
+
+def _observation_sha(value: object) -> str:
+    return _sha256_bytes(_canonical_json(value).encode("utf-8"))
 
 
 def _canonical_json(value: object) -> str:
@@ -231,6 +255,162 @@ def _local_contiguous_learning(
         "eligible_window_end_slots": eligible_ends,
         "blockers": blockers,
     }
+
+
+def build_minute_observation_outcome(
+    *,
+    canary_receipt: Mapping[str, Any],
+    profile: MinuteDatasetProfile,
+    decision_as_of: datetime | str,
+) -> dict[str, Any]:
+    """Build one durable, non-training observation from an exact canary receipt.
+
+    The canary artifact is the only input authority here.  Its immutable
+    per-row receipt proofs are reconstructed before any fields are persisted;
+    no forward label is inferred when the target horizon is still open.
+    """
+
+    if not isinstance(canary_receipt, Mapping) or not isinstance(
+        profile, MinuteDatasetProfile
+    ):
+        raise MinuteOfflineLearningError("minute_observation_input_invalid")
+    if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
+        raise MinuteOfflineLearningError("real_trading_must_remain_disabled")
+    try:
+        snapshot = snapshot_from_canary_receipt(canary_receipt, profile=profile)
+    except (MinuteCanaryConfigurationError, ValueError) as exc:
+        raise MinuteOfflineLearningError("minute_observation_receipt_invalid") from exc
+
+    receipt = canary_receipt
+    if (
+        receipt.get("requested_count") != 30
+        or receipt.get("accepted_count") != 30
+        or receipt.get("missing_count") != 0
+        or receipt.get("row_count") != 30
+        or receipt.get("quality_status") != "usable"
+        or receipt.get("lineage_complete") is not True
+        or receipt.get("authority_tier") != "observation_only"
+        or receipt.get("real_trading_enabled") is not False
+    ):
+        raise MinuteOfflineLearningError("minute_observation_exact_30_required")
+    requested = receipt.get("requested_symbols")
+    accepted = receipt.get("accepted_symbols")
+    if (
+        not isinstance(requested, list)
+        or not isinstance(accepted, list)
+        or len(requested) != 30
+        or len(accepted) != 30
+        or len(set(requested)) != 30
+        or len(set(accepted)) != 30
+        or set(requested) != set(accepted)
+        or set(accepted) != {bar.symbol for bar in snapshot.bars}
+    ):
+        raise MinuteOfflineLearningError("minute_observation_universe_mismatch")
+
+    as_of = (
+        decision_as_of
+        if isinstance(decision_as_of, datetime)
+        else _observation_stamp(decision_as_of, "minute_observation_decision_as_of_invalid")
+    )
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=SHANGHAI)
+    bars = snapshot.bars
+    if len(bars) != 30:
+        raise MinuteOfflineLearningError("minute_observation_exact_30_required")
+    decision_times = {bar.decision_time for bar in bars}
+    bar_ends = {bar.bar_end for bar in bars}
+    data_through = {bar.data_through for bar in bars}
+    sessions = {bar.market_session for bar in bars}
+    if (
+        len(decision_times) != 1
+        or len(bar_ends) != 1
+        or len(data_through) != 1
+        or len(sessions) != 1
+        or any(bar.observed_at > as_of for bar in bars)
+        or any(bar.data_through > bar.observed_at for bar in bars)
+        or any(bar.decision_time > as_of for bar in bars)
+    ):
+        raise MinuteOfflineLearningError("minute_observation_pit_or_segment_invalid")
+    proof_summary = snapshot.validated_proof_summary
+    if proof_summary is None or set(proof_summary.receipt_ids) != {
+        bar.receipt_id for bar in bars
+    }:
+        raise MinuteOfflineLearningError("minute_observation_proof_binding_invalid")
+    if len(proof_summary.receipt_ids) < 1:
+        raise MinuteOfflineLearningError("minute_observation_proof_binding_invalid")
+
+    decision_time = next(iter(decision_times))
+    bar_end = next(iter(bar_ends))
+    data_through_stamp = next(iter(data_through))
+    segment_id = (
+        f"{bar_end.astimezone(SHANGHAI).date().isoformat()}"
+        f":{next(iter(sessions))}:{bar_end.astimezone(SHANGHAI).isoformat()}"
+    )
+    rows = [
+        {
+            "symbol": bar.symbol,
+            "bar_end": bar.bar_end.astimezone(SHANGHAI).isoformat(),
+            "decision_time": bar.decision_time.astimezone(SHANGHAI).isoformat(),
+            "receipt_id": bar.receipt_id,
+            "data_through": bar.data_through.astimezone(SHANGHAI).isoformat(),
+            "observed_at": bar.observed_at.astimezone(SHANGHAI).isoformat(),
+            "source_lineage_sha256": bar.source_lineage_sha256,
+            "envelope_proof_sha256": bar.envelope_proof_sha256,
+            "source_row_sha256": bar.source_row_sha256,
+            "bar_sha256": bar.sha256,
+        }
+        for bar in bars
+    ]
+    source = {
+        "dataset_id": proof_summary.dataset_id,
+        "provider": proof_summary.provider,
+        "execution_id": proof_summary.execution_id,
+        "config_hash": proof_summary.config_hash,
+        "data_through": data_through_stamp.astimezone(SHANGHAI).isoformat(),
+        "receipt_ids": list(proof_summary.receipt_ids),
+        "content_sha256": proof_summary.content_sha256,
+    }
+    observation = {
+        "schema": OBSERVATION_OUTCOME_SCHEMA,
+        "observation_key": "",
+        "trading_date": bar_end.astimezone(SHANGHAI).date().isoformat(),
+        "segment_id": segment_id,
+        "decision_time": decision_time.astimezone(SHANGHAI).isoformat(),
+        "decision_as_of": as_of.astimezone(SHANGHAI).isoformat(),
+        "evidence_use": bars[0].evidence_use.value,
+        "observation": {
+            "requested_count": 30,
+            "accepted_count": 30,
+            "row_count": 30,
+            "lineage_complete": True,
+            "snapshot_sha256": receipt.get("snapshot_sha256"),
+            "pagination_trace_sha256": snapshot.pagination_trace_sha256,
+            "first_semantic_sha256": snapshot.first_semantic_sha256,
+            "replay_semantic_sha256": snapshot.replay_semantic_sha256,
+            "proof": source,
+            "rows": rows,
+        },
+        "outcome": {
+            "status": "pending_forward_labels",
+            "forward_label_state": "blocked_missing_authoritative_forward_labels",
+            "planned_horizons": list(FORWARD_LABEL_HORIZONS),
+            "training_sample_count": 0,
+            "training_eligible": False,
+            "labels_appended": 0,
+        },
+        "authority": {
+            "observation_authority": False,
+            "durable_observation": True,
+            "training_authority": False,
+            "promotion_authority": False,
+            "execution_authority": False,
+            "real_trading_enabled": False,
+        },
+    }
+    digest_payload = dict(observation)
+    digest_payload["observation_key"] = None
+    observation["observation_key"] = _observation_sha(digest_payload)
+    return observation
 
 
 def build_minute_offline_learning_projection(
@@ -483,6 +663,78 @@ def write_minute_offline_learning_projection(
     return {"appended": True, "projection": projection}
 
 
+def _existing_observation_keys(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    if path.is_symlink() or not path.is_file():
+        raise MinuteOfflineLearningError("minute_observation_journal_invalid")
+    values: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            value = json.loads(line)
+            if (
+                not isinstance(value, Mapping)
+                or value.get("schema") != OBSERVATION_OUTCOME_SCHEMA
+                or not isinstance(value.get("observation_key"), str)
+            ):
+                raise MinuteOfflineLearningError("minute_observation_journal_invalid")
+            key = value["observation_key"]
+            digest = _observation_sha({**dict(value), "observation_key": None})
+            if key != digest:
+                raise MinuteOfflineLearningError("minute_observation_journal_invalid")
+            if key in values and values[key] != digest:
+                raise MinuteOfflineLearningError("minute_observation_journal_conflict")
+            values[key] = digest
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise MinuteOfflineLearningError("minute_observation_journal_invalid") from exc
+    return values
+
+
+def write_minute_observation_outcome(
+    *,
+    canary_receipt: Mapping[str, Any],
+    profile: MinuteDatasetProfile,
+    decision_as_of: datetime | str,
+    learning_root: Path | str,
+) -> dict[str, Any]:
+    """Append one validated exact observation and refresh its latest view."""
+
+    observation = build_minute_observation_outcome(
+        canary_receipt=canary_receipt,
+        profile=profile,
+        decision_as_of=decision_as_of,
+    )
+    root = Path(learning_root)
+    _validate_root(root)
+    journal = root / OBSERVATION_OUTCOME_JOURNAL_NAME
+    with _exclusive_lock(root):
+        existing = _existing_observation_keys(journal)
+        key = observation["observation_key"]
+        digest = _observation_sha({**observation, "observation_key": None})
+        if key in existing:
+            if existing[key] != digest:
+                raise MinuteOfflineLearningError("minute_observation_journal_conflict")
+            _atomic_json(root / OBSERVATION_OUTCOME_LATEST_NAME, observation)
+            return {"appended": False, "observation": observation}
+        encoded = (_canonical_json(observation) + "\n").encode("utf-8")
+        try:
+            descriptor = os.open(journal, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            with os.fdopen(descriptor, "ab") as stream:
+                stream.write(encoded)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.chmod(journal, 0o600)
+        except OSError as exc:
+            raise MinuteOfflineLearningError(
+                "minute_observation_journal_persist_failed"
+            ) from exc
+        _atomic_json(root / OBSERVATION_OUTCOME_LATEST_NAME, observation)
+    return {"appended": True, "observation": observation}
+
+
+append_minute_observation_outcome = write_minute_observation_outcome
+
+
 def state_bundle_for_current_session(*, state_root: Path | str) -> Path:
     """Resolve today's bundle without scanning or modifying a state root."""
 
@@ -530,8 +782,14 @@ if __name__ == "__main__":
 __all__ = [
     "JOURNAL_NAME",
     "LATEST_NAME",
+    "OBSERVATION_OUTCOME_JOURNAL_NAME",
+    "OBSERVATION_OUTCOME_LATEST_NAME",
+    "OBSERVATION_OUTCOME_SCHEMA",
     "MinuteOfflineLearningError",
+    "build_minute_observation_outcome",
     "build_minute_offline_learning_projection",
     "state_bundle_for_current_session",
+    "write_minute_observation_outcome",
+    "append_minute_observation_outcome",
     "write_minute_offline_learning_projection",
 ]

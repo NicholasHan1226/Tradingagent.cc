@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import json
 import os
 from pathlib import Path
@@ -9,17 +9,51 @@ import sys
 
 import pytest
 
+from Ashare import minute_canary as minute_canary_module
+from Ashare.minute_canary import run_minute_canary
 from Ashare.minute_auto_runner import session_bar_ends
-from Ashare.minute_data import SHANGHAI
+from Ashare.minute_data import MinuteEvidenceUse, SHANGHAI
 from Ashare.minute_loop import MinuteFixtureClosedLoop, _canonical_sha256
 from Ashare.minute_offline_learning import (
     JOURNAL_NAME,
     LOCAL_CONTIGUOUS_LEARNING_PROFILE,
     MinuteOfflineLearningError,
+    OBSERVATION_OUTCOME_JOURNAL_NAME,
+    build_minute_observation_outcome,
     build_minute_offline_learning_projection,
+    write_minute_observation_outcome,
     write_minute_offline_learning_projection,
 )
 from Ashare.minute_research import MinuteResearchUniverse
+from shared.data.sharedsignals_v1 import SharedSignalsV1Client
+
+from tests.test_ashare_minute_canary import (
+    _RealRtMinTransport,
+    _real_rt_min_config,
+    _real_rt_min_references,
+    _real_rt_min_rows,
+)
+
+
+def _real_observation_receipt() -> tuple[dict, object]:
+    rows = _real_rt_min_rows()
+    config = _real_rt_min_config()
+    receipt = run_minute_canary(
+        config,
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-08-13T13:50:00+08:00"),
+        trading_date=date(2026, 8, 13),
+        reference_facts=_real_rt_min_references(rows),
+        bar_end="2026-08-13 09:40:00",
+        evidence_use=MinuteEvidenceUse.HISTORICAL_DISPLAY,
+        transport_factory=lambda *args, **kwargs: _RealRtMinTransport(rows),
+    )
+    profile = config.build_profile(
+        SharedSignalsV1Client(
+            config.client_config(), transport=_RealRtMinTransport(rows)
+        )
+    )
+    return receipt, profile
 
 
 def _bundle(
@@ -272,6 +306,95 @@ def test_projection_never_grants_authority(tmp_path: Path) -> None:
     }
 
 
+def test_exact_receipt_bound_observation_is_append_only_and_label_blocked(
+    tmp_path: Path,
+) -> None:
+    receipt, profile = _real_observation_receipt()
+    root = (tmp_path / "learning").resolve()
+    first = write_minute_observation_outcome(
+        canary_receipt=receipt,
+        profile=profile,
+        decision_as_of="2026-08-13T13:50:00+08:00",
+        learning_root=root,
+    )
+    second = write_minute_observation_outcome(
+        canary_receipt=receipt,
+        profile=profile,
+        decision_as_of="2026-08-13T13:50:00+08:00",
+        learning_root=root,
+    )
+    assert first["appended"] is True
+    assert second["appended"] is False
+    event = first["observation"]
+    assert event["observation"]["accepted_count"] == 30
+    assert event["observation"]["row_count"] == 30
+    assert len(event["observation"]["proof"]["receipt_ids"]) == 5
+    assert event["outcome"] == {
+        "status": "pending_forward_labels",
+        "forward_label_state": "blocked_missing_authoritative_forward_labels",
+        "planned_horizons": ["m30", "m60", "close", "1d", "3d", "5d"],
+        "training_sample_count": 0,
+        "training_eligible": False,
+        "labels_appended": 0,
+    }
+    assert event["authority"]["observation_authority"] is False
+    assert event["authority"]["durable_observation"] is True
+    assert event["authority"]["training_authority"] is False
+    assert len((root / OBSERVATION_OUTCOME_JOURNAL_NAME).read_text().splitlines()) == 1
+
+
+def test_exact_receipt_bound_summary_is_authenticated_and_replayable() -> None:
+    receipt, profile = _real_observation_receipt()
+    restored = minute_canary_module.snapshot_from_canary_receipt(
+        receipt, profile=profile
+    )
+    assert restored.validated_proof_summary is not None
+    assert restored.validated_proof_summary.provider == "tushare"
+    tampered = json.loads(json.dumps(receipt))
+    tampered["validated_proof_summary"]["provider"] = "other"
+    with pytest.raises(MinuteOfflineLearningError, match="minute_observation_receipt_invalid"):
+        build_minute_observation_outcome(
+            canary_receipt=tampered,
+            profile=profile,
+            decision_as_of="2026-08-13T13:50:00+08:00",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate, reason",
+    [
+        (lambda value: value["snapshot_rows"]["items"].__setitem__(0, {
+            **value["snapshot_rows"]["items"][0],
+            "receipt_id": value["receipt_ids"][1],
+        }), "minute_observation_receipt_invalid"),
+        (lambda value: value["snapshot_rows"]["items"].__setitem__(0, {
+            **value["snapshot_rows"]["items"][0],
+            "market_session": "afternoon",
+        }), "minute_observation_receipt_invalid"),
+    ],
+)
+def test_exact_receipt_bound_observation_rejects_tampered_rows(
+    mutate, reason, tmp_path: Path
+) -> None:
+    receipt, profile = _real_observation_receipt()
+    tampered = json.loads(json.dumps(receipt))
+    mutate(tampered)
+    with pytest.raises(MinuteOfflineLearningError, match=reason):
+        build_minute_observation_outcome(
+            canary_receipt=tampered,
+            profile=profile,
+            decision_as_of=datetime.fromisoformat("2026-08-13T13:50:00+08:00"),
+        )
+
+
+def test_exact_receipt_bound_observation_rejects_future_pit(tmp_path: Path) -> None:
+    receipt, profile = _real_observation_receipt()
+    with pytest.raises(MinuteOfflineLearningError, match="minute_observation_pit_or_segment_invalid"):
+        build_minute_observation_outcome(
+            canary_receipt=receipt,
+            profile=profile,
+            decision_as_of="2026-08-13T09:44:00+08:00",
+        )
 def test_tracked_timer_candidate_is_not_an_enabled_runtime() -> None:
     timer = (
         Path(__file__).resolve().parents[1]
