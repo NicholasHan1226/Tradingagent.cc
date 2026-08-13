@@ -5,9 +5,9 @@ decisions and simulated capital.  This module reads that evidence after a
 completion is durable, then writes a separate append-only learning projection.
 It has no order, capital, Champion, network, or promotion authority.
 
-Incremental work deliberately handles one new completion only.  A full scrub
-is the integrity boundary: it validates every completion to projection mapping
-and deterministically fills only projections that have never been checkpointed.
+Incremental work is bounded and resumable.  A full scrub is the integrity
+boundary: it validates every completion to projection mapping and
+deterministically fills only projections that have never been checkpointed.
 """
 
 from __future__ import annotations
@@ -43,6 +43,10 @@ ROUND_TRIP_LEARNING_SCRUB_CONTRACT = "tradingagent.crypto.round_trip_learning_sc
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
 ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS = 90.0
+ROUND_TRIP_LEARNING_INCREMENTAL_MAX_SECONDS = (
+    ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS
+)
+ROUND_TRIP_LEARNING_INCREMENTAL_MAX_RECORDS = 8
 
 
 class CryptoRoundTripLearningError(RuntimeError):
@@ -656,25 +660,39 @@ def _read_incremental_state(evolution: Path) -> dict[str, Any] | None:
 def run_crypto_delayed_paper_round_trip_learning_incremental(
     *, output_root: Path | str
 ) -> dict[str, Any]:
-    """Project at most one new completion without writing core state."""
+    """Project a bounded append-only completion suffix without core writes."""
 
     _assert_simulation_only()
+    deadline = monotonic() + ROUND_TRIP_LEARNING_INCREMENTAL_MAX_SECONDS
     root = Path(output_root)
     store, checkpoint, core_state = _core_snapshot(root)
-    if checkpoint.get("pending") is not None:
-        return _result(status="deferred_core_pending")
     completion_count = int(checkpoint.get("completion_count") or 0)
+    common = {
+        "processed_count": 0,
+        "remaining_backlog_count": 0,
+        "projected_completion_count": 0,
+        "core_completion_count": completion_count,
+        "latest_projected_observation_id": None,
+        "checkpoint_head_sha256": None,
+    }
+    if checkpoint.get("pending") is not None:
+        return _result(status="deferred_core_pending", **common)
     latest_observation_id = core_state.get("latest_observation_id")
-    if completion_count == 0:
-        return _result(status="none", projected_completion_count=0)
-    if not isinstance(latest_observation_id, str):
+    if completion_count and not isinstance(latest_observation_id, str):
         raise CryptoRoundTripLearningError("round_trip_learning_core_invalid")
     evolution = _ensure_evolution_root(root)
     with _learning_lock(evolution):
+        checkpoints = _read_checkpoints(evolution)
         state = _read_incremental_state(evolution)
         projected = int(state["projected_completion_count"]) if state else 0
+        if len(checkpoints) != projected:
+            raise CryptoRoundTripLearningError("round_trip_learning_state_invalid")
         if projected > completion_count:
             raise CryptoRoundTripLearningError("round_trip_learning_core_regressed")
+        if completion_count == 0:
+            if projected:
+                raise CryptoRoundTripLearningError("round_trip_learning_core_regressed")
+            return _result(status="none", **common)
         if projected == completion_count:
             if (
                 state is not None
@@ -683,46 +701,145 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
                 raise CryptoRoundTripLearningError(
                     "round_trip_learning_core_checkpoint_mismatch"
                 )
-            return _result(status="current", projected_completion_count=projected)
+            latest = checkpoints[-1] if checkpoints else None
+            return _result(
+                status="current",
+                **{
+                    **common,
+                    "remaining_backlog_count": completion_count - projected,
+                    "projected_completion_count": projected,
+                    "latest_projected_observation_id": (
+                        latest.get("observation_id") if latest else None
+                    ),
+                    "checkpoint_head_sha256": (
+                        latest.get("checkpoint_sha256") if latest else None
+                    ),
+                },
+            )
         if state is None:
             return _result(
                 status="full_scrub_required",
-                projected_completion_count=projected,
-                core_completion_count=completion_count,
+                **{
+                    **common,
+                    "remaining_backlog_count": completion_count - projected,
+                    "projected_completion_count": projected,
+                },
             )
-        if completion_count != projected + 1:
+        completed = _completion_inventory(
+            store, checkpoint, core_state, deadline=deadline
+        )
+        if completed is None:
             return _result(
-                status="full_scrub_required",
-                projected_completion_count=projected,
-                core_completion_count=completion_count,
+                status="deferred_inventory_time_budget",
+                inventory_complete=False,
+                **{
+                    **common,
+                    "projected_completion_count": projected,
+                },
             )
-        receipt = _verify_or_project(
-            root,
-            store,
-            latest_observation_id,
-            strict_ledger_membership=False,
-        )
-        previous_sha256 = state.get("checkpoint_head_sha256") if state else None
-        row = _checkpoint_payload(
-            sequence=projected + 1,
-            previous_sha256=previous_sha256,
-            receipt=receipt,
-        )
-        _write_immutable(evolution / "checkpoints" / f"{projected + 1:012d}.json", row)
-        _write_state(
-            evolution / "worker_state.json",
-            _state_payload_from_head(
-                projected_completion_count=projected + 1,
-                latest_checkpoint=row,
-                scrubbed_count=projected + 1,
-            ),
-        )
+        if completed[-1] != latest_observation_id:
+            raise CryptoRoundTripLearningError("round_trip_learning_core_inventory_invalid")
+        for sequence, observation_id in enumerate(completed[:projected], start=1):
+            if monotonic() >= deadline:
+                return _result(
+                    status="deferred_time_budget",
+                    **{
+                        **common,
+                        "remaining_backlog_count": len(completed) - projected,
+                        "projected_completion_count": projected,
+                        "latest_projected_observation_id": checkpoints[-1].get(
+                            "observation_id"
+                        ),
+                        "checkpoint_head_sha256": checkpoints[-1].get(
+                            "checkpoint_sha256"
+                        ),
+                    },
+                )
+            if any(
+                not path.is_file() or path.is_symlink()
+                for path in _paths(root, observation_id).values()
+            ):
+                raise CryptoRoundTripLearningError(
+                    "round_trip_learning_claimed_projection_missing"
+                )
+            receipt = _verify_or_project(
+                root, store, observation_id, strict_ledger_membership=True
+            )
+            row = checkpoints[sequence - 1]
+            if (
+                row.get("observation_id") != observation_id
+                or row.get("source_completion_sha256")
+                != receipt["source_completion_sha256"]
+                or row.get("projection_receipt_sha256")
+                != receipt["projection_receipt_sha256"]
+            ):
+                raise CryptoRoundTripLearningError(
+                    "round_trip_learning_checkpoint_source_mismatch"
+                )
+        remaining = len(completed) - projected
+        processed = 0
+        latest = checkpoints[-1] if checkpoints else None
+        for sequence in range(projected + 1, len(completed) + 1):
+            if processed >= ROUND_TRIP_LEARNING_INCREMENTAL_MAX_RECORDS:
+                break
+            if monotonic() >= deadline:
+                break
+            observation_id = completed[sequence - 1]
+            receipt = _verify_or_project(
+                root,
+                store,
+                observation_id,
+                strict_ledger_membership=True,
+            )
+            row = _checkpoint_payload(
+                sequence=sequence,
+                previous_sha256=latest.get("checkpoint_sha256") if latest else None,
+                receipt=receipt,
+            )
+            _write_immutable(evolution / "checkpoints" / f"{sequence:012d}.json", row)
+            checkpoints.append(row)
+            latest = row
+            processed += 1
+            _write_state(
+                evolution / "worker_state.json",
+                _state_payload_from_head(
+                    projected_completion_count=sequence,
+                    latest_checkpoint=row,
+                    scrubbed_count=sequence,
+                ),
+            )
+        projected = len(checkpoints)
+        remaining = len(completed) - projected
+        if processed == 0 and remaining:
+            return _result(
+                status="deferred_time_budget",
+                **{
+                    **common,
+                    "remaining_backlog_count": remaining,
+                    "projected_completion_count": projected,
+                    "latest_projected_observation_id": (
+                        latest.get("observation_id") if latest else None
+                    ),
+                    "checkpoint_head_sha256": (
+                        latest.get("checkpoint_sha256") if latest else None
+                    ),
+                },
+            )
         return _result(
-            status="projected",
-            observation_id=latest_observation_id,
-            projected_completion_count=projected + 1,
-            checkpoint_head_sha256=row["checkpoint_sha256"],
-            incremental_source_records=1,
+            status="projected" if remaining == 0 else "backlog_remaining",
+            **{
+                **common,
+                "processed_count": processed,
+                "remaining_backlog_count": remaining,
+                "projected_completion_count": projected,
+                "latest_projected_observation_id": (
+                    latest.get("observation_id") if latest else None
+                ),
+                "checkpoint_head_sha256": (
+                    latest.get("checkpoint_sha256") if latest else None
+                ),
+                "incremental_source_records": processed,
+            },
         )
 
 
@@ -830,6 +947,7 @@ def round_trip_learning_exit_code(result: Mapping[str, Any]) -> int:
         "current",
         "none",
         "projected",
+        "backlog_remaining",
         "recovered",
         "scrubbed",
         "deferred_core_pending",
