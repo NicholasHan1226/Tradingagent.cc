@@ -20,7 +20,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--lane", required=True, choices=("ashare", "cnfutures", "crypto"))
     parser.add_argument("--repo", type=Path, default=Path.cwd())
-    parser.add_argument("--base-ref", default="main")
+    parser.add_argument(
+        "--base-ref",
+        default="main",
+        help=(
+            "validation base; use main at slice start, then the exact "
+            "Controller-recorded assignment commit for handoff"
+        ),
+    )
     args = parser.parse_args()
     try:
         result = validate_market_lane(

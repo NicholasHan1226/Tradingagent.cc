@@ -144,3 +144,31 @@ def test_lane_rejects_development_when_branch_is_behind_base(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="1 commit.s. behind main"):
         validate_market_lane("ashare", repo)
+
+
+def test_lane_handoff_accepts_controller_frozen_base_after_unrelated_main_advance(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path, "market-ashare", "codex/market-ashare-lane")
+    assignment_base = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    _git(repo, "checkout", "main")
+    (repo / "README.md").write_text("unrelated shared advance\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "advance unrelated shared source")
+    _git(repo, "checkout", "codex/market-ashare-lane")
+    target = repo / "Ashare" / "runtime" / "entrypoint.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("# frozen-base candidate\n", encoding="utf-8")
+
+    result = validate_market_lane("ashare", repo, base_ref=assignment_base)
+
+    assert result.base_ref == assignment_base
+    assert result.base_head == assignment_base
+    assert result.behind == 0
+    assert result.changed_paths == ("Ashare/runtime/entrypoint.py",)
