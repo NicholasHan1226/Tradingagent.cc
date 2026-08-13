@@ -25,8 +25,12 @@ from Crypto.round_trip_capital import SLIPPAGE_BPS, TAKER_FEE_RATE
 EVALUATION_CONTRACT = "tradingagent.crypto.factor_strategy_evaluation.v1"
 HORIZON_MINUTES = 60
 COST_POLICY_ID = "crypto-round-trip-taker-v1"
+STRATEGY_HYPOTHESIS_PAIRS = {
+    "momentum": "time_series_momentum_v1",
+    "trend": "trend_pullback_v1",
+}
 SELECTED_STRATEGY = "momentum"
-SELECTED_HYPOTHESIS = "time_series_momentum_v1"
+SELECTED_HYPOTHESIS = STRATEGY_HYPOTHESIS_PAIRS[SELECTED_STRATEGY]
 _PROOF_FALSE_FIELDS = (
     "automatic_champion_replacement", "automatic_risk_expansion_enabled",
     "durable_execution_receipt", "execution_authority", "execution_eligible",
@@ -114,13 +118,17 @@ def _sample_binding_sha256(sample: Mapping[str, Any]) -> str:
     return _sha(material)
 
 
-def _strategy(strategy_dir: Path | str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+def _strategy(strategy_dir: Path | str | None, strategy_name: str = SELECTED_STRATEGY) -> tuple[dict[str, Any], dict[str, Any]]:
+    hypothesis = STRATEGY_HYPOTHESIS_PAIRS.get(strategy_name)
+    if hypothesis is None:
+        raise CryptoFactorStrategyEvaluationError("evaluation_strategy_invalid")
     loaded = CryptoAdapter(strategy_dir=Path(strategy_dir) if strategy_dir else None).get_strategy_config().get("strategies")
-    content = loaded.get(SELECTED_STRATEGY) if isinstance(loaded, Mapping) else None
-    if not isinstance(content, Mapping) or content.get("name") != SELECTED_STRATEGY or content.get("enabled") is not True:
+    content = loaded.get(strategy_name) if isinstance(loaded, Mapping) else None
+    if not isinstance(content, Mapping) or content.get("name") != strategy_name or content.get("enabled") is not True:
         raise CryptoFactorStrategyEvaluationError("evaluation_strategy_invalid")
     normalized = json.loads(_json(content))
-    return normalized, {"strategy_name": SELECTED_STRATEGY, "strategy_version": _sha(normalized), "configured_maturity": normalized.get("maturity")}
+    return normalized, {"strategy_name": strategy_name, "strategy_version": _sha(normalized),
+                        "factor_hypothesis_id": hypothesis, "configured_maturity": normalized.get("maturity")}
 
 
 def _resolved(sample: Mapping[str, Any], evaluation_as_of: datetime) -> tuple[dict[str, Any], Decimal]:
@@ -317,10 +325,10 @@ def _cash_baseline(resolved_count: int) -> dict[str, Any]:
             "metric_basis": "cash_no_position"}
 
 
-def build_factor_strategy_evaluation(*, samples: Sequence[Mapping[str, Any]], evaluation_as_of: str, strategy_dir: Path | str | None = None, expected_strategy_version: str | None = None) -> dict[str, Any]:
-    """Evaluate momentum/time-series-momentum versus the same-cost hold baseline."""
+def build_factor_strategy_evaluation(*, samples: Sequence[Mapping[str, Any]], evaluation_as_of: str, strategy_dir: Path | str | None = None, expected_strategy_version: str | None = None, strategy_name: str = SELECTED_STRATEGY) -> dict[str, Any]:
+    """Evaluate one allowlisted existing strategy versus the same-cost hold baseline."""
     as_of = _utc(evaluation_as_of, "evaluation_as_of")
-    content, strategy_identity = _strategy(strategy_dir)
+    content, strategy_identity = _strategy(strategy_dir, strategy_name=strategy_name)
     if expected_strategy_version is not None and expected_strategy_version != strategy_identity["strategy_version"]:
         raise CryptoFactorStrategyEvaluationError("evaluation_strategy_hash_mismatch")
     rows: list[tuple[dict[str, Any], Decimal]] = []
@@ -349,7 +357,7 @@ def build_factor_strategy_evaluation(*, samples: Sequence[Mapping[str, Any]], ev
     rows.sort(key=lambda row: _utc(row[0]["snapshot"]["market_slot"], "market_slot"))
     baseline = _metrics(rows, [True] * len(rows))
     baseline_mean = _decimal(baseline["cost_adjusted_net_return"], "baseline_mean") if baseline["cost_adjusted_net_return"] is not None else None
-    signals = [_signal(SELECTED_HYPOTHESIS, row[0]["snapshot"]) for row in rows]
+    signals = [_signal(strategy_identity["factor_hypothesis_id"], row[0]["snapshot"]) for row in rows]
     metrics = _metrics(rows, signals, baseline_mean)
     cash_baseline = _cash_baseline(len(rows))
     strategy_mean = (
@@ -363,7 +371,7 @@ def build_factor_strategy_evaluation(*, samples: Sequence[Mapping[str, Any]], ev
         else "downweight" if strategy_mean is not None and strategy_mean <= 0
         else "retain_for_more_evidence"
     )
-    artifact = {"contract": EVALUATION_CONTRACT, **strategy_identity, "factor_hypothesis_id": SELECTED_HYPOTHESIS,
+    artifact = {"contract": EVALUATION_CONTRACT, **strategy_identity,
                 "evaluation_as_of": as_of.isoformat().replace("+00:00", "Z"), "horizon_minutes": HORIZON_MINUTES,
                 "sample_count": len(samples), "resolved_count": len(rows), "pending_count": pending, "excluded_count": 0,
                 "resolved_coverage": _text(Decimal(len(rows)) / Decimal(len(samples))) if samples else "0",

@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from Crypto.factor_research import build_factor_snapshot, build_forward_label
+from Crypto.factor_research import _signal, build_factor_snapshot, build_forward_label
 from Crypto.factor_strategy_evaluation import (
     CryptoFactorStrategyEvaluationError,
     _sample_binding_sha256,
@@ -20,10 +20,17 @@ START = datetime(2026, 8, 1, tzinfo=timezone.utc)
 AS_OF = "2026-08-01T04:00:00Z"
 
 
-def _bars(start: datetime, rising: bool) -> list[dict[str, str]]:
+def _bars(start: datetime, rising: bool, pullback: bool = False) -> list[dict[str, str]]:
     rows = []
     for index in range(13):
-        close = Decimal("100") + (Decimal(index) if rising else -Decimal(index))
+        if pullback:
+            close = (
+                Decimal("100") + Decimal(index) * 2
+                if index < 9
+                else Decimal("116") - Decimal(index - 8)
+            )
+        else:
+            close = Decimal("100") + (Decimal(index) if rising else -Decimal(index))
         rows.append({
             "open_time": (start + timedelta(minutes=index * 5)).isoformat().replace("+00:00", "Z"),
             "open": str(close), "high": str(close + 1), "low": str(close - 1),
@@ -49,10 +56,10 @@ def _future_evidence(slot: datetime, marker: str) -> dict[str, str]:
     }
 
 
-def _sample(slot: datetime = START, rising: bool = True) -> dict[str, object]:
+def _sample(slot: datetime = START, rising: bool = True, pullback: bool = False) -> dict[str, object]:
     snapshot = build_factor_snapshot(
         observation_id=f"obs-{slot.hour}-{rising}", symbol="BTCUSDT",
-        bars=_bars(slot, rising), evidence=_evidence(slot, "a"),
+        bars=_bars(slot, rising, pullback), evidence=_evidence(slot, "a"),
     )
     future = slot + timedelta(hours=2)
     label = build_forward_label(
@@ -131,6 +138,7 @@ def test_deterministic_nonzero_fixture_artifact() -> None:
     second = build_factor_strategy_evaluation(samples=samples, evaluation_as_of=AS_OF)
     assert first == second
     assert first["strategy_name"] == "momentum"
+    assert first["factor_hypothesis_id"] == "time_series_momentum_v1"
     assert len(first["strategy_version"]) == 64
     assert first["configured_maturity"] == "training"
     assert first["evaluated_status"] == "exploratory_insufficient_edge"
@@ -138,6 +146,8 @@ def test_deterministic_nonzero_fixture_artifact() -> None:
     assert first["resolved_count"] == 2 and first["pending_count"] == 1 and first["excluded_count"] == 0
     assert first["resolved_coverage"] == "0.6666666666666666666666666667"
     assert first["metrics"]["cost_adjusted_net_return"] is not None
+    assert first["metrics"]["signal_count"] == 1
+    assert first["metrics"]["abstention_count"] == 1
     assert first["cash_baseline"] == {
         "resolved_count": 2, "signal_count": 0, "abstention_count": 2,
         "coverage": "0", "hit_rate": None, "cost_adjusted_net_return": "0",
@@ -147,6 +157,34 @@ def test_deterministic_nonzero_fixture_artifact() -> None:
     assert Decimal(first["baseline"]["drawdown"]) > 0
     assert first["recommendation"]["shadow_only_action"] in {"retain_for_more_evidence", "downweight", "disable"}
     assert first["promotion"] is False and first["execution"] is False and first["live"] is False
+
+
+def test_trend_pullback_is_distinct_allowlisted_pair_on_same_samples() -> None:
+    samples = [_sample(pullback=True), _sample(START + timedelta(hours=1), rising=False)]
+    snapshots = [sample["snapshot"] for sample in samples]
+    momentum_signals = [_signal("time_series_momentum_v1", snapshot) for snapshot in snapshots]
+    trend_signals = [_signal("trend_pullback_v1", snapshot) for snapshot in snapshots]
+    momentum = build_factor_strategy_evaluation(samples=samples, evaluation_as_of=AS_OF, strategy_name="momentum")
+    trend = build_factor_strategy_evaluation(samples=samples, evaluation_as_of=AS_OF, strategy_name="trend")
+    assert momentum["strategy_name"] == "momentum"
+    assert momentum["factor_hypothesis_id"] == "time_series_momentum_v1"
+    assert trend["strategy_name"] == "trend"
+    assert trend["factor_hypothesis_id"] == "trend_pullback_v1"
+    assert momentum["strategy_version"] != trend["strategy_version"]
+    assert momentum["metrics"]["signal_count"] == 0
+    assert trend["metrics"]["signal_count"] == 1
+    assert momentum_signals == [False, False]
+    assert trend_signals == [True, False]
+    assert momentum_signals != trend_signals
+    assert momentum["metrics"]["signal_count"] != trend["metrics"]["signal_count"]
+    assert trend == build_factor_strategy_evaluation(
+        samples=samples, evaluation_as_of=AS_OF, strategy_name="trend"
+    )
+
+
+def test_unknown_strategy_selection_fails_closed() -> None:
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_strategy_invalid"):
+        build_factor_strategy_evaluation(samples=[_sample()], evaluation_as_of=AS_OF, strategy_name="unknown")
 
 
 @pytest.mark.parametrize("mutator,reason", [
@@ -174,6 +212,18 @@ def test_strategy_hash_tamper_fails_closed() -> None:
     expected = hashlib.sha256(json.dumps(strategy, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
     with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_strategy_hash_mismatch"):
         build_factor_strategy_evaluation(samples=[_sample()], evaluation_as_of=AS_OF, expected_strategy_version="f" * 64)
+
+
+def test_wrong_existing_strategy_content_fails_closed(tmp_path) -> None:
+    strategy = CryptoAdapter().get_strategy_config()["strategies"]["momentum"]
+    wrong = dict(strategy)
+    wrong["name"] = "not-momentum"
+    path = tmp_path / "momentum.json"
+    path.write_text(json.dumps(wrong), encoding="utf-8")
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_strategy_invalid"):
+        build_factor_strategy_evaluation(
+            samples=[_sample()], evaluation_as_of=AS_OF, strategy_dir=tmp_path
+        )
 
 
 def test_same_length_completion_digest_tamper_fails_closed() -> None:
@@ -208,7 +258,7 @@ def test_all_abstain_recommends_disable() -> None:
 
 
 def test_negative_signalled_return_recommends_downweight() -> None:
-    sample = _sample(rising=True)
+    sample = _sample()
     label = sample["label"]  # type: ignore[assignment]
     entry = Decimal(label["entry_price"])
     exit_ = Decimal("98")
