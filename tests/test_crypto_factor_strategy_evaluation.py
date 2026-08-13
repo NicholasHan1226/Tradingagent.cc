@@ -187,6 +187,28 @@ def test_unknown_strategy_selection_fails_closed() -> None:
         build_factor_strategy_evaluation(samples=[_sample()], evaluation_as_of=AS_OF, strategy_name="unknown")
 
 
+def test_volume_breakout_is_distinct_allowlisted_pair_on_same_samples() -> None:
+    samples = [_sample(pullback=True), _sample(START + timedelta(hours=1))]
+    snapshots = [sample["snapshot"] for sample in samples]
+    trend_signals = [_signal("trend_pullback_v1", snapshot) for snapshot in snapshots]
+    volume_signals = [_signal("volume_breakout_v1", snapshot) for snapshot in snapshots]
+    trend = build_factor_strategy_evaluation(samples=samples, evaluation_as_of=AS_OF, strategy_name="trend")
+    volatility = build_factor_strategy_evaluation(
+        samples=samples, evaluation_as_of=AS_OF, strategy_name="volatility"
+    )
+    assert volatility["strategy_name"] == "volatility"
+    assert volatility["factor_hypothesis_id"] == "volume_breakout_v1"
+    assert volatility["strategy_version"] != trend["strategy_version"]
+    assert trend_signals == [True, False]
+    assert volume_signals == [False, True]
+    assert trend_signals != volume_signals
+    assert trend["metrics"]["signal_count"] == 1
+    assert volatility["metrics"]["signal_count"] == 1
+    assert volatility == build_factor_strategy_evaluation(
+        samples=samples, evaluation_as_of=AS_OF, strategy_name="volatility"
+    )
+
+
 @pytest.mark.parametrize("mutator,reason", [
     (lambda s: s.update(future_segment_id="crypto-5m-segment-20260801T010000Z"), "evaluation_cross_gap_label"),
     (lambda s: s["label"].update(forward_label_sha256="f" * 64), "evaluation_receipt_or_lineage_binding_invalid"),

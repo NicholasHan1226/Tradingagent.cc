@@ -28,6 +28,7 @@ COST_POLICY_ID = "crypto-round-trip-taker-v1"
 STRATEGY_HYPOTHESIS_PAIRS = {
     "momentum": "time_series_momentum_v1",
     "trend": "trend_pullback_v1",
+    "volatility": "volume_breakout_v1",
 }
 SELECTED_STRATEGY = "momentum"
 SELECTED_HYPOTHESIS = STRATEGY_HYPOTHESIS_PAIRS[SELECTED_STRATEGY]
