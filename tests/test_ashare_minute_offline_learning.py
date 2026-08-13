@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -12,19 +13,20 @@ import pytest
 from Ashare import minute_canary as minute_canary_module
 from Ashare.minute_canary import run_minute_canary
 from Ashare.minute_auto_runner import session_bar_ends
-from Ashare.minute_data import MinuteEvidenceUse, SHANGHAI
+from Ashare.minute_data import MinuteEvidenceUse, MinuteValidatedProofSummary, SHANGHAI
 from Ashare.minute_loop import MinuteFixtureClosedLoop, _canonical_sha256
 from Ashare.minute_offline_learning import (
     JOURNAL_NAME,
     LOCAL_CONTIGUOUS_LEARNING_PROFILE,
     MinuteOfflineLearningError,
     OBSERVATION_OUTCOME_JOURNAL_NAME,
+    build_minute_forward_label,
     build_minute_observation_outcome,
     build_minute_offline_learning_projection,
     write_minute_observation_outcome,
     write_minute_offline_learning_projection,
 )
-from Ashare.minute_research import MinuteResearchUniverse
+from Ashare.minute_research import MinuteResearchUniverse, MinuteUniverseInstrument
 from shared.data.sharedsignals_v1 import SharedSignalsV1Client
 
 from tests.test_ashare_minute_canary import (
@@ -395,6 +397,183 @@ def test_exact_receipt_bound_observation_rejects_future_pit(tmp_path: Path) -> N
             profile=profile,
             decision_as_of="2026-08-13T09:44:00+08:00",
         )
+
+
+def test_single_symbol_m60_label_is_usable_degraded_and_shadow_only() -> None:
+    receipt, profile = _real_observation_receipt()
+    source_snapshot = minute_canary_module.snapshot_from_canary_receipt(
+        receipt, profile=profile
+    )
+    source_bar = next(bar for bar in source_snapshot.bars if bar.symbol == "000001.SZ")
+    target = datetime.fromisoformat("2026-08-13T10:40:00+08:00")
+    future_bars = tuple(
+        replace(
+            bar,
+            bar_start=target - timedelta(minutes=5),
+            bar_end=target,
+            data_through=target,
+            observed_at=datetime.fromisoformat("2026-08-13T10:45:00+08:00"),
+            available_at=datetime.fromisoformat("2026-08-13T10:45:00+08:00"),
+            decision_time=datetime.fromisoformat("2026-08-13T13:50:00+08:00"),
+            receipt_id="future-receipt-10-40",
+            source_row_sha256=("d" * 64 if bar.symbol == source_bar.symbol else bar.source_row_sha256),
+        )
+        for bar in source_snapshot.bars
+    )
+    future_snapshot = replace(
+        source_snapshot,
+        bars=future_bars,
+        validated_proof_summary=MinuteValidatedProofSummary(
+            dataset_id=source_snapshot.profile.dataset_id,
+            provider="tushare",
+            execution_id="execution-10-40",
+            config_hash="b" * 64,
+            data_through="2026-08-13 10:40:00",
+            receipt_ids=("future-receipt-10-40",),
+            content_sha256="e" * 64,
+        ),
+    )
+    universe = MinuteResearchUniverse(
+        instruments=(
+            MinuteUniverseInstrument(
+                symbol="000001.SZ",
+                name="Ping An Bank",
+                industry="banking",
+                research_theme="mainboard_opportunity_scan",
+                list_date=date(1991, 4, 3),
+            ),
+        )
+    )
+    result = build_minute_forward_label(
+        source_snapshot=source_snapshot,
+        future_snapshot=future_snapshot,
+        symbol="000001.SZ",
+        target_slot=target,
+        decision_as_of="2026-08-13T13:50:00+08:00",
+        research_universe=universe,
+    )
+    assert result["status"] == "usable_degraded"
+    assert result["requested_symbols"] == result["resolved_symbols"] == ["000001.SZ"]
+    assert result["missing_symbols"] == []
+    assert result["horizon"] == "m60"
+    assert result["outcome"]["sample_count"] == 1
+    assert result["outcome"]["resolved_count"] == 1
+    assert result["outcome"]["pending"] == 0
+    assert result["outcome"]["excluded"] == 0
+    assert result["outcome"]["evaluated_status"] == "exploratory_insufficient_edge"
+    assert result["shadow_suggestion"]["action"] in {"retain_for_more_evidence", "downweight"}
+    assert result["shadow_suggestion"]["execution_authority"] is False
+    assert len(result["artifact_sha256"]) == 64
+    assert result["labels"][0]["source_receipt_id"] == source_bar.receipt_id
+    assert result["labels"][0]["future_receipt_id"] == "future-receipt-10-40"
+
+
+def test_single_symbol_forward_label_is_deterministic_and_rejects_pit_drift() -> None:
+    receipt, profile = _real_observation_receipt()
+    source_snapshot = minute_canary_module.snapshot_from_canary_receipt(receipt, profile=profile)
+    source_bar = next(bar for bar in source_snapshot.bars if bar.symbol == "000001.SZ")
+    target = datetime.fromisoformat("2026-08-13T10:40:00+08:00")
+    future_snapshot = replace(
+        source_snapshot,
+        bars=tuple(replace(
+            bar, bar_start=target - timedelta(minutes=5), bar_end=target,
+            data_through=target,
+            observed_at=datetime.fromisoformat("2026-08-13T10:45:00+08:00"),
+            available_at=datetime.fromisoformat("2026-08-13T10:45:00+08:00"),
+            decision_time=datetime.fromisoformat("2026-08-13T13:50:00+08:00"),
+            receipt_id="future-receipt-10-40",
+        ) for bar in source_snapshot.bars),
+        validated_proof_summary=MinuteValidatedProofSummary(
+            dataset_id=source_snapshot.profile.dataset_id, provider="tushare",
+            execution_id="execution-10-40", config_hash="b" * 64,
+            data_through="2026-08-13 10:40:00",
+            receipt_ids=("future-receipt-10-40",), content_sha256="e" * 64,
+        ),
+    )
+    universe = MinuteResearchUniverse(instruments=(MinuteUniverseInstrument(
+        symbol="000001.SZ", name="Ping An Bank", industry="banking",
+        research_theme="mainboard_opportunity_scan", list_date=date(1991, 4, 3),
+    ),))
+    kwargs = dict(
+        source_snapshot=source_snapshot,
+        future_snapshot=future_snapshot, symbol="000001.SZ", target_slot=target,
+        decision_as_of="2026-08-13T13:50:00+08:00", research_universe=universe,
+    )
+    label = build_minute_forward_label(**kwargs)
+    assert build_minute_forward_label(**kwargs) == label
+    with pytest.raises(MinuteOfflineLearningError, match="minute_forward_label_pit_invalid"):
+        build_minute_forward_label(**{**kwargs, "decision_as_of": "2026-08-13T09:44:00+08:00"})
+
+
+@pytest.mark.parametrize("delta", [timedelta(minutes=55), timedelta(days=1)])
+def test_single_symbol_forward_label_rejects_non_m60_or_cross_session(delta: timedelta) -> None:
+    receipt, profile = _real_observation_receipt()
+    source_snapshot = minute_canary_module.snapshot_from_canary_receipt(receipt, profile=profile)
+    source_bar = next(bar for bar in source_snapshot.bars if bar.symbol == "000001.SZ")
+    target = source_bar.bar_end + delta
+    future_snapshot = replace(
+        source_snapshot,
+        bars=tuple(replace(
+            bar, bar_start=target - timedelta(minutes=5), bar_end=target,
+            data_through=target,
+            observed_at=target + timedelta(minutes=5),
+            available_at=target + timedelta(minutes=5),
+            decision_time=target + timedelta(minutes=10),
+            receipt_id="future-receipt-invalid",
+        ) for bar in source_snapshot.bars),
+        validated_proof_summary=MinuteValidatedProofSummary(
+            dataset_id=source_snapshot.profile.dataset_id, provider="tushare",
+            execution_id="execution-invalid", config_hash="b" * 64,
+            data_through=target.strftime("%Y-%m-%d %H:%M:%S"),
+            receipt_ids=("future-receipt-invalid",), content_sha256="e" * 64,
+        ),
+    )
+    universe = MinuteResearchUniverse(instruments=(MinuteUniverseInstrument(
+        symbol="000001.SZ", name="Ping An Bank", industry="banking",
+        research_theme="mainboard_opportunity_scan", list_date=date(1991, 4, 3),
+    ),))
+    with pytest.raises(MinuteOfflineLearningError):
+        build_minute_forward_label(
+            source_snapshot=source_snapshot, future_snapshot=future_snapshot,
+            symbol="000001.SZ", target_slot=target,
+            decision_as_of="2026-08-13T13:50:00+08:00", research_universe=universe,
+        )
+
+
+def test_single_symbol_forward_label_rejects_proof_data_through_mismatch() -> None:
+    receipt, profile = _real_observation_receipt()
+    source_snapshot = minute_canary_module.snapshot_from_canary_receipt(receipt, profile=profile)
+    source_bar = next(bar for bar in source_snapshot.bars if bar.symbol == "000001.SZ")
+    target = datetime.fromisoformat("2026-08-13T10:40:00+08:00")
+    future_snapshot = replace(
+        source_snapshot,
+        bars=tuple(replace(
+            bar, bar_start=target - timedelta(minutes=5), bar_end=target,
+            data_through=target,
+            observed_at=datetime.fromisoformat("2026-08-13T10:45:00+08:00"),
+            available_at=datetime.fromisoformat("2026-08-13T10:45:00+08:00"),
+            decision_time=datetime.fromisoformat("2026-08-13T13:50:00+08:00"),
+            receipt_id="future-receipt-mismatch",
+        ) for bar in source_snapshot.bars),
+        validated_proof_summary=MinuteValidatedProofSummary(
+            dataset_id=source_snapshot.profile.dataset_id, provider="tushare",
+            execution_id="execution-mismatch", config_hash="b" * 64,
+            data_through="2026-08-13 10:41:00",
+            receipt_ids=("future-receipt-mismatch",), content_sha256="e" * 64,
+        ),
+    )
+    universe = MinuteResearchUniverse(instruments=(MinuteUniverseInstrument(
+        symbol="000001.SZ", name="Ping An Bank", industry="banking",
+        research_theme="mainboard_opportunity_scan", list_date=date(1991, 4, 3),
+    ),))
+    with pytest.raises(MinuteOfflineLearningError, match="minute_forward_label_target_mismatch"):
+        build_minute_forward_label(
+            source_snapshot=source_snapshot, future_snapshot=future_snapshot,
+            symbol="000001.SZ", target_slot=target,
+            decision_as_of="2026-08-13T13:50:00+08:00", research_universe=universe,
+        )
+
+
 def test_tracked_timer_candidate_is_not_an_enabled_runtime() -> None:
     timer = (
         Path(__file__).resolve().parents[1]

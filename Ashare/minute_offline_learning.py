@@ -24,7 +24,19 @@ from .minute_canary import (
     MinuteCanaryConfigurationError,
     snapshot_from_canary_receipt,
 )
-from .minute_data import MinuteDatasetProfile, SHANGHAI
+from .minute_data import (
+    MinuteBarSnapshot,
+    MinuteDatasetProfile,
+    SHANGHAI,
+)
+from .minute_research import (
+    MODEL_ID,
+    MODEL_VERSION,
+    MinuteFeatureVector,
+    MinuteResearchUniverse,
+    rank_minute_candidates,
+)
+from .style_samples import compute_ashare_conservative_costs
 from .minute_day_report import MinuteDayReportError, build_minute_day_report
 from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
@@ -36,6 +48,7 @@ OBSERVATION_OUTCOME_JOURNAL_NAME = "minute_observation_outcomes.jsonl"
 OBSERVATION_OUTCOME_LATEST_NAME = "minute_observation_outcome_latest.json"
 OBSERVATION_OUTCOME_SCHEMA = "tradingagent.ashare.minute_observation_outcome.v1"
 FORWARD_LABEL_HORIZONS = ("m30", "m60", "close", "1d", "3d", "5d")
+FORWARD_LABEL_SCHEMA = "tradingagent.ashare.minute_forward_label.v1"
 _SHA256_HEX = frozenset("0123456789abcdef")
 
 
@@ -65,7 +78,243 @@ class MinuteOfflineLearningError(ValueError):
     """Raised when fixture learning evidence is unsafe to project."""
 
 
+def _single_symbol_bar(
+    snapshot: MinuteBarSnapshot, symbol: str, reason: str
+) -> Any:
+    bars = tuple(bar for bar in snapshot.bars if bar.symbol == symbol)
+    if len(bars) != 1:
+        raise MinuteOfflineLearningError(reason)
+    return bars[0]
+
+
+def build_minute_forward_label(
+    *,
+    source_snapshot: MinuteBarSnapshot,
+    future_snapshot: MinuteBarSnapshot,
+    symbol: str,
+    target_slot: datetime | str,
+    decision_as_of: datetime | str,
+    research_universe: MinuteResearchUniverse,
+    horizon: str = "m60",
+) -> dict[str, Any]:
+    """Resolve one PIT-safe forward label from already validated snapshots.
+
+    This is deliberately per-symbol: a capability-local TD failure for other
+    symbols does not erase a validated row/proof pair.  The snapshots are the
+    existing TA query boundary, so no provider or database access occurs here.
+    """
+
+    if (
+        not isinstance(source_snapshot, MinuteBarSnapshot)
+        or not isinstance(future_snapshot, MinuteBarSnapshot)
+        or not isinstance(research_universe, MinuteResearchUniverse)
+        or horizon not in FORWARD_LABEL_HORIZONS
+        or horizon != "m60"
+    ):
+        raise MinuteOfflineLearningError("minute_forward_label_input_invalid")
+    if not isinstance(symbol, str) or not symbol.strip():
+        raise MinuteOfflineLearningError("minute_forward_label_symbol_invalid")
+    source_bar = _single_symbol_bar(source_snapshot, symbol, "minute_forward_label_source_missing")
+    future_bar = _single_symbol_bar(future_snapshot, symbol, "minute_forward_label_future_missing")
+    source_proof = source_snapshot.validated_proof_summary
+    future_proof = future_snapshot.validated_proof_summary
+    if source_proof is None or future_proof is None:
+        raise MinuteOfflineLearningError("minute_forward_label_proof_missing")
+    if (
+        source_bar.receipt_id not in source_proof.receipt_ids
+        or future_bar.receipt_id not in future_proof.receipt_ids
+        or not all(
+            isinstance(value, str)
+            and len(value) == 64
+            and all(character in _SHA256_HEX for character in value)
+            for value in (
+                source_bar.source_lineage_sha256,
+                future_bar.source_lineage_sha256,
+                source_bar.source_row_sha256,
+                future_bar.source_row_sha256,
+            )
+        )
+        or not source_bar.receipt_id.strip()
+        or not future_bar.receipt_id.strip()
+    ):
+        raise MinuteOfflineLearningError("minute_forward_label_proof_binding_invalid")
+    if (
+        source_proof.dataset_id != future_proof.dataset_id
+        or source_proof.provider != future_proof.provider
+        or source_proof.config_hash != future_proof.config_hash
+        or source_snapshot.profile.dataset_id != future_snapshot.profile.dataset_id
+        or source_proof.dataset_id != source_snapshot.profile.dataset_id
+    ):
+        raise MinuteOfflineLearningError("minute_forward_label_cohort_mismatch")
+    target = _observation_stamp(target_slot, "minute_forward_label_target_slot_invalid")
+    as_of = _observation_stamp(decision_as_of, "minute_forward_label_decision_as_of_invalid")
+    source_proof_through = _observation_stamp(
+        source_proof.data_through, "minute_forward_label_proof_data_through_invalid"
+    )
+    future_proof_through = _observation_stamp(
+        future_proof.data_through, "minute_forward_label_proof_data_through_invalid"
+    )
+    if (
+        source_proof_through != source_bar.data_through
+        or future_proof_through != future_bar.data_through
+        or target != future_bar.bar_end
+        or future_bar.data_through != target
+    ):
+        raise MinuteOfflineLearningError("minute_forward_label_target_mismatch")
+    if (
+        source_bar.bar_end.astimezone(SHANGHAI).date()
+        != future_bar.bar_end.astimezone(SHANGHAI).date()
+        or source_bar.market_session != future_bar.market_session
+        or future_bar.bar_end - source_bar.bar_end != timedelta(minutes=60)
+        or not source_bar.bar_end < future_bar.bar_end
+        or source_bar.receipt_id == future_bar.receipt_id
+        or source_bar.data_through >= future_bar.data_through
+        or source_bar.observed_at > as_of
+        or future_bar.observed_at > as_of
+        or source_bar.available_at > as_of
+        or future_bar.available_at > as_of
+    ):
+        raise MinuteOfflineLearningError("minute_forward_label_pit_invalid")
+    if source_proof_through >= future_proof_through:
+        raise MinuteOfflineLearningError("minute_forward_label_slot_identity_invalid")
+
+    # One transparent, uncalibrated factor: source close vs reference close.
+    close_return = source_bar.close_cny / source_bar.previous_close_cny - 1.0
+    intrabar_return = 0.0
+    range_ratio = 0.0
+    feature = MinuteFeatureVector(
+        symbol=symbol,
+        bar_end=source_bar.bar_end,
+        previous_bar_sha256=source_bar.reference_evidence_sha256,
+        current_bar_sha256=source_bar.source_row_sha256,
+        close_to_close_return=round(close_return, 10),
+        intrabar_return=round(intrabar_return, 10),
+        range_ratio=round(range_ratio, 10),
+        volume_change=0.0,
+        amount_change=0.0,
+        context_adjustment=0.0,
+        raw_rank_score=round(100.0 * close_return, 10),
+    )
+    candidates = rank_minute_candidates(
+        universe=research_universe,
+        features=(feature,),
+        trade_date=source_bar.bar_end.astimezone(SHANGHAI).date(),
+        minimum_raw_score=-1_000_000_000.0,
+    )
+    if len(candidates) != 1 or not candidates[0].eligible:
+        raise MinuteOfflineLearningError("minute_forward_label_factor_ineligible")
+    costs = compute_ashare_conservative_costs(source_bar.close_cny)
+    sample_key = _observation_sha(
+        {
+            "symbol": symbol,
+            "horizon": horizon,
+            "model_id": MODEL_ID,
+            "model_version": MODEL_VERSION,
+            "costs": costs,
+            "source": {
+                "dataset_id": source_proof.dataset_id,
+                "provider": source_proof.provider,
+                "execution_id": source_proof.execution_id,
+                "config_hash": source_proof.config_hash,
+                "data_through": source_proof_through.isoformat(),
+                "receipt_id": source_bar.receipt_id,
+                "lineage": source_bar.source_lineage_sha256,
+                "row": source_bar.source_row_sha256,
+            },
+            "future": {
+                "execution_id": future_proof.execution_id,
+                "data_through": future_proof_through.isoformat(),
+                "receipt_id": future_bar.receipt_id,
+                "lineage": future_bar.source_lineage_sha256,
+                "row": future_bar.source_row_sha256,
+            },
+        }
+    )
+    gross_return = future_bar.close_cny / source_bar.close_cny - 1.0
+    cost_return = (costs["round_trip_fee_bps"] + costs["round_trip_slippage_bps"]) / 10_000.0
+    net_return = gross_return - cost_return
+    label = {
+        "symbol": symbol,
+        "horizon": horizon,
+        "source_receipt_id": source_bar.receipt_id,
+        "future_receipt_id": future_bar.receipt_id,
+        "source_lineage_sha256": source_bar.source_lineage_sha256,
+        "future_lineage_sha256": future_bar.source_lineage_sha256,
+        "source_row_sha256": source_bar.source_row_sha256,
+        "future_row_sha256": future_bar.source_row_sha256,
+        "source_data_through": source_bar.data_through.astimezone(SHANGHAI).isoformat(),
+        "future_data_through": future_bar.data_through.astimezone(SHANGHAI).isoformat(),
+        "future_observed_at": future_bar.observed_at.astimezone(SHANGHAI).isoformat(),
+        "gross_return": round(gross_return, 10),
+        "net_return": round(net_return, 10),
+        "costs": costs,
+        "feature_sha256": feature.sha256,
+        "strategy_id": MODEL_ID,
+        "strategy_version": MODEL_VERSION,
+        "baseline_net_return": 0.0,
+        "net_return_delta_vs_no_trade": round(net_return, 10),
+    }
+    result = {
+        "schema": FORWARD_LABEL_SCHEMA,
+        "observation_key": sample_key,
+        "horizon": horizon,
+        "target_slot": target.astimezone(SHANGHAI).isoformat(),
+        "requested_symbols": [symbol],
+        "resolved_symbols": [symbol],
+        "missing_symbols": [],
+        "sample_count": 1,
+        "resolved_count": 1,
+        "pending": 0,
+        "excluded": 0,
+        "evaluated_status": "exploratory_insufficient_edge",
+        "hit": net_return > 0,
+        "abstention": False,
+        "status": "usable_degraded",
+        "source": {
+            "dataset_id": source_proof.dataset_id,
+            "provider": source_proof.provider,
+            "execution_id": source_proof.execution_id,
+            "config_hash": source_proof.config_hash,
+            "receipt_ids": [source_bar.receipt_id, future_bar.receipt_id],
+        },
+        "labels": [label],
+        "outcome": {
+            "sample_count": 1,
+            "resolved_count": 1,
+            "pending": 0,
+            "excluded": 0,
+            "evaluated_status": "exploratory_insufficient_edge",
+            "hit": net_return > 0,
+            "abstention": False,
+            "training_sample_count": 0,
+            "training_eligible": False,
+        },
+        "shadow_suggestion": {
+            "action": "retain_for_more_evidence" if net_return > 0 else "downweight",
+            "reason": "single_symbol_exploratory_label",
+            "risk_authority": False,
+            "promotion_authority": False,
+            "execution_authority": False,
+            "real_trading_enabled": False,
+        },
+        "pit": {
+            "decision_as_of": as_of.astimezone(SHANGHAI).isoformat(),
+            "segment_id": (
+                f"{source_bar.bar_end.astimezone(SHANGHAI).date().isoformat()}"
+                f":{source_bar.market_session}:{source_bar.bar_end.astimezone(SHANGHAI).isoformat()}"
+            ),
+        },
+    }
+    result["artifact_sha256"] = _observation_sha(result)
+    return result
+
+
 def _observation_stamp(value: object, reason: str) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=SHANGHAI)
+        return parsed
     if not isinstance(value, str) or not value.strip():
         raise MinuteOfflineLearningError(reason)
     try:
@@ -785,7 +1034,9 @@ __all__ = [
     "OBSERVATION_OUTCOME_JOURNAL_NAME",
     "OBSERVATION_OUTCOME_LATEST_NAME",
     "OBSERVATION_OUTCOME_SCHEMA",
+    "FORWARD_LABEL_SCHEMA",
     "MinuteOfflineLearningError",
+    "build_minute_forward_label",
     "build_minute_observation_outcome",
     "build_minute_offline_learning_projection",
     "state_bundle_for_current_session",
