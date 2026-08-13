@@ -218,10 +218,6 @@ def build_rt_min_exact_slot_proof_envelope(
         raise RtMinDailyPITContractError("requested_slot_after_decision_as_of")
 
     metadata = envelope.metadata
-    if metadata.state.strip().lower() not in {"ready", "healthy", "ok", "available"}:
-        raise RtMinDailyPITContractError("query_state_not_ready")
-    if metadata.degraded is not False:
-        raise RtMinDailyPITContractError("query_degraded")
     lineage = metadata.lineage
     if not isinstance(lineage, Mapping) or lineage.get("complete") is not True:
         raise RtMinDailyPITContractError("query_lineage_incomplete")
