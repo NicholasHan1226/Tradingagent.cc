@@ -30,6 +30,18 @@ OBSERVATION_STATE_CONTRACT = "tradingagent.crypto.delayed_paper_state.v1"
 DECISION_LEDGER_STATE_CONTRACT = (
     "tradingagent.crypto.delayed_paper_decision_ledger_state.v1"
 )
+LEDGER_AGGREGATE_CONTRACT = (
+    "tradingagent.crypto.delayed_paper_decision_ledger_aggregate.v1"
+)
+LEDGER_AGGREGATE_FIELDS = (
+    "event_count",
+    "decision_count",
+    "failure_count",
+    "latest_event_id",
+    "latest_event_type",
+    "latest_event_checksum",
+    "aggregate_sha256",
+)
 LOCAL_AUDIT_DURABILITY = "local_audit_fsync_only"
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_LEDGER_BYTES = 16 * 1024 * 1024
@@ -621,7 +633,7 @@ class CryptoDelayedPaperObservationStore:
             }
 
     def runtime_checkpoint_read_only(
-        self, *, nonblocking: bool = False
+        self, *, nonblocking: bool = False, include_ledger: bool = False
     ) -> dict[str, Any]:
         """Return the verified checkpoint without creating or repairing state."""
 
@@ -633,12 +645,16 @@ class CryptoDelayedPaperObservationStore:
                 if pending_id is not None
                 else None
             )
-            return {
+            checkpoint = {
                 "pending": pending,
+                "latest_observation_id": state.get("latest_observation_id"),
                 "latest_market_slot": state.get("latest_market_slot"),
                 "observation_count": state.get("observation_count"),
                 "completion_count": state.get("completion_count"),
             }
+            if include_ledger:
+                checkpoint["ledger_state"] = self._ledger_runtime_state_read_only()
+            return checkpoint
 
     def _verify_observation(self, observation: Mapping[str, Any]) -> str:
         observation_id = self._observation_id(observation)
@@ -1185,7 +1201,22 @@ class CryptoDelayedPaperObservationStore:
         current_start_previous_checksum: str,
         current_row_count: int,
         current_file_sha256: str | None,
+        decision_count: int,
+        failure_count: int,
+        latest_event_id: str | None,
+        latest_event_type: str | None,
+        latest_event_checksum: str | None,
+        rotation_in_progress: bool = False,
     ) -> dict[str, Any]:
+        event_count = sequence
+        aggregate = {
+            "event_count": event_count,
+            "decision_count": decision_count,
+            "failure_count": failure_count,
+            "latest_event_id": latest_event_id,
+            "latest_event_type": latest_event_type,
+            "latest_event_checksum": latest_event_checksum,
+        }
         state: dict[str, Any] = {
             "contract": DECISION_LEDGER_STATE_CONTRACT,
             "sequence": sequence,
@@ -1195,6 +1226,10 @@ class CryptoDelayedPaperObservationStore:
             "current_start_previous_checksum": (current_start_previous_checksum),
             "current_row_count": current_row_count,
             "current_file_sha256": current_file_sha256,
+            "aggregate_contract": LEDGER_AGGREGATE_CONTRACT,
+            "rotation_in_progress": rotation_in_progress,
+            **aggregate,
+            "aggregate_sha256": _sha256(aggregate),
             **_non_authority_fields(),
         }
         state["state_sha256"] = _sha256(state)
@@ -1216,6 +1251,9 @@ class CryptoDelayedPaperObservationStore:
             if self.ledger_path.exists()
             else None
         )
+        decision_count = sum(row.get("event_type") == "decision" for row in rows)
+        failure_count = sum(row.get("event_type") == "data_reject" for row in rows)
+        latest = rows[-1] if rows else None
         state = self._ledger_state_payload(
             sequence=len(rows),
             last_checksum=last_checksum,
@@ -1224,14 +1262,92 @@ class CryptoDelayedPaperObservationStore:
             current_start_previous_checksum=current_start_previous,
             current_row_count=len(current_rows),
             current_file_sha256=current_sha,
+            decision_count=decision_count,
+            failure_count=failure_count,
+            latest_event_id=(str(latest["event_id"]) if latest else None),
+            latest_event_type=(str(latest["event_type"]) if latest else None),
+            latest_event_checksum=(str(latest["checksum"]) if latest else None),
         )
         _write_json_atomic(self.ledger_state_path, state)
         return state
 
-    def _ledger_runtime_state(self) -> dict[str, Any]:
-        if not self.ledger_state_path.exists():
-            return self._rebuild_ledger_runtime_state()
-        state = _read_json(self.ledger_state_path)
+    @staticmethod
+    def _validate_ledger_aggregate(state: Mapping[str, Any]) -> None:
+        integers = (
+            state.get("event_count"),
+            state.get("decision_count"),
+            state.get("failure_count"),
+        )
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in integers
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_invalid"
+            )
+        event_count = state.get("event_count")
+        decision_count = state.get("decision_count")
+        failure_count = state.get("failure_count")
+        if (
+            event_count != state.get("sequence")
+            or decision_count + failure_count > event_count
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_invalid"
+            )
+        for key in ("latest_event_id", "latest_event_type", "latest_event_checksum"):
+            value = state.get(key)
+            if value is not None and not isinstance(value, str):
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_decision_ledger_aggregate_invalid"
+                )
+        latest_checksum = state.get("latest_event_checksum")
+        if latest_checksum is not None and (
+            len(latest_checksum) != 64
+            or any(character not in "0123456789abcdef" for character in latest_checksum)
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_invalid"
+            )
+        if event_count == 0:
+            if any(
+                state.get(key) is not None
+                for key in (
+                    "latest_event_id",
+                    "latest_event_type",
+                    "latest_event_checksum",
+                )
+            ) or state.get("last_checksum") != "0" * 64:
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_decision_ledger_aggregate_invalid"
+                )
+        elif (
+            not isinstance(state.get("latest_event_id"), str)
+            or not state.get("latest_event_id")
+            or not isinstance(state.get("latest_event_type"), str)
+            or not state.get("latest_event_type")
+            or latest_checksum != state.get("last_checksum")
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_invalid"
+            )
+        aggregate = {
+            key: state.get(key)
+            for key in LEDGER_AGGREGATE_FIELDS
+            if key != "aggregate_sha256"
+        }
+        if state.get("aggregate_sha256") != _sha256(aggregate):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_invalid"
+            )
+
+    def _verify_ledger_runtime_state(
+        self,
+        state: Mapping[str, Any],
+        *,
+        rebuild_legacy: bool,
+        verify_current_file: bool = True,
+    ) -> dict[str, Any]:
         material = dict(state)
         claimed = material.pop("state_sha256", None)
         integer_fields = (
@@ -1240,36 +1356,89 @@ class CryptoDelayedPaperObservationStore:
             state.get("current_start_sequence"),
             state.get("current_row_count"),
         )
-        if (
-            state.get("contract") != DECISION_LEDGER_STATE_CONTRACT
-            or claimed != _sha256(material)
-            or any(
-                isinstance(value, bool) or not isinstance(value, int) or value < 0
-                for value in integer_fields
-            )
-            or state.get("current_start_sequence")
-            != state.get("sequence") - state.get("current_row_count") + 1
-            or not isinstance(state.get("last_checksum"), str)
-            or len(str(state.get("last_checksum"))) != 64
-            or not isinstance(
-                state.get("current_start_previous_checksum"),
-                str,
-            )
-            or len(str(state.get("current_start_previous_checksum"))) != 64
-        ):
+        if state.get("contract") != DECISION_LEDGER_STATE_CONTRACT or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in integer_fields
+        ) or state.get("current_start_sequence") != state.get("sequence") - state.get(
+            "current_row_count"
+        ) + 1 or not isinstance(state.get("last_checksum"), str) or len(
+            str(state.get("last_checksum"))
+        ) != 64 or not isinstance(
+            state.get("current_start_previous_checksum"), str
+        ) or len(str(state.get("current_start_previous_checksum"))) != 64:
             raise CryptoDelayedPaperLedgerError(
                 "delayed_paper_decision_ledger_state_invalid"
             )
+        if claimed != _sha256(material):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_state_invalid"
+            )
+        rotation_marker = state.get("rotation_in_progress", False)
+        if not isinstance(rotation_marker, bool):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_state_invalid"
+            )
+        aggregate_keys = set(LEDGER_AGGREGATE_FIELDS) | {"aggregate_contract"}
+        present_aggregate_keys = aggregate_keys.intersection(state)
+        if not present_aggregate_keys and "rotation_in_progress" not in state:
+            if rebuild_legacy:
+                return self._rebuild_ledger_runtime_state()
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_missing"
+            )
+        if (
+            state.get("aggregate_contract") != LEDGER_AGGREGATE_CONTRACT
+            or present_aggregate_keys != aggregate_keys
+        ):
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_aggregate_invalid"
+            )
+        self._validate_ledger_aggregate(state)
+        if rotation_marker and not rebuild_legacy:
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_current_file_invalid"
+            )
+        if not verify_current_file:
+            return dict(state)
         expected_current_sha = state.get("current_file_sha256")
         if self.ledger_path.exists():
-            actual_current_sha = hashlib.sha256(
-                self.ledger_path.read_bytes()
-            ).hexdigest()
+            actual_current_sha = hashlib.sha256(self.ledger_path.read_bytes()).hexdigest()
             if actual_current_sha != expected_current_sha:
-                return self._rebuild_ledger_runtime_state()
+                if rebuild_legacy and not present_aggregate_keys:
+                    return self._rebuild_ledger_runtime_state()
+                raise CryptoDelayedPaperLedgerError(
+                    "delayed_paper_decision_ledger_current_file_invalid"
+                )
         elif expected_current_sha is not None or state.get("current_row_count") != 0:
+            if rebuild_legacy and not present_aggregate_keys:
+                return self._rebuild_ledger_runtime_state()
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_current_file_invalid"
+            )
+        return dict(state)
+
+    def _ledger_runtime_state(self) -> dict[str, Any]:
+        if not self.ledger_state_path.exists():
             return self._rebuild_ledger_runtime_state()
-        return state
+        state = _read_json(self.ledger_state_path)
+        validated = self._verify_ledger_runtime_state(
+            state,
+            rebuild_legacy=True,
+            verify_current_file=state.get("rotation_in_progress") is not True,
+        )
+        if validated.get("rotation_in_progress") is True:
+            return self._rebuild_ledger_runtime_state()
+        return validated
+
+    def _ledger_runtime_state_read_only(self) -> dict[str, Any]:
+        if not self.ledger_state_path.exists():
+            raise CryptoDelayedPaperLedgerError(
+                "delayed_paper_decision_ledger_state_missing"
+            )
+        return self._verify_ledger_runtime_state(
+            _read_json(self.ledger_state_path),
+            rebuild_legacy=False,
+        )
 
     def _current_rows_from_runtime_state(
         self,
@@ -1348,6 +1517,26 @@ class CryptoDelayedPaperObservationStore:
                         "delayed_paper_decision_event_too_large"
                     )
                 segment_count = int(state["segment_count"])
+                _write_json_atomic(
+                    self.ledger_state_path,
+                    self._ledger_state_payload(
+                        sequence=int(state["sequence"]),
+                        last_checksum=str(state["last_checksum"]),
+                        segment_count=segment_count,
+                        current_start_sequence=int(state["current_start_sequence"]),
+                        current_start_previous_checksum=str(
+                            state["current_start_previous_checksum"]
+                        ),
+                        current_row_count=int(state["current_row_count"]),
+                        current_file_sha256=state.get("current_file_sha256"),
+                        decision_count=int(state["decision_count"]),
+                        failure_count=int(state["failure_count"]),
+                        latest_event_id=state.get("latest_event_id"),
+                        latest_event_type=state.get("latest_event_type"),
+                        latest_event_checksum=state.get("latest_event_checksum"),
+                        rotation_in_progress=True,
+                    ),
+                )
                 self._rotate_current_ledger(segment_count)
                 candidate_current = [row]
                 segment_count += 1
@@ -1371,6 +1560,13 @@ class CryptoDelayedPaperObservationStore:
                 current_start_previous_checksum=current_start_previous,
                 current_row_count=len(candidate_current),
                 current_file_sha256=current_file_sha,
+                decision_count=int(state["decision_count"])
+                + (1 if row.get("event_type") == "decision" else 0),
+                failure_count=int(state["failure_count"])
+                + (1 if row.get("event_type") == "data_reject" else 0),
+                latest_event_id=str(row["event_id"]),
+                latest_event_type=str(row["event_type"]),
+                latest_event_checksum=str(row["checksum"]),
             )
             _write_json_atomic(self.ledger_state_path, next_state)
             return row
