@@ -6,6 +6,7 @@ import pytest
 
 from Ashare.rt_min_daily_pit import (
     RT_MIN_DATASET_ID,
+    RT_MIN_EXACT_SLOT_FREQUENCIES,
     RT_MIN_DAILY_DATASET_ID,
     RtMinDailyPITContractError,
     build_rt_min_exact_slot_proof_envelope,
@@ -25,7 +26,7 @@ def _exact_rows_and_proofs() -> tuple[list[dict], list[dict], tuple[str, ...]]:
     rows = [
         {
             "ts_code": symbol,
-            "freq": "1MIN",
+            "freq": "5MIN",
             "time": "2026-08-13 09:40:00",
             "open": 10.0,
             "close": 10.1,
@@ -105,6 +106,65 @@ def test_rt_min_exact_slot_adapter_accepts_ordered_30_row_five_receipt_cohort() 
     assert result.promotion_eligible is False
     assert result.execution_authority is False
     assert result.real_trading_enabled is False
+
+
+@pytest.mark.parametrize("frequency", ["1MIN", "5min"])
+def test_rt_min_exact_slot_accepts_canonical_frequency_equivalent_spellings(
+    frequency: str,
+) -> None:
+    rows, proofs, symbols = _exact_rows_and_proofs()
+    for row in rows:
+        row["freq"] = frequency
+    envelope = parse_query_envelope(
+        {
+            "api_version": "v1", "catalog_version": "catalog-20260813",
+            "request_id": "query-frequency-equivalent", "dataset_id": RT_MIN_DATASET_ID,
+            "data": rows, "next_cursor": None,
+            "metadata": {
+                "state": "failed", "degraded": True,
+                "freshness": {"state": "failed"}, "quality": {"state": "degraded"},
+                "lineage": {"complete": True}, "receipt_id": "latest-failed",
+                "data_through": "2026-08-13T01:40:00+00:00",
+                "observed_at": "2026-08-13T05:00:00+00:00", "reasons": [],
+                "row_receipt_proofs": proofs,
+            },
+        }
+    )
+    result = build_rt_min_exact_slot_proof_envelope(
+        envelope=envelope,
+        requested_symbols=symbols,
+        requested_slot="2026-08-13 09:40:00",
+        decision_as_of=datetime(2026, 8, 13, 2, 0, tzinfo=timezone.utc),
+    )
+    assert result.accepted_symbols == symbols
+    assert result.rows[0]["freq"] == frequency
+
+
+def test_rt_min_exact_slot_rejects_frequency_not_in_production_contract() -> None:
+    rows, proofs, symbols = _exact_rows_and_proofs()
+    rows[0]["freq"] = "15MIN"
+    envelope = parse_query_envelope(
+        {
+            "api_version": "v1", "catalog_version": "catalog-20260813",
+            "request_id": "query-frequency-invalid", "dataset_id": RT_MIN_DATASET_ID,
+            "data": rows, "next_cursor": None,
+            "metadata": {
+                "state": "failed", "degraded": True,
+                "freshness": {"state": "failed"}, "quality": {"state": "degraded"},
+                "lineage": {"complete": True}, "receipt_id": "latest-failed",
+                "data_through": "2026-08-13T01:40:00+00:00",
+                "observed_at": "2026-08-13T05:00:00+00:00", "reasons": [],
+                "row_receipt_proofs": proofs,
+            },
+        }
+    )
+    with pytest.raises(RtMinDailyPITContractError, match="row_freq_invalid"):
+        build_rt_min_exact_slot_proof_envelope(
+            envelope=envelope,
+            requested_symbols=symbols,
+            requested_slot="2026-08-13 09:40:00",
+            decision_as_of=datetime(2026, 8, 13, 2, 0, tzinfo=timezone.utc),
+        )
 
 
 def test_rt_min_exact_slot_adapter_uses_existing_client_query_opt_in() -> None:
