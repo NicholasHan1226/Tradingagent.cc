@@ -306,10 +306,8 @@ def _snapshot_rows_payload(
     snapshot_bar_end = next(iter(bar_ends))
     if selected_bar_end is not None and snapshot_bar_end != selected_bar_end:
         raise MinuteCanaryConfigurationError("minute_snapshot_bar_end_mismatch")
+    receipt_values = {bar.receipt_id for bar in bars}
     for field_name, values in (
-        ("receipt", {bar.receipt_id for bar in bars}),
-        ("lineage", {bar.source_lineage_sha256 for bar in bars}),
-        ("envelope", {bar.envelope_proof_sha256 for bar in bars}),
         ("data_through", {bar.data_through for bar in bars}),
         ("catalog", {bar.catalog_version for bar in bars}),
     ):
@@ -317,6 +315,41 @@ def _snapshot_rows_payload(
             raise MinuteCanaryConfigurationError(
                 f"minute_snapshot_{field_name}_binding_mismatch"
             )
+    if len(receipt_values) > 1 and snapshot.validated_proof_summary is None:
+        raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+    if snapshot.validated_proof_summary is not None:
+        summary = snapshot.validated_proof_summary
+        allowed_receipts = summary.receipt_ids
+        if not allowed_receipts:
+            raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid")
+        if receipt_values != set(allowed_receipts):
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        if summary.dataset_id != snapshot.profile.dataset_id:
+            raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid")
+        if any(not isinstance(value, str) or not value for value in allowed_receipts):
+            raise MinuteCanaryConfigurationError("minute_snapshot_proof_summary_invalid")
+        for field_name in (
+            "provider",
+            "execution_id",
+            "config_hash",
+            "data_through",
+            "content_sha256",
+        ):
+            if not isinstance(getattr(summary, field_name), str) or not getattr(
+                summary, field_name
+            ):
+                raise MinuteCanaryConfigurationError(
+                    "minute_snapshot_proof_summary_invalid"
+                )
+    else:
+        for field_name, values in (
+            ("lineage", {bar.source_lineage_sha256 for bar in bars}),
+            ("envelope", {bar.envelope_proof_sha256 for bar in bars}),
+        ):
+            if len(values) != 1:
+                raise MinuteCanaryConfigurationError(
+                    f"minute_snapshot_{field_name}_binding_mismatch"
+                )
     rows = [_canonical_snapshot_row(bar) for bar in bars]
     if len(rows) != snapshot.row_count:
         raise MinuteCanaryConfigurationError("minute_snapshot_row_count_mismatch")
@@ -654,6 +687,11 @@ def run_minute_canary(
     source_lineage_value = (
         source_lineage_sha256[0] if len(source_lineage_sha256) == 1 else None
     )
+    proof_summary = snapshot.validated_proof_summary
+    if proof_summary is not None and selected_bar_end is not None:
+        proof_receipt_ids = list(proof_summary.receipt_ids)
+        if set(receipt_ids) - set(proof_receipt_ids):
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
     receipt = {
         "status": "pass",
         "authority_tier": "observation_only",
@@ -715,6 +753,11 @@ def run_minute_canary(
         ],
         "audit_rejections": len(audit.records()),
     }
+    if proof_summary is not None and len(receipt_ids) > 1:
+        receipt["selected_receipt_count"] = len(receipt_ids)
+        receipt["selected_receipt_ids_sha256"] = _canonical_sha256(
+            receipt_ids, "selected_receipt_ids"
+        )
     if snapshot_rows is not None:
         receipt["snapshot_rows"] = snapshot_rows
     return receipt
@@ -792,11 +835,32 @@ def snapshot_from_canary_receipt(
         if len(reference_symbols) != count:
             raise MinuteCanaryConfigurationError("minute_snapshot_reference_symbols_invalid")
         expected_bar_end = _aware_iso(value.get("bar_end"), "minute_snapshot_bar_end")
-        receipt_id = _text(value.get("receipt_id"), "minute_snapshot_receipt")
-        data_through = _aware_iso(value.get("data_through"), "minute_snapshot_data_through")
-        lineage_sha = _text(value.get("source_lineage_sha256"), "minute_snapshot_lineage")
-        if len(lineage_sha) != 64 or any(c not in "0123456789abcdef" for c in lineage_sha):
+        receipt_ids_value = value.get("receipt_ids")
+        if not isinstance(receipt_ids_value, list) or not receipt_ids_value:
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        receipt_ids = [_text(item, "minute_snapshot_receipt") for item in receipt_ids_value]
+        if len(receipt_ids) != len(set(receipt_ids)):
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        receipt_id = value.get("receipt_id")
+        if len(receipt_ids) == 1:
+            if _text(receipt_id, "minute_snapshot_receipt") != receipt_ids[0]:
+                raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        elif receipt_id is not None:
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        data_through_values = value.get("data_through_values")
+        if not isinstance(data_through_values, list) or len(data_through_values) != 1:
+            raise MinuteCanaryConfigurationError("minute_snapshot_data_through_mismatch")
+        data_through = _aware_iso(data_through_values[0], "minute_snapshot_data_through")
+        lineage_values = value.get("source_lineage_sha256s")
+        if not isinstance(lineage_values, list) or not lineage_values:
+            raise MinuteCanaryConfigurationError("minute_snapshot_lineage_binding_mismatch")
+        lineage_values = [_text(item, "minute_snapshot_lineage") for item in lineage_values]
+        if any(
+            len(item) != 64 or any(c not in "0123456789abcdef" for c in item)
+            for item in lineage_values
+        ):
             raise MinuteCanaryConfigurationError("minute_snapshot_lineage_invalid")
+        lineage_sha = lineage_values[0] if len(lineage_values) == 1 else None
         replay = _mapping(value.get("replay"), "minute_snapshot_replay")
         if replay.get("same_observation") is not True:
             raise MinuteCanaryConfigurationError("minute_same_observation_mismatch")
@@ -873,9 +937,9 @@ def snapshot_from_canary_receipt(
             or evidence.catalog_version != profile.observed_catalog_version
         ):
             raise MinuteCanaryConfigurationError("minute_snapshot_binding_mismatch")
-        if evidence.receipt_id != receipt_id or evidence.data_through != data_through:
+        if evidence.receipt_id not in receipt_ids or evidence.data_through != data_through:
             raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
-        if evidence.source_lineage_sha256 != lineage_sha:
+        if evidence.source_lineage_sha256 not in lineage_values:
             raise MinuteCanaryConfigurationError("minute_snapshot_lineage_binding_mismatch")
         bars.append(evidence)
 
@@ -883,22 +947,21 @@ def snapshot_from_canary_receipt(
         reference_symbols
     ):
         raise MinuteCanaryConfigurationError("minute_snapshot_reference_symbols_mismatch")
-    if value.get("receipt_ids") != [receipt_id]:
+    if {bar.receipt_id for bar in bars} != set(receipt_ids):
         raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
-    data_through_values = value.get("data_through_values")
-    if not isinstance(data_through_values, list) or len(data_through_values) != 1:
-        raise MinuteCanaryConfigurationError("minute_snapshot_data_through_mismatch")
-    try:
-        if _aware_iso(data_through_values[0], "minute_snapshot_data_through") != data_through:
-            raise MinuteCanaryConfigurationError("minute_snapshot_data_through_mismatch")
-    except MinuteCanaryConfigurationError as exc:
-        if exc.args and exc.args[0] == "minute_snapshot_data_through_mismatch":
-            raise
-        raise MinuteCanaryConfigurationError(
-            "minute_snapshot_data_through_mismatch"
-        ) from exc
-    if value.get("source_lineage_sha256s") != [lineage_sha]:
+    if {bar.source_lineage_sha256 for bar in bars} != set(lineage_values):
         raise MinuteCanaryConfigurationError("minute_snapshot_lineage_binding_mismatch")
+    selected_receipt_count = value.get("selected_receipt_count")
+    selected_receipt_hash = value.get("selected_receipt_ids_sha256")
+    if selected_receipt_count is not None or selected_receipt_hash is not None:
+        if selected_receipt_count != len(receipt_ids):
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+        if selected_receipt_hash != _canonical_sha256(receipt_ids, "selected_receipt_ids"):
+            raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+    elif len(receipt_ids) != 1:
+        raise MinuteCanaryConfigurationError("minute_snapshot_receipt_binding_mismatch")
+    if _aware_iso(data_through_values[0], "minute_snapshot_data_through") != data_through:
+        raise MinuteCanaryConfigurationError("minute_snapshot_data_through_mismatch")
     legacy_rows = value.get("bars")
     if not isinstance(legacy_rows, list) or len(legacy_rows) != len(bars):
         raise MinuteCanaryConfigurationError("minute_snapshot_legacy_rows_mismatch")
