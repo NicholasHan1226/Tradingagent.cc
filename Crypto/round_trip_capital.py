@@ -28,6 +28,9 @@ ROUND_TRIP_HEAD_CONTRACT = "tradingagent.crypto.round_trip_capital_head.v1"
 ROUND_TRIP_ORDER_CONTRACT = "tradingagent.crypto.round_trip_order_intent.v1"
 ROUND_TRIP_RECEIPT_CONTRACT = "tradingagent.crypto.round_trip_paper_receipt.v1"
 ROUND_TRIP_CYCLE_CONTRACT = "tradingagent.crypto.round_trip_cycle.v1"
+ROUND_TRIP_RUNTIME_STATE_CONTRACT = (
+    "tradingagent.crypto.round_trip_capital_runtime_state.v1"
+)
 FROZEN_EXIT_POLICY_ID = "crypto-round-trip-exit-v1"
 TAKE_PROFIT_RETURN = Decimal("0.03")
 STOP_LOSS_RETURN = Decimal("-0.02")
@@ -199,6 +202,7 @@ class RoundTripCapitalLedger:
         self.policy = policy
         self.events_path = self.root / "events.jsonl"
         self.head_path = self.root / "head.json"
+        self.runtime_state_path = self.root / "runtime_state.json"
         self.lock_path = self.root / ".lock"
         self.cycle_lock_path = self.root / ".cycle.lock"
         self._write_enabled = _capability is _WRITE_CAPABILITY
@@ -216,6 +220,7 @@ class RoundTripCapitalLedger:
         for path in (
             self.events_path,
             self.head_path,
+            self.runtime_state_path,
             self.lock_path,
             self.cycle_lock_path,
         ):
@@ -256,7 +261,7 @@ class RoundTripCapitalLedger:
 
     def _events_fingerprint(self) -> tuple[int, int, int, int] | None:
         if not self.events_path.exists():
-            return None
+            return (0, 0, 0, 0)
         node = self.events_path.stat()
         return (node.st_dev, node.st_ino, node.st_size, node.st_mtime_ns)
 
@@ -908,6 +913,195 @@ class RoundTripCapitalLedger:
         finally:
             os.close(directory)
 
+    def _runtime_state_payload(
+        self,
+        *,
+        sequence: int,
+        checksum: str,
+        state: Mapping[str, Any],
+        events_size: int,
+        aggregate: Mapping[str, Any] | None = None,
+        legacy: bool = False,
+    ) -> dict[str, Any]:
+        snapshot = self._snapshot(state)
+        orders = snapshot["orders"]
+        if aggregate is None:
+            receipt_counts = {
+                "buy": 0,
+                "sell": 0,
+                "fixture_simulated": 0,
+                "fixture_partially_simulated": 0,
+                "fixture_rejected": 0,
+            }
+            for order in orders.values():
+                receipt_counts[str(order["side"])] += 1
+                receipt_counts[str(order["status"])] += 1
+            aggregate = {
+                "position_count": len(state["positions"]),
+                "order_count": len(orders),
+                "receipt_counts": receipt_counts,
+            }
+        payload = {
+            "contract": ROUND_TRIP_RUNTIME_STATE_CONTRACT,
+            "sequence": sequence,
+            "checksum": checksum,
+            "events_size": events_size,
+            "events_fingerprint": self._events_fingerprint(),
+            "account_id": self.policy.account_id,
+            "generation": self.policy.generation,
+            "cash": snapshot["cash"],
+            "fees": snapshot["fees"],
+            "realized_pnl": snapshot["realized_pnl"],
+            "equity": snapshot["equity"],
+            "position_count": aggregate["position_count"],
+            "order_count": aggregate["order_count"],
+            "receipt_counts": aggregate["receipt_counts"],
+            "orders_sha256": _sha256(orders),
+            "cycle_count": len(state["cycles"]),
+            "authority": _non_authority_fields(),
+            "legacy_upgrade": legacy,
+        }
+        payload["state_sha256"] = _sha256(payload)
+        return payload
+
+    def _write_runtime_state(
+        self,
+        *,
+        sequence: int,
+        checksum: str,
+        state: Mapping[str, Any],
+        events_size: int,
+        legacy: bool = False,
+    ) -> dict[str, Any]:
+        payload = self._runtime_state_payload(
+            sequence=sequence,
+            checksum=checksum,
+            state=state,
+            events_size=events_size,
+            legacy=legacy,
+        )
+        temporary = self.runtime_state_path.with_name(
+            f".{self.runtime_state_path.name}.tmp-{os.getpid()}"
+        )
+        with temporary.open("x", encoding="utf-8") as stream:
+            stream.write(_canonical_json(payload) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, self.runtime_state_path)
+        directory = os.open(self.root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return payload
+
+    def _validate_runtime_state(
+        self, state: Mapping[str, Any], *, expected_sequence: int, expected_checksum: str
+    ) -> dict[str, Any]:
+        material = dict(state)
+        claimed = material.pop("state_sha256", None)
+        if (
+            state.get("contract") != ROUND_TRIP_RUNTIME_STATE_CONTRACT
+            or claimed != _sha256(material)
+            or state.get("sequence") != expected_sequence
+            or state.get("checksum") != expected_checksum
+            or not isinstance(state.get("events_size"), int)
+            or state.get("events_size", -1) < 0
+            or state.get("account_id") != self.policy.account_id
+            or state.get("generation") != self.policy.generation
+            or not isinstance(state.get("order_count"), int)
+            or state.get("order_count", -1) < 0
+            or not isinstance(state.get("cycle_count"), int)
+            or state.get("cycle_count", -1) < 0
+            or state.get("legacy_upgrade") is not False
+            or not isinstance(state.get("receipt_counts"), Mapping)
+            or not isinstance(state.get("position_count"), int)
+            or not isinstance(state.get("events_fingerprint"), (list, tuple))
+            or len(state.get("events_fingerprint", ())) != 4
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in state.get("events_fingerprint", ())
+            )
+        ):
+            raise CryptoRoundTripError("round_trip_runtime_state_invalid")
+        expected_receipt_keys = {
+            "buy", "sell", "fixture_simulated", "fixture_partially_simulated", "fixture_rejected"
+        }
+        counts = state["receipt_counts"]
+        if set(counts) != expected_receipt_keys or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in counts.values()
+        ) or state["position_count"] > state["order_count"] or state["order_count"] > state["sequence"]:
+            raise CryptoRoundTripError("round_trip_runtime_state_invalid")
+        for key in ("cash", "fees", "realized_pnl", "equity"):
+            value = state.get(key)
+            if not isinstance(value, str):
+                raise CryptoRoundTripError("round_trip_runtime_state_invalid")
+            try:
+                parsed = Decimal(value)
+            except (InvalidOperation, ValueError) as exc:
+                raise CryptoRoundTripError("round_trip_runtime_state_invalid") from exc
+            if not parsed.is_finite() or format(parsed.quantize(MONEY_QUANTUM), "f") != value:
+                raise CryptoRoundTripError("round_trip_runtime_state_invalid")
+        if state["events_size"] != state["events_fingerprint"][2]:
+            raise CryptoRoundTripError("round_trip_runtime_state_invalid")
+        authority = state.get("authority")
+        if not isinstance(authority, Mapping) or authority != _non_authority_fields():
+            raise CryptoRoundTripError("round_trip_runtime_state_invalid")
+        return dict(state)
+
+    def _runtime_state_read_only(self) -> dict[str, Any]:
+        if not self.runtime_state_path.exists():
+            raise CryptoRoundTripError("round_trip_runtime_state_missing")
+        try:
+            state = json.loads(self.runtime_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CryptoRoundTripError("round_trip_runtime_state_invalid") from exc
+        if not self.head_path.exists():
+            raise CryptoRoundTripError("round_trip_head_missing")
+        try:
+            head = json.loads(self.head_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CryptoRoundTripError("round_trip_head_json_invalid") from exc
+        if (
+            not isinstance(head, Mapping)
+            or not isinstance(head.get("sequence"), int)
+            or isinstance(head.get("sequence"), bool)
+            or not isinstance(head.get("checksum"), str)
+        ):
+            raise CryptoRoundTripError("round_trip_head_mismatch")
+        state = self._validate_runtime_state(
+            state,
+            expected_sequence=head["sequence"],
+            expected_checksum=head["checksum"],
+        )
+        if tuple(state["events_fingerprint"]) != self._events_fingerprint():
+            raise CryptoRoundTripError("round_trip_runtime_state_stale")
+        if _canonical_json(head) != _canonical_json(
+            self._head_payload(state["sequence"], state["checksum"])
+        ):
+            raise CryptoRoundTripError("round_trip_head_mismatch")
+        result = {
+            "authority_id": self.policy.authority_id,
+            "account_id": self.policy.account_id,
+            "generation": self.policy.generation,
+            "currency": self.policy.currency,
+            "initial_cash": format(self.policy.initial_cash, "f"),
+            "cash": state["cash"],
+            "fees": state["fees"],
+            "realized_pnl": state["realized_pnl"],
+            "equity": state["equity"],
+            "position_count": state["position_count"],
+            "order_count": state["order_count"],
+            "receipt_counts": dict(state["receipt_counts"]),
+            "balanced": True,
+            "aggregate_with_prior_generations": False,
+            **_non_authority_fields(),
+        }
+        result["head_sequence"] = state["sequence"]
+        result["head_checksum"] = state["checksum"]
+        return result
+
     def _repair_head(
         self,
         rows: Sequence[Mapping[str, Any]],
@@ -965,6 +1159,31 @@ class RoundTripCapitalLedger:
                 rows = self._read_rows_unlocked()
                 state, checksum = self._replay(rows)
             self._repair_head(rows, checksum)
+            if self.runtime_state_path.exists():
+                try:
+                    runtime = json.loads(
+                        self.runtime_state_path.read_text(encoding="utf-8")
+                    )
+                    runtime = self._validate_runtime_state(
+                        runtime,
+                        expected_sequence=len(rows),
+                        expected_checksum=checksum,
+                    )
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise CryptoRoundTripError(
+                        "round_trip_runtime_state_invalid"
+                    ) from exc
+                if tuple(runtime["events_fingerprint"]) != self._events_fingerprint():
+                    raise CryptoRoundTripError("round_trip_runtime_state_stale")
+            else:
+                self._write_runtime_state(
+                    sequence=len(rows),
+                    checksum=checksum,
+                    state=state,
+                    events_size=self.events_path.stat().st_size
+                    if self.events_path.exists()
+                    else 0,
+                )
             self._cache_cycle_replay(rows, state, checksum)
             for row in rows:
                 if row.get("reference_id") != reference_id:
@@ -997,6 +1216,12 @@ class RoundTripCapitalLedger:
                 events.flush()
                 os.fsync(events.fileno())
             self._write_head(sequence, str(event["checksum"]))
+            self._write_runtime_state(
+                sequence=sequence,
+                checksum=str(event["checksum"]),
+                state=next_state,
+                events_size=self.events_path.stat().st_size,
+            )
             self._cache_cycle_replay(
                 [*rows, event],
                 next_state,
@@ -1030,14 +1255,16 @@ class RoundTripCapitalLedger:
 
     def state_read_only(self) -> dict[str, Any]:
         """Validate the ledger/head under a shared existing lock only."""
-
-        rows = self._read_rows(require_existing_lock=True)
-        state, checksum = self._replay(rows)
-        self._validate_head(rows, checksum)
-        result = self._snapshot(state)
-        result["head_sequence"] = len(rows)
-        result["head_checksum"] = checksum
-        return result
+        try:
+            stream = self.lock_path.open("r", encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise CryptoRoundTripError("round_trip_readonly_lock_unavailable") from exc
+        with stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
+            try:
+                return self._runtime_state_read_only()
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def events_read_only(self) -> list[dict[str, Any]]:
         """Return the fully replay-validated immutable event inventory.

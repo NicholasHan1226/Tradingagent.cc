@@ -166,6 +166,64 @@ def test_round_trip_health_does_not_scan_ledger_or_rotated_segments(
     assert result["sample_kpis"]["verified_decision_events"] == 2
 
 
+def test_round_trip_health_does_not_scan_capital_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _completed_round_trip(tmp_path)
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_read_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("capital scan")
+        ),
+    )
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_replay",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("capital replay")
+        ),
+    )
+    result = build_crypto_delayed_paper_round_trip_health(
+        output_root=tmp_path,
+        now=WINDOW_END + timedelta(minutes=5),
+    )
+    assert result["capital"]["order_count"] == 2
+
+
+def test_round_trip_health_rejects_same_size_old_writer_advance(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    capital_root = tmp_path / "round_trip_capital"
+    events = capital_root / "events.jsonl"
+    original = events.read_bytes()
+    replacement = capital_root / "events.replacement"
+    replacement.write_bytes(original)
+    replacement.replace(events)
+    with pytest.raises(
+        CryptoRoundTripHealthError, match="round_trip_health_source_invalid"
+    ):
+        build_crypto_delayed_paper_round_trip_health(
+            output_root=tmp_path, now=WINDOW_END + timedelta(minutes=5)
+        )
+
+
+def test_round_trip_health_rejects_head_or_runtime_partial_state(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    capital_root = tmp_path / "round_trip_capital"
+    head = capital_root / "head.json"
+    payload = json.loads(head.read_text(encoding="utf-8"))
+    payload["sequence"] += 1
+    head.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(CryptoRoundTripHealthError, match="round_trip_health_source_invalid"):
+        build_crypto_delayed_paper_round_trip_health(
+            output_root=tmp_path, now=WINDOW_END + timedelta(minutes=5)
+        )
+
+
 def test_round_trip_health_fails_closed_on_aggregate_counter_or_head_tamper(
     tmp_path: Path,
 ) -> None:

@@ -284,7 +284,9 @@ def build_crypto_delayed_paper_round_trip_health(
     ) as exc:
         raise CryptoRoundTripHealthError("round_trip_health_source_invalid") from exc
 
-    orders = capital.get("orders")
+    receipt_counts = capital.get("receipt_counts")
+    position_count = capital.get("position_count")
+    order_count = capital.get("order_count")
     if (
         capital.get("authority_id") != ROUND_TRIP_CAPITAL_POLICY.authority_id
         or capital.get("account_id") != ROUND_TRIP_CAPITAL_POLICY.account_id
@@ -293,12 +295,14 @@ def build_crypto_delayed_paper_round_trip_health(
         != format(ROUND_TRIP_CAPITAL_POLICY.initial_cash, "f")
         or capital.get("aggregate_with_prior_generations") is not False
         or capital.get("balanced") is not True
-        or not isinstance(orders, Mapping)
+        or not isinstance(receipt_counts, Mapping)
+        or not isinstance(position_count, int)
+        or not isinstance(order_count, int)
         or any(
-            capital.get(key) != expected
-            for key, expected in _non_authority_fields().items()
-            if key in capital
-        )
+                capital.get(key) != expected
+                for key, expected in _non_authority_fields().items()
+                if key in capital
+            )
     ):
         raise CryptoRoundTripHealthError("round_trip_health_capital_invalid")
     latest_slot = _market_slot(observation.get("market_slot"))
@@ -345,9 +349,9 @@ def build_crypto_delayed_paper_round_trip_health(
             "equity": capital["equity"],
             "fees": capital["fees"],
             "realized_pnl": capital["realized_pnl"],
-            "position_count": len(capital["positions"]),
-            "order_count": len(orders),
-            "receipt_counts": _receipt_counts(orders),
+            "position_count": position_count,
+            "order_count": order_count,
+            "receipt_counts": dict(receipt_counts),
             "balanced": True,
             "head_sequence": capital["head_sequence"],
             "head_checksum": capital["head_checksum"],
