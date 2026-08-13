@@ -829,6 +829,101 @@ def test_round_trip_runtime_invocation_budget_breaks_backlog_pending(
     assert drained["invocation_budget_seconds"] == 10.0
 
 
+def test_round_trip_runtime_absolute_deadline_preserves_progress_and_cursor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A slow later TD call defers exactly after the last committed cycle."""
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    first = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+
+    clock = {"now": 0.0}
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: clock["now"])
+    completed = _shifted_transport(5)
+    delayed_failure = FixtureTradingDatasTransport(status_code=503)
+    observed_timeouts: list[float] = []
+
+    def delayed_call(**kwargs: object) -> object:
+        observed_timeouts.append(float(kwargs["timeout_seconds"]))
+        clock["now"] = 12.0
+        return delayed_failure(**kwargs)
+
+    partial = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_sequence_factory([completed, delayed_call]),
+        invocation_budget_seconds=10.0,
+    )
+
+    assert partial["status"] == "backlog_pending"
+    assert partial["processed_cycle_count"] == 1
+    assert partial["backlog_recovery_cycle_count"] == 1
+    assert partial["backlog_gap_cycle_count"] == 0
+    assert partial["budget_deferred"] is True
+    assert observed_timeouts == [10.0]
+    checkpoint = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
+    assert checkpoint["latest_market_slot"] == "2026-07-19T01:05:00Z"
+    assert checkpoint["pending"] is None
+
+
+def test_round_trip_runtime_default_budget_stays_below_service_cadence() -> None:
+    assert runtime_module.ROUND_TRIP_INVOCATION_BUDGET_SECONDS == 120.0
+
+
+def test_round_trip_runtime_zero_progress_deadline_defers_without_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    first = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+    before = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
+    monkeypatch.setattr(
+        runtime_module,
+        "_invocation_budget_exceeded",
+        lambda _started_at, _budget_seconds: True,
+    )
+
+    deferred = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=10, seconds=55),
+        transport_factory=lambda *_args, **_kwargs: pytest.fail(
+            "transport must not be constructed after deadline"
+        ),
+        invocation_budget_seconds=10.0,
+    )
+
+    assert deferred["status"] == "backlog_pending"
+    assert deferred["processed_cycle_count"] == 0
+    assert deferred["backlog_gap_cycle_count"] == 0
+    assert deferred["budget_deferred"] is True
+    assert runtime_module.round_trip_receipt_exit_code(deferred) == 0
+    after = CryptoDelayedPaperObservationStore(output).runtime_checkpoint()
+    assert after == before
+
+
 def test_round_trip_runtime_rejects_noncanonical_epoch_or_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

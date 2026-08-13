@@ -57,10 +57,9 @@ ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
     }
 )
 ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
-# Kept below the 600s systemd TimeoutStartSec so a backlog batch that mixes
-# fast PIT gaps with heavier recoverable observations exits backlog_pending
-# before the unit is killed mid-cycle.
-ROUND_TRIP_INVOCATION_BUDGET_SECONDS = 480.0
+# The deployed service trial has a 300-second hard stop.  Reserve more than one
+# full TD call for final anchor validation, serialization, and scheduling jitter.
+ROUND_TRIP_INVOCATION_BUDGET_SECONDS = 120.0
 
 _FAILURE_PROVENANCE = {
     "pre_network_validation": "runtime_pre_network_validation_failed",
@@ -88,6 +87,10 @@ class CryptoRoundTripRuntimeFailure(RuntimeError):
         self.phase = phase
         self.reason = reason
         super().__init__(detail if detail is not None else reason)
+
+
+class _InvocationBudgetExhausted(RuntimeError):
+    """Private control flow for a safely deferred, not rejected, backlog slot."""
 
 
 def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeFailure | None:
@@ -312,12 +315,58 @@ def _invocation_budget_exceeded(started_at: float, budget_seconds: float) -> boo
     return time.monotonic() - started_at >= budget_seconds
 
 
+def _remaining_invocation_seconds(started_at: float, budget_seconds: float) -> float:
+    """Return the positive wall-clock budget available to the next wire call."""
+
+    remaining = budget_seconds - (time.monotonic() - started_at)
+    if remaining <= 0:
+        raise _InvocationBudgetExhausted("round_trip_invocation_budget_exhausted")
+    return remaining
+
+
+def _deadline_bound_transport_factory(
+    transport_factory: Callable[..., HTTPTransport],
+    *,
+    started_at: float,
+    budget_seconds: float,
+) -> Callable[..., HTTPTransport]:
+    """Clamp every existing TD wire call to the absolute invocation deadline."""
+
+    def build(*args: Any, **kwargs: Any) -> HTTPTransport:
+        transport = transport_factory(*args, **kwargs)
+
+        def send(**request: Any) -> Any:
+            requested_timeout = float(request["timeout_seconds"])
+            remaining = _remaining_invocation_seconds(started_at, budget_seconds)
+            request["timeout_seconds"] = min(requested_timeout, remaining)
+            try:
+                response = transport(**request)
+            except Exception:
+                if time.monotonic() - started_at >= budget_seconds:
+                    raise _InvocationBudgetExhausted(
+                        "round_trip_invocation_budget_exhausted"
+                    ) from None
+                raise
+            if time.monotonic() - started_at >= budget_seconds:
+                raise _InvocationBudgetExhausted(
+                    "round_trip_invocation_budget_exhausted"
+                )
+            return response
+
+        return send
+
+    return build
+
+
 def round_trip_receipt_exit_code(receipt: Mapping[str, Any]) -> int:
     """Map a bounded backlog batch that advanced the ledger to success."""
     if (
         receipt.get("status") == "backlog_pending"
         and receipt.get("backlog_remaining") is True
-        and int(receipt.get("processed_cycle_count") or 0) > 0
+        and (
+            int(receipt.get("processed_cycle_count") or 0) > 0
+            or receipt.get("budget_deferred") is True
+        )
     ):
         return 0
     return crypto_runtime_receipt_exit_code(receipt)
@@ -413,6 +462,24 @@ def run_crypto_delayed_paper_round_trip_server_once(
 ) -> dict[str, Any]:
     """Run exactly one new/pending closed-bar cycle in the isolated epoch."""
 
+    budget_seconds = (
+        ROUND_TRIP_INVOCATION_BUDGET_SECONDS
+        if invocation_budget_seconds is None
+        else invocation_budget_seconds
+    )
+    if (
+        isinstance(budget_seconds, bool)
+        or not isinstance(budget_seconds, (int, float))
+        or budget_seconds <= 0
+    ):
+        raise ValueError("round_trip_invocation_budget_invalid")
+    invocation_started_at = time.monotonic()
+    bounded_transport_factory = _deadline_bound_transport_factory(
+        transport_factory,
+        started_at=invocation_started_at,
+        budget_seconds=float(budget_seconds),
+    )
+
     def prepare_pre_network() -> tuple[Any, Any, bytes, Any, Any, Any]:
         _assert_simulation_only()
         manifest_path = Path(epoch_manifest)
@@ -432,7 +499,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
             _LazyCryptoFiveMinutePort(
                 manifest=manifest,
                 token_file=RUNTIME_TOKEN_FILE,
-                transport_factory=transport_factory,
+                transport_factory=bounded_transport_factory,
                 timeout_seconds=ROUND_TRIP_TIMEOUT_SECONDS,
             )
         )
@@ -469,43 +536,45 @@ def run_crypto_delayed_paper_round_trip_server_once(
     )
     cycle_results: list[dict[str, Any]] = []
     gap_count = 0
-    budget_seconds = (
-        ROUND_TRIP_INVOCATION_BUDGET_SECONDS
-        if invocation_budget_seconds is None
-        else invocation_budget_seconds
-    )
-    invocation_started_at = time.monotonic()
-
+    budget_deferred = False
     if pending is not None:
         pending_slot = _run_failure_stage(
             "checkpoint_recovery_selection",
             lambda: _checkpoint_market_slot(pending.get("market_slot")),
         )
-        pending_result = _run_failure_stage(
-            "core_cycle",
-            lambda: run_crypto_delayed_paper_round_trip_once(
-                port=port,
-                profile=manifest.profile,
-                request=_round_trip_request_for_market_slot(pending_slot),
-                output_root=prepared.output_root,
-            ),
-        )
-        if pending_result.get("status") != "completed":
-            raise CryptoRoundTripRuntimeFailure(
-                phase="core_cycle",
-                reason=_FAILURE_PROVENANCE["core_cycle"],
+        try:
+            pending_result = _run_failure_stage(
+                "core_cycle",
+                lambda: run_crypto_delayed_paper_round_trip_once(
+                    port=port,
+                    profile=manifest.profile,
+                    request=_round_trip_request_for_market_slot(pending_slot),
+                    output_root=prepared.output_root,
+                ),
             )
-        cycle_results.append(
-            {
-                "cycle_kind": "pending_recovery",
-                "target_window_end": _iso_utc(pending_slot + timedelta(minutes=5)),
-                "result": pending_result,
-            }
-        )
-        latest_market_slot = pending_slot
+        except _InvocationBudgetExhausted:
+            pending_result = None
+            budget_deferred = True
+        if pending_result is not None:
+            if pending_result.get("status") != "completed":
+                raise CryptoRoundTripRuntimeFailure(
+                    phase="core_cycle",
+                    reason=_FAILURE_PROVENANCE["core_cycle"],
+                )
+            cycle_results.append(
+                {
+                    "cycle_kind": "pending_recovery",
+                    "target_window_end": _iso_utc(pending_slot + timedelta(minutes=5)),
+                    "result": pending_result,
+                }
+            )
+            latest_market_slot = pending_slot
 
     while len(cycle_results) < ROUND_TRIP_MAX_CYCLES_PER_INVOCATION:
+        if budget_deferred:
+            break
         if _invocation_budget_exceeded(invocation_started_at, budget_seconds):
+            budget_deferred = True
             break
         def select_next_cycle() -> tuple[CryptoFiveMinuteWindowRequest, str] | None:
             if latest_market_slot is None:
@@ -537,7 +606,15 @@ def run_crypto_delayed_paper_round_trip_server_once(
                     output_root=prepared.output_root,
                 ),
             )
+        except _InvocationBudgetExhausted:
+            budget_deferred = True
+            break
         except CryptoRoundTripRuntimeFailure as failure:
+            # A wire timeout at the absolute invocation deadline is a bounded
+            # defer, not evidence that an immutable historical slot is bad.
+            if time.monotonic() - invocation_started_at >= budget_seconds:
+                budget_deferred = True
+                break
             if cycle_kind == "backlog_recovery" and _round_trip_gap_eligible(failure):
                 if gap_count >= ROUND_TRIP_MAX_GAPS_PER_INVOCATION:
                     break
@@ -640,10 +717,11 @@ def run_crypto_delayed_paper_round_trip_server_once(
             item["cycle_kind"] == "backlog_gap" for item in cycle_results
         ),
         "backlog_remaining": backlog_remaining,
+        "budget_deferred": budget_deferred,
         "recovery_mode": recovery_mode,
         "cycle_results": cycle_results,
         "settled_bar_delay_seconds": int(ROUND_TRIP_SETTLED_BAR_DELAY.total_seconds()),
-        "invocation_budget_seconds": budget_seconds,
+        "invocation_budget_seconds": float(budget_seconds),
         "runtime_manifest_sha256": manifest.sha256,
         "fresh_query_catalog_version": manifest.catalog_version,
         "fresh_query_profile_sha256": manifest.profile.sha256,
