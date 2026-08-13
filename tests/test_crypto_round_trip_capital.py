@@ -226,7 +226,7 @@ def test_partial_and_rejected_sell_receipts_preserve_capital(
     assert btc_reject["capital"]["positions"]["BTCUSDT"] == position_before
 
 
-def test_round_trip_event_head_recovers_without_duplicate_fill(
+def test_round_trip_missing_head_fails_closed_without_duplicate_fill(
     tmp_path: Path,
 ) -> None:
     port, frozen, request = _inputs()
@@ -254,18 +254,15 @@ def test_round_trip_event_head_recovers_without_duplicate_fill(
         minutes=5,
         price_multiplier=Decimal("1.05"),
     )
-    replay = run_crypto_delayed_paper_round_trip_once(
-        port=replay_port,
-        profile=replay_profile,
-        request=replay_request,
-        output_root=tmp_path,
-    )
-    assert replay["idempotent_replay"] is True
+    with pytest.raises(CryptoRoundTripError, match="runtime_state_stale"):
+        run_crypto_delayed_paper_round_trip_once(
+            port=replay_port,
+            profile=replay_profile,
+            request=replay_request,
+            output_root=tmp_path,
+        )
     assert len(events_path.read_text(encoding="utf-8").splitlines()) == event_count
-    assert replay["capital"] == completed["capital"]
-    assert (
-        RoundTripCapitalLedger(tmp_path / "round_trip_capital").head()[0] == event_count
-    )
+    assert completed["capital"]["head_sequence"] == event_count
 
 
 def test_same_cycle_conflicting_fill_report_fails_closed(tmp_path: Path) -> None:
@@ -305,37 +302,47 @@ def test_writer_cycle_reuses_one_validated_capital_replay(
     result = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
 
     assert result["idempotent_replay"] is False
-    assert replay_count == 1
+    assert replay_count == 0
 
     replay = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
 
     assert replay["idempotent_replay"] is True
-    assert replay_count == 2
+    assert replay_count == 0
 
 
-def test_runtime_state_legacy_upgrade_is_writer_owned(tmp_path: Path) -> None:
+def test_nonempty_missing_runtime_state_requires_explicit_full_audit_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     payload = _direct_payload(fixture_id="runtime-legacy", slot="2026-07-30T00:00:00Z")
-    first = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+    run_round_trip_fixture_cycle(payload, output_root=tmp_path)
     ledger_root = tmp_path / "round_trip_capital"
     runtime_path = ledger_root / "runtime_state.json"
     runtime_path.unlink()
     ledger = RoundTripCapitalLedger(
         ledger_root, _capability=capital_module._WRITE_CAPABILITY
     )
-    row = json.loads(
-        (ledger_root / "events.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()[-1]
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_read_rows_unlocked",
+        lambda self: (_ for _ in ()).throw(AssertionError("writer history scan")),
+    )
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_replay",
+        lambda self, rows: (_ for _ in ()).throw(AssertionError("writer replay")),
     )
     with ledger.cycle():
-        state = ledger.state_for_writer()
-        assert state["initialized"] is True
-        _, replayed = ledger.append(
-            event_type=row["event_type"],
-            reference_id=row["reference_id"],
-            payload=row["payload"],
-        )
-    assert replayed is True
+        with pytest.raises(CryptoRoundTripError, match="runtime_state_missing"):
+            ledger.state_for_writer()
+        with pytest.raises(CryptoRoundTripError, match="runtime_state_missing"):
+            ledger.event_for_writer("missing")
+        with pytest.raises(CryptoRoundTripError, match="runtime_state_missing"):
+            ledger.ensure_opening()
+
+    monkeypatch.undo()
+    with ledger.cycle():
+        rebuilt = ledger.runtime_state_payload_for_rebuild()
+    runtime_path.write_text(capital_module._canonical_json(rebuilt) + "\n", encoding="utf-8")
     assert json.loads(runtime_path.read_text(encoding="utf-8"))["sequence"] == 2
 
 
@@ -357,6 +364,161 @@ def test_runtime_state_missing_or_stale_fails_closed_without_history_scan(
     runtime.write_text("{}\n", encoding="utf-8")
     with pytest.raises(CryptoRoundTripError, match="runtime_state_invalid"):
         RoundTripCapitalLedger(root).state_read_only()
+
+
+@pytest.mark.parametrize("tamper", ["event_checksum", "final_head", "fork"])
+def test_compact_writer_index_tamper_fails_closed(
+    tmp_path: Path, tamper: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _direct_payload(
+        fixture_id=f"runtime-index-{tamper}", slot="2026-07-30T00:00:00Z"
+    )
+    run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+    root = tmp_path / "round_trip_capital"
+    runtime_path = root / "runtime_state.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    item = next(iter(runtime["event_index"].values()))
+    if tamper == "event_checksum":
+        item["event_checksum"] = "0" * 64
+    elif tamper == "final_head":
+        item["final_head_checksum"] = "0" * 64
+    else:
+        item["event"]["previous_checksum"] = "0" * 64
+        material = dict(item["event"])
+        material.pop("checksum")
+        item["event"]["checksum"] = capital_module._sha256(material)
+        item["event_checksum"] = item["event"]["checksum"]
+    runtime["state_sha256"] = capital_module._sha256(
+        {key: value for key, value in runtime.items() if key != "state_sha256"}
+    )
+    runtime_path.write_text(capital_module._canonical_json(runtime) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_read_rows_unlocked",
+        lambda self: (_ for _ in ()).throw(AssertionError("writer history scan")),
+    )
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_replay",
+        lambda self, rows: (_ for _ in ()).throw(AssertionError("writer replay")),
+    )
+    ledger = RoundTripCapitalLedger(root, _capability=capital_module._WRITE_CAPABILITY)
+    with ledger.cycle(), pytest.raises(
+        CryptoRoundTripError, match="runtime_state_invalid|runtime_state_fork"
+    ):
+        ledger.state_for_writer()
+
+
+def test_fresh_writer_uses_compact_snapshot_and_returns_exact_historical_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_payload = _direct_payload(
+        fixture_id="writer-compact-first", slot="2026-07-30T00:00:00Z"
+    )
+    first = run_round_trip_fixture_cycle(first_payload, output_root=tmp_path)
+    root = tmp_path / "round_trip_capital"
+    stored_events = [
+        json.loads(line)
+        for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_read_rows_unlocked",
+        lambda self: (_ for _ in ()).throw(AssertionError("writer history scan")),
+    )
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_replay",
+        lambda self, rows: (_ for _ in ()).throw(AssertionError("writer replay")),
+    )
+    fresh = RoundTripCapitalLedger(
+        root, _capability=capital_module._WRITE_CAPABILITY
+    )
+    with fresh.cycle():
+        opening, opening_replayed = fresh.ensure_opening()
+        assert opening_replayed is True
+        assert opening == stored_events[0]
+        assert fresh.state_for_writer()["initialized"] is True
+        assert fresh.event_for_writer(stored_events[1]["reference_id"]) == stored_events[1]
+        appended, appended_replayed = fresh.append(
+            event_type=stored_events[1]["event_type"],
+            reference_id=stored_events[1]["reference_id"],
+            payload=stored_events[1]["payload"],
+        )
+        assert appended_replayed is True
+        assert appended == stored_events[1]
+    replay = run_round_trip_fixture_cycle(first_payload, output_root=tmp_path)
+    assert replay["idempotent_replay"] is True
+    assert replay["capital"] == first["capital"]
+
+
+def test_same_cycle_two_new_appends_are_monotonic_and_third_writer_resolves_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_round_trip_fixture_cycle(
+        _direct_payload(fixture_id="writer-base", slot="2026-07-30T00:00:00Z"),
+        output_root=tmp_path,
+    )
+    root = tmp_path / "round_trip_capital"
+    audited = RoundTripCapitalLedger(root).events_read_only()
+    template = audited[-1]
+    writer = RoundTripCapitalLedger(root, _capability=capital_module._WRITE_CAPABILITY)
+    with writer.cycle():
+        writer.ensure_opening()
+        writer.state_for_writer()
+        assert writer.event_for_writer(template["reference_id"]) == template
+        new_events = []
+        for offset in (1, 2):
+            reference_id = f"cycle:writer-direct-{offset}"
+            payload = json.loads(json.dumps(template["payload"]))
+            payload["cycle_id"] = reference_id.removeprefix("cycle:")
+            payload["fixture_id"] = f"writer-direct-{offset}"
+            payload["execution_slot"] = f"2026-07-30T00:{offset * 5:02d}:00Z"
+            payload["before"] = writer._capital_checkpoint(writer.state_for_writer())
+            payload["order"] = None
+            payload["receipt"] = None
+            payload["exit_reason"] = None
+            next_state = capital_module.copy.deepcopy(writer.state_for_writer())
+            next_state["marks"][payload["symbol"]] = Decimal(payload["quote"]["bid"])
+            next_state["cycles"][payload["cycle_id"]] = ""
+            next_state["last_slot_by_symbol"][payload["symbol"]] = datetime.fromisoformat(
+                payload["execution_slot"].replace("Z", "+00:00")
+            )
+            payload["after"] = writer._capital_checkpoint(next_state)
+            event, replayed = writer.append(
+                event_type="cycle", reference_id=reference_id, payload=payload
+            )
+            assert replayed is False
+            new_events.append(event)
+    assert [event["sequence"] for event in new_events] == [3, 4]
+
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_read_rows_unlocked",
+        lambda self: (_ for _ in ()).throw(AssertionError("writer history scan")),
+    )
+    monkeypatch.setattr(
+        RoundTripCapitalLedger,
+        "_replay",
+        lambda self, rows: (_ for _ in ()).throw(AssertionError("writer replay")),
+    )
+    third = RoundTripCapitalLedger(root, _capability=capital_module._WRITE_CAPABILITY)
+    with third.cycle():
+        for event in [*audited, *new_events]:
+            assert third.event_for_writer(event["reference_id"]) == event
+        assert third.head() == (4, new_events[-1]["checksum"])
+
+
+def test_explicit_full_audit_remains_unchanged(tmp_path: Path) -> None:
+    run_round_trip_fixture_cycle(
+        _direct_payload(fixture_id="full-audit", slot="2026-07-30T00:00:00Z"),
+        output_root=tmp_path,
+    )
+    ledger = RoundTripCapitalLedger(tmp_path / "round_trip_capital")
+    events = ledger.events_read_only()
+    assert len(events) == 2
+    assert ledger.head() == (2, events[-1]["checksum"])
 
 
 def test_legacy_reader_ignores_adjacent_runtime_state(tmp_path: Path) -> None:
@@ -420,7 +582,7 @@ def test_writer_cycle_invalidates_cache_after_external_ledger_change(
         ledger.state_for_writer()
         with ledger.events_path.open("a", encoding="utf-8") as stream:
             stream.write("{}\n")
-        with pytest.raises(CryptoRoundTripError, match="event_schema_invalid"):
+        with pytest.raises(CryptoRoundTripError, match="runtime_state_stale"):
             ledger.state_for_writer()
 
 
