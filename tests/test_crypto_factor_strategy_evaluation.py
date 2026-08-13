@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import copy
+import hashlib
+import json
 
 import pytest
 
@@ -59,22 +61,72 @@ def _sample(slot: datetime = START, rising: bool = True) -> dict[str, object]:
         entry_price="100", exit_price="102" if rising else "98",
         future_evidence=_future_evidence(future, "b"),
     )
+    source_id = snapshot["observation_id"]
+    future_id = "future-observation-1h"
+    segment_id = "crypto-5m-segment-20260801T000000Z"
+
+    def projection_proof(observation_id: str, market_slot: str, completion_marker: str) -> dict[str, object]:
+        source_snapshot = snapshot if completion_marker == "1" else {
+            **snapshot,
+            "observation_id": observation_id,
+            "market_slot": market_slot,
+            "evidence_receipt_id": label["future_evidence_receipt_id"],
+            "evidence_lineage_sha256": label["future_evidence_lineage_sha256"],
+            "observed_at": label["future_observed_at"],
+            "data_through": label["future_data_through"],
+        }
+        source_snapshot["factor_snapshot_sha256"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in source_snapshot.items() if key != "factor_snapshot_sha256"},
+            ensure_ascii=True, separators=(",", ":"), sort_keys=True,
+        ).encode()).hexdigest()
+        observation_content_sha256 = completion_marker * 64
+        completion = {"contract": "tradingagent.crypto.delayed_paper_completion.v1",
+                      "observation_id": observation_id, "observation_content_sha256": observation_content_sha256,
+                      "status": "completed"}
+        completion["completion_sha256"] = hashlib.sha256(json.dumps(completion, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+        record = {"contract": "tradingagent.crypto.factor_projection.v1", "observation_id": observation_id,
+                  "market_slot": market_slot, "segment_id": segment_id, "snapshots": {"BTCUSDT": source_snapshot},
+                  "source_observation_content_sha256": observation_content_sha256,
+                  "source_completion_sha256": completion["completion_sha256"]}
+        record["factor_projection_sha256"] = hashlib.sha256(json.dumps(record, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+        receipt = {"contract": "tradingagent.crypto.factor_projection_receipt.v1", "observation_id": observation_id,
+                   "source_completion_sha256": completion["completion_sha256"],
+                   "factor_projection_sha256": record["factor_projection_sha256"]}
+        receipt["projection_receipt_sha256"] = hashlib.sha256(json.dumps(receipt, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+        checkpoint = {"contract": "tradingagent.crypto.factor_projection_checkpoint.v1",
+                      "sequence": 1 if completion_marker == "1" else 2, "observation_id": observation_id,
+                      "previous_checkpoint_sha256": None,
+                      "source_completion_sha256": completion["completion_sha256"],
+                      "projection_receipt_sha256": receipt["projection_receipt_sha256"]}
+        checkpoint["checkpoint_sha256"] = hashlib.sha256(json.dumps(checkpoint, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+        return {"completion": completion, "record": record, "receipt": receipt, "checkpoint": checkpoint}
+
+    source_proof = projection_proof(source_id, snapshot["market_slot"], "1")
+    future_proof = projection_proof(future_id, label["future_market_slot"], "2")
+    future_proof["checkpoint"]["previous_checkpoint_sha256"] = source_proof["checkpoint"]["checkpoint_sha256"]  # type: ignore[index]
+    future_checkpoint = future_proof["checkpoint"]  # type: ignore[assignment]
+    future_checkpoint["checkpoint_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in future_checkpoint.items() if key != "checkpoint_sha256"},
+        ensure_ascii=True, separators=(",", ":"), sort_keys=True,
+    ).encode()).hexdigest()
+    checkpoint_chain = [source_proof["checkpoint"], future_proof["checkpoint"]]
     sample = {
         "snapshot": snapshot, "label": label,
-        "segment_id": "crypto-5m-segment-20260801T000000Z",
-        "future_segment_id": "crypto-5m-segment-20260801T000000Z",
-        "source_completion_sha256": "1" * 64, "future_completion_sha256": "2" * 64,
-        "future_observation_id": "future-observation-1h",
-        "source_completion_proof": {"completion_sha256": "1" * 64, "observation_id": snapshot["observation_id"], "market_slot": snapshot["market_slot"]},
-        "future_completion_proof": {"completion_sha256": "2" * 64, "observation_id": "future-observation-1h", "market_slot": label["future_market_slot"]},
+        "segment_id": segment_id, "future_segment_id": segment_id,
+        "source_completion_sha256": source_proof["completion"]["completion_sha256"],  # type: ignore[index]
+        "future_completion_sha256": future_proof["completion"]["completion_sha256"],  # type: ignore[index]
+        "future_observation_id": future_id,
+        "source_projection_proof": source_proof, "future_projection_proof": future_proof,
+        "projection_checkpoint_chain": checkpoint_chain,
+        "expected_checkpoint_head_sha256": future_checkpoint["checkpoint_sha256"],
         "cost_policy": {"cost_policy_id": "crypto-round-trip-taker-v1", "fee_rate": "0.001", "slippage_bps_each_side": "2"},
     }
     sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
     return sample
 
 
-def test_deterministic_nonzero_fixture_artifact_and_pending() -> None:
-    samples = [_sample(), _sample(START + timedelta(hours=1), rising=False), {"status": "pending"}]
+def test_deterministic_nonzero_fixture_artifact() -> None:
+    samples = [_sample(), _sample(START + timedelta(hours=1), rising=False), {"status": "pending", "sample_id": "next-1h"}]
     first = build_factor_strategy_evaluation(samples=samples, evaluation_as_of=AS_OF)
     second = build_factor_strategy_evaluation(samples=samples, evaluation_as_of=AS_OF)
     assert first == second
@@ -86,6 +138,13 @@ def test_deterministic_nonzero_fixture_artifact_and_pending() -> None:
     assert first["resolved_count"] == 2 and first["pending_count"] == 1 and first["excluded_count"] == 0
     assert first["resolved_coverage"] == "0.6666666666666666666666666667"
     assert first["metrics"]["cost_adjusted_net_return"] is not None
+    assert first["cash_baseline"] == {
+        "resolved_count": 2, "signal_count": 0, "abstention_count": 2,
+        "coverage": "0", "hit_rate": None, "cost_adjusted_net_return": "0",
+        "baseline_delta": None, "drawdown": "0", "turnover": "0", "round_trip_leg_rate": "0", "metric_basis": "cash_no_position",
+    }
+    assert first["metrics"]["cash_baseline_delta"] == first["metrics"]["cost_adjusted_net_return"]
+    assert Decimal(first["baseline"]["drawdown"]) > 0
     assert first["recommendation"]["shadow_only_action"] in {"retain_for_more_evidence", "downweight", "disable"}
     assert first["promotion"] is False and first["execution"] is False and first["live"] is False
 
@@ -124,12 +183,21 @@ def test_same_length_completion_digest_tamper_fails_closed() -> None:
         build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
 
 
-def test_future_completion_observation_mismatch_fails_closed() -> None:
+def test_projection_completion_observation_mismatch_fails_closed() -> None:
     sample = _sample()
-    sample["future_observation_id"] = "different-future-observation"
+    sample["future_projection_proof"]["completion"]["observation_id"] = "different-future-observation"  # type: ignore[index]
     sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
-    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_source_binding_invalid"):
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_projection_binding_invalid"):
         build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
+
+
+def test_projection_receipt_or_checkpoint_tamper_fails_closed() -> None:
+    for role, member in (("source", "receipt"), ("future", "checkpoint")):
+        sample = _sample()
+        sample[f"{role}_projection_proof"][member]["observation_id"] = "tampered"  # type: ignore[index]
+        sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
+        with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_(projection_binding|checkpoint_chain)_invalid"):
+            build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
 
 
 def test_all_abstain_recommends_disable() -> None:
@@ -137,6 +205,76 @@ def test_all_abstain_recommends_disable() -> None:
     result = build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
     assert result["metrics"]["signal_count"] == 0
     assert result["recommendation"]["shadow_only_action"] == "disable"
+
+
+def test_negative_signalled_return_recommends_downweight() -> None:
+    sample = _sample(rising=True)
+    label = sample["label"]  # type: ignore[assignment]
+    entry = Decimal(label["entry_price"])
+    exit_ = Decimal("98")
+    fee = Decimal(label["fee_rate"])
+    label["exit_price"] = "98"
+    label["gross_return"] = format(exit_ / entry - Decimal("1"), "f")
+    label["net_return"] = format(exit_ * (Decimal("1") - fee) / (entry * (Decimal("1") + fee)) - Decimal("1"), "f")
+    label["forward_label_sha256"] = hashlib.sha256(  # type: ignore[index]
+        json.dumps(
+            {key: value for key, value in label.items() if key != "forward_label_sha256"},
+            ensure_ascii=True, allow_nan=False, separators=(",", ":"), sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
+    result = build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
+    assert Decimal(result["metrics"]["cost_adjusted_net_return"]) < 0
+    assert result["metrics"]["cash_baseline_delta"] == result["metrics"]["cost_adjusted_net_return"]
+    assert result["recommendation"]["shadow_only_action"] == "downweight"
+
+
+def test_return_self_hash_cannot_override_price_and_fee_semantics() -> None:
+    sample = _sample()
+    sample["label"]["net_return"] = "-0.99"  # type: ignore[index]
+    label = sample["label"]  # type: ignore[assignment]
+    label["forward_label_sha256"] = hashlib.sha256(json.dumps(
+        {key: value for key, value in label.items() if key != "forward_label_sha256"},
+        ensure_ascii=True, allow_nan=False, separators=(",", ":"), sort_keys=True,
+    ).encode()).hexdigest()
+    sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_label_return_invalid"):
+        build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
+
+
+def test_duplicate_and_malformed_pending_fail_closed() -> None:
+    sample = _sample()
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_sample_duplicate"):
+        build_factor_strategy_evaluation(samples=[sample, copy.deepcopy(sample)], evaluation_as_of=AS_OF)
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_pending_identity_invalid"):
+        build_factor_strategy_evaluation(samples=[{"status": "pending"}], evaluation_as_of=AS_OF)
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_sample_duplicate"):
+        build_factor_strategy_evaluation(
+            samples=[{"status": "pending", "sample_id": "same"}, {"status": "pending", "sample_id": "same"}],
+            evaluation_as_of=AS_OF,
+        )
+
+
+@pytest.mark.parametrize("mutator", [
+    lambda sample: sample["source_projection_proof"]["completion"].update(status="pending"),
+    lambda sample: sample["source_projection_proof"]["record"].update(execution_authority=True),
+    lambda sample: sample["future_projection_proof"]["record"]["snapshots"]["BTCUSDT"].update(observed_at="2027-01-01T00:00:00Z"),
+])
+def test_projection_authority_or_future_pit_tamper_fails_closed(mutator) -> None:
+    sample = _sample()
+    mutator(sample)
+    for role in ("source", "future"):
+        proof = sample[f"{role}_projection_proof"]
+        for member, hash_field in (("completion", "completion_sha256"), ("record", "factor_projection_sha256"),
+                                   ("receipt", "projection_receipt_sha256"), ("checkpoint", "checkpoint_sha256")):
+            item = proof[member]
+            item[hash_field] = hashlib.sha256(json.dumps(
+                {key: value for key, value in item.items() if key != hash_field},
+                ensure_ascii=True, separators=(",", ":"), sort_keys=True,
+            ).encode()).hexdigest()
+    sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
+    with pytest.raises(CryptoFactorStrategyEvaluationError, match="evaluation_projection_binding_invalid"):
+        build_factor_strategy_evaluation(samples=[sample], evaluation_as_of=AS_OF)
 
 
 def test_future_after_as_of_fails_closed() -> None:
