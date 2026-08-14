@@ -914,6 +914,8 @@ def _validate_runtime_receipt(
         raise MinuteScale500RuntimeError("minute_scale500_bar_end_mismatch")
     if result.get("row_count") != EXPECTED_UNIVERSE_COUNT:
         raise MinuteScale500RuntimeError("minute_scale500_row_count_mismatch")
+    if result.get("audit_rejections") != 0:
+        raise MinuteScale500RuntimeError("minute_scale500_audit_rejections")
     if (
         result.get("authority_tier") != "non_production_fixture"
         or result.get("capital_authority") is not False
@@ -957,6 +959,150 @@ def _partial_session_projection(gate: Mapping[str, object]) -> dict[str, object]
         "late_start_bar_end": gate["late_start_bar_end"],
         "learning_eligible": False,
         "full_session_complete": False,
+    }
+
+
+def _validated_partial_runtime_observation(
+    result: Mapping[str, object],
+    *,
+    expected_symbols: frozenset[str],
+    expected_bar_end: str,
+) -> tuple[tuple[str, ...], datetime, datetime, list[dict[str, object]]]:
+    target, minimum, _ = _shadow_policy()
+    accepted = _strict_symbols(
+        result.get("accepted_symbols"),
+        "minute_scale500_partial_observation_invalid",
+    )
+    missing = _strict_symbols(
+        result.get("missing_symbols"),
+        "minute_scale500_partial_observation_invalid",
+    )
+    accepted_set = frozenset(accepted)
+    missing_set = frozenset(missing)
+    if (
+        result.get("status") != "partial_observation"
+        or result.get("bar_end") != expected_bar_end
+        or result.get("requested_count") != target
+        or result.get("accepted_count") != len(accepted)
+        or result.get("missing_count") != len(missing)
+        or not minimum <= len(accepted) < target
+        or not accepted_set <= expected_symbols
+        or accepted_set & missing_set
+        or accepted_set | missing_set != expected_symbols
+        or result.get("same_observation") is not True
+        or result.get("lineage_complete") is not True
+        or result.get("proof_complete") is not True
+        or result.get("audit_rejections") != 0
+        or any(
+            result.get(field) is not False
+            for field in (
+                "capital_authority",
+                "execution_authority",
+                "execution_eligible",
+                "training_eligible",
+                "promotion_authorized",
+                "real_trading_enabled",
+            )
+        )
+    ):
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_partial_observation_invalid"
+        )
+    try:
+        observed_at = datetime.fromisoformat(str(result["observed_at"]))
+        decision_time = datetime.fromisoformat(str(result["decision_time"]))
+    except (KeyError, ValueError) as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_partial_observation_invalid"
+        ) from exc
+    raw_rows = result.get("per_row_evidence")
+    if not isinstance(raw_rows, list) or len(raw_rows) != len(accepted):
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_partial_observation_invalid"
+        )
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    row_observed_times: list[datetime] = []
+    expected_bar_time = _parse_bar_end_any(expected_bar_end)
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_partial_observation_invalid"
+            )
+        row = dict(raw)
+        symbol = row.get("symbol")
+        if (
+            not isinstance(symbol, str)
+            or symbol not in accepted_set
+            or symbol in seen
+            or row.get("bar_end")
+            not in {expected_bar_end, expected_bar_time.isoformat()}
+            or not isinstance(row.get("receipt_id"), str)
+            or not row["receipt_id"].strip()
+            or any(
+                not isinstance(row.get(field), str)
+                or not _SHA256_PATTERN.fullmatch(row[field])
+                for field in (
+                    "source_lineage_sha256",
+                    "envelope_proof_sha256",
+                    "source_row_sha256",
+                )
+            )
+        ):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_partial_observation_invalid"
+            )
+        try:
+            data_through = datetime.fromisoformat(str(row["data_through"]))
+            row_observed = datetime.fromisoformat(str(row["observed_at"]))
+        except (KeyError, ValueError) as exc:
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_partial_observation_invalid"
+            ) from exc
+        if (
+            data_through.tzinfo is None
+            or data_through.utcoffset() is None
+            or row_observed.tzinfo is None
+            or row_observed.utcoffset() is None
+            or not expected_bar_time <= data_through <= row_observed <= decision_time
+        ):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_partial_observation_invalid"
+            )
+        seen.add(symbol)
+        row_observed_times.append(row_observed)
+        rows.append(row)
+    if seen != accepted_set or observed_at != max(row_observed_times):
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_partial_observation_invalid"
+        )
+    return accepted, observed_at, decision_time, rows
+
+
+def _partial_cohort_failure(
+    gate: Mapping[str, object], reason: object
+) -> dict[str, object]:
+    stable_reason = (
+        reason
+        if isinstance(reason, str) and _REASON_PATTERN.fullmatch(reason)
+        else "minute_scale500_partial_observation_invalid"
+    )
+    return {
+        "status": "failed_closed",
+        "reason_code": stable_reason,
+        "cohort_failed": True,
+        "selected_mode": "scale500",
+        "scale500_acceptance_status": gate["status"],
+        "rollback30_state_root_preserved": True,
+        "quality_status": "unusable_for_capability",
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "capital_authority": False,
+        "execution_authority": False,
+        "execution_eligible": False,
+        "training_eligible": False,
+        "promotion_authorized": False,
+        "real_trading_enabled": False,
     }
 
 
@@ -1055,13 +1201,63 @@ def run_scale500_once(
             expected_bar_end=target_bar_end,
             require_scale500_reference=target_bar_end is not None,
         )
+        _, partial_minimum, _ = _shadow_policy()
         result = runner(
             state_root=scale,
             token_file=token,
             now=now,
             allow_late_start=allow_late_start,
             pin_universe_filter=True,
+            partial_observation_minimum=partial_minimum,
         )
+        if result.get("status") == "partial_observation_failed_closed":
+            return _partial_cohort_failure(gate, result.get("reason_code"))
+        if result.get("status") == "partial_observation":
+            try:
+                expected_bar_end = target.strftime("%Y-%m-%d %H:%M:%S")
+                accepted, observed_at, decision_time, evidence_rows = (
+                    _validated_partial_runtime_observation(
+                        result,
+                        expected_symbols=expected_symbols,
+                        expected_bar_end=expected_bar_end,
+                    )
+                )
+                shadow = build_scale500_partial_shadow_receipt(
+                    expected_symbols=tuple(sorted(expected_symbols)),
+                    observed_symbols=accepted,
+                    trading_date=trading_date,
+                    bar_end=expected_bar_end,
+                    observed_at=observed_at,
+                    decision_time=decision_time,
+                )
+                shadow.update(
+                    {
+                        "quality_status": "usable_degraded",
+                        "requested_count": result["requested_count"],
+                        "accepted_count": result["accepted_count"],
+                        "missing_count": result["missing_count"],
+                        "accepted_symbols": list(accepted),
+                        "proof_complete": True,
+                        "lineage_complete": True,
+                        "per_row_evidence": evidence_rows,
+                    }
+                )
+                receipt_path = (
+                    scale
+                    / trading_date.replace("-", "")
+                    / "partial-shadow-receipts"
+                    / f"{target.strftime('%H%M%S')}.json"
+                )
+                _atomic_write_json(receipt_path, shadow)
+            except MinuteScale500RuntimeError as exc:
+                return _partial_cohort_failure(gate, str(exc))
+            return {
+                **shadow,
+                "status": "partial_cohort_shadow",
+                "scale500_acceptance_status": gate["status"],
+                "selected_mode": "scale500",
+                "rollback30_state_root_preserved": True,
+            }
         if result.get("status") == "noop":
             if result.get("reason") != "bar_already_processed":
                 raise MinuteScale500RuntimeError(

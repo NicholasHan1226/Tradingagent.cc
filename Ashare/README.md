@@ -613,8 +613,9 @@ symbol, receipt, lineage, snapshot, and replay bindings in
 `minute-manifest.json` (never provider rows). Mixed slots, later-bar
 selection, overlap, missing/extra/duplicate identities, incomplete lineage,
 replay drift, a non-500 `max_rows`, or any partial cohort fails closed. This is
-session preparation only; the two adjacent exact 500/500 observation gate still
-applies before either Scale500 timer may be enabled.
+session preparation only. The two adjacent exact 500/500 gate still controls
+delayed-paper activation, but it is not an admission gate for the recurring
+observation timer.
 
 Normally, the first accepted scale observations must be the adjacent 09:35 and
 09:40 500/500 bars. A one-time, manual `run --allow-late-start` is the only
@@ -637,15 +638,21 @@ double-read gates. These isolated simulated observations have no capital,
 execution, training, promotion, or real-trading authority. After both pass,
 the normal-path timer continues the 48-slot session. Any missing, partial, mixed-time,
 degraded, identity, lineage, fanout, continuity, authority, or persistence
-failure records one exact reason in the scale gate, exits non-zero, and invokes
-the tracked rollback unit.
+failure remains fail-closed for delayed-paper.
 
 The full 500/500 cohort remains mandatory before `delayed-paper` can run. A
 separate pure receipt builder may describe a 99%-or-higher partial cohort only
 when the exact missing identity set is explicit and no replacement identity is
 present. That receipt is deterministic, zero-notional and shadow-only: it has
 no candidate, capital, execution, training or promotion authority and cannot
-be routed through the runner.
+be routed through the delayed-paper runner. The recurring Scale500 path now
+wires the same builder before any state-bundle mutation: a proof- and
+lineage-complete 495--499 subset is persisted as
+`quality_status=usable_degraded` under the isolated scale day root, while the
+exact 500/500 snapshot alone continues into the existing runner. An unsafe
+identity, time, key, proof, or lineage result fails only that cohort and leaves
+the Scale500 gate selected so the next cadence can observe again; it never
+grants execution, training, promotion, capital, or real-trading authority.
 
 The runtime records `fallback30_selected` and its stable failure reason in the
 isolated scale gate before it exits non-zero. The tracked rollback unit only

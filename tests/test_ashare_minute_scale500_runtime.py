@@ -145,10 +145,56 @@ def _receipt(bar_end: str) -> dict[str, object]:
         "status": "pass",
         "bar_end": bar_end,
         "row_count": EXPECTED_UNIVERSE_COUNT,
+        "audit_rejections": 0,
         "authority_tier": "non_production_fixture",
         "capital_authority": False,
         "durable_capital": False,
         "execution_authority": False,
+        "real_trading_enabled": False,
+    }
+
+
+def _partial_runtime_receipt(
+    bar_end: str, *, replacement: bool = False
+) -> dict[str, object]:
+    expected = list(_symbols())
+    accepted = expected[:-1]
+    if replacement:
+        accepted[-1] = "300001.SZ"
+    accepted_set = set(accepted)
+    missing = sorted(set(expected) - accepted_set)
+    return {
+        "status": "partial_observation",
+        "bar_end": bar_end,
+        "decision_time": "2026-07-31T09:40:30+08:00",
+        "observed_at": "2026-07-31T09:40:20+08:00",
+        "requested_count": 500,
+        "accepted_count": len(accepted),
+        "missing_count": len(missing),
+        "accepted_symbols": accepted,
+        "missing_symbols": missing,
+        "same_observation": True,
+        "lineage_complete": True,
+        "proof_complete": True,
+        "audit_rejections": 0,
+        "per_row_evidence": [
+            {
+                "symbol": symbol,
+                "bar_end": "2026-07-31T09:35:00+08:00",
+                "receipt_id": f"receipt-{index}",
+                "data_through": "2026-07-31T09:40:10+08:00",
+                "observed_at": "2026-07-31T09:40:20+08:00",
+                "source_lineage_sha256": "a" * 64,
+                "envelope_proof_sha256": "b" * 64,
+                "source_row_sha256": "c" * 64,
+            }
+            for index, symbol in enumerate(accepted)
+        ],
+        "capital_authority": False,
+        "execution_authority": False,
+        "execution_eligible": False,
+        "training_eligible": False,
+        "promotion_authorized": False,
         "real_trading_enabled": False,
     }
 
@@ -421,6 +467,82 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
     ]
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == before
     assert list(rollback_root.iterdir()) == [sentinel]
+
+
+def test_499_partial_is_persisted_shadow_without_runner_or_rollback30(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    calls: list[dict[str, object]] = []
+
+    def partial_runner(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return _partial_runtime_receipt("2026-07-31 09:35:00")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:42:00"),
+        runner=partial_runner,
+    )
+
+    assert result["status"] == "partial_cohort_shadow"
+    assert result["quality_status"] == "usable_degraded"
+    assert result["accepted_count"] == 499
+    assert result["missing_count"] == 1
+    assert result["selected_mode"] == "scale500"
+    assert result["delayed_paper_eligible"] is False
+    assert calls[0]["partial_observation_minimum"] == 495
+    persisted = json.loads(
+        (
+            scale_root
+            / "20260731"
+            / "partial-shadow-receipts"
+            / "093500.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert persisted["receipt_id"] == result["receipt_id"]
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gate["status"] == "pending_two_live_snapshots"
+    assert gate["selected_mode"] == "scale500"
+
+
+def test_unsafe_partial_replacement_fails_only_the_cohort(tmp_path: Path) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:42:00"),
+        runner=lambda **_: _partial_runtime_receipt(
+            "2026-07-31 09:35:00", replacement=True
+        ),
+    )
+
+    assert result["status"] == "failed_closed"
+    assert result["cohort_failed"] is True
+    assert result["selected_mode"] == "scale500"
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gate["status"] == "pending_two_live_snapshots"
+    assert gate["selected_mode"] == "scale500"
 
 
 def test_partial_canary_cannot_satisfy_scale500_claim_gate(tmp_path: Path) -> None:
