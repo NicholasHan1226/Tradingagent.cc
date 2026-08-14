@@ -181,7 +181,7 @@ def test_worker_admits_only_matching_g4_or_g5_manifest_generation(
     monkeypatch.setattr(
         worker_module,
         "run_crypto_delayed_paper_factor_research_full_scrub",
-        lambda *, output_root: {"status": "scrubbed"},
+        lambda *, output_root, _deadline: {"status": "scrubbed"},
     )
     monkeypatch.setattr(
         worker_module,
@@ -301,6 +301,127 @@ def test_worker_factor_projection_failure_is_retryable_debt_after_learning(
         worker_module.run_round_trip_learning_worker_once(
             mode="incremental", epoch_manifest=manifest
         )
+
+
+def _admit_full_scrub_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, Path]:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    manifest = manifest_directory / "crypto-delayed-paper-round-trip-epoch-g5-test.json"
+    identity = tmp_path / "identity.json"
+    identity.write_bytes(b"identity")
+    root = worker_module.ROUND_TRIP_LEARNING_EPOCH_ROOTS[5]
+    context = SimpleNamespace(
+        epoch_generation=5,
+        output_root=root,
+        identity_path=identity,
+        epoch_id="g5-test",
+        manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=root, identity_path=identity)
+    monkeypatch.setattr(
+        worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory
+    )
+    monkeypatch.setattr(
+        worker_module, "load_round_trip_epoch_manifest", lambda _: context
+    )
+    monkeypatch.setattr(worker_module, "_existing_epoch_root", lambda _: None)
+    monkeypatch.setattr(
+        worker_module, "prepare_round_trip_epoch_candidate", lambda _: prepared
+    )
+    return manifest, root
+
+
+def test_worker_round_trip_budget_debt_short_circuits_factor_and_evaluation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, _ = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    round_trip_result = {
+        "status": "deferred_time_budget",
+        "completion_count": 12_252,
+        "projected_completion_count": 12_000,
+    }
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_full_scrub",
+        lambda *, output_root: round_trip_result,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_full_scrub",
+        lambda *, output_root, _deadline: pytest.fail(
+            "factor ran after round-trip deferral"
+        ),
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda *, output_root: pytest.fail("evaluation ran after round-trip deferral"),
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="full-scrub", epoch_manifest=manifest
+    )
+
+    assert result["status"] == "deferred_time_budget"
+    assert result["completion_count"] == 12_252
+    assert result["projected_completion_count"] == 12_000
+    assert result["factor_projection"] == result["factor_strategy_evaluation"]
+    assert result["factor_projection"]["status"] == "evaluation_debt"
+    assert result["factor_projection"]["reason"] == "factor_projection_time_budget"
+    assert result["factor_projection"]["retry_on_next_learning_cadence"] is True
+    assert result["factor_projection"]["execution_authority"] is False
+
+
+def test_worker_factor_budget_preserves_projection_and_skips_evaluation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, _ = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    round_trip_result = {
+        "status": "scrubbed",
+        "completion_count": 12_252,
+        "projected_completion_count": 12_252,
+    }
+    factor_result = {
+        "status": "deferred_time_budget",
+        "completion_count": 12_252,
+        "verified_record_count": 12_252,
+        "verified_label_source_count": 1_530,
+    }
+    deadlines: list[float] = []
+    monkeypatch.setattr(worker_module, "monotonic", lambda: 7.0)
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_full_scrub",
+        lambda *, output_root: round_trip_result,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_full_scrub",
+        lambda *, output_root, _deadline: deadlines.append(_deadline) or factor_result,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda *, output_root: pytest.fail("evaluation ran after factor deferral"),
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="full-scrub", epoch_manifest=manifest
+    )
+
+    assert result["status"] == "scrubbed"
+    assert result["projected_completion_count"] == 12_252
+    assert deadlines == [117.0]
+    assert result["factor_projection"] == factor_result
+    assert result["factor_strategy_evaluation"]["status"] == "evaluation_debt"
+    assert result["factor_strategy_evaluation"]["stage"] == "factor_projection"
+    assert (
+        result["factor_strategy_evaluation"]["reason"]
+        == "factor_projection_time_budget"
+    )
+    assert result["factor_strategy_evaluation"]["execution_authority"] is False
 
 
 def test_worker_rejects_g5_manifest_with_g4_context_before_root_access(

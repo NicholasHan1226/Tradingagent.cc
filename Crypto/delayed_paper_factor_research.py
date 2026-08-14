@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import stat
+from time import monotonic
 from typing import Any, Iterator, Mapping
 import uuid
 
@@ -49,6 +50,7 @@ OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS = 288
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
 _HORIZONS = (60, 240, 720, 1440)
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+_FACTOR_PROJECTION_FULL_SCRUB_MAX_SECONDS = 110.0
 SEGMENTED_LEARNING_CONSUMER_PROFILE_ID = "crypto-5m-ohlcv-13bar-forward-labels-v1"
 
 
@@ -347,8 +349,8 @@ def _source(
 
 
 def _sources(
-    root: Path,
-) -> tuple[CryptoDelayedPaperObservationStore, list[dict[str, Any]]]:
+    root: Path, *, deadline: float | None = None
+) -> tuple[CryptoDelayedPaperObservationStore, list[dict[str, Any]]] | None:
     required = (
         root / "delayed_paper",
         root / "delayed_paper" / "observations",
@@ -365,7 +367,11 @@ def _sources(
         raise CryptoFactorProjectionError("factor_projection_core_invalid") from exc
     if checkpoint.get("pending") is not None:
         return store, []
-    rows = [_source(store, path.stem) for path in store.completions_dir.glob("*.json")]
+    rows: list[dict[str, Any]] = []
+    for path in store.completions_dir.glob("*.json"):
+        if deadline is not None and monotonic() >= deadline:
+            return None
+        rows.append(_source(store, path.stem))
     rows.sort(
         key=lambda source: (
             _market_slot(source["observation"].get("market_slot")),
@@ -723,20 +729,37 @@ def _learning_eligible_samples(
 
 
 def run_crypto_delayed_paper_factor_research_full_scrub(
-    *, output_root: Path | str, input_root: Path | str | None = None
+    *,
+    output_root: Path | str,
+    input_root: Path | str | None = None,
+    _deadline: float | None = None,
 ) -> dict[str, Any]:
     """Full-scrub independent contiguous segments without crossing a gap."""
 
     _assert_simulation_only()
+    deadline = (
+        _deadline
+        if _deadline is not None
+        else monotonic() + _FACTOR_PROJECTION_FULL_SCRUB_MAX_SECONDS
+    )
     root = Path(output_root)
     source_root = Path(input_root) if input_root is not None else root
     policy = _segmented_learning_policy()
     consumer_profile = _segmented_learning_consumer_profile()
-    _, sources = _sources(source_root)
+    source_inventory = _sources(source_root, deadline=deadline)
+    if source_inventory is None:
+        return _result(
+            status="deferred_inventory_time_budget", inventory_complete=False
+        )
+    _, sources = source_inventory
     if not sources:
         return _result(status="deferred_core_pending")
     continuous = _latest_continuous(sources)
     segments = _segment_ids(sources)
+    if monotonic() >= deadline:
+        return _result(
+            status="deferred_inventory_time_budget", inventory_complete=False
+        )
     try:
         evolution = _ensure_root(root)
         with _lock(evolution):
@@ -748,6 +771,20 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
             records: dict[str, dict[str, Any]] = {}
             recovered = 0
             for sequence, source in enumerate(sources, start=1):
+                if monotonic() >= deadline:
+                    return _result(
+                        status="deferred_time_budget",
+                        completion_count=len(sources),
+                        recovered_observation_count=recovered,
+                        verified_record_count=sequence - 1,
+                        verified_label_source_count=0,
+                        label_count=0,
+                        checkpoint_head_sha256=(
+                            checkpoints[-1]["checkpoint_sha256"]
+                            if checkpoints
+                            else None
+                        ),
+                    )
                 observation_id = str(source["observation"]["observation_id"])
                 record = _record(source, segment_id=segments[observation_id])
                 receipt = _receipt(record)
@@ -797,14 +834,46 @@ def run_crypto_delayed_paper_factor_research_full_scrub(
                     "record": record,
                     "source": source,
                 }
-            label_count = sum(
-                _labels(root, item["record"], records) for item in records.values()
-            )
+            label_count = 0
+            verified_label_source_count = 0
+            for item in records.values():
+                if monotonic() >= deadline:
+                    return _result(
+                        status="deferred_time_budget",
+                        completion_count=len(sources),
+                        recovered_observation_count=recovered,
+                        verified_record_count=len(records),
+                        verified_label_source_count=verified_label_source_count,
+                        label_count=label_count,
+                        checkpoint_head_sha256=checkpoints[-1]["checkpoint_sha256"],
+                    )
+                label_count += _labels(root, item["record"], records)
+                verified_label_source_count += 1
+            if monotonic() >= deadline:
+                return _result(
+                    status="deferred_time_budget",
+                    completion_count=len(sources),
+                    recovered_observation_count=recovered,
+                    verified_record_count=len(records),
+                    verified_label_source_count=verified_label_source_count,
+                    label_count=label_count,
+                    checkpoint_head_sha256=checkpoints[-1]["checkpoint_sha256"],
+                )
             samples, eligible_observation_ids = _learning_eligible_samples(
                 root,
                 records,
                 consumer_profile=consumer_profile,
             )
+            if monotonic() >= deadline:
+                return _result(
+                    status="deferred_time_budget",
+                    completion_count=len(sources),
+                    recovered_observation_count=recovered,
+                    verified_record_count=len(records),
+                    verified_label_source_count=verified_label_source_count,
+                    label_count=label_count,
+                    checkpoint_head_sha256=checkpoints[-1]["checkpoint_sha256"],
+                )
             report = evaluate_factor_hypotheses(samples)
     except CryptoFactorResearchError as exc:
         raise CryptoFactorProjectionError(
@@ -959,6 +1028,8 @@ def factor_projection_exit_code(result: Mapping[str, Any]) -> int:
         "up_to_date",
         "full_scrub_required",
         "deferred_core_pending",
+        "deferred_inventory_time_budget",
+        "deferred_time_budget",
     }:
         return 2
     return (

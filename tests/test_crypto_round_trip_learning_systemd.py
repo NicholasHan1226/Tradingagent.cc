@@ -88,3 +88,15 @@ def test_g5_learning_timers_are_installable_but_default_passive() -> None:
         assert "WantedBy=timers.target" in timer
         assert f"Unit={unit_name}" in timer
         assert "Persistent=true" not in timer
+
+
+def test_round_trip_learning_scrub_units_keep_the_existing_120_second_timeout() -> None:
+    for generation in (4, 5):
+        scrub = _unit(
+            f"tradingagent-crypto-round-trip-g{generation}-learning-scrub.service"
+        )
+        incremental = _unit(
+            f"tradingagent-crypto-round-trip-g{generation}-learning.service"
+        )
+        assert "TimeoutStartSec=120s" in scrub
+        assert "TimeoutStartSec=45s" in incremental

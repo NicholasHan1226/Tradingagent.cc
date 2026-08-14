@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from time import monotonic
 from typing import Any
 
 from Crypto.delayed_paper_round_trip_epoch import (
@@ -80,6 +81,11 @@ ROUND_TRIP_LEARNING_FAILURE_REASONS = frozenset(
         "round_trip_learning_write_failed",
     }
 )
+
+_TIME_BUDGET_DEFERRED_STATUSES = frozenset(
+    {"deferred_inventory_time_budget", "deferred_time_budget"}
+)
+_FULL_SCRUB_WORKER_MAX_SECONDS = 110.0
 
 
 def _post_projection_debt(*, stage: str, reason: str) -> dict[str, Any]:
@@ -273,6 +279,11 @@ def run_round_trip_learning_worker_once(
         prepared = prepare_round_trip_epoch_candidate(epoch_context)
         identity_before = prepared.identity_path.read_bytes()
         context_data["stage"] = "projection_started"
+        full_scrub_deadline = (
+            monotonic() + _FULL_SCRUB_WORKER_MAX_SECONDS
+            if mode == "full-scrub"
+            else None
+        )
         if mode == "incremental":
             result = run_crypto_delayed_paper_round_trip_learning_incremental(
                 output_root=prepared.output_root
@@ -283,29 +294,45 @@ def run_round_trip_learning_worker_once(
             )
         else:
             raise CryptoRoundTripLearningError("round_trip_learning_mode_invalid")
-        try:
-            if mode == "incremental":
-                factor_result = run_crypto_delayed_paper_factor_research_incremental(
-                    output_root=prepared.output_root
-                )
-            else:
-                factor_result = run_crypto_delayed_paper_factor_research_full_scrub(
-                    output_root=prepared.output_root
-                )
-            evaluation_result = run_factor_strategy_post_projection(
-                output_root=prepared.output_root
-            )
-        except CryptoFactorProjectionError:
+        if result.get("status") in _TIME_BUDGET_DEFERRED_STATUSES:
             factor_result = _post_projection_debt(
                 stage="factor_projection",
-                reason="factor_projection_failed",
+                reason="factor_projection_time_budget",
             )
             evaluation_result = factor_result
-        except CryptoFactorStrategyPostProjectionError:
-            evaluation_result = _post_projection_debt(
-                stage="factor_strategy_evaluation",
-                reason="factor_strategy_evaluation_failed",
-            )
+        else:
+            try:
+                if mode == "incremental":
+                    factor_result = (
+                        run_crypto_delayed_paper_factor_research_incremental(
+                            output_root=prepared.output_root
+                        )
+                    )
+                else:
+                    factor_result = run_crypto_delayed_paper_factor_research_full_scrub(
+                        output_root=prepared.output_root,
+                        _deadline=full_scrub_deadline,
+                    )
+                if factor_result.get("status") in _TIME_BUDGET_DEFERRED_STATUSES:
+                    evaluation_result = _post_projection_debt(
+                        stage="factor_projection",
+                        reason="factor_projection_time_budget",
+                    )
+                else:
+                    evaluation_result = run_factor_strategy_post_projection(
+                        output_root=prepared.output_root
+                    )
+            except CryptoFactorProjectionError:
+                factor_result = _post_projection_debt(
+                    stage="factor_projection",
+                    reason="factor_projection_failed",
+                )
+                evaluation_result = factor_result
+            except CryptoFactorStrategyPostProjectionError:
+                evaluation_result = _post_projection_debt(
+                    stage="factor_strategy_evaluation",
+                    reason="factor_strategy_evaluation_failed",
+                )
         context_data.update(
             {
                 "stage": "projection_returned",
