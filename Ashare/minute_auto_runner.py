@@ -208,6 +208,7 @@ def run_current_delayed_minute_paper(
     run_once: Callable[..., dict[str, object]] = run_delayed_minute_paper_once,
     allow_late_start: bool = False,
     pin_universe_filter: bool = False,
+    partial_observation_minimum: int | None = None,
 ) -> dict[str, object]:
     """Process exactly one expected current delayed bar or return a safe no-op."""
 
@@ -274,6 +275,8 @@ def run_current_delayed_minute_paper(
             "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
             "pin_universe_filter": pin_universe_filter,
         }
+        if partial_observation_minimum is not None:
+            run_kwargs["partial_observation_minimum"] = partial_observation_minimum
         if skipped_slots:
             recovery_reason = (
                 "incident_recovery_no_historical_pit"
@@ -308,7 +311,20 @@ def run_current_delayed_minute_paper(
             except MinuteDataContractError as exc:
                 attempts += 1
                 if attempts >= READINESS_RETRY_LIMIT or not _is_readiness_failure(exc):
-                    raise
+                    if partial_observation_minimum is None:
+                        raise
+                    receipt = {
+                        "status": "partial_observation_failed_closed",
+                        "reason_code": str(exc),
+                        "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
+                        "capital_authority": False,
+                        "execution_authority": False,
+                        "execution_eligible": False,
+                        "training_eligible": False,
+                        "promotion_authorized": False,
+                        "real_trading_enabled": False,
+                    }
+                    break
                 time_module.sleep(READINESS_RETRY_BACKOFF_SECONDS)
         result = dict(receipt)
         if skipped_slots:

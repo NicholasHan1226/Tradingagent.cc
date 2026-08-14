@@ -213,6 +213,7 @@ def run_delayed_minute_paper_once(
     bar_end: str,
     gap_recovery: Mapping[str, object] | None = None,
     pin_universe_filter: bool = False,
+    partial_observation_minimum: int | None = None,
 ) -> dict[str, Any]:
     """Process one exact completed bar in the delayed, simulation-only tier."""
 
@@ -242,8 +243,89 @@ def run_delayed_minute_paper_once(
         reference_facts=reference_facts,
         evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
     )
-    if set(bar.symbol for bar in snapshot.bars) != universe_symbols:
-        raise MinutePaperRunnerError("minute_paper_snapshot_universe_incomplete")
+    if partial_observation_minimum is not None and (
+        isinstance(partial_observation_minimum, bool)
+        or not isinstance(partial_observation_minimum, int)
+        or partial_observation_minimum <= 0
+        or partial_observation_minimum >= len(universe_symbols)
+    ):
+        raise MinutePaperRunnerError(
+            "minute_paper_partial_observation_policy_invalid"
+        )
+    observed_symbols = {bar.symbol for bar in snapshot.bars}
+    if partial_observation_minimum is not None and audit.records():
+        return {
+            "status": "partial_observation_failed_closed",
+            "reason_code": "minute_paper_partial_audit_rejections",
+            "bar_end": bar_end,
+            "capital_authority": False,
+            "execution_authority": False,
+            "execution_eligible": False,
+            "training_eligible": False,
+            "promotion_authorized": False,
+            "real_trading_enabled": False,
+        }
+    if observed_symbols != universe_symbols:
+        if partial_observation_minimum is None:
+            raise MinutePaperRunnerError("minute_paper_snapshot_universe_incomplete")
+        missing_symbols = sorted(universe_symbols - observed_symbols)
+        unsafe_reason = None
+        if not observed_symbols <= universe_symbols:
+            unsafe_reason = "minute_paper_partial_identity_replacement"
+        elif len(observed_symbols) < partial_observation_minimum:
+            unsafe_reason = "minute_paper_partial_coverage_insufficient"
+        if unsafe_reason is not None:
+            return {
+                "status": "partial_observation_failed_closed",
+                "reason_code": unsafe_reason,
+                "bar_end": bar_end,
+                "requested_count": len(universe_symbols),
+                "accepted_count": len(observed_symbols),
+                "missing_count": len(missing_symbols),
+                "accepted_symbols": sorted(observed_symbols),
+                "missing_symbols": missing_symbols,
+                "capital_authority": False,
+                "execution_authority": False,
+                "execution_eligible": False,
+                "training_eligible": False,
+                "promotion_authorized": False,
+                "real_trading_enabled": False,
+            }
+        evidence_rows = [
+            {
+                "symbol": bar.symbol,
+                "bar_end": bar.bar_end.isoformat(),
+                "receipt_id": bar.receipt_id,
+                "data_through": bar.data_through.isoformat(),
+                "observed_at": bar.observed_at.isoformat(),
+                "source_lineage_sha256": bar.source_lineage_sha256,
+                "envelope_proof_sha256": bar.envelope_proof_sha256,
+                "source_row_sha256": bar.source_row_sha256,
+            }
+            for bar in sorted(snapshot.bars, key=lambda item: item.symbol)
+        ]
+        return {
+            "status": "partial_observation",
+            "bar_end": bar_end,
+            "decision_time": decision_time.isoformat(),
+            "observed_at": max(bar.observed_at for bar in snapshot.bars).isoformat(),
+            "requested_count": len(universe_symbols),
+            "accepted_count": len(observed_symbols),
+            "missing_count": len(missing_symbols),
+            "accepted_symbols": sorted(observed_symbols),
+            "missing_symbols": missing_symbols,
+            "same_observation": snapshot.same_observation,
+            "lineage_complete": True,
+            "proof_complete": True,
+            "audit_rejections": 0,
+            "per_row_evidence": evidence_rows,
+            "capital_authority": False,
+            "execution_authority": False,
+            "execution_eligible": False,
+            "training_eligible": False,
+            "promotion_authorized": False,
+            "real_trading_enabled": False,
+        }
     state_path = Path(state_bundle)
     recovery = _validated_gap_recovery(gap_recovery)
     loop, receipt_history = _load_loop_bundle(state_path, universe=universe)

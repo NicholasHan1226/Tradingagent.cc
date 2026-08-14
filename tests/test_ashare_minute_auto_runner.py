@@ -340,6 +340,28 @@ def test_non_readiness_failure_does_not_retry(
     assert len(calls) == 1
 
 
+def test_partial_mode_contains_unsafe_data_failure_to_one_cohort(
+    tmp_path: Path,
+) -> None:
+    _initialized_day(tmp_path, last_bar="2026-07-28 13:45:00")
+
+    def fail(**_kwargs: object) -> dict[str, object]:
+        raise MinuteDataContractError("minute_query_identity_mismatch")
+
+    result = run_current_delayed_minute_paper(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T13:57:10"),
+        run_once=fail,
+        partial_observation_minimum=495,
+    )
+
+    assert result["status"] == "partial_observation_failed_closed"
+    assert result["reason_code"] == "minute_query_identity_mismatch"
+    assert result["bar_end"] == "2026-07-28 13:50:00"
+    assert result["execution_eligible"] is False
+
+
 def test_first_bar_can_initialize_but_midday_cannot(tmp_path: Path) -> None:
     _initialized_day(tmp_path, last_bar=None)
 
