@@ -333,6 +333,201 @@ def _admit_full_scrub_worker(
     return manifest, root
 
 
+@pytest.mark.parametrize("factor_status", ("projected_incremental", "up_to_date"))
+def test_worker_incremental_zero_label_path_is_bounded_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, factor_status: str
+) -> None:
+    manifest, root = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    factor_result = {
+        "status": factor_status,
+        "completion_count": 2_957,
+        "label_count": 0,
+        "label_learning_eligible_sample_count": 0,
+    }
+    calls: list[tuple[Path, bool | None]] = []
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {
+            "status": "projected",
+            "projected_completion_count": 2_957,
+        },
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: factor_result,
+    )
+
+    def bounded_post_projection(
+        *, output_root: Path, _resolved_outcome_changed: bool | None = None
+    ) -> dict[str, object]:
+        calls.append((output_root, _resolved_outcome_changed))
+        return {
+            "status": "no_new_outcome",
+            "reason": "no_new_resolved_outcome",
+        }
+
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        bounded_post_projection,
+    )
+
+    first = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+    second = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+
+    assert first == second
+    assert calls == [(root, False), (root, False)]
+    assert first["factor_projection"] == factor_result
+    assert first["factor_strategy_evaluation"] == {
+        "status": "no_new_outcome",
+        "reason": "no_new_resolved_outcome",
+    }
+
+
+def test_worker_incremental_compact_state_tamper_is_retryable_evaluation_debt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, _ = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    factor_result = {
+        "status": "projected_incremental",
+        "completion_count": 2_957,
+        "label_count": 0,
+        "label_learning_eligible_sample_count": 0,
+    }
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {
+            "status": "projected",
+            "projected_completion_count": 2_957,
+        },
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: factor_result,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda **_: (_ for _ in ()).throw(
+            worker_module.CryptoFactorStrategyPostProjectionError(
+                "factor_strategy_artifact_invalid"
+            )
+        ),
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+
+    assert result["factor_projection"] == factor_result
+    assert result["factor_strategy_evaluation"]["status"] == "evaluation_debt"
+    assert result["factor_strategy_evaluation"]["reason"] == (
+        "factor_strategy_evaluation_failed"
+    )
+    assert result["factor_strategy_evaluation"]["execution_authority"] is False
+
+
+def test_worker_incremental_unknown_post_projection_error_propagates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, _ = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {"status": "projected"},
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: {
+            "status": "projected_incremental",
+            "label_count": 0,
+            "label_learning_eligible_sample_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda **_: (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        worker_module.run_round_trip_learning_worker_once(
+            mode="incremental", epoch_manifest=manifest
+        )
+
+
+def test_worker_incremental_explicit_new_labels_run_existing_full_evaluator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, root = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {"status": "projected"},
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: {
+            "status": "projected_incremental",
+            "label_count": 2,
+            "label_learning_eligible_sample_count": 2,
+        },
+    )
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda *, output_root: seen.append(output_root)
+        or {"status": "shadow_evaluated"},
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+
+    assert seen == [root]
+    assert result["factor_strategy_evaluation"]["status"] == "shadow_evaluated"
+
+
+def test_worker_incremental_unknown_factor_status_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest, _ = _admit_full_scrub_worker(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {"status": "projected"},
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: {"status": "unexpected"},
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda **_: pytest.fail("evaluation ran for an unknown factor status"),
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+
+    assert result["factor_projection"] == result["factor_strategy_evaluation"]
+    assert result["factor_projection"]["status"] == "evaluation_debt"
+    assert result["factor_projection"]["reason"] == "factor_projection_failed"
+
+
 def test_worker_round_trip_budget_debt_short_circuits_factor_and_evaluation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

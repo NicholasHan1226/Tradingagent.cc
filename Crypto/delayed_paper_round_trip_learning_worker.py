@@ -86,6 +86,9 @@ _TIME_BUDGET_DEFERRED_STATUSES = frozenset(
     {"deferred_inventory_time_budget", "deferred_time_budget"}
 )
 _FULL_SCRUB_WORKER_MAX_SECONDS = 110.0
+_INCREMENTAL_FACTOR_COMPLETE_STATUSES = frozenset(
+    {"projected_incremental", "up_to_date"}
+)
 
 
 def _post_projection_debt(*, stage: str, reason: str) -> dict[str, Any]:
@@ -318,6 +321,32 @@ def run_round_trip_learning_worker_once(
                         stage="factor_projection",
                         reason="factor_projection_time_budget",
                     )
+                elif mode == "incremental":
+                    factor_status = factor_result.get("status")
+                    if factor_status == "full_scrub_required":
+                        evaluation_result = _post_projection_debt(
+                            stage="factor_projection",
+                            reason="factor_projection_full_scrub_required",
+                        )
+                    elif factor_status not in _INCREMENTAL_FACTOR_COMPLETE_STATUSES:
+                        raise CryptoFactorProjectionError(
+                            "factor_projection_incremental_status_invalid"
+                        )
+                    elif (
+                        factor_result.get("label_count") == 0
+                        and factor_result.get(
+                            "label_learning_eligible_sample_count"
+                        )
+                        == 0
+                    ):
+                        evaluation_result = run_factor_strategy_post_projection(
+                            output_root=prepared.output_root,
+                            _resolved_outcome_changed=False,
+                        )
+                    else:
+                        evaluation_result = run_factor_strategy_post_projection(
+                            output_root=prepared.output_root
+                        )
                 else:
                     evaluation_result = run_factor_strategy_post_projection(
                         output_root=prepared.output_root

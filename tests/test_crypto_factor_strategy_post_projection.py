@@ -82,6 +82,45 @@ def test_no_resolved_outcome_is_a_write_free_noop(
     assert before == {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
+def test_incremental_no_new_outcome_uses_only_compact_checkpoint_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _root(tmp_path)
+    monkeypatch.setattr(post, "_inventory", lambda _: [_outcome("a")])
+    monkeypatch.setattr(post, "build_factor_strategy_evaluation", _evaluation)
+    created = run_factor_strategy_post_projection(output_root=root)
+    before = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    monkeypatch.setattr(
+        post,
+        "_inventory",
+        lambda _: pytest.fail("full strategy inventory ran for unchanged outcome"),
+    )
+
+    first = run_factor_strategy_post_projection(
+        output_root=root, _resolved_outcome_changed=False
+    )
+    second = run_factor_strategy_post_projection(
+        output_root=root, _resolved_outcome_changed=False
+    )
+
+    assert first == second
+    assert first["status"] == "no_new_outcome"
+    assert first["reason"] == "no_new_resolved_outcome"
+    assert first["last_evaluated_outcome_sha256"] == created[
+        "last_evaluated_outcome_sha256"
+    ]
+    assert first["artifact_sha256"] == created["artifact_sha256"]
+    assert before == {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def test_checkpoint_bound_artifact_corruption_fails_closed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -94,12 +133,73 @@ def test_checkpoint_bound_artifact_corruption_fails_closed(
         / f"{result['last_evaluated_outcome_sha256']}.json"
     )
     artifact.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        post,
+        "_inventory",
+        lambda _: pytest.fail("full strategy inventory ran before tamper rejection"),
+    )
 
     with pytest.raises(
         CryptoFactorStrategyPostProjectionError,
         match="factor_strategy_artifact_invalid",
     ):
-        run_factor_strategy_post_projection(output_root=root)
+        run_factor_strategy_post_projection(
+            output_root=root, _resolved_outcome_changed=False
+        )
+
+
+def test_incremental_no_new_outcome_requires_a_compact_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _root(tmp_path)
+    monkeypatch.setattr(
+        post,
+        "_inventory",
+        lambda _: pytest.fail("full strategy inventory ran without a checkpoint"),
+    )
+
+    with pytest.raises(
+        CryptoFactorStrategyPostProjectionError,
+        match="factor_strategy_checkpoint_missing",
+    ):
+        run_factor_strategy_post_projection(
+            output_root=root, _resolved_outcome_changed=False
+        )
+
+
+def test_incremental_no_new_outcome_rejects_a_rehashed_checkpoint_rebinding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _root(tmp_path)
+    monkeypatch.setattr(post, "_inventory", lambda _: [_outcome("a")])
+    monkeypatch.setattr(post, "build_factor_strategy_evaluation", _evaluation)
+    run_factor_strategy_post_projection(output_root=root)
+    checkpoint_path = (
+        root
+        / "evolution"
+        / "factor_research"
+        / "strategy_evaluation_checkpoint.json"
+    )
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["last_evaluated_completion_sha256"] = "f" * 64
+    checkpoint.pop("checkpoint_sha256")
+    checkpoint["checkpoint_sha256"] = post.projection._sha256(checkpoint)
+    checkpoint_path.write_text(
+        post.projection._canonical_json(checkpoint) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        post,
+        "_inventory",
+        lambda _: pytest.fail("full strategy inventory ran before rebinding rejection"),
+    )
+
+    with pytest.raises(
+        CryptoFactorStrategyPostProjectionError,
+        match="factor_strategy_artifact_invalid",
+    ):
+        run_factor_strategy_post_projection(
+            output_root=root, _resolved_outcome_changed=False
+        )
 
 
 def test_evaluation_failure_preserves_projection_and_checkpoint_for_retry(
