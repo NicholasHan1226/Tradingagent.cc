@@ -26,6 +26,15 @@ from Crypto.delayed_paper_round_trip_learning import (
     run_crypto_delayed_paper_round_trip_learning_full_scrub,
     run_crypto_delayed_paper_round_trip_learning_incremental,
 )
+from Crypto.delayed_paper_factor_research import (
+    CryptoFactorProjectionError,
+    run_crypto_delayed_paper_factor_research_full_scrub,
+    run_crypto_delayed_paper_factor_research_incremental,
+)
+from Crypto.factor_strategy_post_projection import (
+    CryptoFactorStrategyPostProjectionError,
+    run_factor_strategy_post_projection,
+)
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 
 
@@ -71,6 +80,30 @@ ROUND_TRIP_LEARNING_FAILURE_REASONS = frozenset(
         "round_trip_learning_write_failed",
     }
 )
+
+
+def _post_projection_debt(*, stage: str, reason: str) -> dict[str, Any]:
+    """Return one compact, safe retry marker without changing learning output."""
+
+    return {
+        "contract": "tradingagent.crypto.factor_strategy_evaluation_debt.v1",
+        "status": "evaluation_debt",
+        "stage": stage,
+        "reason": reason,
+        "retry_on_next_learning_cadence": True,
+        "authority": "none",
+        "research_only": True,
+        "learning_authority": False,
+        "execution_authority": False,
+        "production_eligible": False,
+        "promotion_authorized": False,
+        "automatic_champion_replacement": False,
+        "automatic_risk_expansion_enabled": False,
+        "real_trading_enabled": False,
+        "network_used": False,
+        "model_network_used": False,
+        "live_broker_used": False,
+    }
 
 
 def _failure_event(
@@ -250,6 +283,29 @@ def run_round_trip_learning_worker_once(
             )
         else:
             raise CryptoRoundTripLearningError("round_trip_learning_mode_invalid")
+        try:
+            if mode == "incremental":
+                factor_result = run_crypto_delayed_paper_factor_research_incremental(
+                    output_root=prepared.output_root
+                )
+            else:
+                factor_result = run_crypto_delayed_paper_factor_research_full_scrub(
+                    output_root=prepared.output_root
+                )
+            evaluation_result = run_factor_strategy_post_projection(
+                output_root=prepared.output_root
+            )
+        except CryptoFactorProjectionError:
+            factor_result = _post_projection_debt(
+                stage="factor_projection",
+                reason="factor_projection_failed",
+            )
+            evaluation_result = factor_result
+        except CryptoFactorStrategyPostProjectionError:
+            evaluation_result = _post_projection_debt(
+                stage="factor_strategy_evaluation",
+                reason="factor_strategy_evaluation_failed",
+            )
         context_data.update(
             {
                 "stage": "projection_returned",
@@ -273,6 +329,8 @@ def run_round_trip_learning_worker_once(
         raise CryptoRoundTripLearningError("round_trip_learning_epoch_invalid") from exc
     return {
         **result,
+        "factor_projection": factor_result,
+        "factor_strategy_evaluation": evaluation_result,
         "epoch_id": epoch_context.epoch_id,
         "epoch_generation": epoch_context.epoch_generation,
         "epoch_output_root": str(epoch_context.output_root),
