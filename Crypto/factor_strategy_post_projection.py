@@ -171,6 +171,64 @@ def _inventory(root: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _validated_current(evolution: Path) -> dict[str, Any] | None:
+    """Validate only the compact checkpoint and its one bound artifact."""
+
+    checkpoint_path = evolution / "strategy_evaluation_checkpoint.json"
+    if not checkpoint_path.exists() and not checkpoint_path.is_symlink():
+        return None
+    try:
+        current = projection._parse_canonical(
+            checkpoint_path, reason="factor_strategy_checkpoint_invalid"
+        )
+    except projection.CryptoFactorProjectionError as exc:
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_checkpoint_invalid"
+        ) from exc
+    material = dict(current)
+    claimed = material.pop("checkpoint_sha256", None)
+    if (
+        current.get("contract") != POST_PROJECTION_CHECKPOINT_CONTRACT
+        or claimed != projection._sha256(material)
+    ):
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_checkpoint_invalid"
+        )
+    prior_outcome = current.get("last_evaluated_outcome_sha256")
+    prior_completion = current.get("last_evaluated_completion_sha256")
+    if (
+        not isinstance(prior_completion, str)
+        or len(prior_completion) != 64
+        or not isinstance(prior_outcome, str)
+        or len(prior_outcome) != 64
+    ):
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_checkpoint_invalid"
+        )
+    artifact_path = evolution / "strategy_evaluations" / f"{prior_outcome}.json"
+    try:
+        prior_artifact = projection._parse_canonical(
+            artifact_path, reason="factor_strategy_artifact_invalid"
+        )
+    except projection.CryptoFactorProjectionError as exc:
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_artifact_invalid"
+        ) from exc
+    artifact_material = dict(prior_artifact)
+    artifact_sha256 = artifact_material.pop("artifact_sha256", None)
+    if (
+        artifact_sha256 != projection._sha256(artifact_material)
+        or current.get("artifact_sha256") != artifact_sha256
+        or prior_artifact.get("last_evaluated_completion_sha256")
+        != prior_completion
+        or prior_artifact.get("last_evaluated_outcome_sha256") != prior_outcome
+    ):
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_artifact_invalid"
+        )
+    return current
+
+
 def _run_locked(root: Path) -> dict[str, Any]:
     try:
         inventory = _inventory(root)
@@ -182,48 +240,7 @@ def _run_locked(root: Path) -> dict[str, Any]:
         return {"contract": POST_PROJECTION_CONTRACT, "status": "no_new_outcome", **_safe()}
     evolution = projection._root(root)
     checkpoint_path = evolution / "strategy_evaluation_checkpoint.json"
-    current: dict[str, Any] | None = None
-    if checkpoint_path.exists() or checkpoint_path.is_symlink():
-        try:
-            current = projection._parse_canonical(
-                checkpoint_path, reason="factor_strategy_checkpoint_invalid"
-            )
-        except projection.CryptoFactorProjectionError as exc:
-            raise CryptoFactorStrategyPostProjectionError(
-                "factor_strategy_checkpoint_invalid"
-            ) from exc
-        material = dict(current)
-        claimed = material.pop("checkpoint_sha256", None)
-        if (
-            current.get("contract") != POST_PROJECTION_CHECKPOINT_CONTRACT
-            or claimed != projection._sha256(material)
-        ):
-            raise CryptoFactorStrategyPostProjectionError(
-                "factor_strategy_checkpoint_invalid"
-            )
-        prior_outcome = current.get("last_evaluated_outcome_sha256")
-        if not isinstance(prior_outcome, str) or len(prior_outcome) != 64:
-            raise CryptoFactorStrategyPostProjectionError(
-                "factor_strategy_checkpoint_invalid"
-            )
-        artifact_path = evolution / "strategy_evaluations" / f"{prior_outcome}.json"
-        try:
-            prior_artifact = projection._parse_canonical(
-                artifact_path, reason="factor_strategy_artifact_invalid"
-            )
-        except projection.CryptoFactorProjectionError as exc:
-            raise CryptoFactorStrategyPostProjectionError(
-                "factor_strategy_artifact_invalid"
-            ) from exc
-        artifact_material = dict(prior_artifact)
-        artifact_sha256 = artifact_material.pop("artifact_sha256", None)
-        if (
-            artifact_sha256 != projection._sha256(artifact_material)
-            or current.get("artifact_sha256") != artifact_sha256
-        ):
-            raise CryptoFactorStrategyPostProjectionError(
-                "factor_strategy_artifact_invalid"
-            )
+    current = _validated_current(evolution)
     selected = inventory[-1]
     if current is not None and (
         current.get("last_evaluated_completion_sha256") == selected["completion_sha256"]
@@ -278,13 +295,47 @@ def _run_locked(root: Path) -> dict[str, Any]:
     return artifact
 
 
-def run_factor_strategy_post_projection(*, output_root: Path | str) -> dict[str, Any]:
+def _run_no_new_resolved_outcome_locked(root: Path) -> dict[str, Any]:
+    evolution = projection._root(root)
+    current = _validated_current(evolution)
+    if current is None:
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_checkpoint_missing"
+        )
+    return {
+        "contract": POST_PROJECTION_CONTRACT,
+        "status": "no_new_outcome",
+        "reason": "no_new_resolved_outcome",
+        "last_evaluated_completion_sha256": current[
+            "last_evaluated_completion_sha256"
+        ],
+        "last_evaluated_outcome_sha256": current[
+            "last_evaluated_outcome_sha256"
+        ],
+        "artifact_sha256": current["artifact_sha256"],
+        **_safe(),
+    }
+
+
+def run_factor_strategy_post_projection(
+    *, output_root: Path | str, _resolved_outcome_changed: bool | None = None
+) -> dict[str, Any]:
     """Append one shadow bundle only when the newest resolved outcome changes."""
 
     _assert_simulation_only()
+    if _resolved_outcome_changed is not None and not isinstance(
+        _resolved_outcome_changed, bool
+    ):
+        raise CryptoFactorStrategyPostProjectionError(
+            "factor_strategy_outcome_change_invalid"
+        )
     root = Path(output_root)
     evolution = projection._root(root)
     if not evolution.exists():
+        if _resolved_outcome_changed is False:
+            raise CryptoFactorStrategyPostProjectionError(
+                "factor_strategy_checkpoint_missing"
+            )
         return {
             "contract": POST_PROJECTION_CONTRACT,
             "status": "no_new_outcome",
@@ -296,6 +347,8 @@ def run_factor_strategy_post_projection(*, output_root: Path | str) -> dict[str,
         )
     try:
         with projection._lock(evolution):
+            if _resolved_outcome_changed is False:
+                return _run_no_new_resolved_outcome_locked(root)
             return _run_locked(root)
     except projection.CryptoFactorProjectionError as exc:
         raise CryptoFactorStrategyPostProjectionError(
