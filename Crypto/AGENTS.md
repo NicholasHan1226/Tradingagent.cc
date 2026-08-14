@@ -96,13 +96,16 @@
   completion；出现多条缺口必须交给 daily full scrub。full scrub 校验全部
   completion→projection receipt→sample/KPI/Challenger segments 及 checkpoint
   链；未声明投影可确定性补齐，已声明 receipt/segment 缺失、旧段篡改或链断裂
-  必须失败关闭。学习 service/timer 与 daily scrub service/timer 是默认未启用的
-  部署候选。worker 只能通过固定
+  必须失败关闭。仓库中的学习 service/timer 与 daily scrub service/timer 安装默认值
+  为 disabled；这只是安装安全默认值，不是现役生产状态或长期阶段门禁。现役状态必须
+  以同轮 systemd、immutable release 和 checkpoint readback 为准。worker 只能通过固定
   `/etc/tradingagent/crypto-delayed-paper.epoch.json` 加载并验证唯一 current
   epoch，不接受自由 output root；tracked service 静态钉住经复核的 epoch，
-  只给其 `evolution/` 写权限，未来换 epoch 必须人工更新 unit。发布侧可在 timer
-  disabled 下 one-shot/full scrub 验收，但 timer 必须等待核心连续 24 小时门禁
-  和主集成复核；任何学习失败都不能改变核心 status、exit code、资本、Champion、
+  只给其 `evolution/` 写权限，未来换 epoch 必须人工更新 unit。发布侧先在 timer
+  disabled 下完成同根 full scrub、幂等 replay、unit/root/rollback 核对，再由 Controller
+  可回退地启用并读取自然增量。最新连续 288 根/24 小时只约束 runtime maturity 以及
+  后续 promotion/risk/execution，不阻断完整 segment 的离线因子/策略评估或学习积累；
+  任何学习失败都不能改变核心 status、exit code、资本、Champion、
   风险或订单。
 - `fixture_auto_sim.py` 是薄兼容 facade；实现位于 `fixture_sim/`。该网络关闭纵向切片只接受显式 fixture/mock，以 1h regime、15m decision、closed 5m 证据及 observed-at-or-later executable quote 生成冻结 Champion 的本地 `fixture_simulated` intent/receipt，并写入 Crypto 自有 append-only 资本链、对账和非晋级复盘；它没有 execution authority，也不是 TradingDatas adapter、scheduler、Testnet 或 Live runtime。
 - 本批纵向切片是 `crypto-capital-v1` 本地 fixture opening 闭环的唯一可写入口，但仍固定为 `local_fixture_simulated_candidate`，没有 execution/runtime/live authority。旧 `crypto-shadow-sim-v1` 仅保留历史证据。

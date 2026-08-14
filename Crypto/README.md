@@ -271,10 +271,14 @@ tracked 候选包含：
 - `tradingagent-crypto-delayed-paper-learning-scrub.service/.timer`：每日独立
   full scrub。
 
-两组 learning timer 均由仓库保持默认未启用。发布侧可先安装 unit、创建现役
-epoch 的 `evolution/`、执行 disabled one-shot 与 full scrub；只有核心连续
-24 小时门禁通过并经主集成复核后才可 enable timer。学习失败不得改变核心
-status、exit code、资本或订单。
+两组 learning timer 的仓库安装默认值均为 disabled；该默认值不代表现役生产状态。
+发布侧先安装 unit、创建现役 epoch 的 `evolution/`，在 disabled 状态完成同根 full
+scrub、幂等 replay、unit/root/rollback 核对，再由 Controller 可回退地 enable 并读取
+自然增量。最新连续 288 根/24 小时只用于 runtime maturity 与后续
+promotion/risk/execution，不阻断完整 segment 的离线因子/策略滚动评估。任何当前
+timer、release、checkpoint 或样本计数必须从同轮 systemd/运行 readback 或带时间的
+状态报告取得，不能从本 README 推断。学习失败不得改变核心 status、exit code、资本
+或订单。
 
 ## 退出影子与健康快照
 
