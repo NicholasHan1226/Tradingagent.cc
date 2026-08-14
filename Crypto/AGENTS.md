@@ -3,16 +3,22 @@
 > **阅读顺序：** [AGENTS.md](../AGENTS.md) → [STATUS.md](../STATUS.md) → 本文件
 
 ## 目标
-加密货币交易模拟盘/影子盘，按 7x24 市场语义建设持续观察和复盘能力。当前只验证 fixture/mock 下的候选模块；监控频率、数据覆盖和策略有效性必须由后续样本证明，不能把“高频训练”写成已实现能力。
+加密货币交易模拟盘/影子盘，按 7x24 市场语义建设持续观察和复盘能力。现役
+delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
+边界内运行；监控频率、数据覆盖和策略有效性仍必须由后续样本证明，不能把“高频训练”
+写成已实现能力或交易 authority。
 
 ## 现有代码
 - `tradingagent/Crypto/` 内为现役实体代码，不再依赖 `/opt/investment/Crypto/tools/` 旧目录。
-- 当前资本写能力只有 `fixture_auto_sim.py`/`fixture_sim/` 本地非权威纵向切片。`delayed_paper_runtime.py` 已作为 sim-only 核心随 `e8ba46d7e0cab847d0fa037290e7368c69c54655` 发布，并由主集成在 2026-07-28 验证 one-shot、幂等重放、相邻自动轮和 timer enabled/active；这只证明本地 delayed-paper 自动积累，不授予 Testnet/live/production execution authority。`delayed_paper_learning.py` 与 `delayed_paper_learning_worker.py` 是后续独立候选，尚未部署或启用。旧 workflow/simulator/executor/shadow writer 已退役为 tombstone；其余 strategy/validation/report 只作研究辅助。
+- 当前资本写能力只有 `fixture_auto_sim.py`/`fixture_sim/` 本地非权威纵向切片。`delayed_paper_runtime.py` 已作为 sim-only 核心随 `e8ba46d7e0cab847d0fa037290e7368c69c54655` 发布，并由主集成在 2026-07-28 验证 one-shot、幂等重放、相邻自动轮和 timer enabled/active；这只证明本地 delayed-paper 自动积累，不授予 Testnet/live/production execution authority。`delayed_paper_learning.py` 与 `delayed_paper_learning_worker.py` 由现有 G5 learning/scrub units 作为 detached offline 路径消费；其当前 release、enablement 与 readback 以 `STATUS.md`/`AUTODEV_STATE.json` 同轮事实为准，不从本文件推断。旧 workflow/simulator/executor/shadow writer 已退役为 tombstone；其余 strategy/validation/report 只作研究辅助。
 - 数据源只读 TradingDatas 的 `GET /v1/catalog` 与 `POST /v1/query`；TradingDatas fresh handoff 前只允许显式 fixture/mock。不得由 Crypto 直接调用 Binance、读取 TradingDatas SQLite，或回退到 `/tushare`、`/source_status`、provider 专用 route。
 
 ## 特点
-- 目标市场语义为 24/7、无交易所统一休市；当前不表示全天候任务已安装。
-- 5min delayed-paper 核心已开始自动积累，但连续 24 小时稳定性和策略样本质量仍需运行证据。`Crypto/systemd/` 中核心 timer 的服务器状态与新增学习 timer 候选必须分别验证；仓库文件存在或 `[Install]` 不能证明学习 timer 已安装、enabled 或 active。
+- 目标市场语义为 24/7、无交易所统一休市；这不表示所有可选任务都已安装。
+- 5min delayed-paper 核心与现有 G5 learning/scrub units 的服务器 enablement、immutable
+  release 和 timer 状态必须分别从 `STATUS.md`/`AUTODEV_STATE.json` 同轮读回；仓库文件存在、
+  install-default 或 `[Install]` 不能替代当前运行证据。连续 24 小时稳定性和策略样本质量仍
+  只由后续运行证据证明。
 - server-local paper、Binance Spot Testnet 和未来 Binance Spot Live 是三份不同合同、账户与凭据域；不能靠切换 base URL 或环境变量升级。当前 `REAL_TRADING_ENABLED=false`，Live adapter 未实现。
 
 ## 当前模块边界

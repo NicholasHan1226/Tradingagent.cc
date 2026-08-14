@@ -1442,6 +1442,32 @@ def test_status_main_readback_cannot_pin_a_self_invalidating_commit_sha() -> Non
         assert stale_count.search(stale_example) is not None
 
 
+def test_crypto_docs_separate_current_g5_facts_from_historical_candidates() -> None:
+    crypto_agents = (ROOT / "Crypto" / "AGENTS.md").read_text(encoding="utf-8")
+    agents_intro = crypto_agents.split("## 当前模块边界", 1)[0]
+    assert "现有 G5 learning/scrub units" in agents_intro
+    assert "尚未部署或启用" not in agents_intro
+
+    readme = (ROOT / "Crypto" / "README.md").read_text(encoding="utf-8")
+    historical = readme.split("## 历史 G4/G5 安装候选（不代表现役状态）", 1)[1]
+    historical = historical.split("## G5 现役 detached learning/scrub 边界", 1)[0]
+    current = readme.split("## G5 现役 detached learning/scrub 边界", 1)[1]
+    current = current.split("## Outage epoch restart 候选", 1)[0]
+    assert "仓库 install-default 可以保持 disabled" in current
+    assert "现役 G5 learning/scrub units" in current
+    assert "288 根连续 closed-5m 只衡量 runtime maturity" in current
+    assert "仓库默认不启用" in historical
+    assert "g4 learning 仍未绑定/启用" in historical
+
+    status = (ROOT / "STATUS.md").read_text(encoding="utf-8")
+    current_summary = status.split("## 2026-08-15 当前交付摘要", 1)[1]
+    current_summary = current_summary.split("## 2026-08-02/03 版本与运行面（历史）", 1)[0]
+    assert "observed_at=2026-08-15T01:17:37+08:00" in current_summary
+    assert "1bc9a0a3275675d68270b952ba70828d2c24083a" in current_summary
+    assert "9a4a174c5631d30afc64d6a1e96ec3832ef43055" in current_summary
+    assert "c8545575d823b8b1f8967460a33713124a5f6542" not in current_summary
+
+
 def test_front_lockfile_excludes_vulnerable_postcss_source_map_loader() -> None:
     lockfile = json.loads((ROOT / "front" / "package-lock.json").read_text())
     package = lockfile["packages"]["node_modules/postcss"]

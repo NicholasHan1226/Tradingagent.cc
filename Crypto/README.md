@@ -232,8 +232,9 @@ learning 候选不读取或修改 manifest、token、18083、核心 unit 或 tim
 
 ## 学习解耦边界
 
-`delayed_paper_learning_worker.py` 是独立离线候选；核心 runtime 不 import、
-调用或恢复它，也不读取或创建 `evolution/`。学习 worker 只异步消费核心已完成的
+`delayed_paper_learning_worker.py` 是现有 G5 detached learning/scrub units 使用的
+独立离线 worker；核心 runtime 不 import、调用或恢复它，也不读取或创建 `evolution/`。
+学习 worker 只异步消费核心已完成的
 append-only observation/completion/decision/capital 证据，所有输出固定
 `learning_mode=detached_offline_worker`、`learning_authority=false`、
 `execution_authority=false`、`production_eligible=false`。
@@ -387,6 +388,11 @@ learning、promotion、risk、execution、production 或 live authority；该路
 core、capital、order、Champion 或现有 `round_trip_learning/`，也不使用网络或模型。
 50 条标签初筛不构成策略有效或自动晋级。
 
+## 历史 G4/G5 安装候选（不代表现役状态）
+
+以下段落保留旧 G4/G5 one-shot、安装和迁移候选的审计语境；它们不能替代
+`STATUS.md`/`AUTODEV_STATE.json` 的当前 release、unit、timer 或 checkpoint readback。
+
 `delayed_paper_round_trip_runtime.py` 是隔离 round-trip epoch 的唯一 closed-5m
 server wrapper。
 它仅复用已冻结的 TradingDatas manifest、token-file transport 与 13-bar 门禁，
@@ -465,56 +471,39 @@ epoch）、核心 fresh、无 pending、Decision Ledger 计数一致且 capital 
 固定为 disabled full-scrub + 幂等 replay；只有两项通过后才允许发布流程启用
 incremental learning。该 unit 是日常报告和告警证据，不是交易调度器。
 
+## G5 现役 detached learning/scrub 边界
+
 G5 是从只读 G4 通过版本化 recovery manifest 与 append-only supersession
 receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile 或账本原地
 改写后继续运行。`tradingagent-crypto-round-trip-g5-{delayed-paper,health,acceptance}`
 三组 unit 各自只读取固定 G5 环境文件；core 仅能写唯一 G5 root，同时只读 G4 与
-旧 G2 根以验证 predecessor anchors。仓库默认不启用任何 G5 timer；发布侧必须先
-创建并读回唯一 G5 root（`tradingagent:tradingagent`、0700、非 symlink），再安装/
-启用 unit；该 unit 也会断言此目录存在，避免 sandbox 在首次 timer 触发时因缺目录
-失败。随后才可在 one-shot、同槽 replay、资本/持仓/订单/receipt 守恒与零重复 fill
-验收后启用 timer。
-G5 acceptance 仍只报告 `not_ready` 或 `eligible`，并沿用 288 根连续 closed-5m
-completion 的 learning maturity 门槛；它不因 epoch generation 改变而放宽门禁。
-为避免日常只读 gate 与核心 writer 争用同一 append-only ledger，G5 acceptance unit
-使用 `After=` 排在 accumulator 之后；若 accumulator 已在运行，acceptance 只排队等待，
-不会终止正在运行的 writer。反向地，accumulator unit 以 `ExecCondition=` 读取
-acceptance 的 `ActiveState`：若 acceptance 已处于 `active`、`activating` 或
-`deactivating`，本次五分钟 occurrence 以跳过方式结束，绝不停止 acceptance；若
-accumulator 先启动，acceptance 的 `After=` 关系使其等待 writer 完成。两种启动顺序都
-保持下一自然 cadence 可继续；定时器计划本身不变，但冲突的五分钟 occurrence 允许
-安全跳过。该机制不授予 acceptance 任何写入、学习或交易 authority。
+旧 G2 根以验证 predecessor anchors。仓库 install-default 可以保持 disabled，
+但这只是安装安全默认，不是当前生产状态；现役 G5 learning/scrub units 的
+immutable release、enablement 与自然 readback 以 `STATUS.md`/`AUTODEV_STATE.json`
+同轮事实为准。发布侧仍须在新 release 上先完成 one-shot、同槽 replay、资本/持仓/订单/
+receipt 守恒与零重复 fill 验收，再按可回退流程切换 unit。
+G5 acceptance 的 288 根连续 closed-5m 只衡量 runtime maturity 及后续
+promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛。
 
-G5 的 learning projection 使用独立的
-`tradingagent-crypto-round-trip-g5-learning` 与 daily
-`...-learning-scrub` unit 候选。它们仅接受 G5 versioned round-trip manifest，且只能
-写入 `crypto-delayed-paper-round-trip-epoch-g5-20260801/evolution/`；G4/G2 根、自由
-output root、网络、核心 observation、capital、order、Champion 与自动风险扩张都不在
-其权限内。两组 G5 timer 默认 disabled。即使 acceptance 已 eligible，也必须先在
-disabled 状态完成同一 G5 根的 full scrub 与精确幂等 replay，并读回 projection/
-checkpoint identity，才可由受控发布流程单独决定是否启用；daily scrub 不因该决定而
-替代 core 收集或成为交易调度器。
+为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的
+5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽
+PIT 校验。其 bounded backlog、journal 摘要、单请求超时和 checkpoint 恢复规则沿用既有
+G5 合同；它们不改变 receipt、资本、timer 或任何执行权限。
 
-G5 full scrub 每次对该只读 store 的 decision ledger 只做一次完整链校验并按
-sequence 建立进程内索引，之后仍逐条复核 observation/completion/event index 与
-projection receipt。它有低于 systemd 120 秒上限的内部单调时间预算，并且只会在两个
-完整 source record 或 observation 之间停止。`deferred_inventory_time_budget` 表示尚未
-建立完整冻结 inventory，因而不会写任何 learning artifact；`deferred_time_budget` 是
-inventory 已完成后的受控未完成状态：只保留已经
-绑定 source completion sha 与 projection receipt sha 的 append-only checkpoint，绝不
-写 worker state 或 full-scrub certificate，也不给 incremental 学习资格。下一次
-Controller 受控的 disabled scrub/replay 必须先重新验证 root identity、冻结 inventory
-和所有已有 checkpoint/receipt binding；任何漂移均失败关闭。只有完整 scrub 和同根
-幂等 replay 都成功后，Controller 才能考虑启用这两组 simulation-only timer。
+G5 的现役 learning projection 使用既有
+`tradingagent-crypto-round-trip-g5-learning` 与 daily `...-learning-scrub` units；
+factor research 是这两组 units 的 subordinate path，没有 standalone unit 或 authority。
+它们只能写入 `crypto-delayed-paper-round-trip-epoch-g5-20260801/evolution/`；G4/G2 根、
+自由 output root、网络、核心 observation、capital、order、Champion 与自动风险扩张都不在
+其权限内。未来 release 仍须先在 disabled 状态完成同根 full scrub 与精确幂等 replay，
+并读回 projection/checkpoint identity；daily scrub 不替代 core 收集或成为交易调度器。
 
-为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽 PIT 校验。这带来 5 分钟的模拟延迟，但给采集独立完成和落库留出了一个完整周期，而非用直接 service 依赖进行耦合。若主机停机造成 timer 漏触发，runtime 用 checkpoint 从最早缺失 slot 开始补处理；每次最多两根，未追平的 `backlog_pending` receipt 会让该轮失败并保留缺口，不把它伪装成最新成功。新的 `data_reject` receipt 记录请求的 window/cutoff，只读报告会将它作为 gap 证据展示；没有这些 receipt 的缺口仍标为未分类，不伪造外部原因。
-核心单请求超时固定为 8 秒：该值覆盖正式 18083 已验证的冷路径 catalog 尾延迟，且两轮
-最坏分页预算仍低于 systemd 的 180 秒停止线；超时不重试、不回退，也不放宽 freshness。
-G5 runtime 成功或已分类的非零 backlog 时写入 systemd journal 的仅是有界的
-`tradingagent.crypto.round_trip_server_journal.v1` 摘要：slot、请求窗口、runtime/profile
-指纹、数据访问计数与 simulation-only flags。完整 `core_result`、订单和资本对象不写入
-journal；它们继续只在受控的 Crypto audit ledger 中审计。该日志投影不改变 receipt、资本、
-timer 或任何执行权限。
+G5 full scrub 仍对该只读 store 的 decision ledger 做完整链校验，并逐条复核
+observation/completion/event index、projection receipt 与 checkpoint checksum 链。
+它受现有 systemd 预算约束；`deferred_inventory_time_budget` 与
+`deferred_time_budget` 只保留可重试的 append-only evaluation debt，不写 full-scrub
+certificate 或授予 incremental 学习资格。任何漂移都失败关闭，完整 scrub 与同根幂等
+replay 均通过后才可考虑后续受控 release。
 
 ## Outage epoch restart 候选
 

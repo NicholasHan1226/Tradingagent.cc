@@ -2,10 +2,11 @@
 
 ## 2026-08-15 当前交付摘要
 
-> `observed_at=2026-08-15T01:09:27+08:00`。本地 source、GitHub `main` 与普通服务器
-> 源码均为 `c8545575d823b8b1f8967460a33713124a5f6542`；该提交尚未发布到现役 Crypto
-> learning/scrub runtime，两者仍钉住
-> `9a4a174c5631d30afc64d6a1e96ec3832ef43055`。00:43 的自然 incremental cadence
+> `observed_at=2026-08-15T01:17:37+08:00`。本地 source、GitHub `main` 与普通服务器
+> 源码均为 `1bc9a0a3275675d68270b952ba70828d2c24083a`；现役 Crypto
+> learning/scrub runtime 仍分别钉住不可变 release
+> `9a4a174c5631d30afc64d6a1e96ec3832ef43055`，本次 source parity 没有切换 runtime。
+> 00:43 的自然 incremental cadence
 > 约 32 秒、`exit=0`，返回 `status=projected`、`completion_count=2963`、
 > `projected_completion_count=2963`；factor 投影返回 `full_scrub_required`，对应
 > evaluation debt 保留到既有 03:35 daily scrub 处理。源码同步、runtime pin、自然轮
