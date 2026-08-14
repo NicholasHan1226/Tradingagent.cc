@@ -178,6 +178,16 @@ def test_worker_admits_only_matching_g4_or_g5_manifest_generation(
         "run_crypto_delayed_paper_round_trip_learning_full_scrub",
         lambda *, output_root: seen.append(output_root) or {"status": "recovered"},
     )
+    monkeypatch.setattr(
+        worker_module,
+        "run_crypto_delayed_paper_factor_research_full_scrub",
+        lambda *, output_root: {"status": "scrubbed"},
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "run_factor_strategy_post_projection",
+        lambda *, output_root: {"status": "no_new_outcome"},
+    )
 
     result = worker_module.run_round_trip_learning_worker_once(
         mode="full-scrub", epoch_manifest=manifest
@@ -186,6 +196,111 @@ def test_worker_admits_only_matching_g4_or_g5_manifest_generation(
     assert seen == [root]
     assert result["epoch_generation"] == generation
     assert result["epoch_output_root"] == str(root)
+    assert result["factor_projection"]["status"] == "scrubbed"
+    assert result["factor_strategy_evaluation"]["status"] == "no_new_outcome"
+
+
+def test_worker_evaluation_failure_is_retryable_debt_after_projection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    manifest = manifest_directory / "crypto-delayed-paper-round-trip-epoch-g5-test.json"
+    identity = tmp_path / "identity.json"
+    identity.write_bytes(b"identity")
+    root = worker_module.ROUND_TRIP_LEARNING_EPOCH_ROOTS[5]
+    context = SimpleNamespace(
+        epoch_generation=5, output_root=root, identity_path=identity,
+        epoch_id="g5-test", manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=root, identity_path=identity)
+    monkeypatch.setattr(worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory)
+    monkeypatch.setattr(worker_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(worker_module, "_existing_epoch_root", lambda _: None)
+    monkeypatch.setattr(worker_module, "prepare_round_trip_epoch_candidate", lambda _: prepared)
+    monkeypatch.setattr(
+        worker_module, "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {"status": "current"},
+    )
+    monkeypatch.setattr(
+        worker_module, "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: {"status": "projected_incremental", "completion_count": 7},
+    )
+    monkeypatch.setattr(
+        worker_module, "run_factor_strategy_post_projection",
+        lambda *, output_root: (_ for _ in ()).throw(
+            worker_module.CryptoFactorStrategyPostProjectionError(
+                "factor_strategy_evaluation_failed"
+            )
+        ),
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+
+    assert result["factor_projection"]["status"] == "projected_incremental"
+    assert result["factor_strategy_evaluation"]["status"] == "evaluation_debt"
+    assert result["factor_strategy_evaluation"]["retry_on_next_learning_cadence"] is True
+    assert result["factor_strategy_evaluation"]["stage"] == "factor_strategy_evaluation"
+    assert result["factor_strategy_evaluation"]["reason"] == "factor_strategy_evaluation_failed"
+    assert result["factor_strategy_evaluation"]["execution_authority"] is False
+
+
+def test_worker_factor_projection_failure_is_retryable_debt_after_learning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_directory = tmp_path / "round-trip-epochs"
+    manifest_directory.mkdir()
+    manifest = manifest_directory / "crypto-delayed-paper-round-trip-epoch-g5-test.json"
+    identity = tmp_path / "identity.json"
+    identity.write_bytes(b"identity")
+    root = worker_module.ROUND_TRIP_LEARNING_EPOCH_ROOTS[5]
+    context = SimpleNamespace(
+        epoch_generation=5, output_root=root, identity_path=identity,
+        epoch_id="g5-test", manifest_sha256="a" * 64,
+    )
+    prepared = SimpleNamespace(output_root=root, identity_path=identity)
+    monkeypatch.setattr(worker_module, "ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY", manifest_directory)
+    monkeypatch.setattr(worker_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(worker_module, "_existing_epoch_root", lambda _: None)
+    monkeypatch.setattr(worker_module, "prepare_round_trip_epoch_candidate", lambda _: prepared)
+    monkeypatch.setattr(
+        worker_module, "run_crypto_delayed_paper_round_trip_learning_incremental",
+        lambda *, output_root: {"status": "current", "projected_completion_count": 7},
+    )
+    monkeypatch.setattr(
+        worker_module, "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: (_ for _ in ()).throw(
+            worker_module.CryptoFactorProjectionError("factor_projection_source_invalid")
+        ),
+    )
+    monkeypatch.setattr(
+        worker_module, "run_factor_strategy_post_projection",
+        lambda *, output_root: pytest.fail("evaluation ran after factor projection debt"),
+    )
+
+    result = worker_module.run_round_trip_learning_worker_once(
+        mode="incremental", epoch_manifest=manifest
+    )
+
+    assert result["status"] == "current"
+    assert result["projected_completion_count"] == 7
+    assert result["factor_projection"] == result["factor_strategy_evaluation"]
+    assert result["factor_projection"]["status"] == "evaluation_debt"
+    assert result["factor_projection"]["stage"] == "factor_projection"
+    assert result["factor_projection"]["reason"] == "factor_projection_failed"
+    assert result["factor_projection"]["retry_on_next_learning_cadence"] is True
+    assert result["factor_projection"]["execution_authority"] is False
+
+    monkeypatch.setattr(
+        worker_module, "run_crypto_delayed_paper_factor_research_incremental",
+        lambda *, output_root: (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+    with pytest.raises(RuntimeError, match="unexpected"):
+        worker_module.run_round_trip_learning_worker_once(
+            mode="incremental", epoch_manifest=manifest
+        )
 
 
 def test_worker_rejects_g5_manifest_with_g4_context_before_root_access(
