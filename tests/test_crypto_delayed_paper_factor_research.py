@@ -249,6 +249,134 @@ def _shift_source(source: dict[str, object], minutes: int) -> dict[str, object]:
     return shifted
 
 
+def _continuous_sources(
+    source: dict[str, object], count: int
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for sequence in range(count):
+        shifted = _shift_source(source, sequence * 5)
+        observation = shifted["observation"]
+        assert isinstance(observation, dict)
+        observation["observation_id"] = f"budget-source-{sequence:04d}"
+        shifted["completion_sha256"] = f"{sequence + 1:064x}"
+        rows.append(shifted)
+    return rows
+
+
+def _factor_files(root: Path) -> dict[str, bytes]:
+    evolution = root / "evolution" / "factor_research"
+    return {
+        path.relative_to(evolution).as_posix(): path.read_bytes()
+        for path in sorted(evolution.rglob("*"))
+        if path.is_file() and path.name != ".lock"
+    }
+
+
+def test_full_scrub_inventory_budget_defers_before_factor_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _complete(tmp_path)
+    clock = iter((0.0, 111.0))
+    monkeypatch.setattr(research, "monotonic", lambda: next(clock))
+
+    deferred = run_crypto_delayed_paper_factor_research_full_scrub(
+        output_root=tmp_path
+    )
+
+    assert deferred == research._result(
+        status="deferred_inventory_time_budget", inventory_complete=False
+    )
+    assert not (tmp_path / "evolution" / "factor_research").exists()
+
+
+def test_full_scrub_budget_resume_matches_uninterrupted_and_skips_consumers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source_root = tmp_path / "source"
+    _complete(source_root)
+    source_inventory = research._sources(source_root)
+    assert source_inventory is not None
+    _, seed_sources = source_inventory
+    sources = _continuous_sources(seed_sources[0], 13)
+    monkeypatch.setattr(
+        research,
+        "_sources",
+        lambda _root, *, deadline=None: (object(), sources),
+    )
+
+    interrupted_root = tmp_path / "interrupted"
+    clock = iter((*([0.0] * 16), 111.0))
+    monkeypatch.setattr(research, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        research,
+        "_learning_eligible_samples",
+        lambda *_args, **_kwargs: pytest.fail("eligible samples ran after deferral"),
+    )
+    monkeypatch.setattr(
+        research,
+        "evaluate_factor_hypotheses",
+        lambda *_args, **_kwargs: pytest.fail("report ran after deferral"),
+    )
+
+    deferred = run_crypto_delayed_paper_factor_research_full_scrub(
+        output_root=interrupted_root
+    )
+
+    assert deferred["status"] == "deferred_time_budget"
+    assert deferred["verified_record_count"] == 13
+    assert deferred["verified_label_source_count"] == 1
+    assert deferred["label_count"] == 2
+    assert factor_projection_exit_code(deferred) == 0
+
+    monkeypatch.undo()
+    monkeypatch.setattr(
+        research,
+        "_sources",
+        lambda _root, *, deadline=None: (object(), sources),
+    )
+    monkeypatch.setattr(research, "monotonic", lambda: 0.0)
+    resumed = run_crypto_delayed_paper_factor_research_full_scrub(
+        output_root=interrupted_root
+    )
+    assert resumed["status"] == "scrubbed"
+
+    uninterrupted_root = tmp_path / "uninterrupted"
+    uninterrupted = run_crypto_delayed_paper_factor_research_full_scrub(
+        output_root=uninterrupted_root
+    )
+    assert uninterrupted["status"] == "recovered"
+    assert _factor_files(interrupted_root) == _factor_files(uninterrupted_root)
+
+
+def test_full_scrub_resume_fails_closed_for_a_tampered_deferred_label(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source_root = tmp_path / "source"
+    _complete(source_root)
+    source_inventory = research._sources(source_root)
+    assert source_inventory is not None
+    _, seed_sources = source_inventory
+    sources = _continuous_sources(seed_sources[0], 13)
+    monkeypatch.setattr(
+        research,
+        "_sources",
+        lambda _root, *, deadline=None: (object(), sources),
+    )
+    clock = iter((*([0.0] * 16), 111.0))
+    monkeypatch.setattr(research, "monotonic", lambda: next(clock))
+    root = tmp_path / "tampered"
+    deferred = run_crypto_delayed_paper_factor_research_full_scrub(output_root=root)
+    assert deferred["status"] == "deferred_time_budget"
+    label = next((root / "evolution" / "factor_research" / "labels").glob("*.json"))
+    label.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(research, "monotonic", lambda: 0.0)
+    with pytest.raises(
+        CryptoFactorProjectionError, match="factor_projection_immutable_conflict"
+    ):
+        run_crypto_delayed_paper_factor_research_full_scrub(output_root=root)
+
+
 def test_labels_only_bind_to_the_exact_later_observed_window(tmp_path: Path) -> None:
     _complete(tmp_path)
     _, sources = research._sources(tmp_path)
