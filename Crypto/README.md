@@ -361,22 +361,29 @@ capital commit、自动 Champion 晋级或风险扩张。
 它只比较三项预注册的研究假设：时间序列动量、趋势内回调、量能突破。标签固定
 为未来 1h/4h/12h/24h 的保守费用后收益，均使用已观察的未来价格；没有任何一项
 结果会变成订单、仓位、Champion、风险预算或自动晋级。50 个标签只是初筛下限，
-绝不构成策略 edge 或晋级授权。后续若要接到 detached worker，必须另行冻结
-append-only 路径、full-scrub/幂等合同与 server one-shot，不能写入 core root。
+绝不构成策略 edge 或晋级授权。它已通过下述 manifest-bound subordinate path 接入，
+同时保持 append-only、full-scrub、幂等与 core-root 隔离边界。
 
-`delayed_paper_factor_research.py` 与其 manifest-bound worker 是未部署的
-detached projection：它按 shared readiness contract 的连续 segment 独立处理，向
-`g4/evolution/factor_research/` 追加 snapshot、receipt、checkpoint 和随后可用的
-未来价格标签。其冻结 consumer profile 为
+`delayed_paper_factor_research.py` 与其 manifest-bound worker 没有 standalone
+authority/unit，但已作为现有 G5 round-trip learning/scrub units 的 subordinate path
+部署：它按 shared readiness contract 的连续 segment 独立处理，向 runtime-provided
+epoch root 下的 `evolution/factor_research/` 追加 snapshot、receipt、checkpoint 和随后
+可用的未来价格标签；G4 只保留为历史证据，不是当前部署 root。其冻结 consumer profile 为
 `crypto-5m-ohlcv-13bar-forward-labels-v1`：13 根 5m OHLCV 输入，且每个样本的
 1h future label 必须在同一连续 segment 内完整、证据一致，才会计入
 `label_learning_eligible`。4h/12h/24h 是继续生成且每日 scrub 的辅助归因，当前
 研究假设不会消费它们；若未来成为必要输入，必须升级 profile 版本。gap 永远切断
-segment；任何 feature/label 不能跨缺口拼接。最近连续 288 根仍只表示 automatic runtime maturity，不阻断
-已完整 segment 的 detached offline projection，也不授权 learning timer、Champion、
-风险扩张或真实执行。routine incremental 仅验证当前 completion 与前一 projection
-receipt/checkpoint；daily full scrub 才重验完整 core completion、投影、标签和
-checkpoint 链。篡改、缺失或不连续会 fail closed。它没有 service/timer，不能写
+segment；任何 feature/label 不能跨缺口拼接。最近连续 288 根仍只表示 automatic
+runtime maturity，不阻断已完整 segment 的 detached offline projection，也不授权
+learning timer、Champion、风险扩张或真实执行。routine incremental 只处理本轮新增
+completion 并验证前一 projection receipt/checkpoint；没有新增 resolved label/outcome
+时，它通过 compact evaluation checkpoint 确定性返回 `no_new_outcome`，不扫描完整
+strategy inventory，也不改写既有 artifact。只有显式新增 resolved label 才评估本轮
+outcome；历史 labels 及其 strategy evaluation 只由 daily full scrub 补齐，full scrub
+同时重验完整 core completion、投影、标签和 checkpoint 链。篡改、缺失或不连续会
+fail closed；受控失败只形成可重试 evaluation debt，不回滚已完成的 learning/factor
+投影。所有 factor/strategy artifact 与 recommendation 都是 private shadow，固定没有
+learning、promotion、risk、execution、production 或 live authority；该路径不能写
 core、capital、order、Champion 或现有 `round_trip_learning/`，也不使用网络或模型。
 50 条标签初筛不构成策略有效或自动晋级。
 
@@ -619,8 +626,9 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - 核心 runtime 已有 sim-only 自动轮证据，但尚未通过连续 24 小时稳定性门禁；
 - outage epoch 已在服务器以独立 generation-2 root 恢复自动轮；旧 root 保持
   只读封存，两个 epoch 的资本、收益和样本禁止聚合；
-- 离线学习 worker/service/timer 仍是未部署候选，核心不会创建 `evolution/`
-  或执行学习恢复；
+- learning worker/service/timer 在仓库中的 install-default 可以保持 disabled，production
+  current state 只以 STATUS/state 为准；现有 G5 learning/scrub units 已运行，核心仍不会
+  创建 `evolution/` 或执行学习恢复；
 - 没有 Binance Spot Testnet/Live adapter、真实账户、密钥、User Data Stream 或外部订单；
 - 现役 core Champion 仍只覆盖 deterministic buy/observe；round-trip
   generation 与 epoch-g3/g4 目前只是未部署候选，不代表现役 timer 已有卖出；

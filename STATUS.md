@@ -1,19 +1,21 @@
 # TradingAgent 历史状态快照
 
-## 2026-08-14 当前交付摘要
+## 2026-08-15 当前交付摘要
 
-> `observed_at=2026-08-14T23:03+08:00`。GitHub `main` 与普通服务器源码均为
-> `352fc002c6dd07be0d49a50b1d7e17e3daa2dab3`；该提交增加的是 Crypto 投影完成后的
-> 有界因子/策略滚动评估入口，尚未发布为新的 runtime unit，因此不能把源码合并写成
-> 自动评估已在生产触发。现役 Crypto 组件仍按 unit 独立钉住：核心 `9323de3`、健康
-> `bc2bf75`、增量学习与 scrub `36545de`；全局 `current` 仍为 `3e6933d`。核心、健康、
-> 增量学习与 daily scrub timer 的同轮 systemd readback 均为 enabled/active；这些
-> timer 只积累 simulation/offline 证据，不具备 promotion、risk expansion、execution
-> 或 live authority。当前精确运行事实仍以 AutoDev state 加同轮运行读回为准。
+> `observed_at=2026-08-15T01:09:27+08:00`。本地 source、GitHub `main` 与普通服务器
+> 源码均为 `c8545575d823b8b1f8967460a33713124a5f6542`；该提交尚未发布到现役 Crypto
+> learning/scrub runtime，两者仍钉住
+> `9a4a174c5631d30afc64d6a1e96ec3832ef43055`。00:43 的自然 incremental cadence
+> 约 32 秒、`exit=0`，返回 `status=projected`、`completion_count=2963`、
+> `projected_completion_count=2963`；factor 投影返回 `full_scrub_required`，对应
+> evaluation debt 保留到既有 03:35 daily scrub 处理。源码同步、runtime pin、自然轮
+> 结果和后续 scrub 是独立证据层，不能互相替代。
 
 > Factor/Strategy MVP 已进入 rolling evaluation：单样本/单窗口只证明 receipt/PIT、
 > 成本、基线和确定性 artifact 管线跑通，不证明 edge。参数、晋级、风险或资本变化仍需
-> 新增独立结果、滚动覆盖、time-split/OOS 与多重比较意识下的复核。
+> 新增独立结果、滚动覆盖、time-split/OOS 与多重比较意识下的复核。上述 incremental、
+> debt 与 scrub 均固定为 offline/private shadow，不具备 promotion、risk expansion、
+> execution 或 live authority。
 
 > 本文件冻结于 2026-08-02/03，以下 commit、timer、receipt 和“下一停止线”仅是
 > 当时的历史快照，不再代表当前运行事实。当前跨线状态以
