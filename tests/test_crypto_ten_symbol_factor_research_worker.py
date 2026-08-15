@@ -278,3 +278,40 @@ def test_worker_defers_evaluation_when_scrub_defers(
     evaluation = result["strategy_evaluation"]
     assert evaluation["status"] == "evaluation_deferred"
     assert evaluation["reason"] == "scrub_status_deferred_core_pending"
+
+
+def test_worker_incremental_catches_up_bounded_backlog(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    token_file, output_root, _ = _bind_worker_manifest(monkeypatch, tmp_path)
+    _accumulate(monkeypatch, tmp_path, token_file, output_root, 2)
+    scrubbed = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
+    assert scrubbed["status"] == "recovered"
+    for index in (2, 3, 4):
+        end = WINDOW_END + index * timedelta(minutes=5)
+        receipt = _run(
+            tmp_path,
+            token_file,
+            output_root,
+            now=end + timedelta(seconds=55),
+            transport_factory=_factory(TenSymbolFixtureTransport()),
+        )
+        assert receipt["status"] == "completed"
+
+    result = run_ten_symbol_factor_research_worker_once(mode="incremental")
+
+    assert result["status"] == "projected_incremental"
+    assert result["projected_count"] == 3
+    assert result["remaining_count"] == 0
+    assert result["strategy_evaluation"]["status"] == "no_evaluation_checkpoint"
+
+    follow_up = run_ten_symbol_factor_research_worker_once(mode="incremental")
+    assert follow_up["status"] == "up_to_date"
+
+    exit_code = worker.main(["--mode", "incremental"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert json.loads(captured.out)["status"] == "up_to_date"

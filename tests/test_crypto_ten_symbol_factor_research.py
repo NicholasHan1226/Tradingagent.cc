@@ -472,17 +472,26 @@ def test_incremental_requires_scrub_then_projects_one_slot_at_a_time(
             transport_factory=_factory(TenSymbolFixtureTransport()),
         )
         assert receipt["status"] == "completed"
-    backlog = run_crypto_ten_symbol_factor_research_incremental(
+    # A two-slot backlog is worked off inside the same invocation instead of
+    # deferring to the daily full scrub.
+    caught_up = run_crypto_ten_symbol_factor_research_incremental(
         output_root=output_root
     )
-    assert backlog["status"] == "full_scrub_required"
-    assert backlog["reason"] == "ten_symbol_factor_projection_incremental_backlog"
+    assert caught_up["status"] == "projected_incremental"
+    assert caught_up["projected_count"] == 2
+    assert caught_up["remaining_count"] == 0
+    assert ten_symbol_factor_projection_exit_code(caught_up) == 0
     assert _store_bytes(output_root) != before
 
+    up_to_date = run_crypto_ten_symbol_factor_research_incremental(
+        output_root=output_root
+    )
+    assert up_to_date["status"] == "up_to_date"
     scrubbed = run_crypto_ten_symbol_factor_research_full_scrub(
         output_root=output_root
     )
     assert scrubbed["observation_count"] == 5
+    assert scrubbed["recovered_observation_count"] == 0
     assert len(_checkpoints(output_root)) == 5
 
 
@@ -515,6 +524,194 @@ def test_incremental_projects_ineligible_slot_without_record(
     assert len(checkpoints) == 3
     assert checkpoints[2]["projection_outcome"] == "sidecar_ineligible"
     assert checkpoints[2]["ineligible_reason"] == "sidecar_missing"
+
+
+def _terminal_event_ids(root: Path) -> list[str]:
+    return [
+        str(event["event_id"])
+        for event in CryptoTenSymbolObservationStore(root).events()
+        if event["event_type"] in {"observation", "data_gap"}
+    ]
+
+
+def test_incremental_catches_up_three_slots_in_one_round(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate(monkeypatch, tmp_path, 2)
+    run_crypto_ten_symbol_factor_research_full_scrub(output_root=output_root)
+    token_file = tmp_path / "tradingdatas-crypto-read.token"
+    for index in (2, 3, 4):
+        end = WINDOW_END + index * timedelta(minutes=5)
+        receipt = _run(
+            tmp_path,
+            token_file,
+            output_root,
+            now=end + timedelta(seconds=55),
+            transport_factory=_factory(TenSymbolFixtureTransport()),
+        )
+        assert receipt["status"] == "completed"
+
+    result = run_crypto_ten_symbol_factor_research_incremental(
+        output_root=output_root
+    )
+
+    assert result["status"] == "projected_incremental"
+    assert result["projected_count"] == 3
+    assert result["remaining_count"] == 0
+    assert result["observation_count"] == 5
+    assert ten_symbol_factor_projection_exit_code(result) == 0
+    assert len(_records(output_root)) == 5
+    checkpoints = _checkpoints(output_root)
+    assert len(checkpoints) == 5
+    assert [c["observation_id"] for c in checkpoints] == _terminal_event_ids(
+        output_root
+    )
+    assert [c["sequence"] for c in checkpoints] == [1, 2, 3, 4, 5]
+    for previous, current in zip(checkpoints, checkpoints[1:]):
+        assert current["previous_checkpoint_sha256"] == (
+            previous["checkpoint_sha256"]
+        )
+    assert {c["segment_id"] for c in checkpoints} == {
+        checkpoints[0]["segment_id"]
+    }
+    follow_up = run_crypto_ten_symbol_factor_research_incremental(
+        output_root=output_root
+    )
+    assert follow_up["status"] == "up_to_date"
+
+
+def test_incremental_bounded_catchup_reports_backlog_remaining(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate(monkeypatch, tmp_path, 2)
+    run_crypto_ten_symbol_factor_research_full_scrub(output_root=output_root)
+    token_file = tmp_path / "tradingdatas-crypto-read.token"
+    for index in range(2, 17):
+        end = WINDOW_END + index * timedelta(minutes=5)
+        receipt = _run(
+            tmp_path,
+            token_file,
+            output_root,
+            now=end + timedelta(seconds=55),
+            transport_factory=_factory(TenSymbolFixtureTransport()),
+        )
+        assert receipt["status"] == "completed"
+
+    first = run_crypto_ten_symbol_factor_research_incremental(
+        output_root=output_root
+    )
+
+    assert first["status"] == "backlog_remaining"
+    assert first["projected_count"] == 12
+    assert first["remaining_count"] == 3
+    assert first["observation_count"] == 17
+    assert ten_symbol_factor_projection_exit_code(first) == 0
+    checkpoints = _checkpoints(output_root)
+    assert len(checkpoints) == 14
+    assert [c["observation_id"] for c in checkpoints] == (
+        _terminal_event_ids(output_root)[:14]
+    )
+
+    second = run_crypto_ten_symbol_factor_research_incremental(
+        output_root=output_root
+    )
+    assert second["status"] == "projected_incremental"
+    assert second["projected_count"] == 3
+    assert second["remaining_count"] == 0
+    checkpoints = _checkpoints(output_root)
+    assert len(checkpoints) == 17
+    assert [c["observation_id"] for c in checkpoints] == _terminal_event_ids(
+        output_root
+    )
+    assert (
+        run_crypto_ten_symbol_factor_research_incremental(
+            output_root=output_root
+        )["status"]
+        == "up_to_date"
+    )
+    scrubbed = run_crypto_ten_symbol_factor_research_full_scrub(
+        output_root=output_root
+    )
+    assert scrubbed["status"] == "scrubbed"
+    assert scrubbed["recovered_observation_count"] == 0
+    assert len(_checkpoints(output_root)) == 17
+
+
+def test_incremental_catchup_segment_rolling_matches_full_scrub(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Root A: scrub base of 2 slots, then a bounded catch-up across a
+    # backlog whose middle slot loses its sidecar.
+    root_a = _accumulate(monkeypatch, tmp_path / "a", 2)
+    run_crypto_ten_symbol_factor_research_full_scrub(output_root=root_a)
+    token_file = tmp_path / "a" / "tradingdatas-crypto-read.token"
+    for index in (2, 3, 4):
+        end = WINDOW_END + index * timedelta(minutes=5)
+        receipt = _run(
+            tmp_path / "a",
+            token_file,
+            root_a,
+            now=end + timedelta(seconds=55),
+            transport_factory=_factory(TenSymbolFixtureTransport()),
+        )
+        assert receipt["status"] == "completed"
+    missing_end = WINDOW_END + timedelta(minutes=10)
+    store_a = CryptoTenSymbolObservationStore(root_a)
+    store_a.bars_sidecar_path(iso(missing_end)).unlink()
+    caught_up = run_crypto_ten_symbol_factor_research_incremental(
+        output_root=root_a
+    )
+    assert caught_up["status"] == "projected_incremental"
+    assert caught_up["projected_count"] == 3
+
+    checkpoints_a = _checkpoints(root_a)
+    assert [c["projection_outcome"] for c in checkpoints_a] == [
+        "projected",
+        "projected",
+        "sidecar_ineligible",
+        "projected",
+        "projected",
+    ]
+    assert checkpoints_a[2]["ineligible_reason"] == "sidecar_missing"
+    records_a = _records(root_a)
+    segment_by_slot = {record["market_slot"]: record["segment_id"] for record in records_a}
+    first_segment = segment_by_slot[iso(WINDOW_END - timedelta(minutes=5))]
+    assert segment_by_slot[iso(WINDOW_END)] == first_segment
+    # The ineligible slot starts its own marker segment, and the following
+    # eligible slot starts a fresh segment its neighbour continues.
+    new_segment = segment_by_slot[iso(WINDOW_END + timedelta(minutes=10))]
+    assert new_segment != first_segment
+    assert (
+        segment_by_slot[iso(WINDOW_END + timedelta(minutes=15))] == new_segment
+    )
+    # The ineligible slot still belongs to the segment it cuts off (the cut
+    # manifests at the next unit), exactly like full-scrub `_segment_ids`.
+    assert checkpoints_a[2]["segment_id"] == first_segment
+    assert checkpoints_a[2]["segment_id"] != new_segment
+
+    # Root B: identical store built upfront, projected by one full scrub.
+    root_b = _accumulate(monkeypatch, tmp_path / "b", 5)
+    store_b = CryptoTenSymbolObservationStore(root_b)
+    store_b.bars_sidecar_path(iso(missing_end)).unlink()
+    scrubbed = run_crypto_ten_symbol_factor_research_full_scrub(output_root=root_b)
+    assert scrubbed["ineligible_slot_count"] == 1
+
+    def projection_triples(root: Path) -> dict[str, bytes]:
+        evolution = root / "evolution" / "ten_symbol_factor_research"
+        return {
+            path.relative_to(evolution).as_posix(): path.read_bytes()
+            for path in sorted(evolution.rglob("*"))
+            if path.is_file() and path.parent.name in {
+                "records",
+                "receipts",
+                "checkpoints",
+            }
+        }
+
+    assert projection_triples(root_a) == projection_triples(root_b)
 
 
 def test_projection_defers_while_observation_pending(

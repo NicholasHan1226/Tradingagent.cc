@@ -202,10 +202,14 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `crypto-5m-ohlcv-13bar-forward-labels-v2`（10 symbol、required horizon
   60min、aux 240/720/1440、feature set
   `crypto-5m-ohlcv-factor-research-v2`）；三个预注册假设不变，横截面只加
-  标注为 context 的 1h/15m return 排名描述，不加新假设。incremental 每轮
-  只投影一个新槽、不回填 label；daily full scrub 全链校验、补 record、
-  结算同段到期 label 并出 hypothesis report；超时走可重试 deferred
-  debt。worker 只绑定固定
+  标注为 context 的 1h/15m return 排名描述，不加新假设。incremental 不回填
+  label，落后时单次 invocation 按槽序有界自恢复（最多
+  `MAX_CATCHUP_UNITS=12`，checkpoint 与 terminal 槽 1:1，绝不跳槽）；
+  追平返回 `projected_incremental`，仍落后返回非错误 status
+  `backlog_remaining`（退出码 0），segment 逐 unit 滚动且与 full scrub
+  `_segment_ids` 语义一致。daily full scrub 仍是唯一全链校验、补 record、
+  结算同段到期 label 并出 hypothesis report 的路径；超时走可重试
+  deferred debt。worker 只绑定固定
   `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json` 推导
   store root，不接受自由 output root，执行前后重验 manifest 字节与 root
   identity。固定 `authority=none`，零 core/资本/order/Champion/learning
