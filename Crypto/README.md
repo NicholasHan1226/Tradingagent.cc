@@ -629,8 +629,10 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 - `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不随 systemd
   jitter 或重跑墙上时钟漂移。
 - timer 固定在每根 bar close +3m25s，避开现役 Crypto core 的 close +55s
-  调用及其 120 秒预算；计入双方最多 3 秒 jitter 后，前后至少各保留 27 秒余量。
-  两者共享 TD token/API/SQLite surface，禁止恢复为重叠并发。
+  调用并居中放在相邻 core cadence 之间。120 秒业务预算不包含全部进程固定开销，
+  不能据此静态保证无重叠；发布验收必须取得前一 core、ten-symbol reader、后一 core
+  三次自然运行的起止时间与 exit 0。两者共享 TD token/API/SQLite surface，禁止恢复为
+  重叠并发。
 - 每 invocation 最多 2 cycle（pending recovery + 1 fresh，或两个连续处理
   步骤），同时受 120 秒绝对 wall-clock budget 约束；每次 TD wire timeout
   压缩到剩余预算，预算耗尽时保留 pending 与已经完成的增量，不追加伪造的
