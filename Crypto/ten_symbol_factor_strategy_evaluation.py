@@ -45,6 +45,8 @@ EVALUATION_CHECKPOINT_CONTRACT = (
     "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_checkpoint.v1"
 )
 HORIZON_MINUTES = 60
+AUXILIARY_HORIZONS = (240, 720, 1440)
+EVALUATION_HORIZONS = (HORIZON_MINUTES, *AUXILIARY_HORIZONS)
 COST_POLICY_ID = "crypto-round-trip-taker-v1"
 STRATEGY_HYPOTHESIS_PAIRS = {
     "momentum": "time_series_momentum_v1",
@@ -156,6 +158,7 @@ def _sample_binding_sha256(sample: Mapping[str, Any]) -> str:
     material = {
         "snapshot_factor_snapshot_sha256": snapshot.get("factor_snapshot_sha256"),
         "label_forward_label_sha256": label.get("forward_label_sha256"),
+        "horizon_minutes": sample.get("horizon_minutes"),
         "segment_id": sample.get("segment_id"),
         "future_segment_id": sample.get("future_segment_id"),
         "source_event_checksum": sample.get("source_event_checksum"),
@@ -322,53 +325,56 @@ def _inventory(
     samples: list[dict[str, Any]] = []
     for slot, item in records.items():
         record = item["record"]
-        future_slot = _iso(
-            _utc(slot, "market_slot") + timedelta(minutes=HORIZON_MINUTES)
-        )
-        future_item = records.get(future_slot)
-        if not isinstance(future_item, Mapping):
-            continue
-        future_record = future_item["record"]
-        if future_record.get("segment_id") != record.get("segment_id"):
-            continue
         observation_id = str(record["observation_id"])
-        future_id = str(future_record["observation_id"])
-        for symbol in _SYMBOLS:
-            label_path = projection._label_path(
-                root, observation_id, symbol, HORIZON_MINUTES
+        snapshots = record.get("snapshots")
+        source_slot = _utc(slot, "market_slot")
+        for horizon in EVALUATION_HORIZONS:
+            future_item = records.get(
+                _iso(source_slot + timedelta(minutes=horizon))
             )
-            if not label_path.is_file() or label_path.is_symlink():
+            if not isinstance(future_item, Mapping):
                 continue
-            label = projection._parse_canonical(
-                label_path, reason="evaluation_label_invalid"
-            )
-            snapshots = record.get("snapshots")
-            snapshot = snapshots.get(symbol) if isinstance(snapshots, Mapping) else None
-            if not isinstance(snapshot, Mapping):
-                raise CryptoTenSymbolFactorStrategyEvaluationError(
-                    "evaluation_record_invalid"
+            future_record = future_item["record"]
+            if future_record.get("segment_id") != record.get("segment_id"):
+                continue
+            future_id = str(future_record["observation_id"])
+            for symbol in _SYMBOLS:
+                label_path = projection._label_path(
+                    root, observation_id, symbol, horizon
                 )
-            sample = {
-                "snapshot": snapshot,
-                "label": label,
-                "segment_id": record.get("segment_id"),
-                "future_segment_id": future_record.get("segment_id"),
-                "source_event_checksum": record.get("source_event_checksum"),
-                "future_event_checksum": future_record.get(
-                    "source_event_checksum"
-                ),
-                "future_observation_id": future_id,
-                "source_projection_proof": item,
-                "future_projection_proof": future_item,
-                "projection_checkpoint_chain": checkpoints,
-                "expected_checkpoint_head_sha256": head,
-                "cost_policy": _cost_policy(),
-            }
-            sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
-            samples.append(sample)
+                if not label_path.is_file() or label_path.is_symlink():
+                    continue
+                label = projection._parse_canonical(
+                    label_path, reason="evaluation_label_invalid"
+                )
+                snapshot = snapshots.get(symbol) if isinstance(snapshots, Mapping) else None
+                if not isinstance(snapshot, Mapping):
+                    raise CryptoTenSymbolFactorStrategyEvaluationError(
+                        "evaluation_record_invalid"
+                    )
+                sample = {
+                    "snapshot": snapshot,
+                    "label": label,
+                    "horizon_minutes": horizon,
+                    "segment_id": record.get("segment_id"),
+                    "future_segment_id": future_record.get("segment_id"),
+                    "source_event_checksum": record.get("source_event_checksum"),
+                    "future_event_checksum": future_record.get(
+                        "source_event_checksum"
+                    ),
+                    "future_observation_id": future_id,
+                    "source_projection_proof": item,
+                    "future_projection_proof": future_item,
+                    "projection_checkpoint_chain": checkpoints,
+                    "expected_checkpoint_head_sha256": head,
+                    "cost_policy": _cost_policy(),
+                }
+                sample["sample_binding_sha256"] = _sample_binding_sha256(sample)
+                samples.append(sample)
     samples.sort(
         key=lambda sample: (
             str(sample["snapshot"].get("market_slot")),
+            int(sample["horizon_minutes"]),
             str(sample["snapshot"].get("symbol")),
         )
     )
@@ -442,7 +448,10 @@ def _verify_chain_replay(sample: Mapping[str, Any]) -> dict[str, Mapping[str, An
 
 
 def _resolved(
-    sample: Mapping[str, Any], evaluation_as_of: datetime
+    sample: Mapping[str, Any],
+    evaluation_as_of: datetime,
+    *,
+    verified_chain: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], Decimal]:
     snapshot = sample.get("snapshot")
     label = sample.get("label")
@@ -466,9 +475,13 @@ def _resolved(
         raise CryptoTenSymbolFactorStrategyEvaluationError(
             "evaluation_receipt_or_lineage_binding_invalid"
         ) from exc
+    horizon = sample.get("horizon_minutes")
     if (
-        label.get("label_status") != "observed_future_outcome"
-        or label.get("horizon_minutes") != HORIZON_MINUTES
+        isinstance(horizon, bool)
+        or not isinstance(horizon, int)
+        or horizon not in EVALUATION_HORIZONS
+        or label.get("label_status") != "observed_future_outcome"
+        or label.get("horizon_minutes") != horizon
     ):
         raise CryptoTenSymbolFactorStrategyEvaluationError(
             "evaluation_label_not_resolved"
@@ -488,11 +501,13 @@ def _resolved(
         )
     market_slot = _utc(snapshot.get("market_slot"), "market_slot")
     future_slot = _utc(label.get("future_market_slot"), "future_market_slot")
-    if future_slot - market_slot != timedelta(minutes=HORIZON_MINUTES):
+    if future_slot - market_slot != timedelta(minutes=horizon):
         raise CryptoTenSymbolFactorStrategyEvaluationError(
             "evaluation_label_horizon_invalid"
         )
-    by_observation = _verify_chain_replay(sample)
+    by_observation = (
+        _verify_chain_replay(sample) if verified_chain is None else verified_chain
+    )
     symbol = snapshot.get("symbol")
     for role, expected_id, expected_slot in (
         ("source", snapshot.get("observation_id"), market_slot),
@@ -644,19 +659,24 @@ def _resolved(
 # Metrics, baselines, artifacts
 # ---------------------------------------------------------------------------
 
-_METRIC_BASIS = (
-    "equal_weight_by_market_slot exploratory drawdown; turnover is exposure"
-    " rate; round_trip_leg_rate is legs per resolved sample; 1h labels"
-    " overlap across 5m slots so effective independent samples are about"
-    " 1/12 of resolved_count; HAC and non-overlapping subsample significance"
-    " are deferred"
-)
+def _metric_basis(horizon: int) -> str:
+    bars = horizon // 5
+    return (
+        "equal_weight_by_market_slot exploratory drawdown; turnover is exposure"
+        " rate; round_trip_leg_rate is legs per resolved sample; "
+        f"{horizon}min labels overlap {bars - 1}/{bars} across adjacent 5m"
+        " slots, so effective independent samples are about"
+        f" 1/{bars} of resolved_count; HAC and non-overlapping subsample"
+        " significance are deferred"
+    )
 
 
 def _metrics(
     rows: Sequence[tuple[Mapping[str, Any], Decimal]],
     signals: Sequence[bool],
     baseline: Decimal | None = None,
+    *,
+    horizon: int,
 ) -> dict[str, Any]:
     selected = [value for (_, value), signal in zip(rows, signals) if signal]
     count = len(rows)
@@ -695,7 +715,7 @@ def _metrics(
         "round_trip_leg_rate": _text(Decimal(2 * len(selected)) / Decimal(count))
         if count
         else "0",
-        "metric_basis": _METRIC_BASIS,
+        "metric_basis": _metric_basis(horizon),
     }
 
 
@@ -744,9 +764,10 @@ def _evaluate_strategy(
     baseline_mean: Decimal | None,
     cash_baseline: Mapping[str, Any],
     evaluation_as_of: datetime,
+    horizon: int,
 ) -> dict[str, Any]:
     signals = [_signal(hypothesis_id, row[0]["snapshot"]) for row in rows]
-    metrics = _metrics(rows, signals, baseline_mean)
+    metrics = _metrics(rows, signals, baseline_mean, horizon=horizon)
     strategy_mean = (
         _decimal(metrics["cost_adjusted_net_return"], "strategy_mean")
         if metrics["cost_adjusted_net_return"] is not None
@@ -766,7 +787,8 @@ def _evaluate_strategy(
         "contract": EVALUATION_CONTRACT,
         **_strategy_identity(strategy_name, hypothesis_id),
         "evaluation_as_of": _iso(evaluation_as_of),
-        "horizon_minutes": HORIZON_MINUTES,
+        "horizon_minutes": horizon,
+        "research_attribution": horizon != HORIZON_MINUTES,
         "resolved_count": len(rows),
         "evaluated_status": "exploratory_insufficient_edge",
         "baseline": dict(baseline),
@@ -880,7 +902,16 @@ def run_ten_symbol_factor_strategy_evaluation(
     store_root: Path | str,
     evaluation_as_of: str | datetime | None = None,
 ) -> dict[str, Any]:
-    """Evaluate all three hypotheses over every resolved projection sample."""
+    """Evaluate all three hypotheses at every registered label horizon.
+
+    Samples are rebuilt for the required 60min horizon and every auxiliary
+    attribution horizon (240/720/1440).  Each horizon with resolved samples
+    gets its own per-hypothesis evaluation inside one immutable bundle;
+    horizons without enough history report an explicit
+    ``insufficient_resolved_samples`` status instead of failing.  The
+    bundle-level recommendation deliberately stays scoped to the required
+    60min definition.
+    """
 
     _assert_simulation_only()
     root = Path(store_root)
@@ -934,54 +965,93 @@ def run_ten_symbol_factor_strategy_evaluation(
                 as_of = evaluation_as_of.astimezone(timezone.utc)
             else:
                 as_of = _utc(evaluation_as_of, "evaluation_as_of")
-            rows: list[tuple[dict[str, Any], Decimal]] = []
+            rows_by_horizon: dict[int, list[tuple[dict[str, Any], Decimal]]] = {
+                horizon: [] for horizon in EVALUATION_HORIZONS
+            }
             identities: set[tuple[Any, ...]] = set()
+            # Every sample from one inventory run embeds the same checkpoint
+            # chain object, so the expensive full replay is performed once;
+            # any sample carrying a different chain object fails closed.
+            verified_chain = _verify_chain_replay(samples[0])
+            shared_chain = samples[0]["projection_checkpoint_chain"]
             for sample in samples:
-                resolved = _resolved(sample, as_of)
+                if sample["projection_checkpoint_chain"] is not shared_chain:
+                    raise CryptoTenSymbolFactorStrategyEvaluationError(
+                        "evaluation_checkpoint_chain_invalid"
+                    )
+                resolved = _resolved(sample, as_of, verified_chain=verified_chain)
                 identity = (
                     sample.get("segment_id"),
                     resolved[0]["snapshot"].get("observation_id"),
                     resolved[0]["snapshot"].get("symbol"),
-                    HORIZON_MINUTES,
+                    sample["horizon_minutes"],
                 )
                 if identity in identities:
                     raise CryptoTenSymbolFactorStrategyEvaluationError(
                         "evaluation_sample_duplicate"
                     )
                 identities.add(identity)
-                rows.append(resolved)
-            rows.sort(
-                key=lambda row: _utc(row[0]["snapshot"]["market_slot"], "market_slot")
-            )
-            baseline = _metrics(rows, [True] * len(rows))
-            baseline_mean = (
-                _decimal(baseline["cost_adjusted_net_return"], "baseline_mean")
-                if baseline["cost_adjusted_net_return"] is not None
-                else None
-            )
-            cash_baseline = _cash_baseline(len(rows))
-            evaluations = {
-                name: _evaluate_strategy(
-                    strategy_name=name,
-                    hypothesis_id=hypothesis_id,
-                    rows=rows,
-                    baseline=baseline,
-                    baseline_mean=baseline_mean,
-                    cash_baseline=cash_baseline,
-                    evaluation_as_of=as_of,
+                rows_by_horizon[int(sample["horizon_minutes"])].append(resolved)
+            required_rows = rows_by_horizon[HORIZON_MINUTES]
+            if not required_rows:
+                return {
+                    "contract": EVALUATION_BUNDLE_CONTRACT,
+                    "status": "insufficient_resolved_samples",
+                    "resolved_count": 0,
+                    **_safe(),
+                }
+            evaluations_by_horizon: dict[str, dict[str, Any]] = {}
+            horizon_status: dict[str, str] = {}
+            resolved_count_by_horizon: dict[str, int] = {}
+            for horizon in EVALUATION_HORIZONS:
+                rows = rows_by_horizon[horizon]
+                horizon_status[str(horizon)] = (
+                    "evaluated" if rows else "insufficient_resolved_samples"
                 )
-                for name, hypothesis_id in STRATEGY_HYPOTHESIS_PAIRS.items()
-            }
+                resolved_count_by_horizon[str(horizon)] = len(rows)
+                if not rows:
+                    continue
+                rows.sort(
+                    key=lambda row: _utc(
+                        row[0]["snapshot"]["market_slot"], "market_slot"
+                    )
+                )
+                baseline = _metrics(rows, [True] * len(rows), horizon=horizon)
+                baseline_mean = (
+                    _decimal(baseline["cost_adjusted_net_return"], "baseline_mean")
+                    if baseline["cost_adjusted_net_return"] is not None
+                    else None
+                )
+                cash_baseline = _cash_baseline(len(rows))
+                evaluations_by_horizon[str(horizon)] = {
+                    name: _evaluate_strategy(
+                        strategy_name=name,
+                        hypothesis_id=hypothesis_id,
+                        rows=rows,
+                        baseline=baseline,
+                        baseline_mean=baseline_mean,
+                        cash_baseline=cash_baseline,
+                        evaluation_as_of=as_of,
+                        horizon=horizon,
+                    )
+                    for name, hypothesis_id in STRATEGY_HYPOTHESIS_PAIRS.items()
+                }
+            required_evaluations = evaluations_by_horizon[str(HORIZON_MINUTES)]
             artifact = {
                 "contract": EVALUATION_BUNDLE_CONTRACT,
                 "status": "shadow_evaluated",
                 "last_evaluated_outcome_sha256": outcome,
                 "evaluation_as_of": _iso(as_of),
-                "resolved_count": len(rows),
-                "evaluations": evaluations,
+                "resolved_count": len(required_rows),
+                "resolved_count_by_horizon": resolved_count_by_horizon,
+                "horizon_status": horizon_status,
+                "evaluations": evaluations_by_horizon,
+                # The recommendation deliberately stays scoped to the
+                # required 60min definition; auxiliary horizons are
+                # directional research attribution only.
                 "recommendation": {
                     name: value["recommendation"]["shadow_only_action"]
-                    for name, value in evaluations.items()
+                    for name, value in required_evaluations.items()
                 },
                 **_safe(),
             }

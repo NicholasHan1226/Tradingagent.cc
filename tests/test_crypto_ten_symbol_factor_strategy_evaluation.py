@@ -200,7 +200,19 @@ def test_evaluation_metrics_baselines_and_recommendation_branches(
     _assert_recursive_non_authority(checkpoint)
 
     expected_mean = _expected_mean(output_root)
-    momentum = artifact["evaluations"]["momentum"]
+    assert artifact["horizon_status"] == {
+        "60": "evaluated",
+        "240": "insufficient_resolved_samples",
+        "720": "insufficient_resolved_samples",
+        "1440": "insufficient_resolved_samples",
+    }
+    assert artifact["resolved_count_by_horizon"] == {
+        "60": 20,
+        "240": 0,
+        "720": 0,
+        "1440": 0,
+    }
+    momentum = artifact["evaluations"]["60"]["momentum"]
     assert momentum["contract"] == (
         "tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v1"
     )
@@ -237,7 +249,7 @@ def test_evaluation_metrics_baselines_and_recommendation_branches(
     assert cash["metric_basis"] == "cash_no_position"
 
     for name in ("trend", "volatility"):
-        other = artifact["evaluations"][name]
+        other = artifact["evaluations"]["60"][name]
         assert other["recommendation"]["shadow_only_action"] == "disable"
         assert other["metrics"]["signal_count"] == 0
         assert other["metrics"]["coverage"] == "0"
@@ -262,7 +274,7 @@ def test_evaluation_downweights_non_positive_mean_with_exact_drawdown(
 
     artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
 
-    momentum = artifact["evaluations"]["momentum"]
+    momentum = artifact["evaluations"]["60"]["momentum"]
     assert momentum["recommendation"]["shadow_only_action"] == "downweight"
     metrics = momentum["metrics"]
     assert metrics["signal_count"] == 20
@@ -274,7 +286,7 @@ def test_evaluation_downweights_non_positive_mean_with_exact_drawdown(
     assert metrics["hit_rate"] == "0"
     assert Decimal(metrics["cash_baseline_delta"]) == expected
     for name in ("trend", "volatility"):
-        assert artifact["evaluations"][name]["recommendation"][
+        assert artifact["evaluations"]["60"][name]["recommendation"][
             "shadow_only_action"
         ] == "disable"
 
@@ -486,7 +498,137 @@ def test_evaluation_result_is_zero_authority(
     assert artifact["execution_authority"] is False
     assert artifact["real_trading_enabled"] is False
     assert artifact["promotion_authorized"] is False
-    for name, item in artifact["evaluations"].items():
-        assert item["authority"] == "none"
-        assert item["evaluation_sha256"]
-        _assert_recursive_non_authority(item)
+    for horizon, evaluations in artifact["evaluations"].items():
+        for name, item in evaluations.items():
+            assert item["authority"] == "none"
+            assert item["evaluation_sha256"]
+            assert item["horizon_minutes"] == int(horizon)
+            _assert_recursive_non_authority(item)
+
+
+def test_aux_horizons_evaluated_with_exact_values_and_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # 73 slots give 61 required-horizon and 25 4h-horizon source slots; the
+    # flat fixture makes every cost-adjusted return the same known constant.
+    output_root = _accumulate(monkeypatch, tmp_path, 73)
+    _scrub(output_root)
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    assert artifact["status"] == "shadow_evaluated"
+    assert artifact["horizon_status"] == {
+        "60": "evaluated",
+        "240": "evaluated",
+        "720": "insufficient_resolved_samples",
+        "1440": "insufficient_resolved_samples",
+    }
+    assert artifact["resolved_count_by_horizon"] == {
+        "60": 610,
+        "240": 250,
+        "720": 0,
+        "1440": 0,
+    }
+    assert set(artifact["evaluations"]) == {"60", "240"}
+    expected = _cost_adjusted(Decimal("1"), Decimal("1"))
+    required = artifact["evaluations"]["60"]["momentum"]
+    aux = artifact["evaluations"]["240"]["momentum"]
+    assert required["research_attribution"] is False
+    assert aux["research_attribution"] is True
+    assert aux["horizon_minutes"] == 240
+    assert aux["evaluated_status"] == "exploratory_insufficient_edge"
+    assert Decimal(aux["metrics"]["cost_adjusted_net_return"]) == expected
+    assert aux["metrics"]["signal_count"] == 250
+    assert aux["metrics"]["hit_rate"] == "0"
+    assert Decimal(aux["metrics"]["baseline_delta"]) == 0
+    assert Decimal(aux["metrics"]["cash_baseline_delta"]) == expected
+    assert aux["metrics"]["turnover"] == "1"
+    assert aux["metrics"]["round_trip_leg_rate"] == "2"
+    assert "47/48" in aux["metrics"]["metric_basis"]
+    assert "1/48" in aux["metrics"]["metric_basis"]
+    assert "11/12" in required["metrics"]["metric_basis"]
+    assert "1/12" in required["metrics"]["metric_basis"]
+    assert aux["baseline"]["metric_basis"] == aux["metrics"]["metric_basis"]
+    _assert_recursive_non_authority(aux)
+    # Recommendation stays scoped to the required 60min evaluations only.
+    assert artifact["recommendation"] == {
+        name: value["recommendation"]["shadow_only_action"]
+        for name, value in artifact["evaluations"]["60"].items()
+    }
+    assert artifact["recommendation"]["momentum"] == "downweight"
+
+
+def test_aux_samples_never_cross_a_segment_cut(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate(monkeypatch, tmp_path, 73)
+    # The unit at slot index 30 loses its sidecar and cuts the segment.
+    from Crypto.ten_symbol_observation_store import (
+        CryptoTenSymbolObservationStore,
+    )
+
+    store = CryptoTenSymbolObservationStore(output_root)
+    store.bars_sidecar_path(iso(WINDOW_END + timedelta(minutes=150))).unlink()
+    _scrub(output_root)
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    # 60min: 18 same-segment slots before the cut plus 30 after it; 4h: every
+    # source slot with a +48 target sits in the earlier segment while its
+    # target sits in the later one, so no auxiliary sample resolves at all.
+    assert artifact["resolved_count_by_horizon"] == {
+        "60": 480,
+        "240": 0,
+        "720": 0,
+        "1440": 0,
+    }
+    assert artifact["horizon_status"]["60"] == "evaluated"
+    assert artifact["horizon_status"]["240"] == "insufficient_resolved_samples"
+    assert artifact["recommendation"]["momentum"] == "downweight"
+
+
+def test_all_four_horizons_evaluated_and_outcome_tracks_aux_growth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root_73 = _accumulate(monkeypatch, tmp_path / "a", 73)
+    _scrub(root_73)
+    first = run_ten_symbol_factor_strategy_evaluation(store_root=root_73)
+    assert first["status"] == "shadow_evaluated"
+
+    root_300 = _accumulate(monkeypatch, tmp_path / "b", 300)
+    _scrub(root_300)
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=root_300)
+
+    assert artifact["status"] == "shadow_evaluated"
+    assert artifact["last_evaluated_outcome_sha256"] != (
+        first["last_evaluated_outcome_sha256"]
+    )
+    assert artifact["horizon_status"] == {
+        "60": "evaluated",
+        "240": "evaluated",
+        "720": "evaluated",
+        "1440": "evaluated",
+    }
+    assert artifact["resolved_count_by_horizon"] == {
+        "60": 2880,
+        "240": 2520,
+        "720": 1560,
+        "1440": 120,
+    }
+    expected = _cost_adjusted(Decimal("1"), Decimal("1"))
+    tolerance = Decimal("1e-24")
+    for horizon, bars in (("720", 144), ("1440", 288)):
+        aux = artifact["evaluations"][horizon]["momentum"]
+        assert aux["research_attribution"] is True
+        assert (
+            abs(
+                Decimal(aux["metrics"]["cost_adjusted_net_return"]) - expected
+            )
+            < tolerance
+        )
+        assert f"{bars - 1}/{bars}" in aux["metrics"]["metric_basis"]
+        assert f"1/{bars}" in aux["metrics"]["metric_basis"]

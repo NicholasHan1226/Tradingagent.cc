@@ -164,7 +164,11 @@ def test_worker_full_scrub_runs_evaluation_downstream(
     evaluation = result["strategy_evaluation"]
     assert evaluation["status"] == "shadow_evaluated"
     assert evaluation["resolved_count"] == 20
-    assert set(evaluation["evaluations"]) == {"momentum", "trend", "volatility"}
+    assert set(evaluation["evaluations"]["60"]) == {
+        "momentum",
+        "trend",
+        "volatility",
+    }
 
     again = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
     assert again["status"] == "scrubbed"

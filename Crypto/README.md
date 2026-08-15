@@ -766,23 +766,29 @@ sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
 快速路径）：
 
 - 样本重建与核验：从投影根 records/labels/checkpoints 重建全部 resolved
-  (snapshot, label) 样本（60min、同 segment、label 文件存在），逐样本按
-  v2 合同核验——snapshot/label integrity（v2 feature set）、
-  record/receipt/checkpoint 三件套互绑、`source_event_checksum` 对 store
-  事件链逐值比对、`source_bars_sidecar_sha256` 对磁盘 sidecar 重算比对、
-  checkpoint 链完整重放、cost policy `crypto-round-trip-taker-v1`（fee
-  0.001 双边 + slippage 2bps 双边，来自
-  `round_trip_capital.TAKER_FEE_RATE/SLIPPAGE_BPS`）逐项比对、gross/net 按
-  entry/exit/fee 重算、future 不晚于 evaluation_as_of。任一不符 fail
-  closed，不跳过样本。
-- 每个假设一份评估 artifact（contract
-  `tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v1`）：
+  (snapshot, label) 样本（required 60min + auxiliary 240/720/1440min，同
+  segment、label 文件存在），逐样本按 v2 合同核验——snapshot/label
+  integrity（v2 feature set）、record/receipt/checkpoint 三件套互绑、
+  `source_event_checksum` 对 store 事件链逐值比对、
+  `source_bars_sidecar_sha256` 对磁盘 sidecar 重算比对、checkpoint 链完整
+  重放（同一 inventory 的样本共享同一条链对象，重放一次复用）、cost
+  policy `crypto-round-trip-taker-v1`（fee 0.001 双边 + slippage 2bps
+  双边，来自 `round_trip_capital.TAKER_FEE_RATE/SLIPPAGE_BPS`）逐项比对、
+  gross/net 按 entry/exit/fee 重算、future 不晚于 evaluation_as_of。任一
+  不符 fail closed，不跳过样本。
+- 每个 horizon × 每个假设一份评估 artifact（contract
+  `tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v1`），在同一
+  bundle 内按 horizon 分组（`evaluations["60"|"240"|"720"|"1440"]`）：
   always-invest 基线（全部样本视为有信号的同成本曲线）、cash 基线（无仓
   位零成本零回撤）、metrics（signal/abstention/coverage/hit_rate/
   cost_adjusted_net_return/baseline_delta/cash_baseline_delta/drawdown/
   turnover/round_trip_leg_rate；drawdown 按等权 per-slot 权益曲线，
-  turnover 即暴露率）。recommendation：无信号 → `disable`，费用后均值 ≤0
-  → `downweight`，否则 `retain_for_more_evidence`；`evaluated_status` 固定
+  turnover 即暴露率）。aux horizon 的 artifact 标注
+  `research_attribution=true`，仅作方向性证据；样本不足的 horizon 在
+  `horizon_status` 报 `insufficient_resolved_samples` 而不产出评估、不
+  fail。recommendation：无信号 → `disable`，费用后均值 ≤0 →
+  `downweight`，否则 `retain_for_more_evidence`；**recommendation 只基于
+  required 60min 口径**（晋级判据不扩口径），`evaluated_status` 固定
   `exploratory_insufficient_edge`，不构成 edge、晋级或参数变更授权。
 - artifact immutable 写入
   `evolution/ten_symbol_factor_research/strategy_evaluations/{outcome_sha}.json`
@@ -796,9 +802,10 @@ sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
   结果合并进 stdout receipt 的 `strategy_evaluation` 子对象；评估失败只记
   `evaluation_failed` debt（下次 scrub 重试），绝不改变已完成 scrub 的
   事实与退出码。scrub deferred 时评估对应 `evaluation_deferred`。
-- **重叠标签警告**：metric_basis 显式标注 1h 标签按 5m 槽重叠，有效独立
-  样本约为 resolved_count 的 1/12；HAC/非重叠子样本的统计显著性结论留待
-  后续 slice，当前所有均值/命中率都只是探索性描述。
+- **重叠标签警告**：每个 horizon 的 metric_basis 按窗口写明重叠率与有效
+  独立样本折算（60min=11/12 ≈ 1/12、240min=47/48 ≈ 1/48、720min=143/144、
+  1440min=287/288）；HAC/非重叠子样本的统计显著性结论留待后续 slice，
+  当前所有均值/命中率都只是探索性描述。
 
 ### 明确未实现
 
