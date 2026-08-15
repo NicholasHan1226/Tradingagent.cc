@@ -24,6 +24,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from Crypto.market_observation import TEN_SYMBOL_BARS_SIDECAR_CONTRACT
+
 
 TEN_SYMBOL_EVENT_CONTRACT = "tradingagent.crypto.ten_symbol_observation_event.v1"
 TEN_SYMBOL_HEAD_CONTRACT = "tradingagent.crypto.ten_symbol_observation_head.v1"
@@ -345,6 +347,9 @@ class CryptoTenSymbolObservationStore:
         self.cycle_lock_path = self.root / ".cycle.lock"
         self.slot_index_dir = self.root / "slot_index"
         _ensure_directory(self.slot_index_dir)
+        # Created lazily on the first sidecar write so read-only detached
+        # consumers can open an existing root without any write access.
+        self.bars_dir = self.root / "bars"
         self._verified_events_cache: list[dict[str, Any]] | None = None
 
     @contextmanager
@@ -820,6 +825,92 @@ class CryptoTenSymbolObservationStore:
             return self._verified_indexed_event(path) if path.exists() else None
 
     # ------------------------------------------------------------------
+    # Detached read-only access (offline projections, no write capability)
+    # ------------------------------------------------------------------
+
+    def events_read_only(self) -> list[dict[str, Any]]:
+        """Verify and return the event chain without taking the write lock.
+
+        Every event file is published by atomic rename with complete content,
+        so an unlocked reader either sees a consistent verified prefix or
+        fails closed on a transient rotation race; it can never accept a torn
+        chain.  Intended for detached offline consumers running with the
+        store root mounted read-only.
+        """
+
+        rows, _, _ = self._read_all_events()
+        return rows
+
+    def pending_record_read_only(self) -> dict[str, Any] | None:
+        if not self.pending_path.exists():
+            return None
+        try:
+            return self._read_pending()
+        except FileNotFoundError:
+            # The writer cleared the marker between the existence check and
+            # the read; treat it as no pending work.
+            return None
+
+    # ------------------------------------------------------------------
+    # Bars sidecar (immutable raw-row companion to observation events)
+    # ------------------------------------------------------------------
+
+    def bars_sidecar_path(self, window_end: str) -> Path:
+        slot = _market_slot(window_end)
+        return self.bars_dir / f"{_slot_token(slot)}.json"
+
+    def _verify_sidecar_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        slot: datetime,
+    ) -> None:
+        if payload.get("contract") != TEN_SYMBOL_BARS_SIDECAR_CONTRACT:
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_bars_sidecar_invalid"
+            )
+        if _market_slot(payload.get("window_end"), aligned=True) != slot:
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_bars_sidecar_invalid"
+            )
+        for key, expected in _non_authority_fields().items():
+            if payload.get(key) != expected:
+                raise CryptoTenSymbolObservationStoreError(
+                    "ten_symbol_observation_bars_sidecar_invalid"
+                )
+
+    def write_bars_sidecar(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist one slot's bars sidecar immutably before its event.
+
+        Same-content rewrites are idempotent no-ops; different content for an
+        already persisted slot fails closed.  The caller writes the sidecar
+        before appending the store event so an event never references a
+        missing sidecar; a crash between the two leaves a harmless orphan
+        that the next invocation reuses for a zero-network retry.
+        """
+
+        if not isinstance(payload, Mapping):
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_bars_sidecar_invalid"
+            )
+        slot = _market_slot(payload.get("window_end"))
+        self._verify_sidecar_payload(payload, slot=slot)
+        _ensure_directory(self.bars_dir)
+        return _write_immutable_json(
+            self.bars_sidecar_path(str(payload["window_end"])),
+            payload,
+        )
+
+    def read_bars_sidecar(self, window_end: str) -> dict[str, Any] | None:
+        slot = _market_slot(window_end)
+        path = self.bars_sidecar_path(window_end)
+        if not path.exists():
+            return None
+        payload = _read_json(path)
+        self._verify_sidecar_payload(payload, slot=slot)
+        return payload
+
+    # ------------------------------------------------------------------
     # Append
     # ------------------------------------------------------------------
 
@@ -1121,3 +1212,4 @@ __all__ = [
     "CryptoTenSymbolObservationStore",
     "CryptoTenSymbolObservationStoreError",
 ]
+

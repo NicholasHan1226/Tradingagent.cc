@@ -29,7 +29,9 @@ from Crypto.market_observation import (
     CryptoMarketObservation,
     CryptoMarketObservationError,
     CryptoObservationWindow,
-    _collect_market_observation_with_catalog,
+    _collect_market_observation_rows_with_catalog,
+    build_ten_symbol_bars_sidecar,
+    observation_from_ten_symbol_bars_sidecar,
 )
 from Crypto.ten_symbol_observation_profile import (
     CryptoTenSymbolObservationProfile,
@@ -504,7 +506,9 @@ class _LazyObservationPort:
         self.transport_constructed_count = 0
         self.observed_catalog_version: str | None = None
 
-    def collect(self, window: CryptoObservationWindow) -> CryptoMarketObservation:
+    def collect(
+        self, window: CryptoObservationWindow
+    ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
         self.collect_calls += 1
         try:
             self.transport_factory_attempts += 1
@@ -530,7 +534,7 @@ class _LazyObservationPort:
             catalog = client.get_catalog()
             self.observed_catalog_version = catalog.catalog_version
             self._manifest.profile.verify_catalog(catalog)
-            return _collect_market_observation_with_catalog(
+            return _collect_market_observation_rows_with_catalog(
                 client,
                 catalog=catalog,
                 expected_catalog_version=catalog.catalog_version,
@@ -713,6 +717,53 @@ def _append_reject(
     }
 
 
+def _observation_for_slot(
+    *,
+    store: CryptoTenSymbolObservationStore,
+    lazy: _LazyObservationPort,
+    manifest: CryptoTenSymbolObservationRuntimeManifest,
+    window: CryptoObservationWindow,
+) -> CryptoMarketObservation:
+    """Return one slot's verified observation, reusing a persisted sidecar.
+
+    The bars sidecar is written before the store event, so a crash between
+    the two leaves a complete, immutable orphan.  Reusing it makes the retry
+    zero-network and keeps the slot pinned to the originally collected rows;
+    a fresh collect happens only when no sidecar exists yet.
+    """
+
+    sidecar = store.read_bars_sidecar(_iso_utc(window.window_end))
+    if sidecar is not None:
+        # A persisted sidecar is local immutable evidence: corruption or
+        # drift fails closed loudly and is never misrecorded as an upstream
+        # data rejection.
+        try:
+            observation, _ = observation_from_ten_symbol_bars_sidecar(sidecar)
+        except CryptoMarketObservationError as exc:
+            raise CryptoTenSymbolObservationRuntimeError(
+                "runtime_bars_sidecar_invalid"
+            ) from exc
+        if (
+            sidecar.get("profile_sha256") != manifest.profile.profile_sha256
+            or observation.window.window_end != window.window_end
+            or observation.window.observation_cutoff != window.observation_cutoff
+        ):
+            raise CryptoTenSymbolObservationRuntimeError(
+                "runtime_bars_sidecar_slot_mismatch"
+            )
+        return observation
+    observation, rows_by_symbol = lazy.collect(window)
+    store.write_bars_sidecar(
+        build_ten_symbol_bars_sidecar(
+            window=window,
+            profile_sha256=manifest.profile.profile_sha256,
+            observation=observation,
+            rows_by_symbol=rows_by_symbol,
+        )
+    )
+    return observation
+
+
 def _fresh_cycle(
     *,
     store: CryptoTenSymbolObservationStore,
@@ -732,7 +783,12 @@ def _fresh_cycle(
         }
     )
     try:
-        observation = lazy.collect(window)
+        observation = _observation_for_slot(
+            store=store,
+            lazy=lazy,
+            manifest=manifest,
+            window=window,
+        )
     except CryptoMarketObservationError as exc:
         result = _append_reject(
             store=store,
@@ -784,7 +840,12 @@ def _attempt_outage_gap_recovery(
     if checkpoint.get("latest_terminal_slot") != _iso_utc(prior_market_slot):
         raise CryptoTenSymbolObservationRuntimeError("runtime_outage_gap_state_changed")
     try:
-        observation = lazy.collect(current_window)
+        observation = _observation_for_slot(
+            store=store,
+            lazy=lazy,
+            manifest=manifest,
+            window=current_window,
+        )
     except CryptoMarketObservationError as exc:
         return _append_reject(
             store=store,

@@ -149,7 +149,12 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   13 根 closed-5m OHLCV 窗口和未来已观察价格，生成证据绑定的特征/标签/固定
   Challenger 比较，不得读写 core、capital、orders、Champion 或 `evolution/`。
   当前只有 BTC/ETH，任何横截面 factor/IC 声称均不成立；只能做时间序列特征
-  研究。历史回填不具备 PIT 证明时只能用于工程/定义检查，不得进入晋级证据。
+  研究。`build_factor_snapshot`/`build_forward_label`/
+  `evaluate_factor_hypotheses` 另有 keyword-only 可选参数（universe 与
+  feature set identity），默认值保持 v1 冻结行为且 v1 调用路径字节不变；
+  只有 v2 投影模块显式传入 10 币 universe 与
+  `crypto-5m-ohlcv-factor-research-v2`。历史回填不具备 PIT 证明时只能用于
+  工程/定义检查，不得进入晋级证据。
 - `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
   `ten_symbol_observation_runtime.py` 组成独立的 10 币 5 分钟 shadow 观测
   积累器，为后续横截面 factor research 提供前向积累的证据级数据源。它与
@@ -174,8 +179,39 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `backlog_pending`
   非零退出且不跳槽；历史窗口对 current-read watermark 门禁确定不可恢复时，
   只允许在当前窗口全部门禁通过后追加显式 `data_gap`，不伪造 PIT。证据只能
-  前向积累，历史回填不构成证据。对应 systemd unit 是 install-default 不启用
+  前向积累，历史回填不构成证据。fresh 采集成功后 runtime 先把该槽 10 币
+  13 根原始 bar 行原子写入 immutable bars sidecar（`bars/<slot>.json`，
+  canonical JSON、tmp+rename+fsync、同内容幂等、异内容 fail closed）再落账
+  事件；data_gap 恢复首窗同样按恢复槽写 sidecar。sidecar 携带每 source 的
+  原始行与 receipt/digest 元数据，消费方可独立重算
+  `identity_sha256`/`market_data_sha256` 并与 store 事件逐值比对；crash
+  留下的孤儿 sidecar 下轮零网络复用，sidecar 本地校验失败一律 fail
+  closed，绝不记为 data_reject。观测事件合同与 digest 定义不变，bar 行不
+  进入任何事件 digest。对应 systemd unit 是 install-default 不启用
   的候选；安装/启用必须经 Nicholas 明确批准。
+- `ten_symbol_factor_research.py`/`ten_symbol_factor_research_worker.py`
+  是 10 币观测积累器的 detached offline 因子投影（v2）：只读观测事件链与
+  bars sidecar，投影根固定 `<store_root>/evolution/ten_symbol_factor_research/`
+  （records/receipts/labels/checkpoints、immutable 写、checkpoint hash 链，
+  机制镜像 `delayed_paper_factor_research.py`）。每个 terminal 槽先从
+  sidecar 原始行独立重算每 source 的 `identity_sha256`/
+  `market_data_sha256` 并与 store 事件逐值比对；sidecar 缺失或 digest
+  不符的槽永不投影、视同 gap 切断 segment（checkpoint 记录
+  `sidecar_ineligible`），也不让 label 跨段结算。冻结 consumer profile
+  `crypto-5m-ohlcv-13bar-forward-labels-v2`（10 symbol、required horizon
+  60min、aux 240/720/1440、feature set
+  `crypto-5m-ohlcv-factor-research-v2`）；三个预注册假设不变，横截面只加
+  标注为 context 的 1h/15m return 排名描述，不加新假设。incremental 每轮
+  只投影一个新槽、不回填 label；daily full scrub 全链校验、补 record、
+  结算同段到期 label 并出 hypothesis report；超时走可重试 deferred
+  debt。worker 只绑定固定
+  `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json` 推导
+  store root，不接受自由 output root，执行前后重验 manifest 字节与 root
+  identity。固定 `authority=none`，零 core/资本/order/Champion/learning
+  写权限；50 标签初筛不构成 edge 或晋级授权；不 port
+  `factor_strategy_evaluation`（baseline/drawdown 留 follow-up）。对应
+  systemd unit 是 install-default 不启用的候选；安装/启用必须经 Nicholas
+  明确批准。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached

@@ -395,17 +395,19 @@ def _validate_run(
     )
 
 
-def _collect_market_observation_with_catalog(
+def _collect_market_observation_rows_with_catalog(
     client: SharedSignalsV1Client,
     *,
     catalog: CatalogEnvelope,
     expected_catalog_version: str,
     window: CryptoObservationWindow,
-) -> CryptoMarketObservation:
-    """Collect the cohort against an already-observed catalog envelope.
+) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
+    """Collect the cohort and also return the validated raw bar rows.
 
-    The accumulator runtime fetches the catalog once per cycle so the frozen
-    profile fingerprints and the query loop share a single catalog read.
+    The rows never enter any observation digest field; they are returned so
+    the accumulator runtime can persist them as an immutable bars sidecar
+    whose digests re-derive exactly the per-source ``identity_sha256`` and
+    ``market_data_sha256`` already bound in the observation evidence.
     """
 
     if (
@@ -414,6 +416,7 @@ def _collect_market_observation_with_catalog(
     ):
         raise CryptoMarketObservationError("crypto_observation_catalog_version_drift")
     sources: list[CryptoObservationSource] = []
+    rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
     for symbol in OBSERVATION_SYMBOLS:
         dataset_id = _bar_dataset_id(symbol)
         _verify_catalog(catalog, dataset_id)
@@ -445,6 +448,7 @@ def _collect_market_observation_with_catalog(
         sources.append(
             _validate_run(run, symbol=symbol, dataset_id=dataset_id, window=window)
         )
+        rows_by_symbol[symbol] = [dict(row) for row in run.envelope.data]
     sources_tuple = tuple(sources)
     market_data_payload = {
         "contract": OBSERVATION_CONTRACT,
@@ -471,7 +475,258 @@ def _collect_market_observation_with_catalog(
         sources=sources_tuple,
         market_data_sha256=market_data_sha256,
         observation_sha256=_canonical_sha256(payload),
+    ), rows_by_symbol
+
+
+def _collect_market_observation_with_catalog(
+    client: SharedSignalsV1Client,
+    *,
+    catalog: CatalogEnvelope,
+    expected_catalog_version: str,
+    window: CryptoObservationWindow,
+) -> CryptoMarketObservation:
+    """Collect the cohort against an already-observed catalog envelope.
+
+    The accumulator runtime fetches the catalog once per cycle so the frozen
+    profile fingerprints and the query loop share a single catalog read.
+    The validated bar rows are deliberately dropped here; callers that need
+    them for the immutable bars sidecar use the row-returning variant.
+    """
+
+    observation, _ = _collect_market_observation_rows_with_catalog(
+        client,
+        catalog=catalog,
+        expected_catalog_version=expected_catalog_version,
+        window=window,
     )
+    return observation
+
+
+TEN_SYMBOL_BARS_SIDECAR_CONTRACT = "tradingagent.crypto.ten_symbol_observation_bars.v1"
+
+
+def _wire_rows_sha256(value: object) -> str:
+    """Recompute digests with the exact pagination-layer canonicalization."""
+
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise CryptoMarketObservationError(
+            "crypto_observation_bars_sidecar_invalid"
+        ) from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _recomputed_identity_sha256(rows: list[Mapping[str, Any]]) -> str:
+    identities: list[dict[str, Any]] = []
+    for row in rows:
+        identity = {
+            "symbol": row.get("symbol"),
+            "open_time": row.get("open_time"),
+        }
+        if identity["symbol"] is None or identity["open_time"] is None:
+            raise CryptoMarketObservationError(
+                "crypto_observation_bars_sidecar_invalid"
+            )
+        identities.append(identity)
+    return _wire_rows_sha256(identities)
+
+
+def _recomputed_market_data_sha256(rows: list[Mapping[str, Any]]) -> str:
+    return _wire_rows_sha256([dict(row) for row in rows])
+
+
+def _validated_sidecar_rows(value: object, *, symbol: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or len(value) != BAR_COUNT:
+        raise CryptoMarketObservationError("crypto_observation_bars_sidecar_invalid")
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != set(BAR_FIELDS)
+            or item.get("symbol") != symbol
+        ):
+            raise CryptoMarketObservationError(
+                "crypto_observation_bars_sidecar_invalid"
+            )
+        rows.append(dict(item))
+    return rows
+
+
+def _verify_sidecar_rows(
+    source: CryptoObservationSource,
+    rows: list[dict[str, Any]],
+) -> None:
+    if (
+        source.row_count != len(rows)
+        or source.page_count != 1
+        or _recomputed_identity_sha256(rows) != source.identity_sha256
+        or _recomputed_market_data_sha256(rows) != source.market_data_sha256
+    ):
+        raise CryptoMarketObservationError("crypto_observation_bars_sidecar_invalid")
+
+
+def build_ten_symbol_bars_sidecar(
+    *,
+    window: CryptoObservationWindow,
+    profile_sha256: str,
+    observation: CryptoMarketObservation,
+    rows_by_symbol: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Assemble the immutable per-slot bars sidecar payload.
+
+    The payload carries each source's validated raw rows next to the digest
+    claims already bound in the observation evidence, so a detached consumer
+    can independently re-derive ``identity_sha256``/``market_data_sha256``
+    from the rows and compare them against the append-only store event.
+    """
+
+    if not isinstance(observation, CryptoMarketObservation):
+        raise CryptoMarketObservationError("crypto_observation_bars_sidecar_invalid")
+    if (
+        observation.window.window_end != window.window_end
+        or observation.window.observation_cutoff != window.observation_cutoff
+    ):
+        raise CryptoMarketObservationError("crypto_observation_bars_sidecar_invalid")
+    if (
+        not isinstance(profile_sha256, str)
+        or len(profile_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in profile_sha256)
+    ):
+        raise CryptoMarketObservationError("crypto_observation_bars_sidecar_invalid")
+    sources: list[dict[str, Any]] = []
+    for source in observation.sources:
+        rows = _validated_sidecar_rows(rows_by_symbol.get(source.symbol), symbol=source.symbol)
+        _verify_sidecar_rows(source, rows)
+        sources.append({**source.to_payload(), "rows": rows})
+    return {
+        "contract": TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
+        "window_end": _iso(window.window_end),
+        "observation_cutoff": _iso(window.observation_cutoff),
+        "catalog_version": observation.catalog_version,
+        "profile_sha256": profile_sha256,
+        "observation_sha256": observation.observation_sha256,
+        "market_data_sha256": observation.market_data_sha256,
+        "sources": sources,
+        "authority": "none",
+        "execution_eligible": False,
+        "capital_write_eligible": False,
+        "model_authority": False,
+    }
+
+
+def observation_from_ten_symbol_bars_sidecar(
+    payload: Mapping[str, Any],
+) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
+    """Re-derive and verify one slot observation from its bars sidecar.
+
+    Every per-source row digest is recomputed from the persisted rows, and
+    the reconstructed observation must reproduce both the observation-level
+    ``market_data_sha256`` and ``observation_sha256`` claims exactly.  Any
+    drift fails closed.
+    """
+
+    reason = "crypto_observation_bars_sidecar_invalid"
+    if not isinstance(payload, Mapping):
+        raise CryptoMarketObservationError(reason)
+    if set(payload) != {
+        "contract",
+        "window_end",
+        "observation_cutoff",
+        "catalog_version",
+        "profile_sha256",
+        "observation_sha256",
+        "market_data_sha256",
+        "sources",
+        "authority",
+        "execution_eligible",
+        "capital_write_eligible",
+        "model_authority",
+    } or payload.get("contract") != TEN_SYMBOL_BARS_SIDECAR_CONTRACT:
+        raise CryptoMarketObservationError(reason)
+    if (
+        payload.get("authority") != "none"
+        or payload.get("execution_eligible") is not False
+        or payload.get("capital_write_eligible") is not False
+        or payload.get("model_authority") is not False
+    ):
+        raise CryptoMarketObservationError("crypto_observation_authority_invalid")
+    window_end = _parse_utc(payload.get("window_end"), reason)
+    observation_cutoff = _parse_utc(payload.get("observation_cutoff"), reason)
+    window = CryptoObservationWindow(
+        window_end=window_end,
+        observation_cutoff=observation_cutoff,
+    )
+    profile_sha256 = payload.get("profile_sha256")
+    catalog_version = payload.get("catalog_version")
+    if (
+        not isinstance(profile_sha256, str)
+        or len(profile_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in profile_sha256)
+        or not isinstance(catalog_version, str)
+        or not catalog_version
+    ):
+        raise CryptoMarketObservationError(reason)
+    raw_sources = payload.get("sources")
+    if not isinstance(raw_sources, list) or len(raw_sources) != len(
+        OBSERVATION_SYMBOLS
+    ):
+        raise CryptoMarketObservationError(reason)
+    expected_keys = {
+        "symbol",
+        "dataset_id",
+        "row_count",
+        "page_count",
+        "receipt_id",
+        "data_through",
+        "observed_at",
+        "identity_sha256",
+        "market_data_sha256",
+        "semantic_sha256",
+        "pagination_trace_sha256",
+        "rows",
+    }
+    sources: list[CryptoObservationSource] = []
+    rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for index, raw in enumerate(raw_sources):
+        symbol = OBSERVATION_SYMBOLS[index]
+        if not isinstance(raw, Mapping) or set(raw) != expected_keys:
+            raise CryptoMarketObservationError(reason)
+        if raw.get("symbol") != symbol or raw.get("dataset_id") != _bar_dataset_id(
+            symbol
+        ):
+            raise CryptoMarketObservationError(reason)
+        source = CryptoObservationSource(
+            symbol=symbol,
+            dataset_id=str(raw["dataset_id"]),
+            row_count=raw.get("row_count"),
+            page_count=raw.get("page_count"),
+            receipt_id=raw.get("receipt_id"),
+            data_through=_parse_utc(raw.get("data_through"), reason),
+            observed_at=_parse_utc(raw.get("observed_at"), reason),
+            identity_sha256=raw.get("identity_sha256"),
+            market_data_sha256=raw.get("market_data_sha256"),
+            semantic_sha256=raw.get("semantic_sha256"),
+            pagination_trace_sha256=raw.get("pagination_trace_sha256"),
+        )
+        rows = _validated_sidecar_rows(raw.get("rows"), symbol=symbol)
+        _verify_sidecar_rows(source, rows)
+        sources.append(source)
+        rows_by_symbol[symbol] = rows
+    observation = CryptoMarketObservation(
+        catalog_version=catalog_version,
+        window=window,
+        sources=tuple(sources),
+        market_data_sha256=payload.get("market_data_sha256"),
+        observation_sha256=payload.get("observation_sha256"),
+    )
+    return observation, rows_by_symbol
 
 
 def collect_market_observation(
@@ -502,9 +757,12 @@ __all__ = [
     "BAR_FIELDS",
     "OBSERVATION_CONTRACT",
     "OBSERVATION_SYMBOLS",
+    "TEN_SYMBOL_BARS_SIDECAR_CONTRACT",
     "CryptoMarketObservation",
     "CryptoMarketObservationError",
     "CryptoObservationSource",
     "CryptoObservationWindow",
+    "build_ten_symbol_bars_sidecar",
     "collect_market_observation",
+    "observation_from_ten_symbol_bars_sidecar",
 ]
