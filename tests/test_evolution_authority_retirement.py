@@ -57,7 +57,9 @@ def test_evolution_controller_contains_no_automatic_expand_action() -> None:
     source = (ROOT / "Ashare" / "evolution_controller.py").read_text(encoding="utf-8")
     forbidden = "expand" + "_risk_candidate"
     assert forbidden not in source
-    assert '"automatic_promotion_enabled": False' in source
+    # Simulation-domain policy: evidence-ready promotion executes automatically
+    # without a human gate; risk expansion stays permanently disabled.
+    assert '"automatic_promotion_enabled": True' in source
     assert '"automatic_risk_expansion_enabled": False' in source
 
 

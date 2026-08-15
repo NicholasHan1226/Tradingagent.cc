@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """A-share simulated evolution decisions backed only by SampleJournal KPIs.
 
-This module never promotes a strategy, expands risk, or enables real trading.
-During the initial simulation window it can only keep collecting evidence or
-surface a candidate for Nicholas' manual review.
+This module never expands risk or enables real trading.  Inside the
+simulation domain there is no human review gate: when the scientific evidence
+gate reports ``promotion_evidence_ready=True`` the decision recommends
+``execute_automatic_promotion`` and the promotion is executed through
+:mod:`Ashare.promotion_executor` into the durable, simulation-only Champion
+selection registry.
+
+The top-level projection safety fields (``automatic_promotion_enabled`` etc.)
+stay ``False`` by the canonical projection publisher contract; the standing
+policy is carried by ``policy.automatic_promotion_enabled`` and the actual
+promotion authority by the registry receipt chain.
 """
 
 from __future__ import annotations
@@ -151,7 +159,7 @@ def build_evolution_decision(
     authority_scope: Mapping[str, Any],
     target_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    """Build a non-mutating, manual-only evolution assessment."""
+    """Build an evolution assessment; the decision itself never mutates state."""
 
     payload = sample_kpi if isinstance(sample_kpi, Mapping) else {}
     target_date = _compact_date(target_trade_date) or _today_cn_compact()
@@ -205,9 +213,9 @@ def build_evolution_decision(
         state = "evidence_rejected"
         action = "observe_and_label_candidates"
     elif promotion_evidence_ready:
-        state = "manual_review_candidate"
-        action = "manual_review_only"
-        reasons.append("scientific_evidence_ready_for_manual_review_only")
+        state = "automatic_promotion_ready"
+        action = "execute_automatic_promotion"
+        reasons.append("scientific_evidence_ready_for_automatic_promotion")
     else:
         state = "evidence_pending"
         action = "observe_and_label_candidates"
@@ -219,7 +227,7 @@ def build_evolution_decision(
         "propensity_recording_required": True,
         "max_exploration_new_positions_per_day": 1,
         "exploration_total_exposure_limit_cny": 7_500.0,
-        "automatic_promotion_enabled": False,
+        "automatic_promotion_enabled": True,
         "automatic_risk_expansion_enabled": False,
         "real_trading_enabled": False,
     }
@@ -305,6 +313,34 @@ def write_evolution_decision(
     return decision
 
 
+def run_automatic_promotion(
+    decision: Mapping[str, Any],
+    *,
+    registry_root: Path | str,
+    challenger_candidates: list[Mapping[str, Any]] | None = None,
+    recorded_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Execute the evidence-gated automatic promotion for a ready decision.
+
+    Returns a copy of *decision* with the ``promotion_execution`` outcome
+    embedded.  Decisions without ``promotion_evidence_ready=True`` are returned
+    unchanged with an explicit ``no_op`` outcome; no Champion change is ever
+    fabricated.
+    """
+
+    from Ashare.promotion_executor import execute_automatic_promotion
+
+    result = execute_automatic_promotion(
+        decision,
+        registry_root=registry_root,
+        challenger_candidates=challenger_candidates,
+        recorded_at=recorded_at,
+    )
+    updated = dict(decision)
+    updated["promotion_execution"] = result
+    return updated
+
+
 def load_latest_decision(
     path: Path | str | None = None, *, review_dir: Path | str | None = None
 ) -> dict[str, Any]:
@@ -359,7 +395,9 @@ def decision_market_context(
             policy.get("exploration_selection") or "top_k_epsilon_greedy"
         ),
         "propensity_recording_required": True,
-        "automatic_promotion_enabled": False,
+        "automatic_promotion_enabled": (
+            evidence_usable and policy.get("automatic_promotion_enabled") is True
+        ),
         "automatic_risk_expansion_enabled": False,
         "evolution_recommended_action": str(
             decision.get("recommended_action") or "observe_and_label_candidates"
