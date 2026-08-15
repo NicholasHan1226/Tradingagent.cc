@@ -192,12 +192,21 @@ class CryptoTenSymbolObservationProfile:
         )
 
     def verify_catalog(self, catalog: CatalogEnvelope) -> None:
-        rebuilt = type(self).from_catalog(
-            catalog,
-            expected_catalog_version=self.catalog_version,
-        )
-        if rebuilt.datasets != self.datasets:
-            raise CryptoTenSymbolProfileError("ten_symbol_profile_contract_drift")
+        if not isinstance(catalog, CatalogEnvelope) or catalog.api_version != "v1":
+            raise CryptoTenSymbolProfileError("ten_symbol_profile_catalog_invalid")
+        for expected in self.datasets:
+            _verify_catalog(catalog, expected.dataset_id)
+            row = _catalog_row(catalog, expected.dataset_id)
+            try:
+                observed_sha256 = dataset_contract_fingerprint(row)
+            except ValueError as exc:
+                raise CryptoTenSymbolProfileError(
+                    "ten_symbol_profile_contract_invalid"
+                ) from exc
+            if observed_sha256 != expected.catalog_contract_sha256:
+                raise CryptoTenSymbolProfileError(
+                    "ten_symbol_profile_contract_drift"
+                )
 
 
 def load_ten_symbol_observation_profile_payload(

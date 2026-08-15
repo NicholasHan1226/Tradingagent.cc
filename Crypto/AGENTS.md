@@ -155,13 +155,21 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   积累器，为后续横截面 factor research 提供前向积累的证据级数据源。它与
   delayed-paper core/learning/factor 完全不共享 root、锁或状态，任一故障域
   互不影响；固定 `authority=none`、零 capital/order/model/promotion 权限。
-  store 是 append-only checksum 链账本（observation/data_reject/data_gap），
-  同槽重放幂等、同槽异 payload fail closed。profile 冻结 10 个 bar dataset
+  store 是 append-only checksum 链账本（observation/data_reject/data_gap）；
+  terminal observation/data_gap 同槽重放幂等、同槽异 payload fail closed，
+  非 terminal data_reject 则按确定性 attempt/event ID 幂等追加，允许同槽不同失败
+  原因被分别保留，避免瞬时失败变化永久卡槽。profile 冻结 10 个 bar dataset
   各自的 canonical catalog contract fingerprint、统一 consumer 查询形状与
-  外层 SHA，任一漂移 fail closed。runtime 只接受仓外冻结 manifest 与固定
+  外层 SHA；目标 dataset 合同漂移 fail closed，无关 dataset 引起的全局 catalog
+  version 前进不阻塞积累，本轮 query 必须绑定同轮实际观察到的 catalog version。
+  runtime 只接受仓外冻结 manifest 与固定
   token leaf，懒构造 transport，输出根只能来自 manifest 绑定的
   `/var/lib/tradingagent/crypto-ten-symbol-observation`；slot cutoff 固定
-  bar close +55s，每 invocation 最多 2 cycle，积压返回 `backlog_pending`
+  bar close +55s，每 invocation 最多 2 cycle，并受 120 秒绝对 wall-clock
+  budget 约束；每次 wire timeout 都压缩到剩余预算，预算耗尽保留 pending 与已完成
+  增量，不能误记为数据拒绝。候选 timer 固定错开现役 core 的 close+55s，
+  在 close+2m25s 启动，避免共享 token/API/SQLite surface 并发。积压返回
+  `backlog_pending`
   非零退出且不跳槽；历史窗口对 current-read watermark 门禁确定不可恢复时，
   只允许在当前窗口全部门禁通过后追加显式 `data_gap`，不伪造 PIT。证据只能
   前向积累，历史回填不构成证据。对应 systemd unit 是 install-default 不启用

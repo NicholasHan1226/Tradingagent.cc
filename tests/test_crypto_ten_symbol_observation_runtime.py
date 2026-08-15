@@ -103,6 +103,10 @@ def _runtime_paths(
     output_root = tmp_path / "crypto-ten-symbol-observation"
     monkeypatch.setattr(runtime_module, "RUNTIME_TOKEN_FILE", token_file)
     monkeypatch.setattr(runtime_module, "RUNTIME_OUTPUT_ROOT", output_root)
+    # Keep the tests hermetic.  GitHub happens to provide this globally, but a
+    # normal clean developer shell must exercise the same simulation-only
+    # contract without inheriting CI-only ambient state.
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
     return token_file, output_root
 
 
@@ -135,6 +139,7 @@ def _run(
     *,
     now: datetime,
     transport_factory: Callable[..., Any],
+    invocation_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     return run_crypto_ten_symbol_observation_once(
         runtime_manifest=_write_manifest(
@@ -144,6 +149,7 @@ def _run(
         output_root=output_root,
         now=now,
         transport_factory=transport_factory,
+        invocation_budget_seconds=invocation_budget_seconds,
     )
 
 
@@ -328,6 +334,35 @@ def test_completed_cycle_records_observation_event_without_authority(
     event = store.events()[0]
     assert event["event_type"] == "observation"
     assert event["profile_sha256"] == receipt["fresh_query_profile_sha256"]
+
+
+def test_unrelated_catalog_increment_is_bound_to_queries_without_profile_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    observed_version = "fixture-unrelated-catalog-v2"
+    delegate = TenSymbolFixtureTransport()
+
+    def incremented_catalog_transport(**kwargs: Any) -> HTTPResponse:
+        response = delegate(**kwargs)
+        payload = copy.deepcopy(dict(response.json_body))
+        payload["catalog_version"] = observed_version
+        return HTTPResponse(response.status_code, payload)
+
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(incremented_catalog_transport),
+    )
+
+    assert receipt["status"] == "completed"
+    assert receipt["fresh_query_catalog_version"] == observed_version
+    event = CryptoTenSymbolObservationStore(output_root).events()[0]
+    assert event["catalog_version"] == observed_version
+    assert event["observation"]["catalog_version"] == observed_version
     assert event["observation"]["sources"][0]["symbol"] == OBSERVATION_SYMBOLS[0]
     assert (
         event["observation"]["observation_sha256"]
@@ -833,7 +868,7 @@ def test_cli_rejects_non_dedicated_token_leaf(
     )
 
 
-def test_loopback_timeout_budget_stays_below_systemd_stop_line() -> None:
+def test_loopback_absolute_budget_stays_below_systemd_stop_line() -> None:
     service = (
         Path(__file__).resolve().parents[1]
         / "Crypto"
@@ -841,20 +876,39 @@ def test_loopback_timeout_budget_stays_below_systemd_stop_line() -> None:
         / "tradingagent-crypto-ten-symbol-observation.service"
     ).read_text(encoding="utf-8")
 
-    # The live TradingDatas catalog read measures ~13s and each bounded query
-    # ~4s, so the per-request timeout follows the round-trip core at 60s.
+    # Per-wire timeouts are further clamped by one absolute invocation budget,
+    # so a partial/provider slowdown cannot run past multiple 5-minute slots.
     assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 60.0
     assert runtime_module.REQUESTS_PER_CYCLE == 11
-    assert (
-        runtime_module.MAX_CYCLES_PER_INVOCATION
-        * runtime_module.REQUESTS_PER_CYCLE
-        * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        == 1320.0
+    assert runtime_module.INVOCATION_BUDGET_SECONDS == 120.0
+    assert "TimeoutStartSec=180" in service
+
+
+def test_absolute_budget_defers_without_recording_timeout_as_data_reject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    clock = iter((0.0, 0.0, 31.0))
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: next(clock))
+
+    def timed_out_transport(**_: Any) -> HTTPResponse:
+        raise TimeoutError("wire timed out at invocation deadline")
+
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(timed_out_transport),
+        invocation_budget_seconds=30.0,
     )
-    assert (
-        runtime_module.MAX_CYCLES_PER_INVOCATION
-        * runtime_module.REQUESTS_PER_CYCLE
-        * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        < 3600.0
-    )
-    assert "TimeoutStartSec=3600" in service
+
+    assert receipt["status"] == "backlog_pending"
+    assert receipt["budget_deferred"] is True
+    assert receipt["processed_cycle_count"] == 0
+    assert receipt["backlog_remaining"] is True
+    assert crypto_ten_symbol_observation_exit_code(receipt) == 2
+    store = CryptoTenSymbolObservationStore(output_root)
+    assert store.pending_record() is not None
+    assert store.checkpoint()["data_reject_count"] == 0

@@ -142,7 +142,7 @@ def test_crypto_ten_symbol_observation_service_is_loopback_only_sim_only() -> No
     ) in text
     assert "--output-root" not in text
     assert "UMask=0077" in text
-    assert "TimeoutStartSec=3600" in text
+    assert "TimeoutStartSec=180" in text
     assert "NoNewPrivileges=true" in text
     assert "PrivateTmp=true" in text
     assert "PrivateDevices=true" in text
@@ -192,7 +192,7 @@ def test_crypto_ten_symbol_observation_service_is_loopback_only_sim_only() -> No
 def test_crypto_ten_symbol_observation_timer_is_install_default_not_enabled() -> None:
     text = TEN_SYMBOL_TIMER.read_text(encoding="utf-8")
 
-    assert "OnCalendar=*-*-* *:0/5:55" in text
+    assert "OnCalendar=*-*-* *:2/5:25" in text
     assert "AccuracySec=1s" in text
     assert "RandomizedDelaySec=3s" in text
     assert "Persistent=false" in text
@@ -203,3 +203,13 @@ def test_crypto_ten_symbol_observation_timer_is_install_default_not_enabled() ->
     assert "systemctl start" not in text
     assert "OnBootSec=" not in text
     assert "OnUnitActiveSec=" not in text
+
+
+def test_crypto_ten_symbol_timer_is_staggered_after_existing_core_budget() -> None:
+    text = TEN_SYMBOL_TIMER.read_text(encoding="utf-8")
+    service = TEN_SYMBOL_SERVICE.read_text(encoding="utf-8")
+    core_text = TIMER.read_text(encoding="utf-8")
+
+    assert "OnCalendar=*-*-* *:0/5:55" in core_text
+    assert "OnCalendar=*-*-* *:2/5:25" in text
+    assert "TimeoutStartSec=180" in service

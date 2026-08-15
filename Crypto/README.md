@@ -611,7 +611,9 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   fingerprint（`catalog_contract_sha256`），统一 consumer 查询形状
   （字段/order/identity/filter bindings/page budget）绑定
   `consumer_profile_sha256`，外层 `profile_sha256` 任一漂移 fail closed；
-  catalog 硬校验直接复用 `market_observation._verify_catalog`。
+  catalog 硬校验直接复用 `market_observation._verify_catalog`。运行时使用
+  evidence-only catalog 绑定：同轮 query 必须匹配同轮观察版本，十个目标 dataset
+  合同指纹仍严格不变，但无关 dataset 上线造成的全局 catalog version 前进不阻塞。
 - runtime：server CLI，只接受仓外冻结 manifest
   `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json`（loopback
   IP literal base_url、catalog_version、完整 profile payload + SHA、绑定的
@@ -626,8 +628,12 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 
 - `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不随 systemd
   jitter 或重跑墙上时钟漂移。
+- timer 固定在每根 bar close +2m25s，避开现役 Crypto core 的 close +55s
+  调用及其 120 秒预算；两者共享 TD token/API/SQLite surface，禁止恢复为同秒并发。
 - 每 invocation 最多 2 cycle（pending recovery + 1 fresh，或两个连续处理
-  步骤）；仍落后当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
+  步骤），同时受 120 秒绝对 wall-clock budget 约束；每次 TD wire timeout
+  压缩到剩余预算，预算耗尽时保留 pending 与已经完成的增量，不追加伪造的
+  `data_reject`。仍落后当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
   delayed-paper core 的刻意差异（core 在有进展时返回 0）：积累器没有资本
   风险，timer 应把滞后显式暴露为失败直到追平。槽位仍严格按序补，绝不跳过
   中间时槽。
@@ -643,9 +649,10 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   原因与被拒窗口，并内嵌恢复首窗的完整 observation 证据；恢复槽不另写普通
   observation 事件。下一根连续窗口恢复正常积累。同槽重放只做无网络幂等
   校验。
-- data_reject 语义差异：store 对同一 `(event_type, slot)` 的不同 payload
-  （含不同 reason_code）fail closed，比 core 的 decision ledger 更严格；
-  瞬时失败在下轮重试时以相同 payload 幂等。
+- data_reject 是非 terminal 的 attempt 事实：相同确定性 event ID 重放幂等；
+  同一 slot 的不同 reason/attempt 分别追加并保留，不能因为 timeout、metadata、
+  watermark 等失败原因随重试变化而把该 slot 永久卡死。observation/data_gap
+  仍保持 terminal 同槽唯一和异 payload fail closed。
 
 ### manifest / token / root 边界
 
