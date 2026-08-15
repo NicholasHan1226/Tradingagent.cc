@@ -356,6 +356,5 @@ def test_crypto_ten_symbol_timer_is_staggered_after_existing_core_budget() -> No
     assert "OnCalendar=*-*-* *:0/5:55" in core_text
     assert "OnCalendar=*-*-* *:3/5:25" in text
     assert "TimeoutStartSec=180" in service
-    # Core: close+55s + 120s budget + <=3s jitter = close+2m58s.
-    # Reader: close+3m25s + 120s budget + <=3s jitter = close+5m28s,
-    # leaving at least 27s on both sides of the shared surface.
+    # Runtime acceptance still needs natural before/reader/after readbacks:
+    # the 120s business budget does not cover every fixed process overhead.
