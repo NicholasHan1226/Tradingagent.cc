@@ -1,0 +1,14 @@
+[Unit]
+Description=TradingAgent Crypto detached ten-symbol factor-research daily full scrub timer candidate
+
+[Timer]
+# Daily full chain validation and label settlement, staggered after the
+# existing learning scrub window (03:30 + 5m jitter).
+OnCalendar=*-*-* 04:05:00
+AccuracySec=1s
+RandomizedDelaySec=5m
+Persistent=false
+Unit=tradingagent-crypto-ten-symbol-factor-research-scrub.service
+
+[Install]
+WantedBy=timers.target

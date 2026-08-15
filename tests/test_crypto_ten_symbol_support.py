@@ -17,6 +17,9 @@ from Crypto.market_observation import (
     BAR_FIELDS,
     FIVE_MINUTES,
     OBSERVATION_SYMBOLS,
+    CryptoMarketObservation,
+    CryptoObservationWindow,
+    _collect_market_observation_rows_with_catalog,
 )
 from shared.data.sharedsignals_v1 import (
     HTTPResponse,
@@ -208,4 +211,26 @@ def client(transport: TenSymbolFixtureTransport) -> SharedSignalsV1Client:
             cache_ttl_seconds=0,
         ),
         transport=transport,
+    )
+
+
+def collect_fixture_observation(
+    window_end: datetime,
+    *,
+    observed_at: datetime | None = None,
+) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
+    """Collect one fully validated fixture observation plus its raw bar rows."""
+
+    transport = TenSymbolFixtureTransport(observed_at=observed_at)
+    fixture_client = client(transport)
+    catalog = fixture_client.get_catalog()
+    window = CryptoObservationWindow(
+        window_end=window_end,
+        observation_cutoff=window_end + timedelta(seconds=55),
+    )
+    return _collect_market_observation_rows_with_catalog(
+        fixture_client,
+        catalog=catalog,
+        expected_catalog_version=CATALOG_VERSION,
+        window=window,
     )

@@ -20,6 +20,8 @@ FACTOR_RESEARCH_CONTRACT = "tradingagent.crypto.factor_research.v1"
 FACTOR_SET_ID = "crypto-5m-ohlcv-factor-research-v1"
 FACTOR_SET_VERSION = 1
 SUPPORTED_SYMBOLS = ("BTCUSDT", "ETHUSDT")
+TEN_SYMBOL_FACTOR_SET_ID = "crypto-5m-ohlcv-factor-research-v2"
+TEN_SYMBOL_FACTOR_SET_VERSION = 2
 WINDOW_BARS = 13
 BAR_INTERVAL = timedelta(minutes=5)
 MINIMUM_SCREENING_LABELS = 50
@@ -100,12 +102,39 @@ def _non_authority_fields() -> dict[str, Any]:
     }
 
 
-def _assert_snapshot_integrity(snapshot: Mapping[str, Any]) -> None:
+def _feature_set(
+    feature_set_id: str | None,
+    feature_set_version: int | None,
+) -> tuple[str, int]:
+    """Resolve the frozen feature-set identity; defaults stay v1-frozen."""
+
+    resolved_id = FACTOR_SET_ID if feature_set_id is None else feature_set_id
+    resolved_version = (
+        FACTOR_SET_VERSION if feature_set_version is None else feature_set_version
+    )
+    if (
+        not isinstance(resolved_id, str)
+        or not resolved_id
+        or isinstance(resolved_version, bool)
+        or not isinstance(resolved_version, int)
+        or resolved_version <= 0
+    ):
+        raise CryptoFactorResearchError("factor_research_feature_set_invalid")
+    return resolved_id, resolved_version
+
+
+def _assert_snapshot_integrity(
+    snapshot: Mapping[str, Any],
+    *,
+    feature_set_id: str | None = None,
+    feature_set_version: int | None = None,
+) -> None:
+    set_id, set_version = _feature_set(feature_set_id, feature_set_version)
     if (
         snapshot.get("contract") != FACTOR_RESEARCH_CONTRACT
         or snapshot.get("event_type") != "factor_snapshot"
-        or snapshot.get("feature_set_id") != FACTOR_SET_ID
-        or snapshot.get("feature_set_version") != FACTOR_SET_VERSION
+        or snapshot.get("feature_set_id") != set_id
+        or snapshot.get("feature_set_version") != set_version
     ):
         raise CryptoFactorResearchError("factor_research_snapshot_invalid")
     expected = snapshot.get("factor_snapshot_sha256")
@@ -120,16 +149,21 @@ def _assert_snapshot_integrity(snapshot: Mapping[str, Any]) -> None:
 
 
 def _assert_label_integrity(
-    label: Mapping[str, Any], *, snapshot: Mapping[str, Any]
+    label: Mapping[str, Any],
+    *,
+    snapshot: Mapping[str, Any],
+    feature_set_id: str | None = None,
+    feature_set_version: int | None = None,
 ) -> None:
+    set_id, set_version = _feature_set(feature_set_id, feature_set_version)
     expected = label.get("forward_label_sha256")
     material = dict(label)
     material.pop("forward_label_sha256", None)
     if (
         label.get("contract") != FACTOR_RESEARCH_CONTRACT
         or label.get("event_type") != "forward_return_label"
-        or label.get("feature_set_id") != FACTOR_SET_ID
-        or label.get("feature_set_version") != FACTOR_SET_VERSION
+        or label.get("feature_set_id") != set_id
+        or label.get("feature_set_version") != set_version
         or label.get("source_factor_snapshot_sha256")
         != snapshot.get("factor_snapshot_sha256")
         or not isinstance(expected, str)
@@ -206,12 +240,28 @@ def build_factor_snapshot(
     symbol: str,
     bars: Sequence[Mapping[str, Any]],
     evidence: Mapping[str, Any],
+    supported_symbols: Sequence[str] | None = None,
+    feature_set_id: str | None = None,
+    feature_set_version: int | None = None,
 ) -> dict[str, Any]:
-    """Build a read-only feature snapshot from one evidence-bound 13-bar window."""
+    """Build a read-only feature snapshot from one evidence-bound 13-bar window.
 
+    The keyword-only universe/feature-set parameters default to the frozen v1
+    behavior; v1 callers are byte-identical.  The ten-symbol projection passes
+    its frozen ten-symbol universe and v2 feature-set identity explicitly.
+    """
+
+    set_id, set_version = _feature_set(feature_set_id, feature_set_version)
+    symbols = SUPPORTED_SYMBOLS if supported_symbols is None else supported_symbols
+    if (
+        isinstance(symbols, (str, bytes))
+        or not symbols
+        or any(not isinstance(item, str) or not item for item in symbols)
+    ):
+        raise CryptoFactorResearchError("factor_research_symbol_invalid")
     if not isinstance(observation_id, str) or not observation_id:
         raise CryptoFactorResearchError("factor_research_observation_id_invalid")
-    if symbol not in SUPPORTED_SYMBOLS:
+    if symbol not in symbols:
         raise CryptoFactorResearchError("factor_research_symbol_invalid")
     receipt_id = evidence.get("receipt_id")
     lineage_sha256 = evidence.get("lineage_sha256")
@@ -248,8 +298,8 @@ def build_factor_snapshot(
     snapshot = {
         "contract": FACTOR_RESEARCH_CONTRACT,
         "event_type": "factor_snapshot",
-        "feature_set_id": FACTOR_SET_ID,
-        "feature_set_version": FACTOR_SET_VERSION,
+        "feature_set_id": set_id,
+        "feature_set_version": set_version,
         "observation_id": observation_id,
         "symbol": symbol,
         "market_slot": _iso(last.open_time),
@@ -275,10 +325,17 @@ def build_forward_label(
     exit_price: Decimal | str,
     future_evidence: Mapping[str, Any],
     fee_rate: Decimal | str = FEE_RATE,
+    feature_set_id: str | None = None,
+    feature_set_version: int | None = None,
 ) -> dict[str, Any]:
     """Bind a later, cost-aware return label without altering a snapshot."""
 
-    _assert_snapshot_integrity(snapshot)
+    set_id, set_version = _feature_set(feature_set_id, feature_set_version)
+    _assert_snapshot_integrity(
+        snapshot,
+        feature_set_id=set_id,
+        feature_set_version=set_version,
+    )
     snapshot_sha256 = snapshot.get("factor_snapshot_sha256")
     if not isinstance(horizon_minutes, int) or horizon_minutes not in {
         60,
@@ -321,8 +378,8 @@ def build_forward_label(
     label = {
         "contract": FACTOR_RESEARCH_CONTRACT,
         "event_type": "forward_return_label",
-        "feature_set_id": FACTOR_SET_ID,
-        "feature_set_version": FACTOR_SET_VERSION,
+        "feature_set_id": set_id,
+        "feature_set_version": set_version,
         "observation_id": snapshot.get("observation_id"),
         "symbol": snapshot.get("symbol"),
         "source_factor_snapshot_sha256": snapshot_sha256,
@@ -419,9 +476,13 @@ def _signal(hypothesis_id: str, snapshot: Mapping[str, Any]) -> bool:
 
 def evaluate_factor_hypotheses(
     samples: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]],
+    *,
+    feature_set_id: str | None = None,
+    feature_set_version: int | None = None,
 ) -> dict[str, Any]:
     """Compare fixed hypotheses on already observed, cost-aware labels only."""
 
+    set_id, set_version = _feature_set(feature_set_id, feature_set_version)
     hypotheses = (
         "time_series_momentum_v1",
         "trend_pullback_v1",
@@ -431,9 +492,18 @@ def evaluate_factor_hypotheses(
     for hypothesis_id in hypotheses:
         returns: list[Decimal] = []
         for snapshot, label in samples:
-            _assert_snapshot_integrity(snapshot)
+            _assert_snapshot_integrity(
+                snapshot,
+                feature_set_id=set_id,
+                feature_set_version=set_version,
+            )
             try:
-                _assert_label_integrity(label, snapshot=snapshot)
+                _assert_label_integrity(
+                    label,
+                    snapshot=snapshot,
+                    feature_set_id=set_id,
+                    feature_set_version=set_version,
+                )
             except CryptoFactorResearchError as exc:
                 raise CryptoFactorResearchError(
                     "factor_research_label_binding_invalid"
@@ -466,8 +536,8 @@ def evaluate_factor_hypotheses(
     return {
         "contract": FACTOR_RESEARCH_CONTRACT,
         "event_type": "factor_hypothesis_report",
-        "feature_set_id": FACTOR_SET_ID,
-        "feature_set_version": FACTOR_SET_VERSION,
+        "feature_set_id": set_id,
+        "feature_set_version": set_version,
         "sample_count": len(samples),
         "hypotheses": results,
         "selection_authority": "none",
@@ -484,6 +554,8 @@ __all__ = [
     "FACTOR_SET_VERSION",
     "FEE_RATE",
     "MINIMUM_SCREENING_LABELS",
+    "TEN_SYMBOL_FACTOR_SET_ID",
+    "TEN_SYMBOL_FACTOR_SET_VERSION",
     "CryptoFactorResearchError",
     "build_cross_asset_features",
     "build_factor_snapshot",

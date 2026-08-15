@@ -1,0 +1,17 @@
+[Unit]
+Description=TradingAgent Crypto detached ten-symbol factor-research worker timer candidate
+
+[Timer]
+# The observation reader starts at bar close +3m25s with a bounded 120s
+# budget.  Start this offline projector after its typical ~50s cycle so a
+# completed slot is visible; an occasional long observation round simply
+# leaves this round projecting the previous slot, which the next round
+# catches up.  This unit never shares the TradingDatas wire surface.
+OnCalendar=*-*-* *:4/5:50
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=false
+Unit=tradingagent-crypto-ten-symbol-factor-research.service
+
+[Install]
+WantedBy=timers.target

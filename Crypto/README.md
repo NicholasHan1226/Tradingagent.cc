@@ -623,6 +623,20 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   懒构造，pending/同槽恢复不需要网络或 token。输出根只能来自 manifest 绑定
   的 `/var/lib/tradingagent/crypto-ten-symbol-observation`，CLI 没有
   `--output-root`。wire 只有 `GET /v1/catalog` 与 `POST /v1/query`。
+- bars sidecar：store 事件是 digest-only 证据账本，不含 13 根 OHLCV 行。
+  fresh 采集成功后 runtime 先把该槽 10 币原始 bar 行原子写入
+  `bars/<slot>.json`（canonical JSON、tmp+rename+fsync、0600），再落账
+  事件——crash 顺序保证事件引用的 sidecar 必存在，孤儿 sidecar 无害且下轮
+  零网络复用。sidecar 同内容重写幂等、异内容 fail closed；data_gap 恢复
+  首窗按恢复槽同样写 sidecar。sidecar 每 source 携带原始行序列加上
+  receipt/digest 元数据；消费方用分页层 canonicalization
+  （`ensure_ascii=False`、sort_keys、无尾随换行）从行独立重算
+  `identity_sha256`（`symbol`/`open_time` 序列）与 `market_data_sha256`
+  （有序行序列），并与 store 事件的 per-source digest 逐值比对，重建的
+  observation 还必须复现 `observation_sha256`。sidecar 本地校验失败一律
+  fail closed，绝不记为 data_reject。观测事件合同与 digest 定义不变，bar
+  行不进入任何事件 digest；补丁前的旧槽没有 sidecar，v2 视其为
+  feature-ineligible（数量极少）。
 
 ### slot / backlog / gap 语义
 
@@ -678,11 +692,73 @@ manifest 冻结，runtime 不从当前 catalog 动态重建或放宽。部署 ru
 
 ### 明确未实现
 
-- 没有 factor v2 消费端、横截面 factor/IC 声称、rules dataset、历史回填
-  证据化；50 标签初筛不构成晋级。
+- 没有横截面 factor/IC 声称、rules dataset、历史回填证据化；50 标签初筛
+  不构成晋级。factor v2 消费端已作为 install-default 不启用的 detached
+  候选存在（见下章），不代表已启用或已有样本。
 - systemd unit 是 install-default 不启用的候选，不代表现役 timer 状态。
 - 该链不读取/写入 core、资本、learning、Champion 或 `evolution/`，也不构成
   任何 PIT 回填或交易 authority。
+
+## 十币种横截面 Factor Research v2（detached 投影候选）
+
+`ten_symbol_factor_research.py` 与 `ten_symbol_factor_research_worker.py`
+是 10 币观测积累器的 detached offline 因子投影，机制镜像
+`delayed_paper_factor_research.py`，输入换成观测 store 事件链 + bars
+sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
+`authority=none`；任何投影失败都不能改变观测积累器的状态、退出码或事件链。
+
+### 证据绑定与 consumer profile
+
+- 输入单位是 terminal 槽（`observation` 或 `data_gap` 恢复首窗）。每个槽先
+  读 `bars/<slot>.json` sidecar，从原始行重算每 source 的
+  `identity_sha256`/`market_data_sha256`，并重建 observation 复现
+  `observation_sha256`，再与 store 事件逐值比对；sidecar 缺失或 digest
+  不符的槽永不投影，视同 gap 切断 segment，checkpoint 记录
+  `projection_outcome=sidecar_ineligible` 与原因。
+- 冻结 consumer profile `crypto-5m-ohlcv-13bar-forward-labels-v2`：10
+  symbol（固定 `market_observation.OBSERVATION_SYMBOLS` 顺序）、13 根 5m
+  bar、feature set `crypto-5m-ohlcv-factor-research-v2`（version 2）、
+  required label horizon 60min、auxiliary 240/720/1440min。
+  `factor_research.py` 仅增加 keyword-only 可选参数，默认 v1 行为字节不变。
+- record 含 10 个 per-symbol snapshot（receipt_id + per-source
+  `identity_sha256` 作 lineage 绑定材料）、标注为 context 的横截面 1h/15m
+  return 排名/极差（`is_research_hypothesis=false`，不是新假设）、
+  `segment_id`、`source_event_checksum` 与 `source_bars_sidecar_sha256`
+  双重绑定。三个预注册假设不变，横截面不加新假设。
+- segment：相邻 terminal 槽差 ≠5 分钟或前一槽 ineligible 即开新段
+  （`crypto-5m-segment-<段首slot>`）；label 只在同段内按
+  slot+horizon 结算，跨段/目标槽 ineligible 一律不结算。
+
+### 运行模式与部署门禁
+
+- 投影根固定 `<store_root>/evolution/ten_symbol_factor_research/`
+  （records/receipts/labels/checkpoints + immutable 写 + checkpoint hash
+  链）；checkpoint 与 terminal 槽 1:1（含 ineligible 槽），增量/全量计数
+  语义与 v1 相同。incremental 每轮只投影一个新槽、不回填 label（积压返回
+  `full_scrub_required`）；daily full scrub 做全链校验、补 record、结算同段
+  到期 label 并对 required-horizon 同段样本跑
+  `evaluate_factor_hypotheses` 出 hypothesis report；超时走可重试
+  `deferred_time_budget`/`deferred_inventory_time_budget` debt。
+- worker 只从固定
+  `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json` 推导
+  store root，CLI 没有 output-root/manifest 自由参数，执行前后重验
+  manifest 字节与 root identity；`_assert_simulation_only` fail-closed，
+  异常 stderr 脱敏 + exit 2。
+- systemd 候选（install-default 不启用）：incremental unit
+  `OnCalendar=*-*-* *:4/5:50`（观测在 close+3m25s 触发、典型周期约 50s，
+  留约 80s margin；观测偶发长跑时本轮投影上一槽，下轮追平，且投影不共享
+  TD wire surface），scrub unit 每日 `04:05:00`+5m jitter（错开 learning
+  scrub 的 03:30 窗口）。unit 以 ReadOnlyPaths 挂观测 store、
+  ReadWritePaths 仅 `evolution/ten_symbol_factor_research`；部署需先预建该
+  目录（tradingagent:tradingagent 0700），再经 Nicholas 明确批准后方可在
+  sidecar 积累出首个可用 segment 后启用。
+
+### 明确未实现
+
+- 不 port `factor_strategy_evaluation`（always-invest/cash 双基线、
+  drawdown、turnover 留 follow-up）；不做横截面 IC 研究合同（等 288 段
+  成熟度达标后的独立 slice）；50 标签初筛不构成 edge 或晋级授权；不做历史
+  回填证据化；unit 不代表现役 timer 状态。
 
 ## 验证
 
@@ -706,6 +782,9 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_round_trip_acc
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_store.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_profile.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_runtime.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_sidecar.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research_worker.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
