@@ -5,7 +5,7 @@ Description=TradingAgent Crypto ten-symbol closed-5m observation accumulator tim
 # The capital core starts at closed-bar +55s and has a bounded 120s budget.
 # Start this reader after the shared token/API/SQLite surface is clear, while
 # still finishing before the following core cadence.
-OnCalendar=*-*-* *:2/5:25
+OnCalendar=*-*-* *:3/5:25
 AccuracySec=1s
 RandomizedDelaySec=3s
 Persistent=false

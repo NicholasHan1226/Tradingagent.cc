@@ -192,7 +192,7 @@ def test_crypto_ten_symbol_observation_service_is_loopback_only_sim_only() -> No
 def test_crypto_ten_symbol_observation_timer_is_install_default_not_enabled() -> None:
     text = TEN_SYMBOL_TIMER.read_text(encoding="utf-8")
 
-    assert "OnCalendar=*-*-* *:2/5:25" in text
+    assert "OnCalendar=*-*-* *:3/5:25" in text
     assert "AccuracySec=1s" in text
     assert "RandomizedDelaySec=3s" in text
     assert "Persistent=false" in text
@@ -211,5 +211,8 @@ def test_crypto_ten_symbol_timer_is_staggered_after_existing_core_budget() -> No
     core_text = TIMER.read_text(encoding="utf-8")
 
     assert "OnCalendar=*-*-* *:0/5:55" in core_text
-    assert "OnCalendar=*-*-* *:2/5:25" in text
+    assert "OnCalendar=*-*-* *:3/5:25" in text
     assert "TimeoutStartSec=180" in service
+    # Core: close+55s + 120s budget + <=3s jitter = close+2m58s.
+    # Reader: close+3m25s + 120s budget + <=3s jitter = close+5m28s,
+    # leaving at least 27s on both sides of the shared surface.
