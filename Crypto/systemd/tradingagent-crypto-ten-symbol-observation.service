@@ -16,7 +16,7 @@ Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.ten_symbol_observation_runtime --runtime-manifest /etc/tradingagent/crypto-ten-symbol-observation.runtime.json --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
-TimeoutStartSec=3600
+TimeoutStartSec=180
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

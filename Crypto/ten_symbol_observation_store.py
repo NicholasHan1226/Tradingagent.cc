@@ -555,6 +555,17 @@ class CryptoTenSymbolObservationStore:
 
     def _rebuild_head(self) -> dict[str, Any]:
         rows, current_rows, segment_count = self._read_all_events()
+        # The ledger row is the durable fact; slot indexes are derived lookup
+        # artifacts.  A process can die after publishing the fsynced event
+        # file but before publishing its index/head.  Recreate only missing
+        # indexes from the already verified checksum chain so that same-slot
+        # replay remains idempotent after that crash window.  An existing
+        # conflicting index still fails closed in _write_immutable_json.
+        for row in rows:
+            _write_immutable_json(
+                self._event_index_path(row),
+                row,
+            )
         last_checksum = str(rows[-1]["checksum"]) if rows else "0" * 64
         terminal_slots = [
             _market_slot(row.get("window_end"))
@@ -678,14 +689,23 @@ class CryptoTenSymbolObservationStore:
         if current_sha == head.get("current_file_sha256"):
             return head
         rows, _, _ = self._read_all_events()
+        sequence = int(head["sequence"])
         covered_checksum = (
-            str(rows[int(head["sequence"]) - 1]["checksum"])
-            if int(head["sequence"]) > 0 and len(rows) >= int(head["sequence"])
-            else None
+            "0" * 64
+            if sequence == 0
+            else (
+                str(rows[sequence - 1]["checksum"])
+                if len(rows) >= sequence
+                else None
+            )
         )
-        if len(rows) > int(head["sequence"]) and covered_checksum == head.get(
-            "last_checksum"
-        ):
+        # Two crash-safe representation changes can make the current-file SHA
+        # differ while preserving the verified ledger prefix:
+        #   1. a newly fsynced row was published before its index/head; or
+        #   2. the current file was atomically rotated before the new current
+        #      file was published.
+        # In both cases the complete checksum chain still covers the old head.
+        if len(rows) >= sequence and covered_checksum == head.get("last_checksum"):
             return self._rebuild_head()
         raise CryptoTenSymbolObservationStoreError(
             "ten_symbol_observation_head_invalid"
@@ -717,6 +737,40 @@ class CryptoTenSymbolObservationStore:
     def _slot_index_path(self, event_type: str, window_end: str) -> Path:
         slot = _market_slot(window_end)
         return self.slot_index_dir / f"{event_type}-{_slot_token(slot)}.json"
+
+    def _event_index_path(self, event: Mapping[str, Any]) -> Path:
+        event_type = str(event.get("event_type"))
+        window_end = str(event.get("window_end"))
+        base = self._slot_index_path(event_type, window_end)
+        if event_type != "data_reject":
+            return base
+        event_id = event.get("event_id")
+        if (
+            not isinstance(event_id, str)
+            or not event_id
+            or any(
+                character not in "abcdefghijklmnopqrstuvwxyz0123456789-_"
+                for character in event_id
+            )
+        ):
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_slot_index_invalid"
+            )
+        # A reject is an attempt fact, not a terminal slot fact.  Different
+        # bounded attempts can truthfully fail for different reasons, so key
+        # them by their deterministic event identity while terminal events
+        # remain exactly one index per slot.
+        return base.with_name(f"{base.stem}-{event_id}.json")
+
+    def _reject_index_paths(self, window_end: str) -> list[Path]:
+        base = self._slot_index_path("data_reject", window_end)
+        paths = sorted(self.slot_index_dir.glob(f"{base.stem}-*.json"))
+        # Read compatibility for the pre-fix source contract.  No production
+        # state was deployed under it, but accepting an isolated fixture here
+        # keeps recovery deterministic.
+        if base.exists():
+            paths.append(base)
+        return paths
 
     def _verified_indexed_event(self, path: Path) -> dict[str, Any]:
         row = _read_json(path)
@@ -756,10 +810,14 @@ class CryptoTenSymbolObservationStore:
                 "ten_symbol_observation_event_type_invalid"
             )
         with self._locked():
+            if event_type == "data_reject":
+                paths = self._reject_index_paths(window_end)
+                if not paths:
+                    return None
+                rows = [self._verified_indexed_event(path) for path in paths]
+                return max(rows, key=lambda row: int(row["sequence"]))
             path = self._slot_index_path(event_type, window_end)
-            if not path.exists():
-                return None
-            return self._verified_indexed_event(path)
+            return self._verified_indexed_event(path) if path.exists() else None
 
     # ------------------------------------------------------------------
     # Append
@@ -861,10 +919,7 @@ class CryptoTenSymbolObservationStore:
         event_type = str(canonical["event_type"])
         with self._locked():
             state = self._head_state()
-            index_path = self._slot_index_path(
-                event_type,
-                str(canonical["window_end"]),
-            )
+            index_path = self._event_index_path(canonical)
             if index_path.exists():
                 indexed = self._verified_indexed_event(index_path)
                 existing = dict(indexed)

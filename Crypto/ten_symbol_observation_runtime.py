@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+import time
 from typing import Any, Callable, Mapping
 import urllib.parse
 
@@ -64,6 +65,7 @@ RUNTIME_OUTPUT_ROOT = Path("/var/lib/tradingagent/crypto-ten-symbol-observation"
 RUNTIME_MANIFEST_MAX_BYTES = 256 * 1024
 SLOT_CUTOFF_DELAY_SECONDS = 55
 RUNTIME_TIMEOUT_SECONDS = 60.0
+INVOCATION_BUDGET_SECONDS = 120.0
 MAX_CYCLES_PER_INVOCATION = 2
 # One catalog read plus ten bounded single-page queries per cycle.
 REQUESTS_PER_CYCLE = 11
@@ -100,6 +102,53 @@ _MANIFEST_KEYS = frozenset(
 
 class CryptoTenSymbolObservationRuntimeError(RuntimeError):
     """Stable, redacted fail-closed runtime error."""
+
+
+class _InvocationBudgetExhausted(RuntimeError):
+    """Internal signal that the bounded systemd invocation must defer."""
+
+
+def _remaining_invocation_seconds(started_at: float, budget_seconds: float) -> float:
+    remaining = budget_seconds - (time.monotonic() - started_at)
+    if remaining <= 0:
+        raise _InvocationBudgetExhausted(
+            "ten_symbol_observation_invocation_budget_exhausted"
+        )
+    return remaining
+
+
+def _deadline_bound_transport_factory(
+    transport_factory: Callable[..., HTTPTransport],
+    *,
+    started_at: float,
+    budget_seconds: float,
+) -> Callable[..., HTTPTransport]:
+    """Clamp every TradingDatas wire call to one absolute invocation budget."""
+
+    def build(*args: Any, **kwargs: Any) -> HTTPTransport:
+        transport = transport_factory(*args, **kwargs)
+
+        def send(**request: Any) -> Any:
+            requested_timeout = float(request["timeout_seconds"])
+            remaining = _remaining_invocation_seconds(started_at, budget_seconds)
+            request["timeout_seconds"] = min(requested_timeout, remaining)
+            try:
+                response = transport(**request)
+            except Exception:
+                if time.monotonic() - started_at >= budget_seconds:
+                    raise _InvocationBudgetExhausted(
+                        "ten_symbol_observation_invocation_budget_exhausted"
+                    ) from None
+                raise
+            if time.monotonic() - started_at >= budget_seconds:
+                raise _InvocationBudgetExhausted(
+                    "ten_symbol_observation_invocation_budget_exhausted"
+                )
+            return response
+
+        return send
+
+    return build
 
 
 def _canonical_json(value: Any) -> str:
@@ -453,6 +502,7 @@ class _LazyObservationPort:
         self.collect_calls = 0
         self.transport_factory_attempts = 0
         self.transport_constructed_count = 0
+        self.observed_catalog_version: str | None = None
 
     def collect(self, window: CryptoObservationWindow) -> CryptoMarketObservation:
         self.collect_calls += 1
@@ -470,7 +520,7 @@ class _LazyObservationPort:
                     expected_catalog_version=(self._manifest.catalog_version),
                     dataset_ids=self._manifest.dataset_ids,
                     access_policy_id=self._manifest.access_policy_id,
-                    catalog_version_policy="strict",
+                    catalog_version_policy="evidence_only",
                     timeout_seconds=self._timeout_seconds,
                     max_limit=500,
                     cache_ttl_seconds=0,
@@ -478,11 +528,12 @@ class _LazyObservationPort:
                 transport=transport,
             )
             catalog = client.get_catalog()
+            self.observed_catalog_version = catalog.catalog_version
             self._manifest.profile.verify_catalog(catalog)
             return _collect_market_observation_with_catalog(
                 client,
                 catalog=catalog,
-                expected_catalog_version=self._manifest.catalog_version,
+                expected_catalog_version=catalog.catalog_version,
                 window=window,
             )
         except CryptoMarketObservationError:
@@ -541,7 +592,7 @@ def _observation_event(
         "market_session": "24x7",
         "window_end": _iso_utc(window.window_end),
         "observation_cutoff": _iso_utc(window.observation_cutoff),
-        "catalog_version": manifest.catalog_version,
+        "catalog_version": observation.catalog_version,
         "profile_sha256": manifest.profile.profile_sha256,
         "observation": observation.to_payload(),
         "authority": "none",
@@ -627,7 +678,7 @@ def _data_gap_event(
         "rejected_target_observation_cutoff": _iso_utc(
             rejected_window.observation_cutoff
         ),
-        "catalog_version": manifest.catalog_version,
+        "catalog_version": observation.catalog_version,
         "profile_sha256": manifest.profile.profile_sha256,
         "recovery_observation": observation.to_payload(),
         "authority": "none",
@@ -708,6 +759,7 @@ def _fresh_cycle(
         "observation_cutoff": _iso_utc(window.observation_cutoff),
         "observation_sha256": observation.observation_sha256,
         "market_data_sha256": observation.market_data_sha256,
+        "catalog_version": observation.catalog_version,
         **_non_authority_receipt_fields(),
     }
 
@@ -759,6 +811,7 @@ def _attempt_outage_gap_recovery(
         "skipped_to": stored["skipped_to"],
         "recovery_market_slot": stored["recovery_market_slot"],
         "recovery_observation_sha256": observation.observation_sha256,
+        "catalog_version": observation.catalog_version,
         **_non_authority_receipt_fields(),
     }
 
@@ -770,9 +823,27 @@ def run_crypto_ten_symbol_observation_once(
     output_root: Path | str,
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] = (build_runtime_transport),
+    invocation_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Recover pending work, then process missing windows in slot order."""
 
+    budget_seconds = (
+        INVOCATION_BUDGET_SECONDS
+        if invocation_budget_seconds is None
+        else invocation_budget_seconds
+    )
+    if (
+        isinstance(budget_seconds, bool)
+        or not isinstance(budget_seconds, (int, float))
+        or budget_seconds <= 0
+    ):
+        raise ValueError("ten_symbol_observation_invocation_budget_invalid")
+    invocation_started_at = time.monotonic()
+    bounded_transport_factory = _deadline_bound_transport_factory(
+        transport_factory,
+        started_at=invocation_started_at,
+        budget_seconds=float(budget_seconds),
+    )
     _assert_simulation_only()
     token, root = _require_exact_service_paths(
         token_file=token_file,
@@ -788,10 +859,11 @@ def run_crypto_ten_symbol_observation_once(
     lazy = _LazyObservationPort(
         manifest=manifest,
         token_file=token,
-        transport_factory=transport_factory,
+        transport_factory=bounded_transport_factory,
     )
     cycle_results: list[dict[str, Any]] = []
     recovered_observations: list[dict[str, Any]] = []
+    budget_deferred = False
     try:
         with store.cycle():
             state_before = store.checkpoint()
@@ -864,32 +936,39 @@ def run_crypto_ten_symbol_observation_once(
                         raise CryptoTenSymbolObservationRuntimeError(
                             "runtime_pending_profile_drift"
                         )
-                    result = _fresh_cycle(
-                        store=store,
-                        lazy=lazy,
-                        manifest=manifest,
-                        target_window_end=pending_slot,
-                    )
-                    cycle_results.append(
-                        {
-                            "cycle_kind": "pending_recovery",
-                            "target_window_end": _iso_utc(pending_slot),
-                            "result": result,
-                        }
-                    )
-                    if result["status"] == "completed":
-                        latest_terminal = pending_slot
-                        recovered_observations.append(
+                    try:
+                        result = _fresh_cycle(
+                            store=store,
+                            lazy=lazy,
+                            manifest=manifest,
+                            target_window_end=pending_slot,
+                        )
+                    except _InvocationBudgetExhausted:
+                        budget_deferred = True
+                    else:
+                        cycle_results.append(
                             {
-                                "window_end": str(pending["window_end"]),
-                                "source_profile_sha256": pending["profile_sha256"],
-                                "runtime_manifest_profile_used_for_recovery": True,
-                                "network_used": True,
+                                "cycle_kind": "pending_recovery",
+                                "target_window_end": _iso_utc(pending_slot),
+                                "result": result,
                             }
                         )
+                        if result["status"] == "completed":
+                            latest_terminal = pending_slot
+                            recovered_observations.append(
+                                {
+                                    "window_end": str(pending["window_end"]),
+                                    "source_profile_sha256": pending[
+                                        "profile_sha256"
+                                    ],
+                                    "runtime_manifest_profile_used_for_recovery": True,
+                                    "network_used": True,
+                                }
+                            )
 
             while (
-                len(cycle_results) < MAX_CYCLES_PER_INVOCATION
+                not budget_deferred
+                and len(cycle_results) < MAX_CYCLES_PER_INVOCATION
                 and (latest_terminal is None or latest_terminal < current_window.window_end)
             ):
                 target_window_end = (
@@ -898,12 +977,16 @@ def run_crypto_ten_symbol_observation_once(
                     else latest_terminal + timedelta(minutes=5)
                 )
                 target_window = _window_for_end(target_window_end)
-                result = _fresh_cycle(
-                    store=store,
-                    lazy=lazy,
-                    manifest=manifest,
-                    target_window_end=target_window_end,
-                )
+                try:
+                    result = _fresh_cycle(
+                        store=store,
+                        lazy=lazy,
+                        manifest=manifest,
+                        target_window_end=target_window_end,
+                    )
+                except _InvocationBudgetExhausted:
+                    budget_deferred = True
+                    break
                 cycle_results.append(
                     {
                         "cycle_kind": "fresh_query",
@@ -921,15 +1004,19 @@ def run_crypto_ten_symbol_observation_once(
                     and target_window_end < current_window.window_end
                     and len(cycle_results) < MAX_CYCLES_PER_INVOCATION
                 ):
-                    gap_result = _attempt_outage_gap_recovery(
-                        store=store,
-                        lazy=lazy,
-                        manifest=manifest,
-                        prior_market_slot=latest_terminal,
-                        rejected_window=target_window,
-                        current_window=current_window,
-                        reason_code=str(result["reason_code"]),
-                    )
+                    try:
+                        gap_result = _attempt_outage_gap_recovery(
+                            store=store,
+                            lazy=lazy,
+                            manifest=manifest,
+                            prior_market_slot=latest_terminal,
+                            rejected_window=target_window,
+                            current_window=current_window,
+                            reason_code=str(result["reason_code"]),
+                        )
+                    except _InvocationBudgetExhausted:
+                        budget_deferred = True
+                        break
                     cycle_results.append(
                         {
                             "cycle_kind": "outage_gap_recovery",
@@ -964,17 +1051,28 @@ def run_crypto_ten_symbol_observation_once(
         and cycle_results[-1]["result"].get("status") != "completed"
     )
     backlog_remaining = bool(
-        latest_terminal is not None
-        and latest_terminal < current_window.window_end
-        and len(cycle_results) >= MAX_CYCLES_PER_INVOCATION
-        and not outage_gap_attempt_failed
+        budget_deferred
+        or (
+            latest_terminal is not None
+            and latest_terminal < current_window.window_end
+            and len(cycle_results) >= MAX_CYCLES_PER_INVOCATION
+            and not outage_gap_attempt_failed
+        )
     )
     if not cycle_results:
-        core_result: Mapping[str, Any] = {
-            "status": "noop",
-            "reason_code": "crypto_ten_symbol_slot_already_recorded",
-            **_non_authority_receipt_fields(),
-        }
+        core_result: Mapping[str, Any] = (
+            {
+                "status": "budget_deferred",
+                "reason_code": "crypto_ten_symbol_invocation_budget_exhausted",
+                **_non_authority_receipt_fields(),
+            }
+            if budget_deferred
+            else {
+                "status": "noop",
+                "reason_code": "crypto_ten_symbol_slot_already_recorded",
+                **_non_authority_receipt_fields(),
+            }
+        )
     else:
         core_result = cycle_results[-1]["result"]
     last_status = str(core_result.get("status") or "failed_closed")
@@ -996,7 +1094,9 @@ def run_crypto_ten_symbol_observation_once(
         "market": "crypto",
         "market_session": "24x7",
         "runtime_manifest_sha256": manifest.sha256,
-        "fresh_query_catalog_version": manifest.catalog_version,
+        "fresh_query_catalog_version": (
+            lazy.observed_catalog_version or manifest.catalog_version
+        ),
         "fresh_query_profile_sha256": manifest.profile.profile_sha256,
         "requested_window_end": _iso_utc(current_window.window_end),
         "requested_observation_cutoff": _iso_utc(current_window.observation_cutoff),
@@ -1017,6 +1117,8 @@ def run_crypto_ten_symbol_observation_once(
             for item in cycle_results
         ),
         "backlog_remaining": backlog_remaining,
+        "budget_deferred": budget_deferred,
+        "invocation_budget_seconds": float(budget_seconds),
         "warmup_eligible": warmup_eligible,
         "market_data_transport": "loopback_tradingdatas_v1",
         "market_data_access_attempt_count": lazy.collect_calls,
@@ -1108,6 +1210,7 @@ __all__ = [
     "CryptoTenSymbolObservationRuntimeManifest",
     "HISTORICAL_GAP_RECOVERY_REASONS",
     "HISTORICAL_WINDOW_UNRECOVERABLE_REASON",
+    "INVOCATION_BUDGET_SECONDS",
     "MAX_CYCLES_PER_INVOCATION",
     "OUTAGE_GAP_CONTRACT",
     "REQUESTS_PER_CYCLE",

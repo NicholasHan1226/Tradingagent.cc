@@ -171,7 +171,9 @@ def test_terminal_slot_conflict_across_event_types(tmp_path: Path) -> None:
         store.append_event(_gap_event(WINDOW_END - timedelta(minutes=10), WINDOW_END))
 
 
-def test_data_reject_is_idempotent_per_slot_and_reason(tmp_path: Path) -> None:
+def test_data_reject_is_idempotent_per_attempt_and_preserves_changed_reason(
+    tmp_path: Path,
+) -> None:
     store = CryptoTenSymbolObservationStore(tmp_path)
     first = store.append_event(_reject_event(WINDOW_END))
 
@@ -179,11 +181,13 @@ def test_data_reject_is_idempotent_per_slot_and_reason(tmp_path: Path) -> None:
 
     assert replay == first
     assert len(store.data_reject_events()) == 1
-    with pytest.raises(
-        CryptoTenSymbolObservationStoreError,
-        match="ten_symbol_observation_slot_payload_conflict",
-    ):
-        store.append_event(_reject_event(WINDOW_END, reason_code="other_reason"))
+    changed = store.append_event(
+        _reject_event(WINDOW_END, reason_code="other_reason")
+    )
+    assert changed["sequence"] == 2
+    assert changed["previous_checksum"] == first["checksum"]
+    assert len(store.data_reject_events()) == 2
+    assert store.event_for_slot("data_reject", _iso(WINDOW_END)) == changed
 
 
 def test_data_reject_does_not_advance_terminal_slot(tmp_path: Path) -> None:
@@ -367,6 +371,60 @@ def test_crash_after_segment_write_recovers_from_fsynced_events(
     )
     assert third["sequence"] == 3
     assert third["previous_checksum"] != first["checksum"]
+
+
+def test_crash_after_event_publish_rebuilds_head_and_missing_slot_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = CryptoTenSymbolObservationStore(tmp_path)
+    event = _observation_event(WINDOW_END)
+    original_write_index = store_module._write_immutable_json
+
+    def fail_index_publish(path: Path, value: dict[str, Any]) -> dict[str, Any]:
+        if path.parent.name == "slot_index":
+            raise OSError("simulated crash after events fsync")
+        return original_write_index(path, value)
+
+    monkeypatch.setattr(store_module, "_write_immutable_json", fail_index_publish)
+    with pytest.raises(OSError, match="simulated crash"):
+        store.append_event(event)
+
+    assert (tmp_path / "events.jsonl").exists()
+    assert not list((tmp_path / "slot_index").glob("*.json"))
+    monkeypatch.setattr(store_module, "_write_immutable_json", original_write_index)
+
+    recovered = CryptoTenSymbolObservationStore(tmp_path)
+    checkpoint = recovered.checkpoint()
+    assert checkpoint["event_count"] == 1
+    indexed = recovered.event_for_slot("observation", _iso(WINDOW_END))
+    assert indexed is not None
+    assert indexed["checksum"] == checkpoint["last_checksum"]
+    assert recovered.append_event(event) == indexed
+    assert len(recovered.events()) == 1
+
+
+def test_crash_after_rotation_before_new_current_rebuilds_same_head(
+    tmp_path: Path,
+) -> None:
+    store = CryptoTenSymbolObservationStore(tmp_path)
+    first = store.append_event(_observation_event(WINDOW_END))
+
+    # Simulate the atomic rotation having landed while the following current
+    # file and new row have not.  The verified ledger is unchanged, only its
+    # file representation differs from the stale head.
+    os.replace(
+        tmp_path / "events.jsonl",
+        tmp_path / "events.segment-000001.jsonl",
+    )
+
+    recovered = CryptoTenSymbolObservationStore(tmp_path)
+    assert recovered.head() == (1, first["checksum"])
+    second = recovered.append_event(
+        _observation_event(WINDOW_END + timedelta(minutes=5), seed="2")
+    )
+    assert second["sequence"] == 2
+    assert second["previous_checksum"] == first["checksum"]
 
 
 def test_symlink_root_is_rejected(tmp_path: Path) -> None:

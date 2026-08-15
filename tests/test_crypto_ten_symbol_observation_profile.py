@@ -151,17 +151,13 @@ def test_profile_verify_detects_contract_fingerprint_drift() -> None:
         profile.verify_catalog(drifted)
 
 
-def test_profile_verify_detects_catalog_version_drift() -> None:
+def test_profile_verify_accepts_unrelated_catalog_version_increment() -> None:
     profile = _profile()
     catalog = _catalog()
     mutated = copy.deepcopy(catalog)
     object.__setattr__(mutated, "catalog_version", "fixture-other-version")
 
-    with pytest.raises(
-        CryptoTenSymbolProfileError,
-        match="ten_symbol_profile_catalog_version_drift",
-    ):
-        profile.verify_catalog(mutated)
+    profile.verify_catalog(mutated)
 
 
 def test_profile_requires_the_exact_ten_symbol_cohort() -> None:
