@@ -149,3 +149,132 @@ def test_worker_cli_has_no_output_root_or_manifest_flag(
             ["--mode", "incremental", "--runtime-manifest", str(tmp_path / "x.json")]
         )
     capsys.readouterr()
+
+
+def test_worker_full_scrub_runs_evaluation_downstream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root, _ = _bind_worker_manifest(monkeypatch, tmp_path)
+    _accumulate(monkeypatch, tmp_path, token_file, output_root, 14)
+
+    result = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
+
+    assert result["status"] == "recovered"
+    evaluation = result["strategy_evaluation"]
+    assert evaluation["status"] == "shadow_evaluated"
+    assert evaluation["resolved_count"] == 20
+    assert set(evaluation["evaluations"]) == {"momentum", "trend", "volatility"}
+
+    again = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
+    assert again["status"] == "scrubbed"
+    assert again["strategy_evaluation"]["status"] == "no_new_outcome"
+
+    incremental = run_ten_symbol_factor_research_worker_once(mode="incremental")
+    assert incremental["status"] == "up_to_date"
+    assert incremental["strategy_evaluation"]["status"] == "no_new_outcome"
+    assert incremental["strategy_evaluation"]["artifact_sha256"] == (
+        again["strategy_evaluation"]["artifact_sha256"]
+    )
+
+
+def test_worker_incremental_skips_evaluation_before_first_scrub(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root, _ = _bind_worker_manifest(monkeypatch, tmp_path)
+    _accumulate(monkeypatch, tmp_path, token_file, output_root, 1)
+
+    result = run_ten_symbol_factor_research_worker_once(mode="incremental")
+
+    assert result["status"] == "full_scrub_required"
+    evaluation = result["strategy_evaluation"]
+    assert evaluation["status"] == "no_evaluation_checkpoint"
+    assert evaluation["reason"] == "evaluation_checkpoint_missing_pre_first_scrub"
+
+
+def test_worker_full_scrub_with_insufficient_samples_reports_explicit_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root, _ = _bind_worker_manifest(monkeypatch, tmp_path)
+    _accumulate(monkeypatch, tmp_path, token_file, output_root, 2)
+
+    result = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
+
+    assert result["status"] == "recovered"
+    assert result["strategy_evaluation"]["status"] == (
+        "insufficient_resolved_samples"
+    )
+
+
+def test_worker_evaluation_failure_does_not_change_scrub_exit_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    token_file, output_root, _ = _bind_worker_manifest(monkeypatch, tmp_path)
+    _accumulate(monkeypatch, tmp_path, token_file, output_root, 14)
+
+    def broken_evaluation(*, store_root: Path, **_: Any) -> dict[str, Any]:
+        from Crypto.ten_symbol_factor_strategy_evaluation import (
+            CryptoTenSymbolFactorStrategyEvaluationError,
+        )
+
+        raise CryptoTenSymbolFactorStrategyEvaluationError("sensitive/path/detail")
+
+    monkeypatch.setattr(
+        worker,
+        "run_ten_symbol_factor_strategy_evaluation",
+        broken_evaluation,
+    )
+
+    result = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
+
+    assert result["status"] == "recovered"
+    evaluation = result["strategy_evaluation"]
+    assert evaluation["status"] == "evaluation_failed"
+    assert evaluation["reason"] == "ten_symbol_factor_strategy_evaluation_failed"
+    assert "sensitive" not in json.dumps(result)
+
+    exit_code = worker.main(["--mode", "full-scrub"])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    printed = json.loads(captured.out)
+    assert printed["status"] == "scrubbed"
+    assert printed["strategy_evaluation"]["status"] == "evaluation_failed"
+
+
+def test_worker_defers_evaluation_when_scrub_defers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root, _ = _bind_worker_manifest(monkeypatch, tmp_path)
+    _accumulate(monkeypatch, tmp_path, token_file, output_root, 1)
+    from Crypto.ten_symbol_observation_store import (
+        CryptoTenSymbolObservationStore,
+    )
+    from tests.test_crypto_ten_symbol_support import (
+        CATALOG_VERSION,
+        WINDOW_END,
+        iso,
+    )
+
+    store = CryptoTenSymbolObservationStore(output_root)
+    profile_sha256 = store.events()[0]["profile_sha256"]
+    store.set_pending(
+        {
+            "window_end": iso(WINDOW_END + timedelta(minutes=5)),
+            "observation_cutoff": iso(WINDOW_END + timedelta(minutes=5, seconds=55)),
+            "profile_sha256": profile_sha256,
+            "catalog_version": CATALOG_VERSION,
+        }
+    )
+
+    result = run_ten_symbol_factor_research_worker_once(mode="full-scrub")
+
+    assert result["status"] == "deferred_core_pending"
+    evaluation = result["strategy_evaluation"]
+    assert evaluation["status"] == "evaluation_deferred"
+    assert evaluation["reason"] == "scrub_status_deferred_core_pending"

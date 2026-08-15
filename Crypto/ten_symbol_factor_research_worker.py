@@ -12,7 +12,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.ten_symbol_factor_research import (
@@ -20,6 +20,13 @@ from Crypto.ten_symbol_factor_research import (
     run_crypto_ten_symbol_factor_research_full_scrub,
     run_crypto_ten_symbol_factor_research_incremental,
     ten_symbol_factor_projection_exit_code,
+)
+from Crypto.ten_symbol_factor_strategy_evaluation import (
+    EVALUATION_BUNDLE_CONTRACT,
+    CryptoTenSymbolFactorStrategyEvaluationError,
+    _safe as _evaluation_safe_fields,
+    run_ten_symbol_factor_strategy_evaluation,
+    run_ten_symbol_factor_strategy_evaluation_fast,
 )
 from Crypto.ten_symbol_observation_runtime import (
     CryptoTenSymbolObservationRuntimeError,
@@ -39,6 +46,46 @@ def _fixed_manifest_path(value: Path | str) -> Path:
             "ten_symbol_factor_projection_manifest_path_invalid"
         )
     return path
+
+
+def _evaluation_debt(*, status: str, reason: str) -> dict[str, Any]:
+    """Evaluation-stage outcome that never alters the scrub fact or exit code."""
+
+    return {
+        "contract": EVALUATION_BUNDLE_CONTRACT,
+        "status": status,
+        "reason": reason,
+        **_evaluation_safe_fields(),
+    }
+
+
+def _strategy_evaluation_stage(*, store_root: Path, mode: str, result: Mapping[str, Any]) -> dict[str, Any]:
+    """Run the downstream evaluation without endangering the scrub fact.
+
+    The evaluation is strictly downstream of the projection: its failure is
+    recorded as a retriable debt in the receipt and never changes the
+    completed scrub's status or the worker exit code.
+    """
+
+    try:
+        if mode == "incremental":
+            # Incremental rounds never settle labels, so only the compact
+            # checkpoint fast path runs here; before the first evaluated
+            # scrub it reports an explicit skip instead of failing.
+            return run_ten_symbol_factor_strategy_evaluation_fast(
+                store_root=store_root
+            )
+        if result.get("status") not in {"recovered", "scrubbed"}:
+            return _evaluation_debt(
+                status="evaluation_deferred",
+                reason=f"scrub_status_{result.get('status')}",
+            )
+        return run_ten_symbol_factor_strategy_evaluation(store_root=store_root)
+    except CryptoTenSymbolFactorStrategyEvaluationError:
+        return _evaluation_debt(
+            status="evaluation_failed",
+            reason="ten_symbol_factor_strategy_evaluation_failed",
+        )
 
 
 def run_ten_symbol_factor_research_worker_once(
@@ -72,6 +119,9 @@ def run_ten_symbol_factor_research_worker_once(
             raise CryptoTenSymbolFactorProjectionError(
                 "ten_symbol_factor_projection_mode_invalid"
             )
+        evaluation = _strategy_evaluation_stage(
+            store_root=store_root, mode=mode, result=result
+        )
         manifest_after = load_crypto_ten_symbol_observation_runtime_manifest(
             manifest_path
         )
@@ -94,6 +144,7 @@ def run_ten_symbol_factor_research_worker_once(
         "mode": mode,
         "store_root": str(store_root),
         "runtime_manifest_sha256": manifest_before.sha256,
+        "strategy_evaluation": evaluation,
     }
 
 

@@ -753,12 +753,54 @@ sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
   目录（tradingagent:tradingagent 0700），再经 Nicholas 明确批准后方可在
   sidecar 积累出首个可用 segment 后启用。
 
+### 费用后策略评估（scrub 下游）
+
+`ten_symbol_factor_strategy_evaluation.py` 是 v1
+`factor_strategy_evaluation` + post_projection 的 v2 port，只在 full scrub
+之后由 worker 调用（incremental 从不结算 label，只走 compact checkpoint
+快速路径）：
+
+- 样本重建与核验：从投影根 records/labels/checkpoints 重建全部 resolved
+  (snapshot, label) 样本（60min、同 segment、label 文件存在），逐样本按
+  v2 合同核验——snapshot/label integrity（v2 feature set）、
+  record/receipt/checkpoint 三件套互绑、`source_event_checksum` 对 store
+  事件链逐值比对、`source_bars_sidecar_sha256` 对磁盘 sidecar 重算比对、
+  checkpoint 链完整重放、cost policy `crypto-round-trip-taker-v1`（fee
+  0.001 双边 + slippage 2bps 双边，来自
+  `round_trip_capital.TAKER_FEE_RATE/SLIPPAGE_BPS`）逐项比对、gross/net 按
+  entry/exit/fee 重算、future 不晚于 evaluation_as_of。任一不符 fail
+  closed，不跳过样本。
+- 每个假设一份评估 artifact（contract
+  `tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v1`）：
+  always-invest 基线（全部样本视为有信号的同成本曲线）、cash 基线（无仓
+  位零成本零回撤）、metrics（signal/abstention/coverage/hit_rate/
+  cost_adjusted_net_return/baseline_delta/cash_baseline_delta/drawdown/
+  turnover/round_trip_leg_rate；drawdown 按等权 per-slot 权益曲线，
+  turnover 即暴露率）。recommendation：无信号 → `disable`，费用后均值 ≤0
+  → `downweight`，否则 `retain_for_more_evidence`；`evaluated_status` 固定
+  `exploratory_insufficient_edge`，不构成 edge、晋级或参数变更授权。
+- artifact immutable 写入
+  `evolution/ten_symbol_factor_research/strategy_evaluations/{outcome_sha}.json`
+  （outcome = resolved 样本集合的确定性 sha，只有样本集合变化才前进）；
+  compact `strategy_evaluation_checkpoint.json`（tmp+os.replace 原子覆写）
+  记录 last_evaluated_outcome_sha256/artifact_sha256。幂等：同 outcome
+  返回 `no_new_outcome`；0 resolved 返回 `insufficient_resolved_samples`
+  不产出 artifact；首次 scrub 前的 incremental 轮明确返回
+  `no_evaluation_checkpoint` 而非失败。
+- worker 合并语义：full-scrub 成功（recovered/scrubbed）后按序调用评估，
+  结果合并进 stdout receipt 的 `strategy_evaluation` 子对象；评估失败只记
+  `evaluation_failed` debt（下次 scrub 重试），绝不改变已完成 scrub 的
+  事实与退出码。scrub deferred 时评估对应 `evaluation_deferred`。
+- **重叠标签警告**：metric_basis 显式标注 1h 标签按 5m 槽重叠，有效独立
+  样本约为 resolved_count 的 1/12；HAC/非重叠子样本的统计显著性结论留待
+  后续 slice，当前所有均值/命中率都只是探索性描述。
+
 ### 明确未实现
 
-- 不 port `factor_strategy_evaluation`（always-invest/cash 双基线、
-  drawdown、turnover 留 follow-up）；不做横截面 IC 研究合同（等 288 段
-  成熟度达标后的独立 slice）；50 标签初筛不构成 edge 或晋级授权；不做历史
-  回填证据化；unit 不代表现役 timer 状态。
+- 不做 HAC/非重叠子样本统计显著性；不做横截面 IC 研究合同（等 288 段
+  成熟度达标后的独立 slice）；50 标签初筛与评估 recommendation 均不构成
+  edge、晋级或参数变更授权；不做历史回填证据化；unit 不代表现役 timer
+  状态。
 
 ## 验证
 
@@ -785,6 +827,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_obs
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_sidecar.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research_worker.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_strategy_evaluation.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 

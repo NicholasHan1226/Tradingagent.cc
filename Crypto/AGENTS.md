@@ -209,10 +209,32 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json` 推导
   store root，不接受自由 output root，执行前后重验 manifest 字节与 root
   identity。固定 `authority=none`，零 core/资本/order/Champion/learning
-  写权限；50 标签初筛不构成 edge 或晋级授权；不 port
-  `factor_strategy_evaluation`（baseline/drawdown 留 follow-up）。对应
+  写权限；50 标签初筛不构成 edge 或晋级授权；费用后策略评估由下游
+  `ten_symbol_factor_strategy_evaluation.py` 承担。对应
   systemd unit 是 install-default 不启用的候选；安装/启用必须经 Nicholas
   明确批准。
+- `ten_symbol_factor_strategy_evaluation.py` 是 v2 投影的 detached 费用后
+  策略评估（v1 `factor_strategy_evaluation` + post_projection 的 v2
+  port），只可作为 full scrub 的下游运行：从投影根重建全部 resolved
+  (snapshot, label) 样本并逐样本按 v2 合同核验（snapshot/label integrity、
+  同 segment、record/receipt/checkpoint 三件套、store 事件 checksum 与
+  bars sidecar sha 双重绑定、checkpoint 链重放、cost policy
+  `crypto-round-trip-taker-v1` 逐项比对、gross/net 重算、future 不晚于
+  evaluation_as_of），失败一律 fail closed 不跳过。对三个预注册假设各产出
+  一份 immutable 评估 artifact（always-invest 基线、cash 基线、
+  signal/abstention/coverage/hit_rate/cost_adjusted_net_return/
+  baseline_delta/cash_baseline_delta/drawdown/turnover/round_trip_leg_rate、
+  recommendation ∈ {disable, downweight, retain_for_more_evidence}，
+  `evaluated_status` 固定 `exploratory_insufficient_edge`），写入
+  `strategy_evaluations/{outcome_sha}.json` 并用 compact
+  `strategy_evaluation_checkpoint.json` 幂等：同 outcome 返回
+  `no_new_outcome`，0 resolved 返回 `insufficient_resolved_samples`。
+  metric_basis 显式标注 1h 标签按 5m 槽重叠、有效独立样本约 1/12，HAC/
+  非重叠子样本显著性留待后续。worker 的 incremental 模式只走 compact
+  checkpoint 快速路径（首次 scrub 前明确跳过而非 fail closed）；评估失败
+  只记为可重试 debt，绝不改变已完成 scrub 的事实与退出码。固定
+  `authority=none`，零 core/资本/order/Champion 写权限，不构成 edge、晋级
+  或参数变更授权。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached
