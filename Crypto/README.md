@@ -734,10 +734,15 @@ sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
 - 投影根固定 `<store_root>/evolution/ten_symbol_factor_research/`
   （records/receipts/labels/checkpoints + immutable 写 + checkpoint hash
   链）；checkpoint 与 terminal 槽 1:1（含 ineligible 槽），增量/全量计数
-  语义与 v1 相同。incremental 每轮只投影一个新槽、不回填 label（积压返回
-  `full_scrub_required`）；daily full scrub 做全链校验、补 record、结算同段
-  到期 label 并对 required-horizon 同段样本跑
-  `evaluate_factor_hypotheses` 出 hypothesis report；超时走可重试
+  语义与 v1 相同。incremental 不回填 label；落后时在单次 invocation 内按槽
+  序有界自恢复（最多 `MAX_CATCHUP_UNITS=12` 个未投影 terminal unit，逐
+  unit 走同一 eligibility/segment/checkpoint 逻辑，checkpoint 与 terminal
+  槽保持 1:1，绝不跳槽）；追平返回 `projected_incremental`，处理完仍落后
+  返回 `backlog_remaining`（带 projected_count/remaining_count，与
+  `full_scrub_required` 同为非错误 status、退出码 0），下轮从下一序号
+  继续；segment 延续判定逐 unit 滚动，与 full scrub 的 `_segment_ids`
+  语义一致（测试保证两者产物字节一致）。daily full scrub 仍是唯一的全链
+  校验 + label 结算 + hypothesis report 路径；超时走可重试
   `deferred_time_budget`/`deferred_inventory_time_budget` debt。
 - worker 只从固定
   `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json` 推导

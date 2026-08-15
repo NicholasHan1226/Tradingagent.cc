@@ -59,6 +59,7 @@ TEN_SYMBOL_FACTOR_PROJECTION_CHECKPOINT_CONTRACT = (
     "tradingagent.crypto.ten_symbol_factor_projection_checkpoint.v1"
 )
 OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS = 288
+MAX_CATCHUP_UNITS = 12
 _SYMBOLS = OBSERVATION_SYMBOLS
 _HORIZONS = (60, 240, 720, 1440)
 _MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -1147,13 +1148,17 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
 def run_crypto_ten_symbol_factor_research_incremental(
     *, output_root: Path | str
 ) -> dict[str, Any]:
-    """Append one new unlabelled observation after a verified full-scrub base.
+    """Project new unlabelled observations after a verified full-scrub base.
 
-    This routine deliberately reads only the verified event chain tail, its
-    newest terminal unit, and the preceding projection checkpoint.  It never
-    queries TradingDatas and never retroactively scans history for labels;
-    the daily full scrub performs that complete semantic validation and
-    label completion.
+    This routine deliberately reads only the verified event chain, the
+    bounded backlog of unprojected terminal units, and the preceding
+    projection checkpoint head.  It never queries TradingDatas and never
+    retroactively scans history for labels; the daily full scrub performs
+    that complete semantic validation and label completion.  A backlog is
+    worked off in slot order, at most ``MAX_CATCHUP_UNITS`` per invocation,
+    keeping exactly one checkpoint per terminal unit; a round that still
+    lags reports ``backlog_remaining`` and the next round continues from the
+    following sequence without ever skipping a slot.
     """
 
     _assert_simulation_only()
@@ -1206,61 +1211,68 @@ def run_crypto_ten_symbol_factor_research_incremental(
                     segmented_learning_profile=consumer_profile,
                     label_learning_eligible_sample_count=0,
                 )
-            if unit_count != sequence + 1:
-                return _result(
-                    status="full_scrub_required",
-                    observation_count=unit_count,
-                    checkpoint_count=sequence,
-                    label_count=0,
-                    reason="ten_symbol_factor_projection_incremental_backlog",
-                    segmented_learning_policy=policy,
-                    segmented_learning_profile=consumer_profile,
-                    label_learning_eligible_sample_count=0,
-                )
-            unit = units[-1]
-            _attach_eligibility(store, unit)
-            if previous_checkpoint is None:
-                segment_id = "crypto-5m-segment-" + unit["slot"].strftime(
-                    "%Y%m%dT%H%M%SZ"
-                )
-            else:
+            catchup_units = units[sequence : sequence + MAX_CATCHUP_UNITS]
+            remaining_count = unit_count - sequence - len(catchup_units)
+            previous_slot: datetime | None = None
+            previous_outcome: str | None = None
+            previous_segment_id: str | None = None
+            previous_checkpoint_sha: str | None = None
+            if previous_checkpoint is not None:
                 previous_slot = _utc(
                     previous_checkpoint.get("market_slot"),
                     reason="ten_symbol_factor_projection_checkpoint_invalid",
                 )
-                existing_segment = previous_checkpoint.get("segment_id")
-                if not isinstance(existing_segment, str):
+                previous_outcome = previous_checkpoint.get("projection_outcome")
+                if previous_outcome not in {"projected", "sidecar_ineligible"}:
+                    raise CryptoTenSymbolFactorProjectionError(
+                        "ten_symbol_factor_projection_checkpoint_invalid"
+                    )
+                previous_segment_id = previous_checkpoint.get("segment_id")
+                if not isinstance(previous_segment_id, str):
                     raise CryptoTenSymbolFactorProjectionError(
                         "ten_symbol_factor_projection_segment_invalid"
                     )
-                segment_id = (
-                    existing_segment
-                    if previous_checkpoint.get("projection_outcome") == "projected"
-                    and unit["slot"] - previous_slot == _FIVE_MINUTES
-                    else "crypto-5m-segment-"
-                    + unit["slot"].strftime("%Y%m%dT%H%M%SZ")
+                previous_checkpoint_sha = previous_checkpoint["checkpoint_sha256"]
+            projected_count = 0
+            for offset, unit in enumerate(catchup_units, start=1):
+                _attach_eligibility(store, unit)
+                if (
+                    previous_slot is None
+                    or previous_outcome != "projected"
+                    or previous_segment_id is None
+                    or unit["slot"] - previous_slot != _FIVE_MINUTES
+                ):
+                    segment_id = "crypto-5m-segment-" + unit["slot"].strftime(
+                        "%Y%m%dT%H%M%SZ"
+                    )
+                else:
+                    segment_id = previous_segment_id
+                record = None
+                receipt = None
+                if unit["eligible"]:
+                    record = _record(unit, segment_id=segment_id)
+                    receipt = _receipt(record)
+                    paths = _paths(root, str(unit["observation_id"]))
+                    _write_immutable(paths["record"], record)
+                    _write_immutable(paths["receipt"], receipt)
+                new_checkpoint = _checkpoint(
+                    sequence + offset,
+                    previous_checkpoint_sha,
+                    unit,
+                    segment_id=segment_id,
+                    receipt=receipt,
                 )
-            record = None
-            receipt = None
-            if unit["eligible"]:
-                record = _record(unit, segment_id=segment_id)
-                receipt = _receipt(record)
-                paths = _paths(root, str(unit["observation_id"]))
-                _write_immutable(paths["record"], record)
-                _write_immutable(paths["receipt"], receipt)
-            new_checkpoint = _checkpoint(
-                sequence + 1,
-                previous_checkpoint["checkpoint_sha256"]
-                if previous_checkpoint is not None
-                else None,
-                unit,
-                segment_id=segment_id,
-                receipt=receipt,
-            )
-            _write_immutable(
-                evolution / "checkpoints" / f"{sequence + 1:012d}.json",
-                new_checkpoint,
-            )
+                _write_immutable(
+                    evolution / "checkpoints" / f"{sequence + offset:012d}.json",
+                    new_checkpoint,
+                )
+                previous_slot = unit["slot"]
+                previous_outcome = (
+                    "projected" if unit["eligible"] else "sidecar_ineligible"
+                )
+                previous_segment_id = segment_id
+                previous_checkpoint_sha = str(new_checkpoint["checkpoint_sha256"])
+                projected_count += 1
     except CryptoFactorResearchError as exc:
         raise CryptoTenSymbolFactorProjectionError(
             "ten_symbol_factor_projection_factor_input_invalid"
@@ -1272,8 +1284,12 @@ def run_crypto_ten_symbol_factor_research_incremental(
             "ten_symbol_factor_projection_incremental_invalid"
         ) from exc
     return _result(
-        status="projected_incremental",
+        status=(
+            "projected_incremental" if remaining_count == 0 else "backlog_remaining"
+        ),
         observation_count=unit_count,
+        projected_count=projected_count,
+        remaining_count=remaining_count,
         label_count=0,
         label_status="observation_only_pending_daily_scrub",
         segmented_learning_policy=policy,
@@ -1287,6 +1303,7 @@ def ten_symbol_factor_projection_exit_code(result: Mapping[str, Any]) -> int:
         "recovered",
         "scrubbed",
         "projected_incremental",
+        "backlog_remaining",
         "up_to_date",
         "full_scrub_required",
         "deferred_core_pending",
@@ -1305,6 +1322,7 @@ def ten_symbol_factor_projection_exit_code(result: Mapping[str, Any]) -> int:
 
 __all__ = [
     "CryptoTenSymbolFactorProjectionError",
+    "MAX_CATCHUP_UNITS",
     "OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS",
     "SEGMENTED_LEARNING_CONSUMER_PROFILE_ID",
     "TEN_SYMBOL_FACTOR_PROJECTION_CONTRACT",
