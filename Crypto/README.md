@@ -650,8 +650,9 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   层——per-symbol：单 symbol 的 catalog 硬门禁（schema/fields/identity/
   `point_in_time=current_snapshot`/filter/limits）、查询/元数据门禁
   （ready/非 degraded/fresh 非 stale/quality valid/完整 lineage/receipt）、
-  watermark（receipt `observed_at` ≤ 槽 cutoff，与 bar 同一纪律；上游无事件
-  时间戳，receipt 观测时刻是唯一时间权威）、行校验（正值 bid/ask/qty 且
+  watermark（槽结束 ≤ receipt `observed_at` ≤ 槽 cutoff，与 bar 同一纪律；
+  上游无事件时间戳，receipt 观测时刻是唯一时间权威）、行校验（正值
+  bid/ask/qty 且
   ask ≥ bid）任一失败只把该 symbol 记为 `rejected` + 稳定 reason code，
   其余 symbol 照常采样；leg-wide：spread 自身 catalog 读或同形失败把整个
   leg 记为 `unavailable` + 单一 reason code。采样成功的槽把每 symbol

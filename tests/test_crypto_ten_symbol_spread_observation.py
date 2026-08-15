@@ -279,6 +279,37 @@ def test_book_ticker_observed_at_after_cutoff_is_rejected(
     }
 
 
+def test_book_ticker_observed_at_before_slot_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    transport = TenSymbolFixtureTransport(
+        book_ticker_observed_at=WINDOW_END - timedelta(seconds=1)
+    )
+    receipt, _, output_root = _run_completed(monkeypatch, tmp_path, transport)
+
+    assert receipt["core_result"]["spread_status"] == "unavailable"
+    spread = CryptoTenSymbolObservationStore(output_root).events()[0]["spread"]
+    assert spread["rejected_symbol_count"] == 10
+    assert set(spread["rejected_reasons"].values()) == {
+        "crypto_spread_watermark_invalid"
+    }
+
+
+def test_spreads_sidecar_rejects_sample_before_its_slot() -> None:
+    payload = collect_fixture_spreads_sidecar(
+        WINDOW_END, profile_sha256=_profile().profile_sha256
+    )
+    payload["entries"][0]["observed_at"] = iso(WINDOW_END - timedelta(seconds=1))
+    payload["spread_sha256"] = _canonical_sha256(payload["entries"])
+
+    with pytest.raises(
+        ValueError,
+        match="crypto_observation_spreads_sidecar_invalid",
+    ):
+        validate_ten_symbol_spreads_sidecar(payload)
+
+
 def test_same_slot_replay_keeps_spreads_sidecar_untouched_without_network(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

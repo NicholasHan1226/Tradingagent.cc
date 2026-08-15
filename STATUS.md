@@ -1,5 +1,23 @@
 # TradingAgent 历史状态快照
 
+## 2026-08-16 Crypto 观测链读回
+
+> `observed_at=2026-08-16T00:22:14+08:00`。十币种观测 unit 的 effective
+> `WorkingDirectory` 固定在不可变 release
+> `25c34f95e4da5f6fafa9249f7808b8a079dfbc17`，不是全局 `current`
+> `3e6933d1d0faf2e638bfebf6b6a9160978802d49`。00:18:26–00:19:20 的自然轮
+> `Result=success`、`ExecMainStatus=0`，完成 `16:15Z` 槽且
+> `spread_status=completed`；同一读回的 store 为 126 events、109
+> observations、11 data rejects、6 gaps、`pending=false`，最新 terminal 槽为
+> `16:15Z`。timer 为 enabled/active/waiting，下一轮 00:23:26。
+
+> `readback_at=2026-08-16T00:23:30+08:00`。通过 18083 和专用 Crypto read-token
+> 对 `crypto.spot.binance.btcusdt.book_ticker` 完成一次认证 catalog+query：1 行、
+> `ready/fresh/valid`、非 degraded、非 stale、receipt 与完整 lineage 均存在，
+> `observed_at=2026-08-16T00:20:23.374283+08:00`、无 next cursor。该 current
+> snapshot 只证明本次只读消费证据，不证明历史 PIT、因子 edge、晋级、风险、资本、
+> 执行或 live authority。
+
 ## 2026-08-15 当前交付摘要
 
 > `observed_at=2026-08-15T01:17:37+08:00`。本地 source、GitHub `main` 与普通服务器
