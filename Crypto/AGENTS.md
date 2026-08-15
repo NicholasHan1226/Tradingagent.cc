@@ -202,7 +202,8 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   book_ticker dataset id）与独立 catalog 读，其任何失败（per-symbol 记
   `rejected` + reason code，leg-wide 记 `unavailable` + reason code）绝不
   触发 bar 重试或丢失 bar 观测，预算耗尽信号永远穿透。快照行、receipt
-  `observed_at`（唯一时间权威，与 bar 同一 watermark 门禁）/freshness 元
+  `observed_at`（唯一时间权威，必须在槽结束与 cutoff 之间，与 bar 同一
+  watermark 门禁）/freshness 元
   数据与实测 `catalog_contract_sha256` 写入 immutable
   `spreads/<slot>.json`（写在 bars sidecar 之后、事件之前）；
   `observation`/`data_gap` 事件新增 `spread` 状态块（contract

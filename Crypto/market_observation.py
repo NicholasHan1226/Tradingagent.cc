@@ -871,7 +871,7 @@ def _validate_spread_run(
         _parse_utc(metadata.data_through, "crypto_spread_observed_at_invalid")
     # The receipt observation instant is the snapshot's only time authority;
     # it is held to the same slot watermark discipline as the bar evidence.
-    if observed_at > window.observation_cutoff:
+    if not window.window_end <= observed_at <= window.observation_cutoff:
         raise CryptoMarketObservationError("crypto_spread_watermark_invalid")
     row = _validated_spread_row(envelope.data[0], symbol=symbol)
     return {
@@ -1206,6 +1206,12 @@ def validate_ten_symbol_spreads_sidecar(
     if not isinstance(catalog_version, str) or not catalog_version:
         raise CryptoMarketObservationError(reason)
     entries = _validate_spread_entries(payload.get("entries"))
+    for entry in entries:
+        if entry["status"] != "sampled":
+            continue
+        observed_at = _parse_utc(entry.get("observed_at"), reason)
+        if not window.window_end <= observed_at <= window.observation_cutoff:
+            raise CryptoMarketObservationError(reason)
     if payload.get("spread_sha256") != _spread_entries_sha256(entries):
         raise CryptoMarketObservationError(reason)
     return entries
