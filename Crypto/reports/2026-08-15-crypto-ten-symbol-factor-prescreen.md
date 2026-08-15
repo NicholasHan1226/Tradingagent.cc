@@ -24,18 +24,6 @@
 | TRXUSDT | 2571 | 2026-08-06T12:00:00Z | 2026-08-15T10:10:00Z | 0 |
 | XRPUSDT | 2571 | 2026-08-06T12:00:00Z | 2026-08-15T10:10:00Z | 0 |
 
-## 机器产物与人工结论边界
-
-本报告上方的数字属于可复算机器结果；当前 renderer 会从同一冻结 raw
-cohort 生成不含人工判断的 canonical JSON，并写出其精确内容与 SHA-256。
-下面的“结论与预注册建议”是独立的人工判断，不属于机器产物，不能反向
-改变上方数字或其 hash。
-
-- artifact contract：`tradingagent.crypto.ten_symbol_factor_prescreen.machine_artifact.v1`
-- exact content/hash：用
-  `Crypto/ten_symbol_factor_prescreen.py --raw-dir <raw> --artifact <path> --report <path>`
-  生成；artifact 文件字节（含末尾换行）即为 renderer 输出的 hash 输入。
-
 ## 候选：XS-RS 横截面相对强弱（long top-k 等权，永远在场）
 
 假设：cross-sectional relative strength: rank symbols by 1h return each slot, long top-k equal weight, always in market
@@ -129,6 +117,17 @@ per-symbol（naive）：
 | low_vol_half | 1140 / 12735 | 0.1508771929824561403508771930 | -0.002429882359786820057482302210 | -0.0023971628771228771228771229 | -0.000092251974224551931320270418 | -0.002429882359786820057482302210 | 0.7919748690613489172475149163 | 0.08951707891637220259128386337 | 101 / 213 | -0.002714510111008159150444165519 |
 
 median realized_volatility_1h = 0.000764610539681150139275444538
+
+## 机器产物与人工结论边界
+
+以下机器产物只包含上面的分析结果；其 canonical JSON 内容和 SHA-256
+由当前 renderer 从同一冻结 raw cohort 生成。人工判断不进入机器产物，
+因此可以在不改变可复算数字的情况下单独修订。
+
+- artifact contract: `tradingagent.crypto.ten_symbol_factor_prescreen.machine_artifact.v1`
+- canonical JSON content sha256: `dbc8a240f6c3b5effb93f64ec01a132b3ba3d7c62c7b71c8d9bca83e86ea38cc`
+- exact content: 运行 `--artifact <path>` 写出，文件字节（含末尾换行）
+  即为上述 hash 的输入。
 
 ## 结论与预注册建议
 
