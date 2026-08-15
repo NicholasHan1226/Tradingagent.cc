@@ -220,25 +220,31 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
 - `ten_symbol_factor_strategy_evaluation.py` 是 v2 投影的 detached 费用后
   策略评估（v1 `factor_strategy_evaluation` + post_projection 的 v2
   port），只可作为 full scrub 的下游运行：从投影根重建全部 resolved
-  (snapshot, label) 样本并逐样本按 v2 合同核验（snapshot/label integrity、
-  同 segment、record/receipt/checkpoint 三件套、store 事件 checksum 与
-  bars sidecar sha 双重绑定、checkpoint 链重放、cost policy
+  (snapshot, label) 样本（required 60min + auxiliary 240/720/1440min）并
+  逐样本按 v2 合同核验（snapshot/label integrity、同 segment、
+  record/receipt/checkpoint 三件套、store 事件 checksum 与 bars sidecar
+  sha 双重绑定、checkpoint 链重放、cost policy
   `crypto-round-trip-taker-v1` 逐项比对、gross/net 重算、future 不晚于
-  evaluation_as_of），失败一律 fail closed 不跳过。对三个预注册假设各产出
-  一份 immutable 评估 artifact（always-invest 基线、cash 基线、
-  signal/abstention/coverage/hit_rate/cost_adjusted_net_return/
-  baseline_delta/cash_baseline_delta/drawdown/turnover/round_trip_leg_rate、
-  recommendation ∈ {disable, downweight, retain_for_more_evidence}，
-  `evaluated_status` 固定 `exploratory_insufficient_edge`），写入
-  `strategy_evaluations/{outcome_sha}.json` 并用 compact
+  evaluation_as_of），失败一律 fail closed 不跳过。每个 horizon × 每个
+  预注册假设各产出一份评估，在同一 immutable bundle 内按 horizon 分组
+  （always-invest 基线、cash 基线、signal/abstention/coverage/hit_rate/
+  cost_adjusted_net_return/baseline_delta/cash_baseline_delta/drawdown/
+  turnover/round_trip_leg_rate），aux horizon 标注
+  `research_attribution=true` 仅作方向性证据，样本不足的 horizon 报
+  `insufficient_resolved_samples` 不产出评估也不 fail；**recommendation
+  只基于 required 60min 口径**，∈ {disable, downweight,
+  retain_for_more_evidence}，`evaluated_status` 固定
+  `exploratory_insufficient_edge`。bundle 写入
+  `strategy_evaluations/{outcome_sha}.json`（outcome 覆盖含 aux 在内的
+  全部 resolved 样本集合）并用 compact
   `strategy_evaluation_checkpoint.json` 幂等：同 outcome 返回
   `no_new_outcome`，0 resolved 返回 `insufficient_resolved_samples`。
-  metric_basis 显式标注 1h 标签按 5m 槽重叠、有效独立样本约 1/12，HAC/
-  非重叠子样本显著性留待后续。worker 的 incremental 模式只走 compact
-  checkpoint 快速路径（首次 scrub 前明确跳过而非 fail closed）；评估失败
-  只记为可重试 debt，绝不改变已完成 scrub 的事实与退出码。固定
-  `authority=none`，零 core/资本/order/Champion 写权限，不构成 edge、晋级
-  或参数变更授权。
+  metric_basis 按 horizon 标注重叠率与有效独立样本折算（11/12、47/48、
+  143/144、287/288），HAC/非重叠子样本显著性留待后续。worker 的
+  incremental 模式只走 compact checkpoint 快速路径（首次 scrub 前明确跳过
+  而非 fail closed）；评估失败只记为可重试 debt，绝不改变已完成 scrub
+  的事实与退出码。固定 `authority=none`，零 core/资本/order/Champion
+  写权限，不构成 edge、晋级或参数变更授权。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached
