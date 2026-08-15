@@ -49,6 +49,9 @@ from shared.data.tradingdatas_transport import (
 
 PRESCREEN_CONTRACT = "tradingagent.crypto.ten_symbol_factor_prescreen.v1"
 RAW_CONTRACT = "tradingagent.crypto.ten_symbol_factor_prescreen_raw.v1"
+MACHINE_ARTIFACT_CONTRACT = (
+    "tradingagent.crypto.ten_symbol_factor_prescreen.machine_artifact.v1"
+)
 FIVE_MINUTES = timedelta(minutes=5)
 HORIZON_BARS = 12
 PAGE_LIMIT = 500
@@ -84,6 +87,27 @@ def _canonical_json(value: Any) -> str:
 
 def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def render_machine_artifact(result: Mapping[str, Any]) -> str:
+    """Return the byte-stable, verdict-free machine artifact content.
+
+    The artifact deliberately contains only the analysis result.  Human
+    interpretation belongs to the Markdown report and is therefore excluded
+    from the bytes that are hashed and persisted.
+    """
+
+    payload = {
+        "artifact_contract": MACHINE_ARTIFACT_CONTRACT,
+        "analysis": result,
+    }
+    return _canonical_json(payload) + "\n"
+
+
+def machine_artifact_sha256(result: Mapping[str, Any]) -> str:
+    """Return the SHA-256 of the exact machine artifact bytes."""
+
+    return hashlib.sha256(render_machine_artifact(result).encode("utf-8")).hexdigest()
 
 
 def _non_evidence_fields() -> dict[str, Any]:
@@ -1281,11 +1305,21 @@ def render_report(result: Mapping[str, Any]) -> str:
                     _per_symbol_table(lines, table)
     lines += [
         "",
+        "## 机器产物与人工结论边界",
+        "",
+        "以下机器产物只包含上面的分析结果；其 canonical JSON 内容和 SHA-256",
+        "由当前 renderer 从同一冻结 raw cohort 生成。人工判断不进入机器产物，",
+        "因此可以在不改变可复算数字的情况下单独修订。",
+        "",
+        f"- artifact contract: `{MACHINE_ARTIFACT_CONTRACT}`",
+        f"- canonical JSON content sha256: `{machine_artifact_sha256(result)}`",
+        "- exact content: 运行 `--artifact <path>` 写出，文件字节（含末尾换行）",
+        "  即为上述 hash 的输入。",
+        "",
         "## 结论与预注册建议",
         "",
-        "（待填：基于上表数字的人工判断——哪些候选值得正式预注册进证据链。"
-        "注意全部结论仅基于非重叠子样本口径也成立时才考虑预注册；本报告"
-        "不构成任何晋级证据。）",
+        "（人工判断：哪些候选值得正式预注册进证据链。注意全部结论仅基于"
+        "非重叠子样本口径也成立时才考虑预注册；本报告不构成任何晋级证据。）",
         "",
         "---",
         "",
@@ -1359,6 +1393,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=str)
     parser.add_argument("--end", type=str)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--artifact", type=Path)
     args = parser.parse_args(argv)
     try:
         _assert_simulation_only()
@@ -1395,6 +1430,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         rows_by_symbol, meta = load_raw_dir(args.raw_dir)
         result = analyze(rows_by_symbol, meta=meta)
+        if args.artifact is not None:
+            _write_file_atomic(
+                args.artifact,
+                render_machine_artifact(result).encode("utf-8"),
+            )
         if args.report is not None:
             report_text = render_report(result)
             _write_file_atomic(
@@ -1417,9 +1457,12 @@ __all__ = [
     "PRESCREEN_CONTRACT",
     "RAW_CONTRACT",
     "CryptoTenSymbolFactorPrescreenError",
+    "MACHINE_ARTIFACT_CONTRACT",
     "analyze",
     "fetch_raw_history",
     "load_raw_dir",
     "main",
+    "machine_artifact_sha256",
     "render_report",
+    "render_machine_artifact",
 ]

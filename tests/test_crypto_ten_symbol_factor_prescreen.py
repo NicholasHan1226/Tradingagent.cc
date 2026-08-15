@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -12,13 +13,16 @@ import pytest
 
 import Crypto.ten_symbol_factor_prescreen as prescreen
 from Crypto.ten_symbol_factor_prescreen import (
+    MACHINE_ARTIFACT_CONTRACT,
     PRESCREEN_CONTRACT,
     RAW_CONTRACT,
     CryptoTenSymbolFactorPrescreenError,
     analyze,
     fetch_raw_history,
     load_raw_dir,
+    machine_artifact_sha256,
     render_report,
+    render_machine_artifact,
 )
 from tests.test_crypto_ten_symbol_observation_sidecar import (
     _assert_recursive_non_authority,
@@ -488,8 +492,16 @@ def test_cli_analyze_and_report_modes(
     assert len(result["candidates"]) == 4
 
     report_path = tmp_path / "report.md"
+    artifact_path = tmp_path / "artifact.json"
     exit_code = prescreen.main(
-        ["--raw-dir", str(raw_dir), "--report", str(report_path)]
+        [
+            "--raw-dir",
+            str(raw_dir),
+            "--artifact",
+            str(artifact_path),
+            "--report",
+            str(report_path),
+        ]
     )
     capsys.readouterr()
     assert exit_code == 0
@@ -499,6 +511,12 @@ def test_cli_analyze_and_report_modes(
     assert "XS-RS" in report
     assert "非重叠" in report
     assert "| top_1 |" in report
+    assert "机器产物与人工结论边界" in report
+    artifact = artifact_path.read_text(encoding="utf-8")
+    assert json.loads(artifact)["artifact_contract"] == MACHINE_ARTIFACT_CONTRACT
+    assert machine_artifact_sha256(result) == hashlib.sha256(
+        artifact.encode("utf-8")
+    ).hexdigest()
 
     fetch_exit = prescreen.main(["--raw-dir", str(raw_dir), "--fetch"])
     captured = capsys.readouterr()
@@ -523,3 +541,21 @@ def test_render_report_marks_non_evidence_and_overlap() -> None:
     assert "每 12 槽取 1" in report
     assert "结论与预注册建议" in report
     assert "AAA" in report
+
+
+def test_machine_artifact_rerun_is_byte_identical_and_verdict_free() -> None:
+    rows_by_symbol = {
+        "AAA": _typed_bars([format(100 + 2 * i, "f") for i in range(40)]),
+        "BBB": _typed_bars([format(100 + i, "f") for i in range(40)]),
+    }
+    result = analyze(rows_by_symbol)
+
+    first = render_machine_artifact(result)
+    second = render_machine_artifact(analyze(rows_by_symbol))
+
+    assert first == second
+    assert machine_artifact_sha256(result) == hashlib.sha256(
+        first.encode("utf-8")
+    ).hexdigest()
+    assert "结论与预注册建议" not in first
+    assert "artifact_contract" in first

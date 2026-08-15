@@ -24,6 +24,18 @@
 | TRXUSDT | 2571 | 2026-08-06T12:00:00Z | 2026-08-15T10:10:00Z | 0 |
 | XRPUSDT | 2571 | 2026-08-06T12:00:00Z | 2026-08-15T10:10:00Z | 0 |
 
+## 机器产物与人工结论边界
+
+本报告上方的数字属于可复算机器结果；当前 renderer 会从同一冻结 raw
+cohort 生成不含人工判断的 canonical JSON，并写出其精确内容与 SHA-256。
+下面的“结论与预注册建议”是独立的人工判断，不属于机器产物，不能反向
+改变上方数字或其 hash。
+
+- artifact contract：`tradingagent.crypto.ten_symbol_factor_prescreen.machine_artifact.v1`
+- exact content/hash：用
+  `Crypto/ten_symbol_factor_prescreen.py --raw-dir <raw> --artifact <path> --report <path>`
+  生成；artifact 文件字节（含末尾换行）即为 renderer 输出的 hash 输入。
+
 ## 候选：XS-RS 横截面相对强弱（long top-k 等权，永远在场）
 
 假设：cross-sectional relative strength: rank symbols by 1h return each slot, long top-k equal weight, always in market
