@@ -841,18 +841,20 @@ def test_loopback_timeout_budget_stays_below_systemd_stop_line() -> None:
         / "tradingagent-crypto-ten-symbol-observation.service"
     ).read_text(encoding="utf-8")
 
-    assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 8.0
+    # The live TradingDatas catalog read measures ~13s and each bounded query
+    # ~4s, so the per-request timeout follows the round-trip core at 60s.
+    assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 60.0
     assert runtime_module.REQUESTS_PER_CYCLE == 11
     assert (
         runtime_module.MAX_CYCLES_PER_INVOCATION
         * runtime_module.REQUESTS_PER_CYCLE
         * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        == 176.0
+        == 1320.0
     )
     assert (
         runtime_module.MAX_CYCLES_PER_INVOCATION
         * runtime_module.REQUESTS_PER_CYCLE
         * runtime_module.RUNTIME_TIMEOUT_SECONDS
-        < 180.0
+        < 3600.0
     )
-    assert "TimeoutStartSec=180s" in service
+    assert "TimeoutStartSec=3600" in service

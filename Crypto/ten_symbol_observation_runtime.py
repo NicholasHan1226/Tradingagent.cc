@@ -63,7 +63,7 @@ RUNTIME_TOKEN_FILE = Path("/run/secrets/tradingagent/tradingdatas-crypto-read.to
 RUNTIME_OUTPUT_ROOT = Path("/var/lib/tradingagent/crypto-ten-symbol-observation")
 RUNTIME_MANIFEST_MAX_BYTES = 256 * 1024
 SLOT_CUTOFF_DELAY_SECONDS = 55
-RUNTIME_TIMEOUT_SECONDS = 8.0
+RUNTIME_TIMEOUT_SECONDS = 60.0
 MAX_CYCLES_PER_INVOCATION = 2
 # One catalog read plus ten bounded single-page queries per cycle.
 REQUESTS_PER_CYCLE = 11
