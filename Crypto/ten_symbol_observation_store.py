@@ -1212,4 +1212,3 @@ __all__ = [
     "CryptoTenSymbolObservationStore",
     "CryptoTenSymbolObservationStoreError",
 ]
-
