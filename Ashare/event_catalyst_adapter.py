@@ -1,12 +1,14 @@
 """Adapters that mint event-catalyst calendar entries from frozen evidence.
 
 This module is the only bridge into the event-catalyst shadow factor.  It
-converts two already-validated input families into ``CatalystEntry`` values:
+converts three already-validated input families into ``CatalystEntry`` values:
 
 * ``EventEvidenceSnapshot`` rows from the TradingDatas ``disclosure_date``
-  dataset (earnings disclosure appointments are hard-dated events), and
+  dataset (earnings disclosure appointments are hard-dated events),
+* validated provider-native ``share_float`` rows (lockup expiries are
+  hard-dated once announced), and
 * caller-maintained calendar documents (policy meetings, conferences,
-  product launches, index rebalances, lockup expiries, macro releases),
+  product launches, index rebalances, macro releases),
   which stay plain data documents validated here field by field.
 
 The adapter performs no network, no persistence and no scheduling.  It grants
@@ -33,6 +35,17 @@ EVENT_CATALYST_ADAPTER_CONTRACT = (
     "tradingagent.ashare.event_catalyst_adapter.v1"
 )
 DISCLOSURE_DATE_DATASET_ID = "cn.dataset.disclosure_date"
+SHARE_FLOAT_DATASET_ID = "cn.dataset.share_float"
+
+_LOCKUP_REQUIRED_FIELDS = (
+    "ts_code",
+    "ann_date",
+    "float_date",
+    "float_share",
+    "float_ratio",
+    "holder_name",
+    "share_type",
+)
 
 
 class EventCatalystAdapterError(ValueError):
@@ -199,3 +212,78 @@ def catalyst_entries_from_calendar_document(
         except EventCatalystShadowError as exc:
             raise EventCatalystAdapterError(exc.reason_code) from exc
     return tuple(entries)
+
+
+def catalyst_entry_from_lockup_row(
+    row: Mapping[str, Any],
+    *,
+    dataset_id: str,
+    receipt_id: str,
+) -> CatalystEntry:
+    """Mint one hard-dated lockup-expiry entry from a validated provider row.
+
+    ``row`` must be one already-validated ``share_float`` provider-native row
+    obtained by the caller through the frozen TradingDatas catalog/query
+    boundary; this adapter performs no transport itself.  ``float_date`` is a
+    fixed exchange-registered date once announced, so the entry is
+    ``hard_date``; the direction is ``negative`` by convention (new sellable
+    supply) and stays an explicit hypothesis, not a calibrated claim.  Rows
+    with missing/blank required fields, malformed dates, non-positive share
+    counts, or symbols outside the mainboard research scope fail closed.
+    """
+
+    if dataset_id != SHARE_FLOAT_DATASET_ID:
+        raise EventCatalystAdapterError(
+            "event_catalyst_adapter_lockup_dataset_invalid"
+        )
+    receipt = _text(receipt_id, "event_catalyst_adapter_lockup_receipt_invalid")
+    if not isinstance(row, Mapping):
+        raise EventCatalystAdapterError(
+            "event_catalyst_adapter_lockup_row_invalid"
+        )
+    for field_name in _LOCKUP_REQUIRED_FIELDS:
+        value = row.get(field_name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise EventCatalystAdapterError(
+                "event_catalyst_adapter_lockup_field_missing"
+            )
+    symbol = _text(
+        row.get("ts_code"), "event_catalyst_adapter_lockup_row_invalid"
+    )
+    float_date = _parse_event_date(
+        row.get("float_date"), "event_catalyst_adapter_lockup_float_date_invalid"
+    )
+    _parse_event_date(
+        row.get("ann_date"), "event_catalyst_adapter_lockup_ann_date_invalid"
+    )
+    float_share = row.get("float_share")
+    if (
+        isinstance(float_share, bool)
+        or not isinstance(float_share, (int, float))
+        or float(float_share) <= 0
+    ):
+        raise EventCatalystAdapterError(
+            "event_catalyst_adapter_lockup_share_invalid"
+        )
+    holder = _text(
+        row.get("holder_name"), "event_catalyst_adapter_lockup_row_invalid"
+    )
+    share_type = _text(
+        row.get("share_type"), "event_catalyst_adapter_lockup_row_invalid"
+    )
+    try:
+        return CatalystEntry(
+            event_id=(
+                f"lockup:{dataset_id}:{receipt}:{symbol}:"
+                f"{float_date.isoformat()}:{holder}:{share_type}"
+            ),
+            event_type="lockup_expiry",
+            scheduled_date=float_date,
+            date_confidence="hard_date",
+            impact_direction="negative",
+            source_ref=f"td-v1:{dataset_id}:{receipt}",
+            entity=holder,
+            symbol=symbol,
+        )
+    except EventCatalystShadowError as exc:
+        raise EventCatalystAdapterError(exc.reason_code) from exc

@@ -200,3 +200,116 @@ class TestCalendarDocumentAdapter:
     def test_non_mapping_fails_closed(self):
         with pytest.raises(EventCatalystAdapterError):
             catalyst_entries_from_calendar_document(["not", "a", "mapping"])
+
+
+class TestLockupRowAdapter:
+    def _row(self, **overrides):
+        row = {
+            "ts_code": "002475.SZ",
+            "ann_date": "20260810",
+            "float_date": "20260915",
+            "float_share": 12500000.0,
+            "float_ratio": 1.73,
+            "holder_name": "示例控股股东",
+            "share_type": "首发原股东限售股份",
+        }
+        row.update(overrides)
+        return row
+
+    def test_mints_hard_dated_negative_entry(self):
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        entry = catalyst_entry_from_lockup_row(
+            self._row(),
+            dataset_id="cn.dataset.share_float",
+            receipt_id="receipt-9",
+        )
+        assert entry.event_type == "lockup_expiry"
+        assert entry.date_confidence == "hard_date"
+        assert entry.impact_direction == "negative"
+        assert entry.scheduled_date == date(2026, 9, 15)
+        assert entry.symbol == "002475.SZ"
+        assert entry.source_ref == "td-v1:cn.dataset.share_float:receipt-9"
+        assert "receipt-9" in entry.event_id
+
+    def test_rejects_wrong_dataset(self):
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        with pytest.raises(EventCatalystAdapterError) as excinfo:
+            catalyst_entry_from_lockup_row(
+                self._row(),
+                dataset_id="cn.dataset.disclosure_date",
+                receipt_id="receipt-9",
+            )
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_adapter_lockup_dataset_invalid"
+        )
+
+    def test_rejects_missing_field(self):
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        with pytest.raises(EventCatalystAdapterError) as excinfo:
+            catalyst_entry_from_lockup_row(
+                self._row(float_ratio=None),
+                dataset_id="cn.dataset.share_float",
+                receipt_id="receipt-9",
+            )
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_adapter_lockup_field_missing"
+        )
+
+    def test_rejects_bad_float_date(self):
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        with pytest.raises(EventCatalystAdapterError) as excinfo:
+            catalyst_entry_from_lockup_row(
+                self._row(float_date="mid-september"),
+                dataset_id="cn.dataset.share_float",
+                receipt_id="receipt-9",
+            )
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_adapter_lockup_float_date_invalid"
+        )
+
+    def test_rejects_nonpositive_share(self):
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        with pytest.raises(EventCatalystAdapterError) as excinfo:
+            catalyst_entry_from_lockup_row(
+                self._row(float_share=0),
+                dataset_id="cn.dataset.share_float",
+                receipt_id="receipt-9",
+            )
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_adapter_lockup_share_invalid"
+        )
+
+    def test_rejects_star_market_symbol(self):
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        with pytest.raises(EventCatalystAdapterError) as excinfo:
+            catalyst_entry_from_lockup_row(
+                self._row(ts_code="688981.SH"),
+                dataset_id="cn.dataset.share_float",
+                receipt_id="receipt-9",
+            )
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_symbol_outside_mainboard_scope"
+        )
