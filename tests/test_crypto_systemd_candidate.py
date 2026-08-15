@@ -142,7 +142,7 @@ def test_crypto_ten_symbol_observation_service_is_loopback_only_sim_only() -> No
     ) in text
     assert "--output-root" not in text
     assert "UMask=0077" in text
-    assert "TimeoutStartSec=180s" in text
+    assert "TimeoutStartSec=3600" in text
     assert "NoNewPrivileges=true" in text
     assert "PrivateTmp=true" in text
     assert "PrivateDevices=true" in text
