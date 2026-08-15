@@ -1,0 +1,201 @@
+"""Adapters that mint event-catalyst calendar entries from frozen evidence.
+
+This module is the only bridge into the event-catalyst shadow factor.  It
+converts two already-validated input families into ``CatalystEntry`` values:
+
+* ``EventEvidenceSnapshot`` rows from the TradingDatas ``disclosure_date``
+  dataset (earnings disclosure appointments are hard-dated events), and
+* caller-maintained calendar documents (policy meetings, conferences,
+  product launches, index rebalances, lockup expiries, macro releases),
+  which stay plain data documents validated here field by field.
+
+The adapter performs no network, no persistence and no scheduling.  It grants
+no authority: minted entries remain inputs to a shadow-only research factor,
+and every failure is fail-closed with a stable reason code.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any, Mapping, Sequence
+
+from Ashare.event_catalyst_shadow import (
+    DATE_CONFIDENCE_LEVELS,
+    EVENT_TYPES,
+    IMPACT_DIRECTIONS,
+    CatalystEntry,
+    EventCatalystShadowError,
+)
+from Ashare.event_evidence import EventEvidenceSnapshot
+
+
+EVENT_CATALYST_ADAPTER_CONTRACT = (
+    "tradingagent.ashare.event_catalyst_adapter.v1"
+)
+DISCLOSURE_DATE_DATASET_ID = "cn.dataset.disclosure_date"
+
+
+class EventCatalystAdapterError(ValueError):
+    """Fail-closed adapter failure with a stable reason code."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+def _text(value: object, reason: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or "\x00" in value
+    ):
+        raise EventCatalystAdapterError(reason)
+    return value
+
+
+def _parse_event_date(value: object, reason: str) -> date:
+    raw = _text(value, reason)
+    try:
+        parsed = date.fromisoformat(raw)
+        return parsed
+    except ValueError:
+        pass
+    try:
+        parsed_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise EventCatalystAdapterError(reason) from exc
+    return parsed_dt.date()
+
+
+def catalyst_entry_from_disclosure_snapshot(
+    snapshot: EventEvidenceSnapshot,
+) -> CatalystEntry:
+    """Mint one hard-dated earnings-disclosure entry from frozen evidence.
+
+    Only the ``disclosure_date`` dataset carries appointment semantics; any
+    other dataset, a missing symbol, or an unparseable event time fails
+    closed.  The entry's ``source_ref`` binds back to the evidence receipt so
+    downstream shadow observations stay replayable.
+    """
+
+    if not isinstance(snapshot, EventEvidenceSnapshot):
+        raise EventCatalystAdapterError(
+            "event_catalyst_adapter_snapshot_invalid"
+        )
+    if snapshot.dataset_id != DISCLOSURE_DATE_DATASET_ID:
+        raise EventCatalystAdapterError(
+            "event_catalyst_adapter_dataset_not_appointment"
+        )
+    if snapshot.symbol is None:
+        raise EventCatalystAdapterError(
+            "event_catalyst_adapter_symbol_missing"
+        )
+    scheduled = _parse_event_date(
+        snapshot.event_time, "event_catalyst_adapter_event_time_invalid"
+    )
+    try:
+        return CatalystEntry(
+            event_id=f"disclosure:{snapshot.evidence_ref}",
+            event_type="earnings_disclosure",
+            scheduled_date=scheduled,
+            date_confidence="hard_date",
+            impact_direction="unclear",
+            source_ref=snapshot.evidence_ref,
+            entity=snapshot.entity,
+            symbol=snapshot.symbol,
+        )
+    except EventCatalystShadowError as exc:
+        raise EventCatalystAdapterError(exc.reason_code) from exc
+
+
+def catalyst_entries_from_calendar_document(
+    document: Mapping[str, Any],
+) -> tuple[CatalystEntry, ...]:
+    """Validate one caller-maintained calendar document into entries.
+
+    The document must be a mapping with ``calendar_id`` (text) and
+    ``entries`` (a non-empty sequence of mappings with the CatalystEntry
+    fields).  Unknown event types, confidence levels or impact directions,
+    duplicate ``event_id`` values, and malformed dates all fail closed.
+    """
+
+    if not isinstance(document, Mapping):
+        raise EventCatalystAdapterError("event_catalyst_calendar_doc_invalid")
+    calendar_id = _text(
+        document.get("calendar_id"), "event_catalyst_calendar_id_invalid"
+    )
+    raw_entries = document.get("entries")
+    if (
+        not isinstance(raw_entries, Sequence)
+        or isinstance(raw_entries, (str, bytes))
+        or not raw_entries
+    ):
+        raise EventCatalystAdapterError("event_catalyst_calendar_entries_invalid")
+    entries: list[CatalystEntry] = []
+    seen_ids: set[str] = set()
+    for raw in raw_entries:
+        if not isinstance(raw, Mapping):
+            raise EventCatalystAdapterError(
+                "event_catalyst_calendar_entry_invalid"
+            )
+        event_id = _text(
+            raw.get("event_id"), "event_catalyst_calendar_entry_invalid"
+        )
+        if event_id in seen_ids:
+            raise EventCatalystAdapterError(
+                "event_catalyst_calendar_event_id_duplicate"
+            )
+        seen_ids.add(event_id)
+        event_type = _text(
+            raw.get("event_type"), "event_catalyst_calendar_entry_invalid"
+        )
+        if event_type not in EVENT_TYPES:
+            raise EventCatalystAdapterError(
+                "event_catalyst_calendar_event_type_invalid"
+            )
+        date_confidence = _text(
+            raw.get("date_confidence"),
+            "event_catalyst_calendar_entry_invalid",
+        )
+        if date_confidence not in DATE_CONFIDENCE_LEVELS:
+            raise EventCatalystAdapterError(
+                "event_catalyst_calendar_confidence_invalid"
+            )
+        impact_direction = _text(
+            raw.get("impact_direction"),
+            "event_catalyst_calendar_entry_invalid",
+        )
+        if impact_direction not in IMPACT_DIRECTIONS:
+            raise EventCatalystAdapterError(
+                "event_catalyst_calendar_direction_invalid"
+            )
+        source_ref = _text(
+            raw.get("source_ref"), "event_catalyst_calendar_entry_invalid"
+        )
+        entity = raw.get("entity")
+        if entity is not None:
+            entity = _text(entity, "event_catalyst_calendar_entry_invalid")
+        symbol = raw.get("symbol")
+        if symbol is not None:
+            symbol = _text(symbol, "event_catalyst_calendar_entry_invalid")
+        scheduled = _parse_event_date(
+            raw.get("scheduled_date"),
+            "event_catalyst_calendar_scheduled_date_invalid",
+        )
+        try:
+            entries.append(
+                CatalystEntry(
+                    event_id=f"{calendar_id}:{event_id}",
+                    event_type=event_type,
+                    scheduled_date=scheduled,
+                    date_confidence=date_confidence,
+                    impact_direction=impact_direction,
+                    source_ref=source_ref,
+                    entity=entity,
+                    symbol=symbol,
+                )
+            )
+        except EventCatalystShadowError as exc:
+            raise EventCatalystAdapterError(exc.reason_code) from exc
+    return tuple(entries)
