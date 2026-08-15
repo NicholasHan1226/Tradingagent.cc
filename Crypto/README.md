@@ -585,95 +585,6 @@ fail closed；本机制不创建新 epoch，也不重置或聚合 10,000 USDT。
 
 LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本地读取上界。sidecar 损坏、超限或写入失败只返回 `degraded/authority=none` 诊断，不撤销、重复或阻塞已提交的核心资本与 bundle replay。
 
-## 十币种 Shadow 观测积累器（零权限、独立故障域）
-
-`ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
-`ten_symbol_observation_runtime.py` 组成一条独立、append-only、receipt 绑定的
-10 币 5 分钟观测积累链，为后续 factor research 扩到 10 币（横截面研究）提供
-证据级数据源。样本速率目标是 10 币 × 288 槽/天。它与 delayed-paper
-core/learning/factor 完全不共享 root、锁或状态，任何一方故障互不影响；所有
-事件固定 `authority=none`、`execution_eligible=false`、
-`capital_write_eligible=false`、`model_authority=false`。
-
-### 设计
-
-- store：append-only 观测账本，三类事件——`observation`（一个 slot 的完整
-  10 币 13 根窗口证据，复用 `market_observation.CryptoMarketObservation`
-  payload，含 per-source receipt/lineage/watermark/digest）、`data_reject`
-  （slot 数据不合格，幂等追加，不含市场行）、`data_gap`（历史窗口确定不可
-  恢复时追加）。`head.json` 发布 sequence+checksum 检查点；进程锁与 cycle
-  锁串行化 invocation；16 MiB 段原子 rotation；current 文件整体原子重写，
-  crash 后从已 fsync 事件链重建 head（head 落后但前缀一致才恢复，其余分歧
-  fail closed）。同槽重放不重复追加；同槽不同 payload（含 observation 与
-  data_gap 跨类型冲突）fail closed；terminal 槽位严格单调。
-- profile：冻结 profile，不复用 `CryptoFiveMinuteDataProfile`，避免触碰
-  BTC/ETH 资本路径。10 个 bar dataset 各自绑定 shared canonical dataset
-  fingerprint（`catalog_contract_sha256`），统一 consumer 查询形状
-  （字段/order/identity/filter bindings/page budget）绑定
-  `consumer_profile_sha256`，外层 `profile_sha256` 任一漂移 fail closed；
-  catalog 硬校验直接复用 `market_observation._verify_catalog`。
-- runtime：server CLI，只接受仓外冻结 manifest
-  `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json`（loopback
-  IP literal base_url、catalog_version、完整 profile payload + SHA、绑定的
-  output_root、safety 合同）；manifest 校验在任何读写之前（绝对路径、
-  regular/single-link、owner/mode、重复 JSON key、读取中变更）。token leaf
-  固定 `/run/secrets/tradingagent/tradingdatas-crypto-read.token`；transport
-  懒构造，pending/同槽恢复不需要网络或 token。输出根只能来自 manifest 绑定
-  的 `/var/lib/tradingagent/crypto-ten-symbol-observation`，CLI 没有
-  `--output-root`。wire 只有 `GET /v1/catalog` 与 `POST /v1/query`。
-
-### slot / backlog / gap 语义
-
-- `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不随 systemd
-  jitter 或重跑墙上时钟漂移。
-- 每 invocation 最多 2 cycle（pending recovery + 1 fresh，或两个连续处理
-  步骤）；仍落后当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
-  delayed-paper core 的刻意差异（core 在有进展时返回 0）：积累器没有资本
-  风险，timer 应把滞后显式暴露为失败直到追平。槽位仍严格按序补，绝不跳过
-  中间时槽。
-- pending marker 只是 crash 簿记（不是证据）：fresh cycle 取数前写入、事件
-  落账后清除。槽已有事件的 pending 恢复不需要网络；pending 槽已成历史时
-  清除 marker 并由 data_gap 合同显式覆盖该槽——这也与 core 的 pending 必须
-  完整恢复不同，因为积累器的 pending 不含任何已验证数据。
-- data_gap 合同：current-read 查询不带 `as_of`，历史槽的
-  `observed_at` 必然越过其 cutoff（`crypto_observation_watermark_invalid`），
-  因此历史窗口确定不可恢复，不伪造 PIT。只有 pending 为空、目标历史槽严格
-  落后当前槽、且当前 10 币 13 根窗口全部 catalog/receipt/lineage/freshness/
-  quality 门禁通过时，才追加一条 `data_gap`：记录精确 skipped range、拒绝
-  原因与被拒窗口，并内嵌恢复首窗的完整 observation 证据；恢复槽不另写普通
-  observation 事件。下一根连续窗口恢复正常积累。同槽重放只做无网络幂等
-  校验。
-- data_reject 语义差异：store 对同一 `(event_type, slot)` 的不同 payload
-  （含不同 reason_code）fail closed，比 core 的 decision ledger 更严格；
-  瞬时失败在下轮重试时以相同 payload 幂等。
-
-### manifest / token / root 边界
-
-manifest root-owned 0640、仓外、secret-free；token 只由最终 HTTP transport
-从固定 leaf 注入；输出根、catalog version、10 份 dataset contract 全部由
-manifest 冻结，runtime 不从当前 catalog 动态重建或放宽。部署 runbook
-（独立步骤，需 Nicholas 明确批准后执行）：
-
-1. 服务器创建 `/var/lib/tradingagent/crypto-ten-symbol-observation`
-   （`tradingagent:tradingagent`，非 symlink；unit 的 `StateDirectory=` 也可
-   代为创建）。
-2. 从 live catalog 读回 10 个 dataset 的 contract SHA，生成并原子安装
-   `/etc/tradingagent/crypto-ten-symbol-observation.runtime.json`
-   （root-owned 0640，不含 token）。
-3. 验证现有 crypto read token 对 6 个新 dataset 的查询权限（bounded query
-   smoke）。
-4. 在 immutable release 上跑 one-shot → 同槽幂等重放 → 相邻两轮；全部通过
-   后才 `enable --now` timer。
-5. 回滚：停/禁 timer，保留 store 只读审计，不删除任何事件。
-
-### 明确未实现
-
-- 没有 factor v2 消费端、横截面 factor/IC 声称、rules dataset、历史回填
-  证据化；50 标签初筛不构成晋级。
-- systemd unit 是 install-default 不启用的候选，不代表现役 timer 状态。
-- 该链不读取/写入 core、资本、learning、Champion 或 `evolution/`，也不构成
-  任何 PIT 回填或交易 authority。
-
 ## 验证
 
 ```bash
@@ -693,9 +604,6 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_round_trip_learning_systemd.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_delayed_paper_round_trip_report.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_round_trip_acceptance_systemd.py
-REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_store.py
-REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_profile.py
-REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_observation_runtime.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 

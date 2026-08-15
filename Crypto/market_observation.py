@@ -395,19 +395,21 @@ def _validate_run(
     )
 
 
-def _collect_market_observation_with_catalog(
+def collect_market_observation(
     client: SharedSignalsV1Client,
     *,
-    catalog: CatalogEnvelope,
     expected_catalog_version: str,
     window: CryptoObservationWindow,
 ) -> CryptoMarketObservation:
-    """Collect the cohort against an already-observed catalog envelope.
+    """Return a zero-authority ten-symbol read-only observation.
 
-    The accumulator runtime fetches the catalog once per cycle so the frozen
-    profile fingerprints and the query loop share a single catalog read.
+    The function intentionally does not replay, persist, schedule, or invoke
+    any capital/model path. A caller may compare repeated reports separately.
     """
 
+    if not isinstance(client, SharedSignalsV1Client):
+        raise TypeError("client must be a SharedSignalsV1Client")
+    catalog = client.get_catalog()
     if (
         catalog.api_version != "v1"
         or catalog.catalog_version != expected_catalog_version
@@ -471,29 +473,6 @@ def _collect_market_observation_with_catalog(
         sources=sources_tuple,
         market_data_sha256=market_data_sha256,
         observation_sha256=_canonical_sha256(payload),
-    )
-
-
-def collect_market_observation(
-    client: SharedSignalsV1Client,
-    *,
-    expected_catalog_version: str,
-    window: CryptoObservationWindow,
-) -> CryptoMarketObservation:
-    """Return a zero-authority ten-symbol read-only observation.
-
-    The function intentionally does not replay, persist, schedule, or invoke
-    any capital/model path. A caller may compare repeated reports separately.
-    """
-
-    if not isinstance(client, SharedSignalsV1Client):
-        raise TypeError("client must be a SharedSignalsV1Client")
-    catalog = client.get_catalog()
-    return _collect_market_observation_with_catalog(
-        client,
-        catalog=catalog,
-        expected_catalog_version=expected_catalog_version,
-        window=window,
     )
 
 
