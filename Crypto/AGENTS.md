@@ -150,6 +150,22 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   Challenger 比较，不得读写 core、capital、orders、Champion 或 `evolution/`。
   当前只有 BTC/ETH，任何横截面 factor/IC 声称均不成立；只能做时间序列特征
   研究。历史回填不具备 PIT 证明时只能用于工程/定义检查，不得进入晋级证据。
+- `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
+  `ten_symbol_observation_runtime.py` 组成独立的 10 币 5 分钟 shadow 观测
+  积累器，为后续横截面 factor research 提供前向积累的证据级数据源。它与
+  delayed-paper core/learning/factor 完全不共享 root、锁或状态，任一故障域
+  互不影响；固定 `authority=none`、零 capital/order/model/promotion 权限。
+  store 是 append-only checksum 链账本（observation/data_reject/data_gap），
+  同槽重放幂等、同槽异 payload fail closed。profile 冻结 10 个 bar dataset
+  各自的 canonical catalog contract fingerprint、统一 consumer 查询形状与
+  外层 SHA，任一漂移 fail closed。runtime 只接受仓外冻结 manifest 与固定
+  token leaf，懒构造 transport，输出根只能来自 manifest 绑定的
+  `/var/lib/tradingagent/crypto-ten-symbol-observation`；slot cutoff 固定
+  bar close +55s，每 invocation 最多 2 cycle，积压返回 `backlog_pending`
+  非零退出且不跳槽；历史窗口对 current-read watermark 门禁确定不可恢复时，
+  只允许在当前窗口全部门禁通过后追加显式 `data_gap`，不伪造 PIT。证据只能
+  前向积累，历史回填不构成证据。对应 systemd unit 是 install-default 不启用
+  的候选；安装/启用必须经 Nicholas 明确批准。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached
