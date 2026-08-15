@@ -31,9 +31,16 @@ from Crypto.market_observation import (
     CryptoMarketObservation,
     CryptoMarketObservationError,
     CryptoObservationWindow,
+    _book_ticker_dataset_id,
     _collect_market_observation_rows_with_catalog,
+    build_spread_event_block,
     build_ten_symbol_bars_sidecar,
+    build_ten_symbol_spreads_sidecar,
+    collect_book_ticker_spread_entries,
     observation_from_ten_symbol_bars_sidecar,
+    unavailable_spread_event_block,
+    validate_ten_symbol_spreads_sidecar,
+    OBSERVATION_SYMBOLS,
 )
 from Crypto.ten_symbol_observation_profile import (
     CryptoTenSymbolObservationProfile,
@@ -73,8 +80,9 @@ SLOT_CUTOFF_DELAY_SECONDS = 55
 RUNTIME_TIMEOUT_SECONDS = 60.0
 INVOCATION_BUDGET_SECONDS = 120.0
 MAX_CYCLES_PER_INVOCATION = 2
-# One catalog read plus ten bounded single-page queries per cycle.
-REQUESTS_PER_CYCLE = 11
+# One catalog read plus ten bounded single-page bar queries per cycle, and
+# the auxiliary spread leg's own catalog read plus ten book-ticker queries.
+REQUESTS_PER_CYCLE = 22
 # Bounded same-slot retry for transport-layer faults only: one initial
 # attempt plus up to two retries with a fixed delay, still clamped by the
 # absolute invocation budget and the unit stop line.
@@ -546,6 +554,39 @@ def _is_retryable_transport_error(exc: BaseException) -> bool:
     return saw_transport
 
 
+def _spread_dataset_ids() -> frozenset[str]:
+    return frozenset(_book_ticker_dataset_id(symbol) for symbol in OBSERVATION_SYMBOLS)
+
+
+def _spread_failure_reason(exc: BaseException) -> str:
+    """Map one spread-leg failure to a stable, redacted degradation reason.
+
+    The spread leg is auxiliary evidence: its failures are recorded as a
+    leg-wide ``unavailable`` status and never fail the bar observation.
+    Reason codes never interpolate payloads, so they are safe to persist.
+    """
+
+    if isinstance(exc, CryptoMarketObservationError):
+        return str(exc)
+    if isinstance(exc, TradingDatasAuthenticationError):
+        return "crypto_spread_auth_unavailable"
+    if isinstance(exc, (urllib.error.HTTPError, HTTPStatusError)):
+        return "crypto_spread_http_unavailable"
+    if isinstance(exc, (CryptoTenSymbolProfileError, SharedSignalsV1Error)):
+        return "crypto_spread_contract_unavailable"
+    if isinstance(
+        exc,
+        (
+            TimeoutError,
+            ConnectionError,
+            urllib.error.URLError,
+            http.client.HTTPException,
+        ),
+    ):
+        return "crypto_spread_transport_unavailable"
+    return "crypto_spread_unexpected_error"
+
+
 class _LazyObservationPort:
     """Construct the authenticated transport only if fresh data is needed."""
 
@@ -573,14 +614,21 @@ class _LazyObservationPort:
 
     def collect(
         self, window: CryptoObservationWindow
-    ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
+    ) -> tuple[
+        CryptoMarketObservation,
+        dict[str, list[dict[str, Any]]],
+        dict[str, Any],
+    ]:
         """Collect one slot, retrying only transport-layer faults in-place.
 
         Every attempt constructs a fresh transport and client from the same
         frozen manifest configuration; the slot cutoff never moves.  After
         the final attempt the exact original failure propagates, preserving
         the established fail-closed paths (data_reject for wrapped semantic
-        errors, runtime failure for raw transport errors).
+        errors, runtime failure for raw transport errors).  The auxiliary
+        spread leg rides on the successful bar attempt and is error-isolated:
+        its failures degrade to a recorded status instead of triggering the
+        bar retry path or failing the slot.
         """
 
         self.collect_calls += 1
@@ -605,9 +653,62 @@ class _LazyObservationPort:
                 raise
         raise CryptoTenSymbolObservationRuntimeError("runtime_collect_unreachable")
 
+    def _collect_spread(
+        self,
+        *,
+        transport: HTTPTransport,
+        window: CryptoObservationWindow,
+    ) -> dict[str, Any]:
+        """Best-effort book-ticker sampling on the successful bar attempt.
+
+        The leg uses its own client configured with exactly the ten
+        book-ticker dataset IDs, so a missing or drifted spread dataset can
+        never fail the bar leg's catalog gate.  Per-symbol faults are
+        captured as rejected entries; a leg-wide fault (its own catalog
+        read, for example) degrades to one recorded ``unavailable`` reason.
+        The invocation-budget signal always propagates untouched.
+        """
+
+        try:
+            client = SharedSignalsV1Client(
+                SharedSignalsV1Config(
+                    base_url=self._manifest.base_url,
+                    expected_catalog_version=(self._manifest.catalog_version),
+                    dataset_ids=_spread_dataset_ids(),
+                    access_policy_id=self._manifest.access_policy_id,
+                    catalog_version_policy="evidence_only",
+                    timeout_seconds=self._timeout_seconds,
+                    max_limit=500,
+                    cache_ttl_seconds=0,
+                ),
+                transport=transport,
+            )
+            catalog = client.get_catalog()
+            entries = collect_book_ticker_spread_entries(
+                client,
+                catalog=catalog,
+                expected_catalog_version=catalog.catalog_version,
+                window=window,
+            )
+            sidecar = build_ten_symbol_spreads_sidecar(
+                window=window,
+                profile_sha256=self._manifest.profile.profile_sha256,
+                catalog_version=catalog.catalog_version,
+                entries=entries,
+            )
+            return {"sidecar": sidecar, "unavailable_reason": None}
+        except _InvocationBudgetExhausted:
+            raise
+        except Exception as exc:
+            return {"sidecar": None, "unavailable_reason": _spread_failure_reason(exc)}
+
     def _collect_once(
         self, window: CryptoObservationWindow
-    ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
+    ) -> tuple[
+        CryptoMarketObservation,
+        dict[str, list[dict[str, Any]]],
+        dict[str, Any],
+    ]:
         try:
             self.transport_factory_attempts += 1
             transport = self._transport_factory(
@@ -632,12 +733,16 @@ class _LazyObservationPort:
             catalog = client.get_catalog()
             self.observed_catalog_version = catalog.catalog_version
             self._manifest.profile.verify_catalog(catalog)
-            return _collect_market_observation_rows_with_catalog(
-                client,
-                catalog=catalog,
-                expected_catalog_version=catalog.catalog_version,
-                window=window,
+            observation, rows_by_symbol = (
+                _collect_market_observation_rows_with_catalog(
+                    client,
+                    catalog=catalog,
+                    expected_catalog_version=catalog.catalog_version,
+                    window=window,
+                )
             )
+            spread = self._collect_spread(transport=transport, window=window)
+            return observation, rows_by_symbol, spread
         except CryptoMarketObservationError:
             raise
         except CryptoTenSymbolProfileError as exc:
@@ -679,6 +784,7 @@ def _observation_event(
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     window: CryptoObservationWindow,
     observation: CryptoMarketObservation,
+    spread_block: Mapping[str, Any],
 ) -> dict[str, Any]:
     id_material = {
         "event_type": "observation",
@@ -697,6 +803,7 @@ def _observation_event(
         "catalog_version": observation.catalog_version,
         "profile_sha256": manifest.profile.profile_sha256,
         "observation": observation.to_payload(),
+        "spread": dict(spread_block),
         "authority": "none",
         "execution_eligible": False,
         "capital_write_eligible": False,
@@ -744,6 +851,7 @@ def _data_gap_event(
     current_window: CryptoObservationWindow,
     reason_code: str,
     observation: CryptoMarketObservation,
+    spread_block: Mapping[str, Any],
 ) -> dict[str, Any]:
     recovery = current_window.window_end
     skipped_from = prior_market_slot + timedelta(minutes=5)
@@ -783,6 +891,7 @@ def _data_gap_event(
         "catalog_version": observation.catalog_version,
         "profile_sha256": manifest.profile.profile_sha256,
         "recovery_observation": observation.to_payload(),
+        "spread": dict(spread_block),
         "authority": "none",
         "execution_eligible": False,
         "capital_write_eligible": False,
@@ -815,19 +924,81 @@ def _append_reject(
     }
 
 
+def _persisted_spread_block(
+    *,
+    store: CryptoTenSymbolObservationStore,
+    manifest: CryptoTenSymbolObservationRuntimeManifest,
+    window: CryptoObservationWindow,
+) -> dict[str, Any]:
+    """Rebuild one slot's spread block from its persisted spreads sidecar.
+
+    The zero-network recovery path never re-samples book tickers: a slot
+    whose bars sidecar survived a crash but whose spreads sidecar was never
+    written records an honest leg-wide ``unavailable`` status instead of
+    inventing evidence or requiring the network/token on recovery.  A
+    corrupt or drifting sidecar is local evidence corruption and fails
+    closed, exactly like the bars sidecar; it is never a data rejection.
+    """
+
+    sidecar = store.read_spreads_sidecar(_iso_utc(window.window_end))
+    if sidecar is None:
+        return unavailable_spread_event_block("crypto_spread_sidecar_missing")
+    try:
+        entries = validate_ten_symbol_spreads_sidecar(sidecar)
+    except CryptoMarketObservationError as exc:
+        raise CryptoTenSymbolObservationRuntimeError(
+            "runtime_spreads_sidecar_invalid"
+        ) from exc
+    if (
+        sidecar.get("profile_sha256") != manifest.profile.profile_sha256
+        or sidecar.get("window_end") != _iso_utc(window.window_end)
+        or sidecar.get("observation_cutoff") != _iso_utc(window.observation_cutoff)
+    ):
+        raise CryptoTenSymbolObservationRuntimeError(
+            "runtime_spreads_sidecar_slot_mismatch"
+        )
+    return build_spread_event_block(
+        entries=entries,
+        catalog_version=str(sidecar["catalog_version"]),
+        spread_sha256=str(sidecar["spread_sha256"]),
+    )
+
+
+def _fresh_spread_block(
+    *,
+    store: CryptoTenSymbolObservationStore,
+    spread: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist the fresh spread leg's sidecar and derive its event block."""
+
+    sidecar = spread.get("sidecar")
+    if sidecar is None:
+        return unavailable_spread_event_block(str(spread["unavailable_reason"]))
+    stored = store.write_spreads_sidecar(sidecar)
+    return build_spread_event_block(
+        entries=stored["entries"],
+        catalog_version=str(stored["catalog_version"]),
+        spread_sha256=str(stored["spread_sha256"]),
+    )
+
+
 def _observation_for_slot(
     *,
     store: CryptoTenSymbolObservationStore,
     lazy: _LazyObservationPort,
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     window: CryptoObservationWindow,
-) -> CryptoMarketObservation:
-    """Return one slot's verified observation, reusing a persisted sidecar.
+) -> tuple[CryptoMarketObservation, dict[str, Any]]:
+    """Return one slot's verified observation plus its spread status block.
 
     The bars sidecar is written before the store event, so a crash between
     the two leaves a complete, immutable orphan.  Reusing it makes the retry
     zero-network and keeps the slot pinned to the originally collected rows;
-    a fresh collect happens only when no sidecar exists yet.
+    a fresh collect happens only when no sidecar exists yet.  The spreads
+    sidecar follows the same write-before-event ordering right after the
+    bars sidecar; on the zero-network reuse path its block is rebuilt from
+    the persisted payload, and a missing one degrades to a recorded
+    ``crypto_spread_sidecar_missing`` status without touching the network.
     """
 
     sidecar = store.read_bars_sidecar(_iso_utc(window.window_end))
@@ -849,8 +1020,12 @@ def _observation_for_slot(
             raise CryptoTenSymbolObservationRuntimeError(
                 "runtime_bars_sidecar_slot_mismatch"
             )
-        return observation
-    observation, rows_by_symbol = lazy.collect(window)
+        return observation, _persisted_spread_block(
+            store=store,
+            manifest=manifest,
+            window=window,
+        )
+    observation, rows_by_symbol, spread = lazy.collect(window)
     store.write_bars_sidecar(
         build_ten_symbol_bars_sidecar(
             window=window,
@@ -859,7 +1034,7 @@ def _observation_for_slot(
             rows_by_symbol=rows_by_symbol,
         )
     )
-    return observation
+    return observation, _fresh_spread_block(store=store, spread=spread)
 
 
 def _fresh_cycle(
@@ -881,7 +1056,7 @@ def _fresh_cycle(
         }
     )
     try:
-        observation = _observation_for_slot(
+        observation, spread_block = _observation_for_slot(
             store=store,
             lazy=lazy,
             manifest=manifest,
@@ -901,6 +1076,7 @@ def _fresh_cycle(
             manifest=manifest,
             window=window,
             observation=observation,
+            spread_block=spread_block,
         )
     )
     store.clear_pending(_iso_utc(window.window_end))
@@ -914,6 +1090,7 @@ def _fresh_cycle(
         "observation_sha256": observation.observation_sha256,
         "market_data_sha256": observation.market_data_sha256,
         "catalog_version": observation.catalog_version,
+        "spread_status": spread_block["status"],
         **_non_authority_receipt_fields(),
     }
 
@@ -938,7 +1115,7 @@ def _attempt_outage_gap_recovery(
     if checkpoint.get("latest_terminal_slot") != _iso_utc(prior_market_slot):
         raise CryptoTenSymbolObservationRuntimeError("runtime_outage_gap_state_changed")
     try:
-        observation = _observation_for_slot(
+        observation, spread_block = _observation_for_slot(
             store=store,
             lazy=lazy,
             manifest=manifest,
@@ -959,6 +1136,7 @@ def _attempt_outage_gap_recovery(
             current_window=current_window,
             reason_code=reason_code,
             observation=observation,
+            spread_block=spread_block,
         )
     )
     return {
@@ -971,6 +1149,7 @@ def _attempt_outage_gap_recovery(
         "recovery_market_slot": stored["recovery_market_slot"],
         "recovery_observation_sha256": observation.observation_sha256,
         "catalog_version": observation.catalog_version,
+        "spread_status": spread_block["status"],
         **_non_authority_receipt_fields(),
     }
 

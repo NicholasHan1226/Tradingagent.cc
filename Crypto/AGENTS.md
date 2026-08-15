@@ -196,6 +196,24 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   closed，绝不记为 data_reject。观测事件合同与 digest 定义不变，bar 行不
   进入任何事件 digest。对应 systemd unit 是 install-default 不启用
   的候选；安装/启用必须经 Nicholas 明确批准。
+  每槽在 bar 采集成功后追加采样 10 个
+  `crypto.spot.binance.<symbol>.book_ticker` 快照（best bid/ask 与 qty）
+  作为附加、降级容忍的实测点差证据：spread leg 用独立 client（只配置
+  book_ticker dataset id）与独立 catalog 读，其任何失败（per-symbol 记
+  `rejected` + reason code，leg-wide 记 `unavailable` + reason code）绝不
+  触发 bar 重试或丢失 bar 观测，预算耗尽信号永远穿透。快照行、receipt
+  `observed_at`（唯一时间权威，与 bar 同一 watermark 门禁）/freshness 元
+  数据与实测 `catalog_contract_sha256` 写入 immutable
+  `spreads/<slot>.json`（写在 bars sidecar 之后、事件之前）；
+  `observation`/`data_gap` 事件新增 `spread` 状态块（contract
+  `tradingagent.crypto.ten_symbol_observation_spread.v1`，status ∈
+  completed/degraded/unavailable + `spread_sha256`），快照行不进入任何
+  observation digest。契约演进不引入新版本号：event/profile contract v1
+  均不变，book_ticker 指纹每槽实测记录而非冻结进 profile，服务器既有
+  manifest 继续有效；旧槽无 `spread` 键视同 feature-ineligible。零网络恢
+  复路径绝不重采样，spreads sidecar 缺失记
+  `crypto_spread_sidecar_missing`、校验失败 fail closed。点差只落账，不接
+  策略/factor 投影 record；后续经独立 detached 只读投影消费。
 - `ten_symbol_factor_research.py`/`ten_symbol_factor_research_worker.py`
   是 10 币观测积累器的 detached offline 因子投影（v2）：只读观测事件链与
   bars sidecar，投影根固定 `<store_root>/evolution/ten_symbol_factor_research/`

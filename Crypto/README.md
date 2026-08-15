@@ -637,6 +637,49 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   fail closed，绝不记为 data_reject。观测事件合同与 digest 定义不变，bar
   行不进入任何事件 digest；补丁前的旧槽没有 sidecar，v2 视其为
   feature-ineligible（数量极少）。
+- spreads sidecar（book_ticker 实测点差采样，附加证据）：每个 fresh 槽在
+  10 币 13 根 bar 采集成功后，追加采样 10 个
+  `crypto.spot.binance.<symbol>.book_ticker` current snapshot（best
+  bid/ask 与 qty），供后续因子研究/费用后评估用实测点差替代假设成本。
+  点差是**附加、降级容忍**的证据，绝不进入资本/策略路径，也绝不允许其失败
+  导致 bar 观测丢失：spread leg 使用独立 client（dataset_ids 只配置 10 个
+  book_ticker 数据集）与独立 catalog 读，因此 book_ticker 数据集缺失或合同
+  drift 只降级 spread、不触碰 bar 链的 catalog 门禁；采样在 bar 成功的同一
+  attempt 内跟随执行，其失败不触发 bar 的有界同槽重试；预算耗尽信号
+  （`_InvocationBudgetExhausted`）永远穿透、不被降级吞掉。降级语义分两
+  层——per-symbol：单 symbol 的 catalog 硬门禁（schema/fields/identity/
+  `point_in_time=current_snapshot`/filter/limits）、查询/元数据门禁
+  （ready/非 degraded/fresh 非 stale/quality valid/完整 lineage/receipt）、
+  watermark（receipt `observed_at` ≤ 槽 cutoff，与 bar 同一纪律；上游无事件
+  时间戳，receipt 观测时刻是唯一时间权威）、行校验（正值 bid/ask/qty 且
+  ask ≥ bid）任一失败只把该 symbol 记为 `rejected` + 稳定 reason code，
+  其余 symbol 照常采样；leg-wide：spread 自身 catalog 读或同形失败把整个
+  leg 记为 `unavailable` + 单一 reason code。采样成功的槽把每 symbol
+  原始快照行、receipt/observed_at/freshness/quality 元数据与实测
+  `catalog_contract_sha256` 指纹原子写入 `spreads/<slot>.json`（与 bars
+  sidecar 同一 immutable 写合同，写在 bars sidecar 之后、事件之前）；
+  `observation` 与 `data_gap` 事件新增 `spread` 状态块（contract
+  `tradingagent.crypto.ten_symbol_observation_spread.v1`：status ∈
+  completed/degraded/unavailable、sampled/rejected 计数、rejected_reasons、
+  `spread_sha256`、本 leg 实测 catalog_version），状态块只绑定 digest 与状
+  态，快照行不进入任何 observation digest；`observation_sha256`/
+  `market_data_sha256` 与 v1 观测 payload 字节不变。契约演进遵循
+  sidecar 先例、不引入任何新版本号：event contract v1 不变（data_gap 本
+  就是同合同多形态 payload，store 不锁定精确键集）；profile v1 不变——
+  book_ticker 指纹**每槽实测记录**进 sidecar 而非冻结进 profile，因为冻结
+  会让其 drift fail-closed 整条 bar 链，与附加证据的降级语义直接冲突；服
+  务器既有冻结 manifest 因此继续有效，无需重新生成。升级前的旧槽没有
+  `spread` 键和 spreads sidecar，下游视同 feature-ineligible（同
+  pre-sidecar 槽先例）。零网络恢复路径绝不重采样点差：bars sidecar 复用时
+  spreads sidecar 存在则逐值重算校验并重建同一状态块，缺失（crash 窗口）
+  则记 `crypto_spread_sidecar_missing` 的 unavailable——保持
+  "pending/同槽恢复不需要网络或 token" 不变式；spreads sidecar 本地校验失
+  败一律 fail closed（`runtime_spreads_sidecar_invalid`），绝不记为
+  data_reject。每 cycle 请求数为 22（bar leg 1 catalog + 10 query，spread
+  leg 1 catalog + 10 query），仍受同一 120 秒绝对预算约束。点差数据本批只
+  落账：factor v2 投影与费用后评估暂不改 record/评估合同，消费方经 store
+  事件链 + `spreads/<slot>.json` 用与 bars sidecar 相同的只读路径获取实测
+  点差。
 
 ### slot / backlog / gap 语义
 
@@ -685,7 +728,9 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 
 manifest root-owned 0640、仓外、secret-free；token 只由最终 HTTP transport
 从固定 leaf 注入；输出根、catalog version、10 份 dataset contract 全部由
-manifest 冻结，runtime 不从当前 catalog 动态重建或放宽。部署 runbook
+manifest 冻结，runtime 不从当前 catalog 动态重建或放宽。book_ticker 点差采
+样不进入该冻结 profile（指纹每槽实测记录进 spreads sidecar），因此既有
+manifest 在引入点差采样后继续有效，无需重新生成。部署 runbook
 （独立步骤，需 Nicholas 明确批准后执行）：
 
 1. 服务器创建 `/var/lib/tradingagent/crypto-ten-symbol-observation`
@@ -705,6 +750,11 @@ manifest 冻结，runtime 不从当前 catalog 动态重建或放宽。部署 ru
 - 没有横截面 factor/IC 声称、rules dataset、历史回填证据化；50 标签初筛
   不构成晋级。factor v2 消费端已作为 install-default 不启用的 detached
   候选存在（见下章），不代表已启用或已有样本。
+- book_ticker 点差只落账（事件 `spread` 状态块 + spreads sidecar），尚未
+  接入 factor v2 投影 record 或费用后策略评估；后续接法是新增一个 detached
+  只读投影（镜像 bars sidecar 消费路径：事件链 `spread_sha256` 逐值比对 +
+  sidecar 重算），把实测点差作为样本级成本证据供费用后评估替代假设成本，
+  该投影同样需要独立候选与验收。
 - systemd unit 是 install-default 不启用的候选，不代表现役 timer 状态。
 - 该链不读取/写入 core、资本、learning、Champion 或 `evolution/`，也不构成
   任何 PIT 回填或交易 authority。

@@ -329,8 +329,8 @@ def test_completed_cycle_records_observation_event_without_authority(
         call["url"].endswith(("/v1/catalog", "/v1/query"))
         for call in transport.calls
     )
-    assert sum(call["method"] == "GET" for call in transport.calls) == 1
-    assert sum(call["method"] == "POST" for call in transport.calls) == 10
+    assert sum(call["method"] == "GET" for call in transport.calls) == 2
+    assert sum(call["method"] == "POST" for call in transport.calls) == 20
 
     store = CryptoTenSymbolObservationStore(output_root)
     checkpoint = store.checkpoint()
@@ -797,7 +797,7 @@ def test_transient_transport_failure_retries_same_slot_and_completes(
     query_windows = {
         tuple(call["json_body"]["filters"]["open_time"]["between"])
         for call in delegate.calls
-        if call["method"] == "POST"
+        if call["method"] == "POST" and "open_time" in call["json_body"]["filters"]
     }
     assert len(query_windows) == 1
     query_start, query_end = next(iter(query_windows))
@@ -1085,7 +1085,7 @@ def test_loopback_absolute_budget_stays_below_systemd_stop_line() -> None:
     # Per-wire timeouts are further clamped by one absolute invocation budget,
     # so a partial/provider slowdown cannot run past multiple 5-minute slots.
     assert runtime_module.RUNTIME_TIMEOUT_SECONDS == 60.0
-    assert runtime_module.REQUESTS_PER_CYCLE == 11
+    assert runtime_module.REQUESTS_PER_CYCLE == 22
     assert runtime_module.INVOCATION_BUDGET_SECONDS == 120.0
     assert "TimeoutStartSec=180" in service
 

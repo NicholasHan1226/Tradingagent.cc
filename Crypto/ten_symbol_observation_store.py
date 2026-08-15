@@ -24,7 +24,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
-from Crypto.market_observation import TEN_SYMBOL_BARS_SIDECAR_CONTRACT
+from Crypto.market_observation import (
+    TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
+    TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+)
 
 
 TEN_SYMBOL_EVENT_CONTRACT = "tradingagent.crypto.ten_symbol_observation_event.v1"
@@ -350,6 +353,7 @@ class CryptoTenSymbolObservationStore:
         # Created lazily on the first sidecar write so read-only detached
         # consumers can open an existing root without any write access.
         self.bars_dir = self.root / "bars"
+        self.spreads_dir = self.root / "spreads"
         self._verified_events_cache: list[dict[str, Any]] | None = None
 
     @contextmanager
@@ -908,6 +912,63 @@ class CryptoTenSymbolObservationStore:
             return None
         payload = _read_json(path)
         self._verify_sidecar_payload(payload, slot=slot)
+        return payload
+
+    # ------------------------------------------------------------------
+    # Spreads sidecar (immutable book-ticker companion to observation events)
+    # ------------------------------------------------------------------
+
+    def spreads_sidecar_path(self, window_end: str) -> Path:
+        slot = _market_slot(window_end)
+        return self.spreads_dir / f"{_slot_token(slot)}.json"
+
+    def _verify_spreads_sidecar_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        slot: datetime,
+    ) -> None:
+        if payload.get("contract") != TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT:
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_spreads_sidecar_invalid"
+            )
+        if _market_slot(payload.get("window_end"), aligned=True) != slot:
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_spreads_sidecar_invalid"
+            )
+        for key, expected in _non_authority_fields().items():
+            if payload.get(key) != expected:
+                raise CryptoTenSymbolObservationStoreError(
+                    "ten_symbol_observation_spreads_sidecar_invalid"
+                )
+
+    def write_spreads_sidecar(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist one slot's spreads sidecar immutably before its event.
+
+        Same crash-ordering and idempotency contract as the bars sidecar:
+        the write precedes the store event append, same-content rewrites are
+        no-ops, and different content for a persisted slot fails closed.
+        """
+
+        if not isinstance(payload, Mapping):
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_spreads_sidecar_invalid"
+            )
+        slot = _market_slot(payload.get("window_end"))
+        self._verify_spreads_sidecar_payload(payload, slot=slot)
+        _ensure_directory(self.spreads_dir)
+        return _write_immutable_json(
+            self.spreads_sidecar_path(str(payload["window_end"])),
+            payload,
+        )
+
+    def read_spreads_sidecar(self, window_end: str) -> dict[str, Any] | None:
+        slot = _market_slot(window_end)
+        path = self.spreads_sidecar_path(window_end)
+        if not path.exists():
+            return None
+        payload = _read_json(path)
+        self._verify_spreads_sidecar_payload(payload, slot=slot)
         return payload
 
     # ------------------------------------------------------------------

@@ -11,15 +11,20 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
+import http.client
 import json
 from typing import Any, Mapping
+import urllib.error
 
 from shared.data.sharedsignals_v1 import (
     CatalogEnvelope,
+    HTTPStatusError,
     QueryRequest,
     SharedSignalsV1Client,
+    SharedSignalsV1Error,
 )
 from shared.data.tradingdatas_pagination import PagedQueryRun, collect_query_pages
+from shared.governance.evidence_readiness import dataset_contract_fingerprint
 
 
 OBSERVATION_CONTRACT = "tradingagent.crypto.market_observation.v1"
@@ -67,6 +72,14 @@ def _canonical_sha256(value: object) -> str:
     except (TypeError, ValueError) as exc:
         raise CryptoMarketObservationError("crypto_observation_not_canonical") from exc
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _utc(value: datetime, reason: str, *, aligned: bool = False) -> datetime:
@@ -729,6 +742,475 @@ def observation_from_ten_symbol_bars_sidecar(
     return observation, rows_by_symbol
 
 
+# ---------------------------------------------------------------------------
+# Book-ticker spread sampling (auxiliary, degradation-tolerant evidence)
+# ---------------------------------------------------------------------------
+#
+# The ``.book_ticker`` datasets are current-snapshot reads: the upstream row
+# carries no provider event timestamp, so the collection receipt's
+# ``observed_at`` is the only time authority.  Spread evidence is deliberately
+# auxiliary: every upstream/contract failure degrades to a per-symbol or
+# leg-wide recorded status and never fails the bar observation it rides on.
+# Raw snapshot rows stay out of every observation digest, mirroring the bars
+# sidecar precedent; the event anchors only the derived status block and the
+# sidecar digest.
+
+BOOK_TICKER_FIELDS = ("symbol", "bid_price", "bid_qty", "ask_price", "ask_qty")
+BOOK_TICKER_ROW_COUNT = 1
+TEN_SYMBOL_SPREAD_CONTRACT = "tradingagent.crypto.ten_symbol_observation_spread.v1"
+TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT = (
+    "tradingagent.crypto.ten_symbol_observation_spreads.v1"
+)
+
+
+def _book_ticker_dataset_id(symbol: str) -> str:
+    return f"crypto.spot.binance.{symbol.lower()}.book_ticker"
+
+
+def _spread_catalog_row(catalog: CatalogEnvelope, dataset_id: str) -> Mapping[str, Any]:
+    matches = [row for row in catalog.data if row.get("dataset_id") == dataset_id]
+    if len(matches) != 1:
+        raise CryptoMarketObservationError("crypto_spread_catalog_row_missing")
+    return matches[0]
+
+
+def _verify_book_ticker_catalog(catalog: CatalogEnvelope, dataset_id: str) -> None:
+    row = _spread_catalog_row(catalog, dataset_id)
+    if row.get("schema_major") != 1:
+        raise CryptoMarketObservationError("crypto_spread_schema_major_drift")
+    if tuple(row.get("default_fields") or ()) != BOOK_TICKER_FIELDS:
+        raise CryptoMarketObservationError("crypto_spread_fields_drift")
+    if tuple(row.get("identity_fields") or ()) != ("symbol",):
+        raise CryptoMarketObservationError("crypto_spread_identity_drift")
+    if row.get("point_in_time") != "current_snapshot":
+        raise CryptoMarketObservationError("crypto_spread_point_in_time_drift")
+    availability = row.get("availability")
+    queryability = row.get("queryability")
+    if not (
+        isinstance(availability, Mapping)
+        and "active" in availability.get("entitlement_states", [])
+        and "active" in availability.get("activation_states", [])
+        and isinstance(queryability, Mapping)
+        and queryability.get("queryable") is True
+    ):
+        raise CryptoMarketObservationError("crypto_spread_dataset_not_queryable")
+    filters = row.get("filter_operators")
+    if not (isinstance(filters, Mapping) and "eq" in filters.get("symbol", [])):
+        raise CryptoMarketObservationError("crypto_spread_filters_drift")
+    limits = row.get("limits")
+    if not isinstance(limits, Mapping) or limits.get("max_page_size", 0) < (
+        BOOK_TICKER_ROW_COUNT
+    ):
+        raise CryptoMarketObservationError("crypto_spread_page_limit_invalid")
+
+
+def _spread_contract_fingerprint(
+    catalog: CatalogEnvelope, dataset_id: str
+) -> str:
+    try:
+        return dataset_contract_fingerprint(_spread_catalog_row(catalog, dataset_id))
+    except ValueError as exc:
+        raise CryptoMarketObservationError(
+            "crypto_spread_contract_fingerprint_invalid"
+        ) from exc
+
+
+def _validated_spread_row(value: object, *, symbol: str) -> dict[str, Any]:
+    reason = "crypto_spread_row_shape_invalid"
+    if not isinstance(value, Mapping) or set(value) != set(BOOK_TICKER_FIELDS):
+        raise CryptoMarketObservationError(reason)
+    row = dict(value)
+    if row.get("symbol") != symbol:
+        raise CryptoMarketObservationError(reason)
+    bid_price = _decimal(
+        row.get("bid_price"), "crypto_spread_quote_invalid", positive=True
+    )
+    ask_price = _decimal(
+        row.get("ask_price"), "crypto_spread_quote_invalid", positive=True
+    )
+    _decimal(row.get("bid_qty"), "crypto_spread_quote_invalid", positive=True)
+    _decimal(row.get("ask_qty"), "crypto_spread_quote_invalid", positive=True)
+    if ask_price < bid_price:
+        raise CryptoMarketObservationError("crypto_spread_quote_invalid")
+    return row
+
+
+def _validate_spread_run(
+    run: PagedQueryRun,
+    *,
+    symbol: str,
+    dataset_id: str,
+    window: CryptoObservationWindow,
+    catalog_contract_sha256: str,
+) -> dict[str, Any]:
+    envelope = run.envelope
+    metadata = envelope.metadata
+    if (
+        envelope.dataset_id != dataset_id
+        or envelope.api_version != "v1"
+        or run.page_count != 1
+        or run.row_count != BOOK_TICKER_ROW_COUNT
+        or envelope.next_cursor is not None
+    ):
+        raise CryptoMarketObservationError("crypto_spread_query_shape_invalid")
+    if (
+        metadata.state.lower() != "ready"
+        or metadata.degraded is not False
+        or metadata.freshness.get("state") != "fresh"
+        or metadata.freshness.get("stale") is not False
+        or metadata.quality.get("state") != "valid"
+        or not _complete_lineage(metadata.lineage)
+        or not isinstance(metadata.receipt_id, str)
+        or not metadata.receipt_id
+    ):
+        raise CryptoMarketObservationError("crypto_spread_metadata_invalid")
+    observed_at = _parse_utc(
+        metadata.observed_at, "crypto_spread_observed_at_invalid"
+    )
+    if metadata.data_through is not None:
+        _parse_utc(metadata.data_through, "crypto_spread_observed_at_invalid")
+    # The receipt observation instant is the snapshot's only time authority;
+    # it is held to the same slot watermark discipline as the bar evidence.
+    if observed_at > window.observation_cutoff:
+        raise CryptoMarketObservationError("crypto_spread_watermark_invalid")
+    row = _validated_spread_row(envelope.data[0], symbol=symbol)
+    return {
+        "symbol": symbol,
+        "dataset_id": dataset_id,
+        "status": "sampled",
+        "receipt_id": metadata.receipt_id,
+        "observed_at": _iso(observed_at),
+        "freshness_state": str(metadata.freshness.get("state")),
+        "quality_state": str(metadata.quality.get("state")),
+        "catalog_contract_sha256": catalog_contract_sha256,
+        "identity_sha256": run.identity_sha256,
+        "market_data_sha256": run.ordered_rows_sha256,
+        "row": row,
+    }
+
+
+def _rejected_spread_entry(
+    *,
+    symbol: str,
+    dataset_id: str,
+    reason_code: str,
+    catalog_contract_sha256: str | None,
+) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "dataset_id": dataset_id,
+        "status": "rejected",
+        "reason_code": reason_code,
+        "catalog_contract_sha256": catalog_contract_sha256,
+    }
+
+
+def _collect_book_ticker_entry(
+    client: SharedSignalsV1Client,
+    *,
+    catalog: CatalogEnvelope,
+    symbol: str,
+    window: CryptoObservationWindow,
+) -> dict[str, Any]:
+    """Sample one symbol's book ticker; upstream faults become a rejection."""
+
+    dataset_id = _book_ticker_dataset_id(symbol)
+    try:
+        _verify_book_ticker_catalog(catalog, dataset_id)
+        fingerprint = _spread_contract_fingerprint(catalog, dataset_id)
+    except CryptoMarketObservationError as exc:
+        return _rejected_spread_entry(
+            symbol=symbol,
+            dataset_id=dataset_id,
+            reason_code=str(exc),
+            catalog_contract_sha256=None,
+        )
+    try:
+        run = collect_query_pages(
+            client=client,
+            request=QueryRequest(
+                dataset_id=dataset_id,
+                schema_major=1,
+                fields=BOOK_TICKER_FIELDS,
+                filters={"symbol": {"eq": symbol}},
+                # A current-snapshot read carries no as_of; the receipt's
+                # observed_at is the time authority, like the bar current read.
+                order=("symbol:asc",),
+                limit=BOOK_TICKER_ROW_COUNT,
+            ),
+            identity_fields=("symbol",),
+            max_pages=1,
+            max_rows=BOOK_TICKER_ROW_COUNT,
+        )
+        return _validate_spread_run(
+            run,
+            symbol=symbol,
+            dataset_id=dataset_id,
+            window=window,
+            catalog_contract_sha256=fingerprint,
+        )
+    except CryptoMarketObservationError as exc:
+        reason_code = str(exc)
+    except (urllib.error.HTTPError, HTTPStatusError):
+        reason_code = "crypto_spread_query_http_error"
+    except SharedSignalsV1Error:
+        reason_code = "crypto_spread_query_contract_invalid"
+    except (
+        TimeoutError,
+        ConnectionError,
+        urllib.error.URLError,
+        http.client.HTTPException,
+    ):
+        reason_code = "crypto_spread_query_transport_failed"
+    return _rejected_spread_entry(
+        symbol=symbol,
+        dataset_id=dataset_id,
+        reason_code=reason_code,
+        catalog_contract_sha256=fingerprint,
+    )
+
+
+def collect_book_ticker_spread_entries(
+    client: SharedSignalsV1Client,
+    *,
+    catalog: CatalogEnvelope,
+    expected_catalog_version: str,
+    window: CryptoObservationWindow,
+) -> list[dict[str, Any]]:
+    """Sample all ten book tickers against one observed catalog envelope.
+
+    Every per-symbol failure is captured as a rejected entry so one symbol's
+    drift, staleness or transport fault never withholds the other snapshots.
+    Leg-wide faults (for example the catalog read itself) still propagate to
+    the caller, which records a leg-wide ``unavailable`` status instead.
+    """
+
+    if (
+        catalog.api_version != "v1"
+        or catalog.catalog_version != expected_catalog_version
+    ):
+        raise CryptoMarketObservationError("crypto_spread_catalog_version_drift")
+    return [
+        _collect_book_ticker_entry(client, catalog=catalog, symbol=symbol, window=window)
+        for symbol in OBSERVATION_SYMBOLS
+    ]
+
+
+def _validate_spread_entries(value: object) -> list[dict[str, Any]]:
+    reason = "crypto_observation_spreads_sidecar_invalid"
+    if not isinstance(value, list) or len(value) != len(OBSERVATION_SYMBOLS):
+        raise CryptoMarketObservationError(reason)
+    sampled_keys = {
+        "symbol",
+        "dataset_id",
+        "status",
+        "receipt_id",
+        "observed_at",
+        "freshness_state",
+        "quality_state",
+        "catalog_contract_sha256",
+        "identity_sha256",
+        "market_data_sha256",
+        "row",
+    }
+    rejected_keys = {
+        "symbol",
+        "dataset_id",
+        "status",
+        "reason_code",
+        "catalog_contract_sha256",
+    }
+    entries: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        symbol = OBSERVATION_SYMBOLS[index]
+        if not isinstance(item, Mapping):
+            raise CryptoMarketObservationError(reason)
+        entry = dict(item)
+        if entry.get("symbol") != symbol or entry.get(
+            "dataset_id"
+        ) != _book_ticker_dataset_id(symbol):
+            raise CryptoMarketObservationError(reason)
+        fingerprint = entry.get("catalog_contract_sha256")
+        status = entry.get("status")
+        if status == "sampled":
+            if set(entry) != sampled_keys:
+                raise CryptoMarketObservationError(reason)
+            if (
+                not isinstance(entry.get("receipt_id"), str)
+                or not entry["receipt_id"]
+                or not isinstance(entry.get("freshness_state"), str)
+                or not entry["freshness_state"]
+                or not isinstance(entry.get("quality_state"), str)
+                or not entry["quality_state"]
+                or not _is_sha256(fingerprint)
+                or not _is_sha256(entry.get("identity_sha256"))
+                or not _is_sha256(entry.get("market_data_sha256"))
+            ):
+                raise CryptoMarketObservationError(reason)
+            _parse_utc(entry.get("observed_at"), reason)
+            row = _validated_spread_row(entry.get("row"), symbol=symbol)
+            if (
+                _wire_rows_sha256([{"symbol": symbol}]) != entry["identity_sha256"]
+                or _wire_rows_sha256([row]) != entry["market_data_sha256"]
+            ):
+                raise CryptoMarketObservationError(reason)
+            entries.append({**entry, "row": row})
+        elif status == "rejected":
+            if set(entry) != rejected_keys:
+                raise CryptoMarketObservationError(reason)
+            if (
+                not isinstance(entry.get("reason_code"), str)
+                or not entry["reason_code"]
+                or (fingerprint is not None and not _is_sha256(fingerprint))
+            ):
+                raise CryptoMarketObservationError(reason)
+            entries.append(entry)
+        else:
+            raise CryptoMarketObservationError(reason)
+    return entries
+
+
+def _spread_entries_sha256(entries: list[dict[str, Any]]) -> str:
+    return _canonical_sha256(entries)
+
+
+def build_spread_event_block(
+    *,
+    entries: list[dict[str, Any]],
+    catalog_version: str | None,
+    spread_sha256: str | None,
+) -> dict[str, Any]:
+    """Derive the event-facing spread status block from validated entries."""
+
+    sampled = [entry for entry in entries if entry["status"] == "sampled"]
+    rejected_reasons = {
+        entry["symbol"]: entry["reason_code"]
+        for entry in entries
+        if entry["status"] == "rejected"
+    }
+    if not rejected_reasons:
+        status = "completed"
+    elif sampled:
+        status = "degraded"
+    else:
+        status = "unavailable"
+    return {
+        "contract": TEN_SYMBOL_SPREAD_CONTRACT,
+        "status": status,
+        "reason_code": None,
+        "sampled_symbol_count": len(sampled),
+        "rejected_symbol_count": len(rejected_reasons),
+        "rejected_reasons": rejected_reasons,
+        "spread_sha256": spread_sha256,
+        "catalog_version": catalog_version,
+    }
+
+
+def unavailable_spread_event_block(reason_code: str) -> dict[str, Any]:
+    """The leg-wide degradation block when no per-symbol evidence exists."""
+
+    if not isinstance(reason_code, str) or not reason_code:
+        raise CryptoMarketObservationError("crypto_spread_reason_invalid")
+    return {
+        "contract": TEN_SYMBOL_SPREAD_CONTRACT,
+        "status": "unavailable",
+        "reason_code": reason_code,
+        "sampled_symbol_count": 0,
+        "rejected_symbol_count": 0,
+        "rejected_reasons": {},
+        "spread_sha256": None,
+        "catalog_version": None,
+    }
+
+
+def build_ten_symbol_spreads_sidecar(
+    *,
+    window: CryptoObservationWindow,
+    profile_sha256: str,
+    catalog_version: str,
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assemble the immutable per-slot spreads sidecar payload.
+
+    The payload mirrors the bars sidecar precedent: raw snapshot rows plus
+    the per-symbol receipt/digest metadata, so a detached consumer can
+    independently re-derive every per-symbol digest and the top-level
+    ``spread_sha256`` and compare them against the store event's spread
+    block.  Spread rows never enter any observation digest.
+    """
+
+    if not isinstance(window, CryptoObservationWindow):
+        raise CryptoMarketObservationError("crypto_observation_spreads_sidecar_invalid")
+    if not _is_sha256(profile_sha256):
+        raise CryptoMarketObservationError("crypto_observation_spreads_sidecar_invalid")
+    if not isinstance(catalog_version, str) or not catalog_version:
+        raise CryptoMarketObservationError("crypto_observation_spreads_sidecar_invalid")
+    normalized = _validate_spread_entries(entries)
+    return {
+        "contract": TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+        "window_end": _iso(window.window_end),
+        "observation_cutoff": _iso(window.observation_cutoff),
+        "catalog_version": catalog_version,
+        "profile_sha256": profile_sha256,
+        "entries": normalized,
+        "spread_sha256": _spread_entries_sha256(normalized),
+        "authority": "none",
+        "execution_eligible": False,
+        "capital_write_eligible": False,
+        "model_authority": False,
+    }
+
+
+def validate_ten_symbol_spreads_sidecar(
+    payload: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Re-derive and verify one slot's spreads sidecar, returning its entries.
+
+    Every sampled entry's row digests are recomputed from the persisted row,
+    and the top-level ``spread_sha256`` claim must reproduce exactly.  Any
+    drift fails closed; a corrupt sidecar is local evidence corruption and
+    is never an upstream data rejection.
+    """
+
+    reason = "crypto_observation_spreads_sidecar_invalid"
+    if not isinstance(payload, Mapping):
+        raise CryptoMarketObservationError(reason)
+    if set(payload) != {
+        "contract",
+        "window_end",
+        "observation_cutoff",
+        "catalog_version",
+        "profile_sha256",
+        "entries",
+        "spread_sha256",
+        "authority",
+        "execution_eligible",
+        "capital_write_eligible",
+        "model_authority",
+    } or payload.get("contract") != TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT:
+        raise CryptoMarketObservationError(reason)
+    if (
+        payload.get("authority") != "none"
+        or payload.get("execution_eligible") is not False
+        or payload.get("capital_write_eligible") is not False
+        or payload.get("model_authority") is not False
+    ):
+        raise CryptoMarketObservationError("crypto_observation_authority_invalid")
+    window = CryptoObservationWindow(
+        window_end=_parse_utc(payload.get("window_end"), reason),
+        observation_cutoff=_parse_utc(payload.get("observation_cutoff"), reason),
+    )
+    if not _is_sha256(payload.get("profile_sha256")):
+        raise CryptoMarketObservationError(reason)
+    catalog_version = payload.get("catalog_version")
+    if not isinstance(catalog_version, str) or not catalog_version:
+        raise CryptoMarketObservationError(reason)
+    entries = _validate_spread_entries(payload.get("entries"))
+    if payload.get("spread_sha256") != _spread_entries_sha256(entries):
+        raise CryptoMarketObservationError(reason)
+    return entries
+
+
 def collect_market_observation(
     client: SharedSignalsV1Client,
     *,
@@ -755,14 +1237,23 @@ def collect_market_observation(
 __all__ = [
     "BAR_COUNT",
     "BAR_FIELDS",
+    "BOOK_TICKER_FIELDS",
+    "BOOK_TICKER_ROW_COUNT",
     "OBSERVATION_CONTRACT",
     "OBSERVATION_SYMBOLS",
     "TEN_SYMBOL_BARS_SIDECAR_CONTRACT",
+    "TEN_SYMBOL_SPREAD_CONTRACT",
+    "TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT",
     "CryptoMarketObservation",
     "CryptoMarketObservationError",
     "CryptoObservationSource",
     "CryptoObservationWindow",
+    "build_spread_event_block",
     "build_ten_symbol_bars_sidecar",
+    "build_ten_symbol_spreads_sidecar",
+    "collect_book_ticker_spread_entries",
     "collect_market_observation",
     "observation_from_ten_symbol_bars_sidecar",
+    "unavailable_spread_event_block",
+    "validate_ten_symbol_spreads_sidecar",
 ]

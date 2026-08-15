@@ -15,11 +15,15 @@ from typing import Any, Callable
 
 from Crypto.market_observation import (
     BAR_FIELDS,
+    BOOK_TICKER_FIELDS,
     FIVE_MINUTES,
     OBSERVATION_SYMBOLS,
     CryptoMarketObservation,
     CryptoObservationWindow,
+    _book_ticker_dataset_id,
     _collect_market_observation_rows_with_catalog,
+    build_ten_symbol_spreads_sidecar,
+    collect_book_ticker_spread_entries,
 )
 from shared.data.sharedsignals_v1 import (
     HTTPResponse,
@@ -41,7 +45,14 @@ def bar_dataset(symbol: str) -> str:
     return f"crypto.spot.binance.{symbol.lower()}.5m"
 
 
+def book_ticker_dataset(symbol: str) -> str:
+    return _book_ticker_dataset_id(symbol)
+
+
 ALL_DATASETS = frozenset(bar_dataset(symbol) for symbol in OBSERVATION_SYMBOLS)
+BOOK_TICKER_DATASETS = frozenset(
+    book_ticker_dataset(symbol) for symbol in OBSERVATION_SYMBOLS
+)
 
 
 def catalog_row(symbol: str) -> dict[str, Any]:
@@ -65,17 +76,40 @@ def catalog_row(symbol: str) -> dict[str, Any]:
     }
 
 
+def book_ticker_catalog_row(symbol: str) -> dict[str, Any]:
+    return {
+        "dataset_id": book_ticker_dataset(symbol),
+        "schema_major": 1,
+        "default_fields": list(BOOK_TICKER_FIELDS),
+        "default_order": ["symbol:asc"],
+        "identity_fields": ["symbol"],
+        "fields": [],
+        "filter_operators": {
+            "symbol": ["eq", "in"],
+        },
+        "limits": {"max_page_size": 500, "max_lookback_days": 36500},
+        "point_in_time": "current_snapshot",
+        "availability": {
+            "entitlement_states": ["active"],
+            "activation_states": ["active"],
+        },
+        "queryability": {"queryable": True, "reasons": []},
+    }
+
+
 def catalog_payload(
     *,
     rows: list[dict[str, Any]] | None = None,
+    include_book_ticker: bool = True,
 ) -> dict[str, Any]:
+    default_rows = [catalog_row(s) for s in OBSERVATION_SYMBOLS]
+    if include_book_ticker:
+        default_rows += [book_ticker_catalog_row(s) for s in OBSERVATION_SYMBOLS]
     return {
         "api_version": "v1",
         "catalog_version": CATALOG_VERSION,
         "request_id": "fixture-ten-symbol-catalog",
-        "data": copy.deepcopy(
-            rows if rows is not None else [catalog_row(s) for s in OBSERVATION_SYMBOLS]
-        ),
+        "data": copy.deepcopy(rows if rows is not None else default_rows),
     }
 
 
@@ -109,6 +143,18 @@ def generated_rows(
     return rows
 
 
+def generated_book_ticker_row(symbol: str) -> dict[str, Any]:
+    base = Decimal("100") + Decimal(OBSERVATION_SYMBOLS.index(symbol) * 10)
+    bid = base + Decimal("12.10")
+    return {
+        "symbol": symbol,
+        "bid_price": format(bid, "f"),
+        "bid_qty": "1.5",
+        "ask_price": format(bid + Decimal("0.20"), "f"),
+        "ask_qty": "2.5",
+    }
+
+
 def query_metadata(
     dataset_id: str,
     *,
@@ -134,7 +180,7 @@ def query_metadata(
 
 
 class TenSymbolFixtureTransport:
-    """Offline loopback fixture for one catalog plus bounded window queries."""
+    """Offline loopback fixture for catalog plus bounded window/snapshot queries."""
 
     def __init__(
         self,
@@ -144,6 +190,14 @@ class TenSymbolFixtureTransport:
         row_count: int = 13,
         status_code: int = 200,
         metadata_mutator: Callable[[str, datetime, dict[str, Any]], None] | None = None,
+        book_ticker_observed_at: datetime | None = None,
+        book_ticker_status_code: int = 200,
+        book_ticker_metadata_mutator: (
+            Callable[[str, dict[str, Any]], None] | None
+        ) = None,
+        book_ticker_row_mutator: (
+            Callable[[str, dict[str, Any]], None] | None
+        ) = None,
     ) -> None:
         self.catalog_rows = copy.deepcopy(catalog_rows)
         # A current read reports *now* as observed_at; tests set this to the
@@ -153,7 +207,49 @@ class TenSymbolFixtureTransport:
         self.row_count = row_count
         self.status_code = status_code
         self.metadata_mutator = metadata_mutator
+        self.book_ticker_observed_at = book_ticker_observed_at
+        self.book_ticker_status_code = book_ticker_status_code
+        self.book_ticker_metadata_mutator = book_ticker_metadata_mutator
+        self.book_ticker_row_mutator = book_ticker_row_mutator
         self.calls: list[dict[str, Any]] = []
+
+    def _book_ticker_response(self, body: dict[str, Any]) -> HTTPResponse:
+        if self.book_ticker_status_code != 200:
+            return HTTPResponse(
+                self.book_ticker_status_code, {"error": "fixture spread failure"}
+            )
+        dataset_id = body["dataset_id"]
+        symbol = str(body["filters"]["symbol"]["eq"])
+        # The book-ticker contract is a current snapshot without a provider
+        # event timestamp; the collection receipt's observed_at is the only
+        # time authority, so the fixture pins it explicitly.
+        observed_at = (
+            self.book_ticker_observed_at
+            or self.observed_at
+            or (WINDOW_END + timedelta(seconds=20))
+        )
+        row = generated_book_ticker_row(symbol)
+        if self.book_ticker_row_mutator is not None:
+            self.book_ticker_row_mutator(dataset_id, row)
+        metadata = query_metadata(
+            dataset_id,
+            data_through=observed_at,
+            observed_at=observed_at,
+        )
+        if self.book_ticker_metadata_mutator is not None:
+            self.book_ticker_metadata_mutator(dataset_id, metadata)
+        return HTTPResponse(
+            200,
+            {
+                "api_version": "v1",
+                "catalog_version": CATALOG_VERSION,
+                "request_id": f"fixture-query-{dataset_id}",
+                "dataset_id": dataset_id,
+                "data": [row][: int(body["limit"])],
+                "next_cursor": None,
+                "metadata": metadata,
+            },
+        )
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(copy.deepcopy(kwargs))
@@ -164,6 +260,8 @@ class TenSymbolFixtureTransport:
         body = kwargs["json_body"]
         assert isinstance(body, dict)
         dataset_id = body["dataset_id"]
+        if dataset_id in BOOK_TICKER_DATASETS:
+            return self._book_ticker_response(body)
         if dataset_id not in ALL_DATASETS:
             return HTTPResponse(404, {"error": "unknown fixture dataset"})
         between = body["filters"]["open_time"]["between"]
@@ -198,12 +296,16 @@ class TenSymbolFixtureTransport:
         )
 
 
-def client(transport: TenSymbolFixtureTransport) -> SharedSignalsV1Client:
+def client(
+    transport: TenSymbolFixtureTransport,
+    *,
+    dataset_ids: frozenset[str] = ALL_DATASETS,
+) -> SharedSignalsV1Client:
     return SharedSignalsV1Client(
         SharedSignalsV1Config(
             base_url="http://127.0.0.1:18083",
             expected_catalog_version=CATALOG_VERSION,
-            dataset_ids=ALL_DATASETS,
+            dataset_ids=dataset_ids,
             access_policy_id="fixture-ten-symbol-observation",
             catalog_version_policy="strict",
             timeout_seconds=1.0,
@@ -233,4 +335,33 @@ def collect_fixture_observation(
         catalog=catalog,
         expected_catalog_version=CATALOG_VERSION,
         window=window,
+    )
+
+
+def collect_fixture_spreads_sidecar(
+    window_end: datetime,
+    *,
+    profile_sha256: str,
+    observed_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Collect one fully validated fixture spreads sidecar payload."""
+
+    transport = TenSymbolFixtureTransport(observed_at=observed_at)
+    fixture_client = client(transport, dataset_ids=BOOK_TICKER_DATASETS)
+    catalog = fixture_client.get_catalog()
+    window = CryptoObservationWindow(
+        window_end=window_end,
+        observation_cutoff=window_end + timedelta(seconds=55),
+    )
+    entries = collect_book_ticker_spread_entries(
+        fixture_client,
+        catalog=catalog,
+        expected_catalog_version=CATALOG_VERSION,
+        window=window,
+    )
+    return build_ten_symbol_spreads_sidecar(
+        window=window,
+        profile_sha256=profile_sha256,
+        catalog_version=CATALOG_VERSION,
+        entries=entries,
     )
