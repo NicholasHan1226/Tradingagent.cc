@@ -168,7 +168,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   bar close +55s，每 invocation 最多 2 cycle，并受 120 秒绝对 wall-clock
   budget 约束；每次 wire timeout 都压缩到剩余预算，预算耗尽保留 pending 与已完成
   增量，不能误记为数据拒绝。候选 timer 固定错开现役 core 的 close+55s，
-  在 close+2m25s 启动，避免共享 token/API/SQLite surface 并发。积压返回
+  在 close+3m25s 启动；按 core 的 120 秒绝对预算与双方 3 秒 jitter 计算，
+  与前一 core 保留至少 27 秒余量，并在下一 core 前保留至少 27 秒余量，
+  避免共享 token/API/SQLite surface 并发。积压返回
   `backlog_pending`
   非零退出且不跳槽；历史窗口对 current-read watermark 门禁确定不可恢复时，
   只允许在当前窗口全部门禁通过后追加显式 `data_gap`，不伪造 PIT。证据只能
