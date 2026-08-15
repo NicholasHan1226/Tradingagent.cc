@@ -15,6 +15,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -23,6 +24,7 @@ import stat
 import sys
 import time
 from typing import Any, Callable, Mapping
+import urllib.error
 import urllib.parse
 
 from Crypto.market_observation import (
@@ -45,6 +47,7 @@ from Crypto.ten_symbol_observation_store import (
     CryptoTenSymbolObservationStoreError,
 )
 from shared.data.sharedsignals_v1 import (
+    HTTPStatusError,
     HTTPTransport,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
@@ -52,6 +55,7 @@ from shared.data.sharedsignals_v1 import (
 )
 from shared.data.tradingdatas_transport import (
     RuntimeGateConfigurationError,
+    TradingDatasAuthenticationError,
     build_runtime_transport,
 )
 
@@ -71,6 +75,11 @@ INVOCATION_BUDGET_SECONDS = 120.0
 MAX_CYCLES_PER_INVOCATION = 2
 # One catalog read plus ten bounded single-page queries per cycle.
 REQUESTS_PER_CYCLE = 11
+# Bounded same-slot retry for transport-layer faults only: one initial
+# attempt plus up to two retries with a fixed delay, still clamped by the
+# absolute invocation budget and the unit stop line.
+MAX_COLLECT_ATTEMPTS = 3
+COLLECT_RETRY_DELAY_SECONDS = 20.0
 OUTAGE_GAP_CONTRACT = TEN_SYMBOL_DATA_GAP_CONTRACT
 HISTORICAL_WINDOW_UNRECOVERABLE_REASON = "crypto_observation_watermark_invalid"
 HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
@@ -486,6 +495,57 @@ def _non_authority_receipt_fields() -> dict[str, Any]:
     }
 
 
+def _is_retryable_transport_error(exc: BaseException) -> bool:
+    """Classify transport-layer faults that merit one bounded same-slot retry.
+
+    Only timeout/connection-class failures are retryable.  HTTP status
+    errors (including 401/403, which must never be retried), catalog/profile
+    or data-contract failures and the invocation budget signal are semantic
+    and always fail immediately.
+    """
+
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    saw_transport = False
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                urllib.error.HTTPError,
+                HTTPStatusError,
+                TradingDatasAuthenticationError,
+                CryptoMarketObservationError,
+                CryptoTenSymbolProfileError,
+                _InvocationBudgetExhausted,
+            ),
+        ):
+            return False
+        if isinstance(
+            current,
+            (
+                TimeoutError,
+                ConnectionError,
+                urllib.error.URLError,
+                http.client.HTTPException,
+            ),
+        ):
+            saw_transport = True
+        related: list[BaseException] = []
+        if current.__cause__ is not None:
+            related.append(current.__cause__)
+        if current.__context__ is not None:
+            related.append(current.__context__)
+        reason = getattr(current, "reason", None)
+        if isinstance(reason, BaseException):
+            related.append(reason)
+        pending.extend(candidate for candidate in related if id(candidate) not in seen)
+    return saw_transport
+
+
 class _LazyObservationPort:
     """Construct the authenticated transport only if fresh data is needed."""
 
@@ -496,12 +556,17 @@ class _LazyObservationPort:
         token_file: Path,
         transport_factory: Callable[..., HTTPTransport],
         timeout_seconds: float = RUNTIME_TIMEOUT_SECONDS,
+        retry_sleep: Callable[[float], None] = time.sleep,
+        budget_check: Callable[[], float] | None = None,
     ) -> None:
         self._manifest = manifest
         self._token_file = token_file
         self._transport_factory = transport_factory
         self._timeout_seconds = timeout_seconds
+        self._retry_sleep = retry_sleep
+        self._budget_check = budget_check or (lambda: float("inf"))
         self.collect_calls = 0
+        self.collect_attempts = 0
         self.transport_factory_attempts = 0
         self.transport_constructed_count = 0
         self.observed_catalog_version: str | None = None
@@ -509,7 +574,40 @@ class _LazyObservationPort:
     def collect(
         self, window: CryptoObservationWindow
     ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
+        """Collect one slot, retrying only transport-layer faults in-place.
+
+        Every attempt constructs a fresh transport and client from the same
+        frozen manifest configuration; the slot cutoff never moves.  After
+        the final attempt the exact original failure propagates, preserving
+        the established fail-closed paths (data_reject for wrapped semantic
+        errors, runtime failure for raw transport errors).
+        """
+
         self.collect_calls += 1
+        for attempt in range(1, MAX_COLLECT_ATTEMPTS + 1):
+            # This check is deliberately before incrementing the receipt
+            # counter: an attempt whose transport/client was never built is
+            # not an attempt, even when a previous retry sleep consumed the
+            # remaining absolute invocation budget.
+            self._budget_check()
+            self.collect_attempts += 1
+            try:
+                return self._collect_once(window)
+            except Exception as exc:
+                if attempt < MAX_COLLECT_ATTEMPTS and (
+                    _is_retryable_transport_error(exc)
+                ):
+                    self._retry_sleep(COLLECT_RETRY_DELAY_SECONDS)
+                    # Retry sleeps are part of the same invocation budget;
+                    # never construct a fresh transport after the deadline.
+                    self._budget_check()
+                    continue
+                raise
+        raise CryptoTenSymbolObservationRuntimeError("runtime_collect_unreachable")
+
+    def _collect_once(
+        self, window: CryptoObservationWindow
+    ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
         try:
             self.transport_factory_attempts += 1
             transport = self._transport_factory(
@@ -885,6 +983,7 @@ def run_crypto_ten_symbol_observation_once(
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] = (build_runtime_transport),
     invocation_budget_seconds: float | None = None,
+    retry_sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Recover pending work, then process missing windows in slot order."""
 
@@ -921,6 +1020,10 @@ def run_crypto_ten_symbol_observation_once(
         manifest=manifest,
         token_file=token,
         transport_factory=bounded_transport_factory,
+        retry_sleep=retry_sleep,
+        budget_check=lambda: _remaining_invocation_seconds(
+            invocation_started_at, float(budget_seconds)
+        ),
     )
     cycle_results: list[dict[str, Any]] = []
     recovered_observations: list[dict[str, Any]] = []
@@ -1183,6 +1286,7 @@ def run_crypto_ten_symbol_observation_once(
         "warmup_eligible": warmup_eligible,
         "market_data_transport": "loopback_tradingdatas_v1",
         "market_data_access_attempt_count": lazy.collect_calls,
+        "collect_attempts": lazy.collect_attempts,
         "transport_factory_attempt_count": lazy.transport_factory_attempts,
         "market_data_network_used": lazy.transport_constructed_count > 0,
         "model_network_used": False,
@@ -1266,12 +1370,14 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "COLLECT_RETRY_DELAY_SECONDS",
     "CRYPTO_TEN_SYMBOL_RUNTIME_CONTRACT",
     "CryptoTenSymbolObservationRuntimeError",
     "CryptoTenSymbolObservationRuntimeManifest",
     "HISTORICAL_GAP_RECOVERY_REASONS",
     "HISTORICAL_WINDOW_UNRECOVERABLE_REASON",
     "INVOCATION_BUDGET_SECONDS",
+    "MAX_COLLECT_ATTEMPTS",
     "MAX_CYCLES_PER_INVOCATION",
     "OUTAGE_GAP_CONTRACT",
     "REQUESTS_PER_CYCLE",

@@ -643,14 +643,24 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 - `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不随 systemd
   jitter 或重跑墙上时钟漂移。
 - timer 固定在每根 bar close +3m25s，避开现役 Crypto core 的 close +55s
-  调用并居中放在相邻 core cadence 之间。120 秒业务预算不包含全部进程固定开销，
+  调用并居中放在相邻 core cadence 之间。120 秒业务预算从 invocation 开始计时并
+  包含全部 wire attempts 与 retry sleep；进程启动/停止开销不在该函数预算声明内，
   不能据此静态保证无重叠；发布验收必须取得前一 core、ten-symbol reader、后一 core
   三次自然运行的起止时间与 exit 0。两者共享 TD token/API/SQLite surface，禁止恢复为
   重叠并发。
 - 每 invocation 最多 2 cycle（pending recovery + 1 fresh，或两个连续处理
   步骤），同时受 120 秒绝对 wall-clock budget 约束；每次 TD wire timeout
   压缩到剩余预算，预算耗尽时保留 pending 与已经完成的增量，不追加伪造的
-  `data_reject`。仍落后当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
+  `data_reject`。单次 fresh 采集内部对**传输层瞬时错误**（timeout、
+  connection 类：`TimeoutError`/`ConnectionError`/
+  `urllib.error.URLError`（不含 HTTPError）/`http.client.HTTPException`，
+  含其包装链）做有界同槽重试：最多 `MAX_COLLECT_ATTEMPTS=3` 次尝试、固定
+  间隔 20s、每次完整独立构造 transport+client，slot cutoff 固定不随重试
+  漂移；数据合同/校验失败（catalog 漂移、watermark、continuity、profile
+  不符）、HTTP 状态错误（含 401/403，永不重试）与预算耗尽信号一律立即
+  失败。全部尝试失败仍走原 fail-closed 路径（pending 保留、不伪造
+  data_reject）；receipt 的 `collect_attempts` 记录实际尝试次数。仍落后
+  当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
   delayed-paper core 的刻意差异（core 在有进展时返回 0）：积累器没有资本
   风险，timer 应把滞后显式暴露为失败直到追平。槽位仍严格按序补，绝不跳过
   中间时槽。

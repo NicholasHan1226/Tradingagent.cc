@@ -172,9 +172,15 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `/var/lib/tradingagent/crypto-ten-symbol-observation`；slot cutoff 固定
   bar close +55s，每 invocation 最多 2 cycle，并受 120 秒绝对 wall-clock
   budget 约束；每次 wire timeout 都压缩到剩余预算，预算耗尽保留 pending 与已完成
-  增量，不能误记为数据拒绝。候选 timer 固定错开现役 core 的 close+55s，
-  在 close+3m25s 启动，居中放在相邻两次 core cadence 之间。120 秒绝对预算
-  不包含全部进程固定开销，因此不能单靠静态时间计算宣称绝不会重叠；每次发布仍须
+  增量，不能误记为数据拒绝。单次 fresh 采集只对传输层瞬时错误
+  （timeout/connection 类及其包装链）做有界同槽重试：最多
+  `MAX_COLLECT_ATTEMPTS=3` 次、固定间隔 20s、每次完整独立构造
+  transport+client、cutoff 不随重试漂移；数据合同/校验失败、HTTP 状态错误
+  （含 401/403，永不重试）与预算耗尽信号立即失败，全部失败仍走原
+  fail-closed 路径。候选 timer 固定错开现役 core 的 close+55s，
+  在 close+3m25s 启动，居中放在相邻两次 core cadence 之间。120 秒绝对预算从
+  invocation 开始计时并包含全部 wire attempts 与 retry sleep；进程启动/停止开销
+  不在该函数预算声明内，因此不能单靠静态时间计算宣称绝不会重叠；每次发布仍须
   用前一 core、ten-symbol reader、后一 core 三次自然读回证明共享
   token/API/SQLite surface 没有并发。积压返回
   `backlog_pending`

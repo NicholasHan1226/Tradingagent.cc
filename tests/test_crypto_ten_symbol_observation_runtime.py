@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Callable
+import urllib.error
 
 import pytest
 
@@ -140,7 +141,11 @@ def _run(
     now: datetime,
     transport_factory: Callable[..., Any],
     invocation_budget_seconds: float | None = None,
+    retry_sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if retry_sleep is not None:
+        kwargs["retry_sleep"] = retry_sleep
     return run_crypto_ten_symbol_observation_once(
         runtime_manifest=_write_manifest(
             tmp_path, payload=_manifest_payload(output_root)
@@ -150,6 +155,7 @@ def _run(
         now=now,
         transport_factory=transport_factory,
         invocation_budget_seconds=invocation_budget_seconds,
+        **kwargs,
     )
 
 
@@ -746,17 +752,89 @@ def test_backlog_pending_keeps_order_and_never_skips_slots(
     assert store.checkpoint()["latest_terminal_slot"] == iso(current_end)
 
 
-def test_transport_timeout_fails_closed_without_retry(
+def test_transient_transport_failure_retries_same_slot_and_completes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    delegate = TenSymbolFixtureTransport()
+    sleeps: list[float] = []
+    factory_instances: list[Any] = []
+
+    def flaky_transport(**kwargs: Any) -> HTTPResponse:
+        raise TimeoutError("catalog read timed out once")
+
+    def fresh_factory(
+        transport_id: str,
+        *,
+        token_file: Path,
+        base_url: str,
+    ) -> Callable[..., HTTPResponse]:
+        if not factory_instances:
+            transport = flaky_transport
+        else:
+            transport = delegate
+        factory_instances.append(transport)
+        return transport
+
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=fresh_factory,
+        retry_sleep=sleeps.append,
+    )
+
+    assert receipt["status"] == "completed"
+    assert receipt["collect_attempts"] == 2
+    assert receipt["market_data_access_attempt_count"] == 1
+    assert receipt["transport_factory_attempt_count"] == 2
+    assert len(factory_instances) == 2
+    assert factory_instances[0] is not factory_instances[1]
+    assert sleeps == [runtime_module.COLLECT_RETRY_DELAY_SECONDS]
+    assert crypto_ten_symbol_observation_exit_code(receipt) == 0
+    query_windows = {
+        tuple(call["json_body"]["filters"]["open_time"]["between"])
+        for call in delegate.calls
+        if call["method"] == "POST"
+    }
+    assert len(query_windows) == 1
+    query_start, query_end = next(iter(query_windows))
+    assert datetime.fromisoformat(query_end.replace("Z", "+00:00")) == (
+        WINDOW_END - timedelta(minutes=5)
+    )
+    assert datetime.fromisoformat(query_end.replace("Z", "+00:00")) - datetime.fromisoformat(
+        query_start.replace("Z", "+00:00")
+    ) == timedelta(hours=1)
+    store = CryptoTenSymbolObservationStore(output_root)
+    assert store.checkpoint()["observation_count"] == 1
+    assert store.data_reject_events() == []
+
+    replay = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_forbidden_factory,
+    )
+    assert replay["status"] == "noop"
+    assert replay["collect_attempts"] == 0
+    assert store.checkpoint()["event_count"] == 1
+
+
+def test_persistent_transport_failure_retries_bounded_then_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    sleeps: list[float] = []
     calls = 0
 
-    def timed_out_transport(**kwargs: Any) -> HTTPResponse:
+    def dead_transport(**kwargs: Any) -> HTTPResponse:
         nonlocal calls
         calls += 1
-        raise TimeoutError("timed out")
+        raise urllib.error.URLError(ConnectionRefusedError("connection refused"))
 
     with pytest.raises(
         CryptoTenSymbolObservationRuntimeError,
@@ -767,9 +845,137 @@ def test_transport_timeout_fails_closed_without_retry(
             token_file,
             output_root,
             now=WINDOW_END + timedelta(seconds=55),
-            transport_factory=_factory(timed_out_transport),
+            transport_factory=_factory(dead_transport),
+            retry_sleep=sleeps.append,
         )
+    assert calls == runtime_module.MAX_COLLECT_ATTEMPTS
+    assert sleeps == [runtime_module.COLLECT_RETRY_DELAY_SECONDS] * (
+        runtime_module.MAX_COLLECT_ATTEMPTS - 1
+    )
+    store = CryptoTenSymbolObservationStore(output_root)
+    # The original fail-closed shape is unchanged: no fabricated reject, and
+    # the pending marker survives for the next invocation's ordered retry.
+    assert store.data_reject_events() == []
+    assert store.pending_record() is not None
+
+
+def test_retry_sleep_counts_against_absolute_budget_before_next_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    clock = [0.0]
+    sleeps: list[float] = []
+    transport_calls = 0
+
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: clock[0])
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    def timed_out_transport(**_: Any) -> HTTPResponse:
+        nonlocal transport_calls
+        transport_calls += 1
+        raise TimeoutError("transient failure before retry budget expires")
+
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(timed_out_transport),
+        invocation_budget_seconds=10.0,
+        retry_sleep=sleep,
+    )
+
+    assert receipt["status"] == "backlog_pending"
+    assert receipt["budget_deferred"] is True
+    assert receipt["collect_attempts"] == 1
+    assert receipt["transport_factory_attempt_count"] == 1
+    assert transport_calls == 1
+    assert sleeps == [runtime_module.COLLECT_RETRY_DELAY_SECONDS]
+    assert CryptoTenSymbolObservationStore(output_root).pending_record() is not None
+
+
+def test_wrapped_http_error_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    sleeps: list[float] = []
+    calls = 0
+
+    def wrapped_http_failure(**_: Any) -> HTTPResponse:
+        nonlocal calls
+        calls += 1
+        raise urllib.error.URLError(
+            urllib.error.HTTPError(
+                url="http://127.0.0.1:18083/v1/catalog",
+                code=401,
+                msg="unauthorized",
+                hdrs=None,
+                fp=None,
+            )
+        )
+
+    with pytest.raises(
+        CryptoTenSymbolObservationRuntimeError,
+        match="runtime_cycle_failed",
+    ):
+        _run(
+            tmp_path,
+            token_file,
+            output_root,
+            now=WINDOW_END + timedelta(seconds=55),
+            transport_factory=_factory(wrapped_http_failure),
+            retry_sleep=sleeps.append,
+        )
+
     assert calls == 1
+    assert sleeps == []
+    assert CryptoTenSymbolObservationStore(output_root).pending_record() is not None
+
+
+def test_semantic_failures_are_never_retried(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    sleeps: list[float] = []
+
+    # A data-contract failure (incomplete window) is semantic: one attempt.
+    short = TenSymbolFixtureTransport(row_count=12)
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(short),
+        retry_sleep=sleeps.append,
+    )
+    assert receipt["status"] == "data_reject"
+    assert receipt["collect_attempts"] == 1
+    assert sleeps == []
+
+    # An HTTP status error (401) is never retried either.
+    def rejected_transport(**kwargs: Any) -> HTTPResponse:
+        return HTTPResponse(401, {})
+
+    second_root = tmp_path / "second"
+    second_root.mkdir()
+    token_file_2, output_root_2 = _runtime_paths(monkeypatch, second_root)
+    rejected = _run(
+        second_root,
+        token_file_2,
+        output_root_2,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(rejected_transport),
+        retry_sleep=sleeps.append,
+    )
+    assert rejected["status"] == "data_reject"
+    assert rejected["collect_attempts"] == 1
+    assert sleeps == []
 
 
 def test_real_trading_enabled_fails_closed(
