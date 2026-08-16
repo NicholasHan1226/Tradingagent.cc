@@ -513,7 +513,7 @@ class _ChampionCurrentBinding:
             raise PaperRuntimeConfigurationError(
                 "champion_current_selection_unavailable"
             ) from exc
-        cls._validate_manual_simulation_receipt(
+        cls._validate_simulation_receipt(
             current,
             expected_manifest_sha256=expected_manifest_sha256,
         )
@@ -524,7 +524,7 @@ class _ChampionCurrentBinding:
         )
 
     @staticmethod
-    def _validate_manual_simulation_receipt(
+    def _validate_simulation_receipt(
         receipt: ChampionSelectionReceipt,
         *,
         expected_manifest_sha256: str,
@@ -539,7 +539,7 @@ class _ChampionCurrentBinding:
             or receipt.simulation_only is not True
             or receipt.real_trading_enabled is not False
             or receipt.live_transition_authorized is not False
-            or receipt.automatic_promotion_enabled is not False
+            or not isinstance(receipt.automatic_promotion_enabled, bool)
             or receipt.automatic_risk_expansion_enabled is not False
         ):
             raise PaperRuntimeConfigurationError("champion_current_selection_mismatch")
@@ -551,7 +551,7 @@ class _ChampionCurrentBinding:
             raise PaperRuntimeConfigurationError(
                 "champion_current_selection_unavailable"
             ) from exc
-        self._validate_manual_simulation_receipt(
+        self._validate_simulation_receipt(
             current,
             expected_manifest_sha256=self.manifest_sha256,
         )
@@ -561,7 +561,7 @@ class _ChampionCurrentBinding:
 
 
 class _ChampionBoundStagePort:
-    """Recheck the current manual Champion before a capital-bearing stage."""
+    """Recheck the current simulation-only Champion before a capital-bearing stage."""
 
     __slots__ = ("_base_port", "_binding", "identity")
 

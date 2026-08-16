@@ -33,8 +33,8 @@
 - `REAL_TRADING_ENABLED=false`；当前记录必须是 `capital_layer=simulated`、`account_type=simulated`、`real_trading_enabled=false`。
 - 任一真实资金、live broker、direct execution、真实账户或签名密钥标记必须 fail closed，不能静默降级为 simulated/shadow。
 - A股首 1–2 周只跑模拟；第 5、10 个交易日是人工复核点，不是自动实盘日期。
-- 自动 champion 晋级、自动风险扩张和自动 live transition 永久关闭。即使 `promotion_evidence_ready=true`，也只表示证据检查通过，不构成授权。
-- 未来量化 A股实盘只能在 named strategy、数据、样本外、成本、风控、账户、券商适配和合规门禁分别通过且 Nicholas 明确确认后启用；自动晋级和自动切实盘继续永久关闭。TradingCopilot 的人工计划与个人申报账户不构成量化实盘过渡，也不得发送邮件或连接券商。
+- 模拟盘域内策略/因子晋级全自动化：`promotion_evidence_ready=true` 即构成模拟盘 Champion 自动晋级授权，由证据绑定的 registry receipt 直接执行，任何环节不设人工复核门禁。自动风险扩张和自动 live transition 永久关闭。
+- 未来量化 A股实盘只能在 named strategy、数据、样本外、成本、风控、账户、券商适配和合规门禁分别通过且 Nicholas 明确确认后启用；自动切实盘继续永久关闭。TradingCopilot 的人工计划与个人申报账户不构成量化实盘过渡，也不得发送邮件或连接券商。
 - CNFutures 当前暂停；既有模拟合同与证据只读保留，无实盘日期，也不绑定或阻塞 A股/Crypto 进度。
 
 ## A股样本与组合执行
@@ -89,7 +89,7 @@
 - A股与 Crypto 使用各自长期固定 Git worktree 和独立分支；CNFutures 保留隔离 worktree/分支作为暂停边界，不得在 Nicholas 明确恢复前启动写入。`shared/governance/market_lanes.yaml` 定义机器可读的单写者路径边界。
 - `shared/governance/runtime_topology.yaml` 定义机器可读的运行放置边界。当前可使用单机进程隔离；未来拆分服务器时只改变 deployment profile 和仓外 endpoint/credential provisioning，不改变市场领域合同、资本 authority、状态 namespace 或 TradingDatas catalog/query 协议。
 - 每个市场最多一个 active writer，使用独立 fault domain、writer identity、state namespace 和 service prefix；故障切换必须先人工 fencing 再激活备用节点。禁止多个主机同时写同一市场账本、通过 NFS/共享 SQLite 形成隐式双写，或让只读前端成为资本/订单/模型 authority。
-- 市场 core 与离线 learning 是两个故障域：学习失败不能使五分钟/会话核心失败；learning 只生成 Challenger/校准/研究 artifact，自动 promotion 和风险扩张继续关闭。单机 profile 可同机运行；拆分 profile 可按市场迁移，也可把三市场 learning 放到独立共享计算主机，但各市场输出 namespace 继续分离且研究主机不得拥有资本、订单或账本写权限。
+- 市场 core 与离线 learning 是两个故障域：学习失败不能使五分钟/会话核心失败；learning 只生成 Challenger/校准/研究 artifact，模拟盘 Champion 自动 promotion 由 SampleJournal/KPI 证据门禁直接执行、不设人工门禁，风险扩张继续关闭。单机 profile 可同机运行；拆分 profile 可按市场迁移，也可把三市场 learning 放到独立共享计算主机，但各市场输出 namespace 继续分离且研究主机不得拥有资本、订单或账本写权限。
 - 三个市场的模拟撮合合同和未来实盘适配器族必须各自独立：A股保留现金股票/T+1/整手语义，CNFutures保留多空/开平/保证金/夜盘语义，Crypto保留小数数量/最小名义金额/Testnet与Live分账语义。共享内核只可提供BrokerPort、outbox、幂等、审计和对账接口，禁止共享provider payload、账户、密钥、订单状态机、风险或资本authority。
 - 市场 owner 只能修改本市场目录、同前缀测试和局部文档。`shared/**`、根文档、前端和其它市场目录一律只可提交 handoff 提案，由共享内核单写者统一实现。
 - 每个 slice 开工前必须运行 `python3 scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`，并要求当时的 `main` 为 `behind=0`；错误 worktree、错误分支、开工时已落后或越权路径必须 fail closed。Controller 随派单记录该次通过校验的完整 commit 作为冻结 base。开发中无关 `main` 前进不得迫使 lane 重做；交接和提交前改用 `--base-ref <controller-recorded-full-sha>` 校验精确 patch 与路径所有权，禁止 lane 自选旧 SHA。Controller 明确分配的 one-shot 隔离候选可显式追加 `--isolated-candidate`，以完整 frozen SHA 作为 `--base-ref` 并逐个传入 `--allowed-path <repo-relative-file>`；该模式只绕过固定 worktree/branch identity，不放宽 lane ownership、路径、祖先关系或 freshness 门禁。Controller 验收时仍须在最新 `main` 上一次重放精确 patch、处理冲突并复测。输出的 `base_head/lane_head/ahead/behind` 只描述本次所选验证 base，不得冒充当前主线同步证据。

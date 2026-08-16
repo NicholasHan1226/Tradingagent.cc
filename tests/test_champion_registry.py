@@ -17,6 +17,7 @@ from shared.models.lifecycle import (
     LifecycleRecord,
     ModelLifecycleState,
     ValidationPlan,
+    promotion_evidence_reference,
     transition_model,
 )
 from shared.models.release_manifest import ModelReleaseManifest
@@ -112,6 +113,34 @@ def _current_lifecycle(
         reason="manual_champion_selection",
         approval_reference=approval_reference,
     )
+
+
+def _automation_current_lifecycle(
+    manifest: ModelReleaseManifest,
+    *,
+    evidence_reference: str,
+    recorded_at: datetime,
+) -> LifecycleRecord:
+    record = LifecycleRecord.draft(manifest=manifest, recorded_at=recorded_at)
+    for target in (
+        ModelLifecycleState.BACKTEST,
+        ModelLifecycleState.SHADOW,
+        ModelLifecycleState.REVIEW,
+        ModelLifecycleState.CURRENT,
+    ):
+        record = transition_model(
+            record,
+            target=target,
+            actor=LifecycleActor.AUTOMATION,
+            recorded_at=recorded_at,
+            reason="promotion_evidence_ready",
+            approval_reference=(
+                evidence_reference
+                if target is ModelLifecycleState.CURRENT
+                else None
+            ),
+        )
+    return record
 
 
 def _canonical_json(value: object) -> str:
@@ -269,21 +298,23 @@ def test_manual_activation_persists_content_addressed_simulation_receipt(
     assert (root / "current.json").is_file()
 
 
-def test_automation_cannot_activate_champion(tmp_path: Path) -> None:
+def test_automation_activation_requires_promotion_evidence_reference(
+    tmp_path: Path,
+) -> None:
     api = _api()
     root = tmp_path / "champion-registry"
     plan = _validation_plan()
     manifest = _manifest(plan)
-    lifecycle = _current_lifecycle(
+    lifecycle = _automation_current_lifecycle(
         manifest,
-        approval_reference="approval-automation-rejected",
+        evidence_reference=promotion_evidence_reference("9" * 64),
         recorded_at=NOW + timedelta(minutes=1),
     )
 
     registry = api.ChampionSelectionRegistry(root)
-    with pytest.raises(api.ChampionRegistryError, match="human_reviewer"):
+    with pytest.raises(api.ChampionRegistryError, match="promotion_evidence"):
         registry.record_selection(
-            selection_id="selection-automation",
+            selection_id="selection-automation-no-evidence",
             action="activate",
             manifest=manifest,
             validation_plan=plan,
@@ -296,6 +327,110 @@ def test_automation_cannot_activate_champion(tmp_path: Path) -> None:
 
     assert not list((root / "receipts").glob("*.json"))
     assert not (root / "current.json").exists()
+
+
+def test_automation_activation_requires_promotion_enabled_lifecycle(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "champion-registry"
+    plan = _validation_plan()
+    manifest = _manifest(plan)
+    evidence_reference = promotion_evidence_reference("9" * 64)
+    lifecycle = _current_lifecycle(
+        manifest,
+        approval_reference=evidence_reference,
+        recorded_at=NOW + timedelta(minutes=1),
+    )
+
+    registry = api.ChampionSelectionRegistry(root)
+    with pytest.raises(api.ChampionRegistryError, match="promotion_enabled_lifecycle"):
+        registry.record_selection(
+            selection_id="selection-automation-flag-mismatch",
+            action="activate",
+            manifest=manifest,
+            validation_plan=plan,
+            lifecycle=lifecycle,
+            actor=LifecycleActor.AUTOMATION,
+            human_approval_reference=evidence_reference,
+            recorded_at=NOW + timedelta(minutes=2),
+            expected_current_manifest_sha256=None,
+        )
+
+    assert not list((root / "receipts").glob("*.json"))
+    assert not (root / "current.json").exists()
+
+
+def test_manual_activation_forbids_promotion_enabled_lifecycle(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "champion-registry"
+    plan = _validation_plan()
+    manifest = _manifest(plan)
+    evidence_reference = promotion_evidence_reference("9" * 64)
+    lifecycle = _automation_current_lifecycle(
+        manifest,
+        evidence_reference=evidence_reference,
+        recorded_at=NOW + timedelta(minutes=1),
+    )
+
+    registry = api.ChampionSelectionRegistry(root)
+    with pytest.raises(api.ChampionRegistryError, match="promotion_enabled_lifecycle"):
+        registry.record_selection(
+            selection_id="selection-manual-flag-mismatch",
+            action="activate",
+            manifest=manifest,
+            validation_plan=plan,
+            lifecycle=lifecycle,
+            actor=LifecycleActor.HUMAN_REVIEWER,
+            human_approval_reference=evidence_reference,
+            recorded_at=NOW + timedelta(minutes=2),
+            expected_current_manifest_sha256=None,
+        )
+
+    assert not list((root / "receipts").glob("*.json"))
+    assert not (root / "current.json").exists()
+
+
+def test_automation_activation_with_evidence_persists_simulation_receipt(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    root = tmp_path / "champion-registry"
+    plan = _validation_plan()
+    manifest = _manifest(plan)
+    evidence_reference = promotion_evidence_reference("9" * 64)
+    lifecycle = _automation_current_lifecycle(
+        manifest,
+        evidence_reference=evidence_reference,
+        recorded_at=NOW + timedelta(minutes=1),
+    )
+
+    registry = api.ChampionSelectionRegistry(root)
+    receipt = registry.record_selection(
+        selection_id="selection-automation-evidence",
+        action="activate",
+        manifest=manifest,
+        validation_plan=plan,
+        lifecycle=lifecycle,
+        actor=LifecycleActor.AUTOMATION,
+        human_approval_reference=evidence_reference,
+        recorded_at=NOW + timedelta(minutes=2),
+        expected_current_manifest_sha256=None,
+    )
+
+    assert receipt.human_approval_reference == evidence_reference
+    assert receipt.automatic_promotion_enabled is True
+    assert receipt.capital_layer == "simulated"
+    assert receipt.account_type == "simulated"
+    assert receipt.simulation_only is True
+    assert receipt.real_trading_enabled is False
+    assert receipt.live_transition_authorized is False
+    assert receipt.automatic_risk_expansion_enabled is False
+    assert registry.load_current() == receipt
+    restarted = api.ChampionSelectionRegistry(root)
+    assert restarted.load_history() == (receipt,)
 
 
 def test_selection_requires_current_lifecycle_state(tmp_path: Path) -> None:
@@ -784,7 +919,7 @@ def test_restart_validates_complete_receipt_chain_and_current_pointer(
         elif tamper == "rollback_target_unknown":
             tail_payload["action"] = "rollback"
         elif tamper == "unsafe_authority_flag":
-            tail_payload["automatic_promotion_enabled"] = True
+            tail_payload["real_trading_enabled"] = True
 
         tail_payload["receipt_sha256"] = _receipt_sha256(tail_payload)
         new_tail_path = tail_path.with_name(

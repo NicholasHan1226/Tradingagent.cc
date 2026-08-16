@@ -1,4 +1,10 @@
-"""Durable, simulation-only manual Champion selection registry."""
+"""Durable, simulation-only Champion selection registry.
+
+Selections are recorded by a human reviewer or by automation carrying a valid
+promotion evidence reference.  Every receipt stays simulation-only: real
+trading, live transition and automatic risk expansion remain permanently
+disabled.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +26,7 @@ from .lifecycle import (
     LifecycleRecord,
     ModelLifecycleState,
     ValidationPlan,
+    is_promotion_evidence_reference,
 )
 from .release_manifest import ModelReleaseManifest
 
@@ -234,7 +241,11 @@ def _lifecycle_record_sha256(record: LifecycleRecord) -> str:
 
 @dataclass(frozen=True)
 class ChampionSelectionReceipt:
-    """One immutable, content-addressed manual selection decision."""
+    """One immutable, content-addressed Champion selection decision.
+
+    Recorded by a human reviewer or by automation bound to a promotion
+    evidence reference; always simulation-only.
+    """
 
     schema_version: str
     selection_id: str
@@ -450,14 +461,27 @@ class ChampionSelectionRegistry:
             expected_current_manifest_sha256,
             field_name="expected_current_manifest_sha256",
         )
-        if actor is not LifecycleActor.HUMAN_REVIEWER:
-            raise ChampionRegistryError("champion_selection_requires_human_reviewer")
+        if not isinstance(actor, LifecycleActor):
+            raise ChampionRegistryError("champion_selection_actor_invalid")
         if not isinstance(manifest, ModelReleaseManifest):
             raise ChampionRegistryError("champion_selection_binding_mismatch")
         if not isinstance(validation_plan, ValidationPlan):
             raise ChampionRegistryError("champion_selection_binding_mismatch")
         if not isinstance(lifecycle, LifecycleRecord):
             raise ChampionRegistryError("champion_selection_binding_mismatch")
+        if actor is LifecycleActor.AUTOMATION:
+            if not is_promotion_evidence_reference(human_approval_reference):
+                raise ChampionRegistryError(
+                    "automatic_selection_requires_promotion_evidence_reference"
+                )
+            if lifecycle.automatic_promotion_enabled is not True:
+                raise ChampionRegistryError(
+                    "automatic_selection_requires_promotion_enabled_lifecycle"
+                )
+        elif lifecycle.automatic_promotion_enabled is not False:
+            raise ChampionRegistryError(
+                "manual_selection_forbids_promotion_enabled_lifecycle"
+            )
         if lifecycle.state is not ModelLifecycleState.CURRENT:
             raise ChampionRegistryError("selected_lifecycle_must_be_current")
         expected_binding = (
@@ -504,6 +528,7 @@ class ChampionSelectionRegistry:
                 manifest=manifest,
                 validation_plan=validation_plan,
                 lifecycle=lifecycle,
+                actor=actor,
                 human_approval_reference=human_approval_reference,
                 recorded_at=recorded_at,
                 expected_current_manifest_sha256=(expected_current_manifest_sha256),
@@ -517,6 +542,7 @@ class ChampionSelectionRegistry:
         manifest: ModelReleaseManifest,
         validation_plan: ValidationPlan,
         lifecycle: LifecycleRecord,
+        actor: LifecycleActor,
         human_approval_reference: str,
         recorded_at: datetime,
         expected_current_manifest_sha256: Optional[str],
@@ -575,7 +601,7 @@ class ChampionSelectionRegistry:
         unsigned = {
             "account_type": "simulated",
             "action": action,
-            "automatic_promotion_enabled": False,
+            "automatic_promotion_enabled": actor is LifecycleActor.AUTOMATION,
             "automatic_risk_expansion_enabled": False,
             "capital_layer": "simulated",
             "expected_current_manifest_sha256": expected_current_manifest_sha256,
@@ -776,7 +802,7 @@ class ChampionSelectionRegistry:
             or payload["simulation_only"] is not True
             or payload["real_trading_enabled"] is not False
             or payload["live_transition_authorized"] is not False
-            or payload["automatic_promotion_enabled"] is not False
+            or not isinstance(payload["automatic_promotion_enabled"], bool)
             or payload["automatic_risk_expansion_enabled"] is not False
         ):
             raise ChampionRegistryError("receipt_simulation_only_contract_violated")

@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent A-share evolution/promotion timer (installed but not enabled by default)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 19:30:00 Asia/Shanghai
+AccuracySec=1min
+RandomizedDelaySec=30s
+Persistent=false
+Unit=tradingagent-ashare-evolution.service
+
+[Install]
+WantedBy=timers.target
