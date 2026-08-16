@@ -6,8 +6,12 @@ operation materializes due forward labels, writes a reproducible KPI
 projection, records the evolution assessment, and persists the A-share
 maturity state.  When the assessment carries ``promotion_evidence_ready=True``
 the evidence-gated automatic Champion promotion is executed into the
-simulation-only Champion selection registry without a human gate.  It has no
-broker, order, email, capital creation, or live transition path.
+simulation-only Champion selection registry without a human gate.  Challenger
+candidates default to the offline-learning producer
+(:mod:`Ashare.challenger_producer`), which derives candidates from the same
+KPI projection; an explicit ``challenger_candidates`` argument always takes
+precedence.  It has no broker, order, email, capital creation, or live
+transition path.
 """
 
 from __future__ import annotations
@@ -26,6 +30,10 @@ from time import perf_counter, process_time
 from typing import Any, Mapping, Optional, Sequence
 from uuid import uuid4
 
+from Ashare.challenger_producer import (
+    ChallengerProducerError,
+    build_challenger_candidates,
+)
 from Ashare.evolution_controller import (
     build_evolution_decision,
     run_automatic_promotion,
@@ -732,17 +740,28 @@ def run_ashare_sample_ops(
     )
     if decision.get("promotion_evidence_ready") is True:
         try:
+            promotion_recorded_at = datetime.now(timezone.utc)
+            produced_candidates = (
+                list(challenger_candidates)
+                if challenger_candidates is not None
+                else build_challenger_candidates(
+                    kpi,
+                    decision=decision,
+                    validation_plan=validation_plan,
+                    recorded_at=promotion_recorded_at,
+                )
+            )
             decision = run_automatic_promotion(
                 decision,
                 registry_root=selected_review_dir / "champion_registry",
-                challenger_candidates=(
-                    list(challenger_candidates)
-                    if challenger_candidates is not None
-                    else None
-                ),
-                recorded_at=datetime.now(timezone.utc),
+                challenger_candidates=produced_candidates,
+                recorded_at=promotion_recorded_at,
             )
-        except (ChampionRegistryError, PromotionExecutionError) as exc:
+        except (
+            ChallengerProducerError,
+            ChampionRegistryError,
+            PromotionExecutionError,
+        ) as exc:
             decision["promotion_execution"] = {
                 "status": "error",
                 "reason": str(exc),
