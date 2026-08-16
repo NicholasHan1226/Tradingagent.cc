@@ -1,0 +1,42 @@
+name: One-shot Align Authority-domain Freshness
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    if: github.head_ref == 'codex/align-authority-domain-freshness-20260816'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Patch root freshness rule
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path=Path('AGENTS.md')
+          text=path.read_text(encoding='utf-8')
+          old='正常 PR 只有在当前 head SHA 的配置测试全部通过后才可自动合并；共享/治理/部署路径或与 `main` 新提交存在文件重叠时，还必须先更新到 fresh `main` 并重跑 CI。'
+          new='正常 PR 只有在当前 head SHA 的配置测试全部通过后才可自动合并；与 `main` 新提交存在精确文件重叠时必须更新并重跑，shared core/deployment/dependency authority 在 `main` 任意前进后必须基于 fresh `main` 重新集成，governance-only 变更仅在同期 `main` 也修改 governance/core authority 时要求刷新；与主线变更文件和 authority domain 均不重叠的 market-local 变更可保留已测试 head 并行合并。'
+          if text.count(old)!=1:
+              raise SystemExit('root freshness wording anchor drifted')
+          path.write_text(text.replace(old,new,1),encoding='utf-8')
+          PY
+          grep -F 'governance-only 变更仅在同期 `main` 也修改 governance/core authority 时要求刷新' AGENTS.md
+          git diff --check
+      - name: Commit durable wording only
+        run: |
+          set -euo pipefail
+          git config user.name 'TradingAgent Governance Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          rm .github/workflows/oneoff-align-authority-domain-freshness.yml
+          git add AGENTS.md .github/workflows/oneoff-align-authority-domain-freshness.yml
+          git commit -m 'docs: align root freshness rule with authority domains'
+          git push origin HEAD:${{ github.head_ref }}
