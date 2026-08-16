@@ -36,6 +36,7 @@ SAMPLE_LAYERS = (
     "exit_stop",
     "risk_reject",
     "chain_validation",
+    "shadow_research",
 )
 
 
@@ -95,6 +96,11 @@ def classify_sample_layers(record: Mapping[str, Any]) -> tuple[str, ...]:
         or classification == "chain_validation"
     ):
         found.add("chain_validation")
+    if kind == "shadow_research":
+        # Research-only shadow facts (e.g. event-catalyst labels): journaled
+        # for audit and promotion-gate input, never a fill, round trip, or
+        # order-path sample.
+        found.add("shadow_research")
     return tuple(layer for layer in SAMPLE_LAYERS if layer in found)
 
 
@@ -208,6 +214,7 @@ def _new_style() -> dict[str, Any]:
         "exit_stop_count": 0,
         "risk_reject_count": 0,
         "chain_validation_count": 0,
+        "shadow_research_count": 0,
         "forward_label_counts": {name: {} for name in CANONICAL_HORIZONS},
         "win_rate": None,
         "average_pnl_cny": None,
