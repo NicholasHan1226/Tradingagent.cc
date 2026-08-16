@@ -28,6 +28,30 @@ health_check() {
   return 1
 }
 
+validate_immutable_release() {
+  local root="$1"
+  local bad_owner bad_write bad_dir bad_file
+
+  [[ -d "$root" && ! -L "$root" ]] || fail "immutable release is not a directory: $root"
+  [[ "$(stat -c '%U:%G' -- "$root")" == 'root:root' ]] || fail "immutable release root is not root:root: $root"
+
+  bad_owner="$(find "$root" \( ! -user root -o ! -group root \) -print -quit)"
+  [[ -z "$bad_owner" ]] || fail "non-root-owned release member: $bad_owner"
+
+  bad_write="$(find "$root" -perm /0022 -print -quit)"
+  [[ -z "$bad_write" ]] || fail "group/other-writable release member: $bad_write"
+
+  bad_dir="$(find "$root" -type d ! -perm 0755 -print -quit)"
+  [[ -z "$bad_dir" ]] || fail "release directory is not mode 0755: $bad_dir"
+
+  bad_file="$(find "$root" -type f ! -perm 0444 ! -perm 0555 -print -quit)"
+  [[ -z "$bad_file" ]] || fail "release file has unexpected mode: $bad_file"
+
+  runuser -u tradingagent -- test -x "$root/front"
+  runuser -u tradingagent -- test -r "$root/front/dist-server/server/tradingAgentSnapshotHttp.js"
+  runuser -u tradingagent -- test -r "$root/tools/audit_ashare_worker_runtime.py"
+}
+
 [[ "$EUID" -eq 0 ]] || fail 'must run as root through the scoped sudo gate'
 [[ $# -eq 0 ]] || fail 'arguments are not accepted; deployment request is read from the fixed spool'
 [[ "$(readlink -f -- "$0")" == "$installed_path" ]] || fail "must run from $installed_path"
@@ -80,6 +104,10 @@ rollback_release() {
     rm -f -- "$rollback_link"
     ln -s -- "$previous_release" "$rollback_link"
     mv -Tf -- "$rollback_link" "$current_link"
+
+    if [[ "$(readlink -f -- "$current_link" 2>/dev/null)" != "$previous_release" ]]; then
+      printf 'SEVERE: current symlink did not restore to previous immutable release\n' >&2
+    fi
 
     if [[ "$front_state_before" == active ]]; then
       systemctl restart "$front_unit"
@@ -184,26 +212,12 @@ else
   find "$staging_dir" -type f -perm /0111 -exec chmod 0555 {} +
   find "$staging_dir" -type f ! -perm /0111 -exec chmod 0444 {} +
 
-  bad_owner="$(find "$staging_dir" \( ! -user root -o ! -group root \) -print -quit)"
-  [[ -z "$bad_owner" ]] || fail "non-root-owned release member: $bad_owner"
-  bad_write="$(find "$staging_dir" -perm /0022 -print -quit)"
-  [[ -z "$bad_write" ]] || fail "group/other-writable release member: $bad_write"
-  bad_dir="$(find "$staging_dir" -type d ! -perm 0755 -print -quit)"
-  [[ -z "$bad_dir" ]] || fail "release directory is not mode 0755: $bad_dir"
-  bad_file="$(find "$staging_dir" -type f ! -perm 0444 ! -perm 0555 -print -quit)"
-  [[ -z "$bad_file" ]] || fail "release file has unexpected mode: $bad_file"
-
-  runuser -u tradingagent -- test -x "$staging_dir/front"
-  runuser -u tradingagent -- test -r "$staging_dir/front/dist-server/server/tradingAgentSnapshotHttp.js"
-  runuser -u tradingagent -- test -r "$staging_dir/tools/audit_ashare_worker_runtime.py"
-
+  validate_immutable_release "$staging_dir"
   mv -- "$staging_dir" "$release_dir"
   staging_dir=''
 fi
 
-[[ "$(stat -c '%U:%G' -- "$release_dir")" == 'root:root' ]] || fail 'release directory must be root:root'
-bad_write="$(find "$release_dir" -perm /0022 -print -quit)"
-[[ -z "$bad_write" ]] || fail "immutable release contains group/other writable member: $bad_write"
+validate_immutable_release "$release_dir"
 
 link_tmp="$release_root/.current-${sha}-$$"
 ln -s -- "$release_dir" "$link_tmp"
