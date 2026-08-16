@@ -33,12 +33,6 @@ jobs:
       DEPLOY_RUN_ID: ${{ github.event.workflow_run.id }}
 
     steps:
-      - name: Check out tested commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 1
-
       - name: Validate deployment configuration
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -100,11 +94,21 @@ jobs:
           chmod 0600 "$HOME/.ssh/known_hosts"
 
       - name: Publish tested release
+        id: publish
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_ARCHIVE: ${{ steps.release.outputs.archive }}
           RELEASE_CHECKSUM: ${{ steps.release.outputs.checksum }}
         run: |
           set -euo pipefail
+
+          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current_main_sha" != "$DEPLOY_SHA" ]]; then
+            echo "Skip stale deployment: tested=$DEPLOY_SHA current_main=$current_main_sha"
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           ssh_opts=(
             -i "$HOME/.ssh/deploy_key"
             -o BatchMode=yes
@@ -138,10 +142,21 @@ jobs:
             "$request_file" \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${spool}/request.incoming"
 
+          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current_main_sha" != "$DEPLOY_SHA" ]]; then
+            echo "Main advanced during upload; discard incoming stale release without cutover."
+            ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "rm -f '${spool}/${archive_name}.incoming' '${spool}/request.incoming'"
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "set -e; mv '${spool}/${archive_name}.incoming' '${spool}/${archive_name}'; mv '${spool}/request.incoming' '${spool}/request'; sudo -n /usr/local/sbin/tradingagent-release"
+          echo 'published=true' >> "$GITHUB_OUTPUT"
 
       - name: Verify deployed commit
+        if: steps.publish.outputs.published == 'true'
         run: |
           set -euo pipefail
           ssh_opts=(
