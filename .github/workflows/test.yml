@@ -81,3 +81,39 @@ jobs:
           SHAREDSIGNALS_API_URL: ""
           MARKETGRAPH_API_URL: ""
         run: npm run build:all
+
+      - name: Package tested release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          release_root="$(mktemp -d "$RUNNER_TEMP/tradingagent-release-root.XXXXXX")"
+          trap 'rm -rf -- "$release_root"' EXIT
+
+          git -C "$GITHUB_WORKSPACE" archive "$GITHUB_SHA" \
+            | tar -x -C "$release_root"
+
+          test -d dist
+          test -d dist-server
+          rm -rf -- "$release_root/front/dist" "$release_root/front/dist-server"
+          cp -a dist "$release_root/front/dist"
+          cp -a dist-server "$release_root/front/dist-server"
+          printf '%s\n' "$GITHUB_SHA" > "$release_root/.source-sha"
+
+          test -f "$release_root/front/dist-server/server/tradingAgentSnapshotHttp.js"
+          tar -C "$release_root" -czf "$RUNNER_TEMP/tradingagent-${GITHUB_SHA}.tar.gz" .
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "tradingagent-${GITHUB_SHA}.tar.gz" \
+              > "tradingagent-${GITHUB_SHA}.tar.gz.sha256"
+          )
+
+      - name: Upload tested release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingagent-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/tradingagent-${{ github.sha }}.tar.gz
+            ${{ runner.temp }}/tradingagent-${{ github.sha }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 3
