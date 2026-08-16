@@ -1058,6 +1058,83 @@ systemd、不接执行；晋级永远人工。
 3. **晋级仍永久人工**：任何阶段都不授予自动晋级、自动风险扩张或执行
    authority。
 
+## 研究进化闭环 第二阶段（假设生成器，proposal-only detached 只读）
+
+`ten_symbol_hypothesis_generator.py` 是研究进化闭环的第二阶段：一个离线、
+只读、detached 的假设生成器。它把仓内冻结、版本化的生成配置
+（`crypto-ten-symbol-hypothesis-generation-v1`：因子族 × 参数网格 ×
+horizon）确定性展开为候选假设集，对每个候选做轻量可行性检查（所需数据面
+可用性与样本量下限），产出一份供人工评审的 immutable 注册提案 artifact。
+第二阶段**不自动注册**（全部候选固定
+`registration_status=pending_manual_review`、`registered_into_prescreen/
+registered_into_evaluation=false`，预筛与一阶段注册集合保持不变、漂移仍
+fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永远人工。
+
+### 生成配置与因子族
+
+- 配置冻结在模块内（先例同观测 profile）：五个 B 类因子族，每族参数网格
+  ≤5 组，horizon 固定 12/48/144/288（60/240/720/1440min），共 23 个候选：
+  - `oi_change_rate`（5 组：lookback_bars × oi_change_threshold，
+    12/0.005、12/0.01、48/0.01、144/0.02、288/0.02）；
+  - `price_oi_divergence`（5 组：lookback × direction∈fade/follow，
+    12/48/288）；
+  - `oi_weighted_momentum`（5 组：momentum_lookback × oi_lookback ×
+    top_k∈{2,3}，12/48/288）；
+  - `spread_regime`（4 组：regime_threshold_bps∈1.0/1.5/2.0 ×
+    mode∈narrow_only/wide_only；阈值网格夹住实测点差中位数 ~1.06bps）；
+  - `premium_momentum`（4 组：lookback × premium_threshold，
+    12/0.0005、48/±0.001、288/0.002）。
+- 配置校验严格（family 集合与顺序、模板占位符与参数键一一对应、variant
+  唯一、horizon 为允许子集且排序、Decimal 文本可解析）：任何配置漂移 fail
+  closed（`hypothesis_generator_config_drift`）；改动网格须换 config id 并
+  走人工评审。
+- 候选 id 形如 `<family>__<variant>`，与预筛/一阶段注册集合保证不相交。
+
+### 可行性检查与数据面
+
+- 数据面注册表冻结四个 plane：`ohlcv_bars`（观测 store bars sidecar，样本量
+  由已验证事件链实测，为 10 币合并历史的最小行数）、`realized_spreads`
+  （spreads sidecar + 点差投影 artifact，下限 12，镜像费用后评估日桶最低
+  样本）、`open_interest_5m`（`crypto.perp.binance.<symbol>.open_interest`，
+  下限 10000）、`premium_index`（`crypto.perp.binance.<symbol>.premium_index`，
+  下限 200）。
+- `ohlcv_bars` 下限按候选为 lookback + 13 + 最短 horizon（信号可计算且最
+  短 horizon 标签可结算）；B 类 plane 只能由调用方显式传入的数据面证据
+  manifest（contract
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_data_planes.v1`，严格
+  shape 校验、available 必须带 sample_count、禁止声明 ohlcv_bars）声明；
+  未声明 plane 一律 `unavailable`，`accumulating` 不算 available。
+- 逐候选 `feasibility.status ∈ {feasible_for_manual_evaluation, blocked}`
+  附逐 plane 检查（observed vs min、reason code）；可行性只影响人工评审
+  排序，不改变固定 `pending_manual_review` 状态。
+
+### Artifact 合约
+
+- 提案（contract
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v1`）
+  immutable 写入
+  `<store_root>/evolution/ten_symbol_hypothesis_generator/proposals/{proposal_sha256}.json`，
+  自含 `proposal_sha256`；内容包括：冻结配置全文与其 sha、store 链绑定
+  （event 计数、head checksum、逐槽 terminal_units 聚合 sha、数据窗口）、
+  数据面 manifest sha 与 plane 状态、逐候选定义（假设文本、依据、所需证据、
+  参数、horizon、可行性）以及固定
+  `review.recommendation=manual_review_required`（每候选同）。
+- compact `hypothesis_generator_checkpoint.json`（contract
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v1`，原子
+  覆写）绑定 `last_input_digest` 与 `proposal_sha256`。input digest 覆盖
+  配置 sha、manifest sha、store 链 head 与逐槽资格材料：同输入重跑先重验
+  checkpoint 与其绑定提案，返回 `no_new_input` 且字节不变（幂等）；
+  checkpoint 或提案篡改 fail closed。无 terminal 事件返回
+  `deferred_core_pending`，全部槽 ineligible 返回
+  `insufficient_eligible_slots`（非错误）；退出码经
+  `ten_symbol_hypothesis_generator_exit_code`（authority 字段或
+  `manual_review_required` 不符即 2）。
+- 一次性 CLI：`python3 -m Crypto.ten_symbol_hypothesis_generator
+  --store-root <path> [--data-plane-manifest <path>]`；无 worker、无
+  systemd unit。测试：
+  `REAL_TRADING_ENABLED=false python3 -m pytest -q
+  tests/test_crypto_ten_symbol_hypothesis_generator.py`。
+
 ## 验证
 
 ```bash
