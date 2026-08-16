@@ -41,8 +41,8 @@ esac
 [[ -d "$current_target" ]] || fail 'current immutable release target is missing'
 
 install -d -o "$deploy_user" -g "$deploy_group" -m 0700 "$spool"
-rm -f -- "$spool/request" "$spool/request.incoming"
-find "$spool" -maxdepth 1 -type f -name '*.incoming' -delete
+spool_entry="$(find "$spool" -mindepth 1 -maxdepth 1 -print -quit)"
+[[ -z "$spool_entry" ]] || fail "deployment spool is not empty; preserve and resolve it before bootstrap: $spool_entry"
 
 install -o root -g root -m 0755 "$source_helper" "$installed_helper"
 
