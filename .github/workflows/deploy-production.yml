@@ -1,0 +1,121 @@
+name: Deploy TradingAgent Production
+
+on:
+  workflow_run:
+    workflows:
+      - TradingAgent Tests
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradingagent-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Check out tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Validate deployment configuration
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ -n "$DEPLOY_HOST" ]]
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535 ))
+          [[ -n "$DEPLOY_SSH_KEY" ]]
+          [[ -n "$DEPLOY_KNOWN_HOSTS" ]]
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 0600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+      - name: Build exact release archive
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz \
+            --output="$RUNNER_TEMP/tradingagent-${DEPLOY_SHA}.tar.gz" \
+            "$DEPLOY_SHA"
+
+      - name: Upload release
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -i "$HOME/.ssh/deploy_key"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -p "$DEPLOY_PORT"
+          )
+          scp_opts=(
+            -i "$HOME/.ssh/deploy_key"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -P "$DEPLOY_PORT"
+          )
+
+          remote_archive="/tmp/tradingagent-${DEPLOY_SHA}.tar.gz"
+          remote_script="/tmp/tradingagent-release-${DEPLOY_SHA}.sh"
+
+          scp "${scp_opts[@]}" \
+            "$RUNNER_TEMP/tradingagent-${DEPLOY_SHA}.tar.gz" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_archive}"
+          scp "${scp_opts[@]}" \
+            deploy/release.sh \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_script}"
+
+          ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "chmod 0700 '${remote_script}' && '${remote_script}' '${remote_archive}' '${DEPLOY_SHA}' && rm -f '${remote_script}'"
+
+      - name: Verify deployed commit
+        run: |
+          set -euo pipefail
+          ssh_opts=(
+            -i "$HOME/.ssh/deploy_key"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -p "$DEPLOY_PORT"
+          )
+
+          deployed_sha="$(ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "cat /opt/investment/releases/tradingagent/current/.deployed-sha")"
+          [[ "$deployed_sha" == "$DEPLOY_SHA" ]]
+          echo "Verified production release: $deployed_sha"
