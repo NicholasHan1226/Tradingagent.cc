@@ -10,9 +10,10 @@
 2. **核心 runtime 连续性**
    - A股会话/分钟模拟与 Crypto delayed-paper/observation 保持 restart-safe、幂等、可恢复。
    - gap、reject、no-trade 必须留下明确证据，不为追求“全绿”伪造成功。
-3. **发布不依赖 GitHub Actions 或人工审批**
-   - 正常内部 sim-only release、既有 localhost service/timer 的部署/启用、旁路 canary、readback 与可回滚切换，在既定合同内由系统继续执行。
-   - GitHub Actions 仅为可选附加验证；无额度、未运行或被 billing 阻断不能成为普通开发/合并/部署的停止线。
+3. **代码合并/自动部署使用机器 CI gate，不依赖人工审批**
+   - 当前公共仓库的普通 PR 以当前 head SHA 的 CI 成功作为日常 merge gate；共享/治理/部署路径或真实文件重叠必须 fresh-base 后重跑。
+   - `main` 的 exact-SHA 测试/打包证据是 GitHub 自动部署的代码 gate；部署后仍必须由 release/runtime/API/receipt/readback 证明生产事实。
+   - Actions 暂时不可用时，现役数据采集、市场 core 和模拟演进继续运行，但普通代码 PR 不因此绕过 `main` gate。未来若引入独立 fallback runner，必须产生同等级、可校验的机器证据。
    - 真实资金、broker、公开入口、权限/密钥、破坏性数据操作和自动风险扩张仍属于独立 authority。
 
 ## P1 — A股 A3：把已有自动演进链跑实
