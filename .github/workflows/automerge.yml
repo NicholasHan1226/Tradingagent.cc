@@ -8,6 +8,7 @@ on:
       - completed
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -85,8 +86,23 @@ jobs:
             echo "Main advanced only through disjoint, non-authority paths; preserve parallelism and merge the tested PR head."
           fi
 
-          gh api \
+          MERGE_JSON="$(gh api \
             --method PUT \
             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
             -f merge_method=squash \
-            -f sha="$HEAD_SHA"
+            -f sha="$HEAD_SHA")"
+          MERGED="$(jq -r '.merged // false' <<<"$MERGE_JSON")"
+          MERGE_SHA="$(jq -r '.sha // empty' <<<"$MERGE_JSON")"
+          [[ "$MERGED" == "true" ]]
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          # A merge performed with GITHUB_TOKEN does not create a follow-up
+          # push workflow run. workflow_dispatch is an explicit GitHub-supported
+          # exception, so dispatch the exact new main SHA for post-merge tests,
+          # release packaging and (when enabled) deployment.
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/dispatches" \
+            -f ref=main \
+            -f "inputs[expected_sha]=$MERGE_SHA"
+          echo "Dispatched exact-main validation for $MERGE_SHA"
