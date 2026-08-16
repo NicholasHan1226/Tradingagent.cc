@@ -10,14 +10,15 @@ This mechanism changes code releases only. It does not grant live-trading author
 
 ## Tested release artifact
 
-On a `push` to `main`, the existing frontend CI job still performs:
+On every PR and `push` to `main`, the existing frontend CI job performs:
 
 1. `npm ci`;
 2. frontend tests;
 3. lint;
-4. `npm run build:all`.
+4. `npm run build:all`;
+5. release packaging validation.
 
-After those steps pass, the job creates a release archive containing:
+The packaging step creates a release archive containing:
 
 - the exact Git tree for `GITHUB_SHA`;
 - `front/dist` built from that SHA;
@@ -25,13 +26,15 @@ After those steps pass, the job creates a release archive containing:
 - `.source-sha` containing the full Git SHA;
 - a SHA-256 checksum file for the archive.
 
+PR runs validate that the release can actually be packaged. Only a successful `push` run on `main` uploads the artifact for production use.
+
 The artifact is named:
 
 ```text
 tradingagent-release-<40-char-git-sha>
 ```
 
-The production workflow runs only after the entire `TradingAgent Tests` workflow succeeds, so both the Python test job and the frontend job must be green. It downloads the artifact from `github.event.workflow_run.id`, verifies the checksum and `.source-sha`, and never substitutes a newer `main` checkout or a newly rebuilt frontend.
+The production workflow runs only after the entire `TradingAgent Tests` workflow succeeds, so both the Python test job and the frontend job must be green. It downloads the artifact from `github.event.workflow_run.id`, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
 
 ## Immutable server release model
 
@@ -58,7 +61,7 @@ The root-owned release helper normalizes a new release before cutover:
 - owner/group: `root:root`;
 - directories: `0755`;
 - non-executable files: `0444`;
-- executable files: `0555`, preserving whether the packaged Git/archive file was executable;
+- executable files: `0555`, preserving whether the packaged file was executable;
 - no group/other writable release member;
 - only regular files and directories are accepted from the deployment archive;
 - absolute paths, `..`, symlinks, hardlinks, devices and other special archive members are rejected.
@@ -70,7 +73,7 @@ The helper records:
 .release-package-sha256
 ```
 
-An existing SHA-named release is reused only when both metadata values match. A different package may not overwrite an existing immutable release for the same Git SHA.
+An existing SHA-named release is reused only when both metadata values match **and** the full existing release tree still satisfies the same root ownership, immutable modes and `tradingagent` service-readability checks. A different package may not overwrite an existing immutable release for the same Git SHA.
 
 ## Root trust boundary
 
@@ -111,7 +114,9 @@ From a trusted checkout of the approved bootstrap commit, run as root:
 sudo ./deploy/bootstrap-production-server.sh <deploy-user>
 ```
 
-The bootstrap script requires the existing release root and `current` symlink to be valid before it changes anything. It then:
+The bootstrap script requires the existing release root and `current` symlink to be valid before it changes anything. It also refuses to proceed if the deployment spool is nonempty, so an old or partial deployment request is never silently deleted during bootstrap.
+
+It then:
 
 1. creates `/var/tmp/tradingagent-deploy` as `0700` owned by the deployment user;
 2. installs `deploy/release.sh` as root-owned `/usr/local/sbin/tradingagent-release`;
@@ -157,8 +162,21 @@ A production deployment runs only when all of the following are true:
 6. the tested release artifact for the exact workflow-run SHA exists;
 7. its SHA-256 checksum is valid;
 8. its `.source-sha` exactly equals the successful workflow-run head SHA;
-9. SSH host-key verification succeeds;
-10. the pre-installed root-owned release helper and fixed deployment spool exist on the server.
+9. the tested SHA is still the current `main` HEAD immediately before upload;
+10. the tested SHA is still the current `main` HEAD immediately before privileged cutover;
+11. SSH host-key verification succeeds;
+12. the pre-installed root-owned release helper and fixed deployment spool exist on the server.
+
+### Stale-main protection
+
+Multiple coding agents may merge to `main` in quick succession. A slower CI run for an older commit must therefore never deploy after a newer commit has already become `main`.
+
+The production workflow queries the current GitHub `main` ref twice:
+
+- before uploading a release;
+- again after upload but before invoking the root helper.
+
+If the tested SHA is no longer current, the deployment is skipped without changing `current`. If `main` advances during upload, only the fixed `.incoming` files for that attempted upload are removed and no privileged cutover occurs. This prevents queued successful runs from rolling production backward to an older `main` commit.
 
 ## Cutover and application health
 
@@ -195,9 +213,10 @@ The previous `current` target is captured before cutover.
 If any failure occurs after `current` has switched but before the new release is committed healthy, the same privileged deployment action:
 
 1. atomically restores `current` to the previous immutable release;
-2. if the frontend was active before deployment, restarts `tradingagent-front-api.service` against the previous release;
-3. performs a bounded health check of the restored frontend;
-4. exits non-zero so GitHub records deployment failure.
+2. verifies that `current` resolves back to that previous release;
+3. if the frontend was active before deployment, restarts `tradingagent-front-api.service` against the previous release;
+4. performs a bounded health check of the restored frontend;
+5. exits non-zero so GitHub records deployment failure.
 
 Historical immutable release directories are not automatically deleted.
 
@@ -211,10 +230,10 @@ After the server helper returns success, GitHub Actions independently reads:
 
 and requires it to equal the successful CI workflow-run SHA.
 
-Repository tests also lock the main deployment trust boundaries: workflow trigger, artifact linkage, root-helper invocation, immutable modes, bounded health check and rollback behavior.
+Repository tests also lock the main deployment trust boundaries: workflow trigger, exact artifact linkage, stale-main prevention, root-helper invocation, immutable modes, immutable-release reuse checks, bounded health check and rollback behavior.
 
 ## Change control
 
 Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are infrastructure bootstrap changes. The existing automerge workflow excludes `.github/workflows/` changes, so this initial deployment workflow cannot self-bootstrap through the ordinary agent automerge path.
 
-Future ordinary application PRs may continue through the normal CI/automerge path; production deployment remains separately gated by the exact successful `main` workflow run and `DEPLOY_ENABLED`.
+Future ordinary application PRs may continue through the normal CI/automerge path; production deployment remains separately gated by the exact successful current-`main` workflow run and `DEPLOY_ENABLED`.
