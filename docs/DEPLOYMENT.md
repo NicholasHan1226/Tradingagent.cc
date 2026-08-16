@@ -2,13 +2,40 @@
 
 ## Purpose
 
-Production deployment is repository-driven and commit-pinned. A merge to `main` does not directly mutate the server. The exact `main` commit must first complete the `TradingAgent Tests` workflow successfully. Only then can `Deploy TradingAgent Production` publish that tested SHA.
+Production deployment is repository-driven, commit-pinned, and artifact-pinned. A merge to `main` does not directly mutate the server. The exact `main` commit must first complete the `TradingAgent Tests` workflow successfully. The deployment workflow then downloads the release artifact produced by that same successful workflow run.
 
-The deployment workflow is intentionally disabled until the `production` GitHub Environment is configured and the repository variable `DEPLOY_ENABLED` is set to `true`.
+The deployment workflow is intentionally disabled until the one-time server bootstrap is complete, the `production` GitHub Environment contains the required SSH secrets, and the repository variable `DEPLOY_ENABLED` is set to `true`.
 
-## Release model
+This mechanism changes code releases only. It does not grant live-trading authority, alter `/etc/tradingagent` application secrets, enable timers, change broker configuration, or prune historical releases.
 
-The server release root is:
+## Tested release artifact
+
+On a `push` to `main`, the existing frontend CI job still performs:
+
+1. `npm ci`;
+2. frontend tests;
+3. lint;
+4. `npm run build:all`.
+
+After those steps pass, the job creates a release archive containing:
+
+- the exact Git tree for `GITHUB_SHA`;
+- `front/dist` built from that SHA;
+- `front/dist-server` built from that SHA;
+- `.source-sha` containing the full Git SHA;
+- a SHA-256 checksum file for the archive.
+
+The artifact is named:
+
+```text
+tradingagent-release-<40-char-git-sha>
+```
+
+The production workflow runs only after the entire `TradingAgent Tests` workflow succeeds, so both the Python test job and the frontend job must be green. It downloads the artifact from `github.event.workflow_run.id`, verifies the checksum and `.source-sha`, and never substitutes a newer `main` checkout or a newly rebuilt frontend.
+
+## Immutable server release model
+
+The production release root is:
 
 ```text
 /opt/investment/releases/tradingagent/
@@ -20,93 +47,174 @@ Each deployed Git commit receives an immutable directory:
 /opt/investment/releases/tradingagent/<40-char-git-sha>/
 ```
 
-The active release is selected by the symlink:
+The active release is selected by:
 
 ```text
 /opt/investment/releases/tradingagent/current
 ```
 
-`deploy/release.sh` extracts a new release into a staging directory, validates the minimum repository shape, moves it into the SHA-named release directory, and atomically switches `current`. Existing releases are not pruned so rollback remains possible.
+The root-owned release helper normalizes a new release before cutover:
 
-The script does **not** install dependencies, alter `/etc/tradingagent`, enable timers, grant live-trading authority, or broadly restart systemd units. Existing units that resolve code through `/opt/investment/releases/tradingagent/current` will use the new release on their next invocation. Any future long-running service restart policy must be added explicitly and reviewed separately.
+- owner/group: `root:root`;
+- directories: `0755`;
+- non-executable files: `0444`;
+- executable files: `0555`, preserving whether the packaged Git/archive file was executable;
+- no group/other writable release member;
+- only regular files and directories are accepted from the deployment archive;
+- absolute paths, `..`, symlinks, hardlinks, devices and other special archive members are rejected.
+
+The helper records:
+
+```text
+.deployed-sha
+.release-package-sha256
+```
+
+An existing SHA-named release is reused only when both metadata values match. A different package may not overwrite an existing immutable release for the same Git SHA.
+
+## Root trust boundary
+
+GitHub Actions does **not** upload and execute a new privileged deployment script on every release.
+
+The repository file:
+
+```text
+deploy/release.sh
+```
+
+is a source copy of the privileged helper. During one-time server bootstrap it is installed as:
+
+```text
+/usr/local/sbin/tradingagent-release
+```
+
+with `root:root` ownership and no group/other write permission. Normal production deployments invoke only that already-installed helper through a narrow `sudo` rule.
+
+The helper:
+
+- accepts no command-line arguments;
+- reads a fixed request file from `/var/tmp/tradingagent-deploy/request`;
+- requires the spool and uploaded archive/request to belong to the non-root sudo caller;
+- copies the archive to a root-owned temporary file before validation/extraction;
+- validates the requested SHA, checksum, archive member types and release shape;
+- requires an existing valid `current` immutable-release symlink before automated cutover.
+
+This prevents the SSH deployment account from obtaining unrestricted root shell access or replacing the privileged helper during an ordinary deployment.
+
+## One-time server bootstrap
+
+A dedicated SSH deployment user must already exist. It must not be `root`, and it needs an SSH-capable shell because the workflow uses `scp` and `ssh`.
+
+From a trusted checkout of the approved bootstrap commit, run as root:
+
+```bash
+sudo ./deploy/bootstrap-production-server.sh <deploy-user>
+```
+
+The bootstrap script requires the existing release root and `current` symlink to be valid before it changes anything. It then:
+
+1. creates `/var/tmp/tradingagent-deploy` as `0700` owned by the deployment user;
+2. installs `deploy/release.sh` as root-owned `/usr/local/sbin/tradingagent-release`;
+3. installs a sudoers entry allowing that deployment user to invoke the fixed helper;
+4. validates the sudoers file with `visudo`;
+5. leaves `DEPLOY_ENABLED` unchanged.
+
+The bootstrap script does not create SSH keys, does not modify application secrets, does not enable services/timers and does not activate deployment by itself.
 
 ## GitHub production environment
 
-Create a GitHub Environment named `production` and configure these environment secrets:
+Create a GitHub Environment named:
 
-- `DEPLOY_HOST` — production server hostname or IP address.
-- `DEPLOY_USER` — dedicated unprivileged deployment account.
-- `DEPLOY_SSH_KEY` — private key used only by that deployment account.
-- `DEPLOY_KNOWN_HOSTS` — trusted `known_hosts` entry for the production SSH server. Do not disable host-key checking.
+```text
+production
+```
 
-Configure these **repository variables** under Actions variables:
+Configure these **Environment Secrets**:
 
-- `DEPLOY_ENABLED` — keep absent or `false` during bootstrap; set exactly to `true` only when server preparation is complete.
-- `DEPLOY_PORT` — optional SSH port; defaults to `22`.
+- `DEPLOY_HOST` — production server hostname or IP address;
+- `DEPLOY_USER` — the same dedicated non-root user passed to the server bootstrap;
+- `DEPLOY_SSH_KEY` — private SSH key for that deployment account;
+- `DEPLOY_KNOWN_HOSTS` — pinned trusted SSH host-key entry for the production server.
 
-`DEPLOY_ENABLED` must be a repository-level variable because it is evaluated in the job-level `if:` gate before the job is sent to a runner. Environment-level configuration variables are not suitable for this pre-run gate.
+Host-key checking remains strict. Do not set `StrictHostKeyChecking=no`.
 
-Secrets must not be committed to this repository, copied into documentation, or sent through application configuration.
+Configure these **repository-level Actions variables**:
 
-## Server prerequisites
+- `DEPLOY_ENABLED` — keep absent or `false` until server bootstrap and secrets are complete;
+- `DEPLOY_PORT` — optional SSH port, default `22`.
 
-The deployment account must be able to:
+`DEPLOY_ENABLED` must be repository-level because it is evaluated by the job-level `if:` gate before the job is sent to a runner. Environment-level configuration variables are not suitable for that pre-run gate.
 
-1. connect over SSH using the configured key;
-2. create directories below `/opt/investment/releases/tradingagent`;
-3. atomically replace `/opt/investment/releases/tradingagent/current`;
-4. create and remove its own temporary files under `/tmp`.
-
-It should not be `root`. Grant only the filesystem permissions required for the release root. The workflow does not require unrestricted `sudo`.
-
-Existing application secrets and state remain outside the release tree, including `/etc/tradingagent`, `/var/lib/tradingagent`, and `/var/log/tradingagent`.
-
-## Deployment gate
+## Production gate
 
 A production deployment runs only when all of the following are true:
 
 1. `TradingAgent Tests` completed successfully;
-2. the successful run was a `push` run;
+2. the successful run was triggered by a `push`;
 3. the tested branch was `main`;
 4. the repository variable `DEPLOY_ENABLED` is exactly `true`;
-5. the `production` Environment secrets are present;
-6. SSH host-key verification succeeds.
+5. the `production` Environment secrets are available;
+6. the tested release artifact for the exact workflow-run SHA exists;
+7. its SHA-256 checksum is valid;
+8. its `.source-sha` exactly equals the successful workflow-run head SHA;
+9. SSH host-key verification succeeds;
+10. the pre-installed root-owned release helper and fixed deployment spool exist on the server.
 
-The workflow checks out and archives `github.event.workflow_run.head_sha`, so the deployed tree is the exact commit that passed CI rather than whatever happens to be at `main` later.
+## Cutover and application health
+
+Before changing `current`, the privileged helper reads the real state of:
+
+```text
+tradingagent-front-api.service
+http://127.0.0.1:8787/healthz
+```
+
+Two preflight states are accepted:
+
+- `active`: the endpoint must already be healthy before cutover;
+- `inactive + disabled`: deployment may update `current`, but must not start the deliberately disabled frontend.
+
+Other ambiguous or failed service states abort the deployment before cutover.
+
+For an active frontend, deployment performs:
+
+1. prepare and validate the new root-owned immutable release;
+2. atomically switch `current`;
+3. restart **only** `tradingagent-front-api.service`;
+4. retry `127.0.0.1:8787/healthz` for a bounded period;
+5. verify the new service `MainPID` has its working directory inside the requested immutable release.
+
+There is no wildcard `systemctl restart tradingagent-*`.
+
+Timer/oneshot units that already resolve code through `current` use the new release on their next invocation; this deployment bootstrap does not broadly restart or enable them.
+
+## Automatic rollback
+
+The previous `current` target is captured before cutover.
+
+If any failure occurs after `current` has switched but before the new release is committed healthy, the same privileged deployment action:
+
+1. atomically restores `current` to the previous immutable release;
+2. if the frontend was active before deployment, restarts `tradingagent-front-api.service` against the previous release;
+3. performs a bounded health check of the restored frontend;
+4. exits non-zero so GitHub records deployment failure.
+
+Historical immutable release directories are not automatically deleted.
 
 ## Verification
 
-Each release records its Git SHA in:
-
-```text
-/opt/investment/releases/tradingagent/<sha>/.deployed-sha
-```
-
-After the atomic switch, the workflow reads:
+After the server helper returns success, GitHub Actions independently reads:
 
 ```text
 /opt/investment/releases/tradingagent/current/.deployed-sha
 ```
 
-and fails unless it exactly matches the tested commit SHA.
+and requires it to equal the successful CI workflow-run SHA.
 
-This is a release-integrity check, not an application-level health check. The repository already exposes the loopback-only read API health route at `http://127.0.0.1:8787/healthz`; wiring service restart plus this application-level health check is a separate follow-up because the current bootstrap intentionally grants no systemd restart permission.
-
-## Rollback
-
-Rollback is intentionally explicit. Select a previously deployed SHA and atomically repoint `current` to that release on the server, then perform any service-specific restart/reload required by the relevant runtime contract.
-
-Example shape (run by an authorized operator on the server):
-
-```bash
-previous_sha=<known-good-40-char-sha>
-release_root=/opt/investment/releases/tradingagent
-ln -s "$release_root/$previous_sha" "$release_root/.rollback-current"
-mv -Tf "$release_root/.rollback-current" "$release_root/current"
-```
-
-Do not delete historical release directories until a separate retention policy is approved.
+Repository tests also lock the main deployment trust boundaries: workflow trigger, artifact linkage, root-helper invocation, immutable modes, bounded health check and rollback behavior.
 
 ## Change control
 
-Changes under `.github/workflows/` or to deployment trust boundaries are infrastructure changes. They must not be self-approved by the coding agent that authored them. Deployment permissions, production secrets, systemd enablement, real-trading authority, and rollback policy remain separate concerns.
+Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are infrastructure bootstrap changes. The existing automerge workflow excludes `.github/workflows/` changes, so this initial deployment workflow cannot self-bootstrap through the ordinary agent automerge path.
+
+Future ordinary application PRs may continue through the normal CI/automerge path; production deployment remains separately gated by the exact successful `main` workflow run and `DEPLOY_ENABLED`.
