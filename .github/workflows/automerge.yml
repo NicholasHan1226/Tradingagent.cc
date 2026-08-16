@@ -36,6 +36,7 @@ jobs:
 
           PR_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           BASE_REF="$(jq -r '.base.ref' <<<"$PR_JSON")"
+          BASE_SHA="$(jq -r '.base.sha' <<<"$PR_JSON")"
           HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")"
           HEAD_SHA="$(jq -r '.head.sha' <<<"$PR_JSON")"
           AUTHOR="$(jq -r '.user.login' <<<"$PR_JSON")"
@@ -50,6 +51,16 @@ jobs:
           CHANGED_FILES="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
           if grep -Eq '^\.github/workflows/' <<<"$CHANGED_FILES"; then
             echo "Skip: workflow-governance changes require a separate trusted bootstrap merge."
+            exit 0
+          fi
+
+          CURRENT_MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$BASE_SHA" != "$CURRENT_MAIN_SHA" ]]; then
+            echo "Base advanced after this CI run; update the PR branch and let CI rerun."
+            gh api \
+              --method PUT \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/update-branch" \
+              -f expected_head_sha="$HEAD_SHA"
             exit 0
           fi
 
