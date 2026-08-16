@@ -155,6 +155,14 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   只有 v2 投影模块显式传入 10 币 universe 与
   `crypto-5m-ohlcv-factor-research-v2`。历史回填不具备 PIT 证明时只能用于
   工程/定义检查，不得进入晋级证据。
+- **Universe 版本化（10 → 40）。** 上述 10 币链是已落盘 append-only 历史，
+  只读封存、不回写；`OBSERVATION_SYMBOLS` 冻结为 10 币，不得原地扩。新 40 币
+  研究 universe 用 `OBSERVATION_SYMBOLS_V40` + 独立 `forty_symbol_*` 契约族 +
+  独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`（thin
+  runtime `forty_symbol_observation_runtime.py`，本轮不部署、不接 systemd/晋级）。
+  40 币因子投影用 feature set `crypto-5m-ohlcv-factor-research-v3`、consumer
+  profile `crypto-5m-ohlcv-13bar-forward-labels-v3`、投影命名空间
+  `evolution/forty_symbol_factor_research/`，不写旧 `evolution/ten_symbol_factor_research/`。
 - `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
   `ten_symbol_observation_runtime.py` 组成独立的 10 币 5 分钟 shadow 观测
   积累器，为后续横截面 factor research 提供前向积累的证据级数据源。它与

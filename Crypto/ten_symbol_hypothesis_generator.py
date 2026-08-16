@@ -894,6 +894,7 @@ def _build_proposal(
     meta: Mapping[str, Any],
     plane_states: Mapping[str, Mapping[str, Any]],
     candidates: Sequence[Mapping[str, Any]],
+    symbols: Sequence[str] = OBSERVATION_SYMBOLS,
 ) -> dict[str, Any]:
     proposal = {
         "contract": PROPOSAL_CONTRACT,
@@ -909,7 +910,7 @@ def _build_proposal(
         "generation_config_id": config["config_id"],
         "generation_config_sha256": config_sha256,
         "generation_config": dict(config),
-        "symbols": list(OBSERVATION_SYMBOLS),
+        "symbols": list(symbols),
         "source": {
             "store_event_count": len(events),
             "store_head_checksum": str(events[-1]["checksum"]),
@@ -957,6 +958,9 @@ def run_ten_symbol_hypothesis_generation_once(
     *,
     store_root: Path | str,
     data_plane_manifest: Path | str | None = None,
+    factor_config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
 ) -> dict[str, Any]:
     """Expand the frozen config and emit one immutable proposal artifact.
 
@@ -978,7 +982,7 @@ def run_ten_symbol_hypothesis_generation_once(
         manifest_sha256 = _sha256(manifest)
     root = Path(store_root)
     try:
-        store = projection._open_store(root)
+        store = projection._open_store(root, factor_config)
     except projection.CryptoTenSymbolFactorProjectionError as exc:
         raise CryptoTenSymbolHypothesisGeneratorError(
             "hypothesis_generator_root_incomplete"
@@ -994,7 +998,7 @@ def run_ten_symbol_hypothesis_generation_once(
     if not events:
         return _result(status="deferred_core_pending")
     try:
-        units = projection._build_units(store)
+        units = projection._build_units(store, config=factor_config)
     except projection.CryptoTenSymbolFactorProjectionError as exc:
         raise CryptoTenSymbolHypothesisGeneratorError(
             "hypothesis_generator_core_invalid"
@@ -1044,7 +1048,7 @@ def run_ten_symbol_hypothesis_generation_once(
                     "hypothesis_generator_source_rows_invalid"
                 ) from exc
             bars_sample_count = min(
-                int(meta[symbol]["row_count"]) for symbol in OBSERVATION_SYMBOLS
+                int(meta[symbol]["row_count"]) for symbol in factor_config.symbols
             )
             plane_states = _plane_states(
                 manifest, bars_sample_count=bars_sample_count
@@ -1077,6 +1081,7 @@ def run_ten_symbol_hypothesis_generation_once(
                 meta=meta,
                 plane_states=plane_states,
                 candidates=candidates,
+                symbols=factor_config.symbols,
             )
             proposal_path = (
                 evolution / "proposals" / f"{proposal['proposal_sha256']}.json"

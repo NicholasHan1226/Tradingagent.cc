@@ -587,6 +587,18 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 
 ## 十币种 Shadow 观测积累器（零权限、独立故障域）
 
+> **Universe 版本化（10 → 40）。** 本节描述的 10 币链是已落盘的 append-only
+> 历史，**只读封存，不再回写**。新 40 币研究 universe 由
+> `market_observation.OBSERVATION_SYMBOLS_V40` 冻结，使用独立
+> `forty_symbol_*` 契约族（profile/event/head/pending/data_gap/bars/spread/
+> spreads）与独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`
+> （本轮不部署，不接 systemd/晋级），thin runtime 见
+> `forty_symbol_observation_runtime.py`。40 币因子投影使用 feature set
+> `crypto-5m-ohlcv-factor-research-v3` + consumer profile
+> `crypto-5m-ohlcv-13bar-forward-labels-v3` + 投影命名空间
+> `evolution/forty_symbol_factor_research/`，不写旧
+> `evolution/ten_symbol_factor_research/`。
+
 `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
 `ten_symbol_observation_runtime.py` 组成一条独立、append-only、receipt 绑定的
 10 币 5 分钟观测积累链，为后续 factor research 扩到 10 币（横截面研究）提供

@@ -28,9 +28,17 @@ import urllib.error
 import urllib.parse
 
 from Crypto.market_observation import (
+    FORTY_SYMBOL_BARS_SIDECAR_CONTRACT,
+    FORTY_SYMBOL_SPREAD_CONTRACT,
+    FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+    TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
+    TEN_SYMBOL_SPREAD_CONTRACT,
+    TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     CryptoMarketObservation,
     CryptoMarketObservationError,
     CryptoObservationWindow,
+    OBSERVATION_SYMBOLS,
+    OBSERVATION_SYMBOLS_V40,
     _book_ticker_dataset_id,
     _collect_market_observation_rows_with_catalog,
     build_spread_event_block,
@@ -40,16 +48,20 @@ from Crypto.market_observation import (
     observation_from_ten_symbol_bars_sidecar,
     unavailable_spread_event_block,
     validate_ten_symbol_spreads_sidecar,
-    OBSERVATION_SYMBOLS,
 )
 from Crypto.ten_symbol_observation_profile import (
+    FORTY_SYMBOL_PROFILE_CONTRACT,
+    TEN_SYMBOL_PROFILE_CONTRACT,
     CryptoTenSymbolObservationProfile,
     CryptoTenSymbolProfileError,
     load_ten_symbol_observation_profile_payload,
 )
 from Crypto.ten_symbol_observation_store import (
+    FORTY_SYMBOL_CONTRACTS,
+    TEN_SYMBOL_CONTRACTS,
     TEN_SYMBOL_DATA_GAP_CONTRACT,
     TEN_SYMBOL_EVENT_CONTRACT,
+    CryptoTenSymbolObservationContracts,
     CryptoTenSymbolObservationStore,
     CryptoTenSymbolObservationStoreError,
 )
@@ -126,6 +138,64 @@ _MANIFEST_KEYS = frozenset(
         "safety",
     }
 )
+
+
+@dataclass(frozen=True)
+class CryptoTenSymbolObservationRuntimeConfig:
+    """Versioned runtime family: universe, contracts, root, and query budget."""
+
+    runtime_contract: str
+    manifest_contract: str
+    output_root: Path
+    symbols: tuple[str, ...]
+    profile_contract: str
+    store_contracts: CryptoTenSymbolObservationContracts
+    bars_sidecar_contract: str
+    spread_contract: str
+    spreads_sidecar_contract: str
+    requests_per_cycle: int
+
+
+TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
+    runtime_contract=CRYPTO_TEN_SYMBOL_RUNTIME_CONTRACT,
+    manifest_contract=RUNTIME_MANIFEST_CONTRACT,
+    output_root=RUNTIME_OUTPUT_ROOT,
+    symbols=OBSERVATION_SYMBOLS,
+    profile_contract=TEN_SYMBOL_PROFILE_CONTRACT,
+    store_contracts=TEN_SYMBOL_CONTRACTS,
+    bars_sidecar_contract=TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
+    spread_contract=TEN_SYMBOL_SPREAD_CONTRACT,
+    spreads_sidecar_contract=TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+    requests_per_cycle=REQUESTS_PER_CYCLE,
+)
+FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
+    runtime_contract="tradingagent.crypto.forty_symbol_observation_runtime.v1",
+    manifest_contract="tradingagent.crypto.forty_symbol_observation_runtime_manifest.v1",
+    output_root=Path("/var/lib/tradingagent/crypto-40-symbol-observation"),
+    symbols=OBSERVATION_SYMBOLS_V40,
+    profile_contract=FORTY_SYMBOL_PROFILE_CONTRACT,
+    store_contracts=FORTY_SYMBOL_CONTRACTS,
+    bars_sidecar_contract=FORTY_SYMBOL_BARS_SIDECAR_CONTRACT,
+    spread_contract=FORTY_SYMBOL_SPREAD_CONTRACT,
+    spreads_sidecar_contract=FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+    requests_per_cycle=2 + 2 * len(OBSERVATION_SYMBOLS_V40),
+)
+
+
+def _resolved_output_root(
+    config: CryptoTenSymbolObservationRuntimeConfig,
+) -> Path:
+    """Resolve the pinned runtime root for one family.
+
+    The ten-symbol root stays a module-level constant so the existing
+    isolated test harness can monkeypatch ``RUNTIME_OUTPUT_ROOT`` per test;
+    the forty-symbol root is deliberately frozen in its own config and never
+    aliases the ten-symbol production root.
+    """
+
+    if config is TEN_SYMBOL_RUNTIME_CONFIG:
+        return RUNTIME_OUTPUT_ROOT
+    return config.output_root
 
 
 class CryptoTenSymbolObservationRuntimeError(RuntimeError):
@@ -379,10 +449,12 @@ class CryptoTenSymbolObservationRuntimeManifest:
 
 def load_crypto_ten_symbol_observation_runtime_manifest(
     path: Path | str,
+    *,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> CryptoTenSymbolObservationRuntimeManifest:
     raw = _read_external_manifest(path)
     _exact_keys(raw, _MANIFEST_KEYS, "runtime_manifest_keys_invalid")
-    if raw.get("schema") != RUNTIME_MANIFEST_CONTRACT:
+    if raw.get("schema") != config.manifest_contract:
         raise CryptoTenSymbolObservationRuntimeError("runtime_manifest_schema_invalid")
     safety = _mapping(
         raw.get("safety"),
@@ -394,7 +466,9 @@ def load_crypto_ten_symbol_observation_runtime_manifest(
         )
     try:
         profile = load_ten_symbol_observation_profile_payload(
-            _mapping(raw.get("profile"), "runtime_profile_invalid")
+            _mapping(raw.get("profile"), "runtime_profile_invalid"),
+            symbols=config.symbols,
+            profile_contract=config.profile_contract,
         )
     except CryptoTenSymbolProfileError as exc:
         raise CryptoTenSymbolObservationRuntimeError(
@@ -434,7 +508,7 @@ def load_crypto_ten_symbol_observation_runtime_manifest(
     if not isinstance(output_root_text, str) or not output_root_text:
         raise CryptoTenSymbolObservationRuntimeError("runtime_output_root_invalid")
     output_root = Path(output_root_text)
-    if not output_root.is_absolute() or output_root != RUNTIME_OUTPUT_ROOT:
+    if not output_root.is_absolute() or output_root != _resolved_output_root(config):
         raise CryptoTenSymbolObservationRuntimeError("runtime_output_root_invalid")
     return CryptoTenSymbolObservationRuntimeManifest(
         base_url=_loopback_base_url(raw.get("base_url")),
@@ -563,8 +637,10 @@ def _is_retryable_transport_error(exc: BaseException) -> bool:
     return saw_transport
 
 
-def _spread_dataset_ids() -> frozenset[str]:
-    return frozenset(_book_ticker_dataset_id(symbol) for symbol in OBSERVATION_SYMBOLS)
+def _spread_dataset_ids(
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+) -> frozenset[str]:
+    return frozenset(_book_ticker_dataset_id(symbol) for symbol in config.symbols)
 
 
 def _spread_failure_reason(exc: BaseException) -> str:
@@ -605,12 +681,14 @@ class _LazyObservationPort:
         manifest: CryptoTenSymbolObservationRuntimeManifest,
         token_file: Path,
         transport_factory: Callable[..., HTTPTransport],
+        config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
         timeout_seconds: float = RUNTIME_TIMEOUT_SECONDS,
         retry_sleep: Callable[[float], None] = time.sleep,
         budget_check: Callable[[], float] | None = None,
     ) -> None:
         self._manifest = manifest
         self._token_file = token_file
+        self._config = config
         self._transport_factory = transport_factory
         self._timeout_seconds = timeout_seconds
         self._retry_sleep = retry_sleep
@@ -683,7 +761,7 @@ class _LazyObservationPort:
                 SharedSignalsV1Config(
                     base_url=self._manifest.base_url,
                     expected_catalog_version=(self._manifest.catalog_version),
-                    dataset_ids=_spread_dataset_ids(),
+                    dataset_ids=_spread_dataset_ids(self._config),
                     access_policy_id=self._manifest.access_policy_id,
                     catalog_version_policy="evidence_only",
                     timeout_seconds=self._timeout_seconds,
@@ -698,12 +776,15 @@ class _LazyObservationPort:
                 catalog=catalog,
                 expected_catalog_version=catalog.catalog_version,
                 window=window,
+                symbols=self._config.symbols,
             )
             sidecar = build_ten_symbol_spreads_sidecar(
                 window=window,
                 profile_sha256=self._manifest.profile.profile_sha256,
                 catalog_version=catalog.catalog_version,
                 entries=entries,
+                symbols=self._config.symbols,
+                spreads_sidecar_contract=self._config.spreads_sidecar_contract,
             )
             return {"sidecar": sidecar, "unavailable_reason": None}
         except _InvocationBudgetExhausted:
@@ -748,6 +829,7 @@ class _LazyObservationPort:
                     catalog=catalog,
                     expected_catalog_version=catalog.catalog_version,
                     window=window,
+                    symbols=self._config.symbols,
                 )
             )
             spread = self._collect_spread(transport=transport, window=window)
@@ -770,6 +852,7 @@ def _require_exact_service_paths(
     *,
     token_file: Path | str,
     output_root: Path | str,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> tuple[Path, Path]:
     token = Path(token_file)
     root = Path(output_root)
@@ -781,7 +864,7 @@ def _require_exact_service_paths(
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_service_paths_must_be_absolute"
         )
-    if root != RUNTIME_OUTPUT_ROOT:
+    if root != _resolved_output_root(config):
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_output_root_invalid"
         )
@@ -794,6 +877,7 @@ def _observation_event(
     window: CryptoObservationWindow,
     observation: CryptoMarketObservation,
     spread_block: Mapping[str, Any],
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     id_material = {
         "event_type": "observation",
@@ -802,7 +886,7 @@ def _observation_event(
         "profile_sha256": manifest.profile.profile_sha256,
     }
     return {
-        "contract": TEN_SYMBOL_EVENT_CONTRACT,
+        "contract": config.store_contracts.event,
         "event_id": f"crypto-ten-observation-{_sha256(id_material)[:24]}",
         "event_type": "observation",
         "market": "crypto",
@@ -825,6 +909,7 @@ def _data_reject_event(
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     window: CryptoObservationWindow,
     reason_code: str,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     id_material = {
         "event_type": "data_reject",
@@ -835,7 +920,7 @@ def _data_reject_event(
         "catalog_version": manifest.catalog_version,
     }
     return {
-        "contract": TEN_SYMBOL_EVENT_CONTRACT,
+        "contract": config.store_contracts.event,
         "event_id": f"crypto-ten-data-reject-{_sha256(id_material)[:24]}",
         "event_type": "data_reject",
         "market": "crypto",
@@ -861,6 +946,7 @@ def _data_gap_event(
     reason_code: str,
     observation: CryptoMarketObservation,
     spread_block: Mapping[str, Any],
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     recovery = current_window.window_end
     skipped_from = prior_market_slot + timedelta(minutes=5)
@@ -871,7 +957,7 @@ def _data_gap_event(
         )
     observation_sha = observation.observation_sha256
     id_material = {
-        "gap_contract": OUTAGE_GAP_CONTRACT,
+        "gap_contract": config.store_contracts.data_gap,
         "prior_market_slot": _iso_utc(prior_market_slot),
         "skipped_from": _iso_utc(skipped_from),
         "skipped_to": _iso_utc(skipped_to),
@@ -880,8 +966,8 @@ def _data_gap_event(
         "recovery_observation_sha256": observation_sha,
     }
     return {
-        "contract": TEN_SYMBOL_EVENT_CONTRACT,
-        "gap_contract": OUTAGE_GAP_CONTRACT,
+        "contract": config.store_contracts.event,
+        "gap_contract": config.store_contracts.data_gap,
         "event_id": f"crypto-ten-data-gap-{_sha256(id_material)[:24]}",
         "event_type": "data_gap",
         "market": "crypto",
@@ -914,12 +1000,14 @@ def _append_reject(
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     window: CryptoObservationWindow,
     reason_code: str,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     stored = store.append_event(
         _data_reject_event(
             manifest=manifest,
             window=window,
             reason_code=reason_code,
+            config=config,
         )
     )
     return {
@@ -938,6 +1026,7 @@ def _persisted_spread_block(
     store: CryptoTenSymbolObservationStore,
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     window: CryptoObservationWindow,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     """Rebuild one slot's spread block from its persisted spreads sidecar.
 
@@ -951,9 +1040,16 @@ def _persisted_spread_block(
 
     sidecar = store.read_spreads_sidecar(_iso_utc(window.window_end))
     if sidecar is None:
-        return unavailable_spread_event_block("crypto_spread_sidecar_missing")
+        return unavailable_spread_event_block(
+            "crypto_spread_sidecar_missing",
+            spread_contract=config.spread_contract,
+        )
     try:
-        entries = validate_ten_symbol_spreads_sidecar(sidecar)
+        entries = validate_ten_symbol_spreads_sidecar(
+            sidecar,
+            symbols=config.symbols,
+            spreads_sidecar_contract=config.spreads_sidecar_contract,
+        )
     except CryptoMarketObservationError as exc:
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_spreads_sidecar_invalid"
@@ -970,6 +1066,7 @@ def _persisted_spread_block(
         entries=entries,
         catalog_version=str(sidecar["catalog_version"]),
         spread_sha256=str(sidecar["spread_sha256"]),
+        spread_contract=config.spread_contract,
     )
 
 
@@ -977,17 +1074,22 @@ def _fresh_spread_block(
     *,
     store: CryptoTenSymbolObservationStore,
     spread: Mapping[str, Any],
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     """Persist the fresh spread leg's sidecar and derive its event block."""
 
     sidecar = spread.get("sidecar")
     if sidecar is None:
-        return unavailable_spread_event_block(str(spread["unavailable_reason"]))
+        return unavailable_spread_event_block(
+            str(spread["unavailable_reason"]),
+            spread_contract=config.spread_contract,
+        )
     stored = store.write_spreads_sidecar(sidecar)
     return build_spread_event_block(
         entries=stored["entries"],
         catalog_version=str(stored["catalog_version"]),
         spread_sha256=str(stored["spread_sha256"]),
+        spread_contract=config.spread_contract,
     )
 
 
@@ -997,6 +1099,7 @@ def _observation_for_slot(
     lazy: _LazyObservationPort,
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     window: CryptoObservationWindow,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> tuple[CryptoMarketObservation, dict[str, Any]]:
     """Return one slot's verified observation plus its spread status block.
 
@@ -1016,7 +1119,11 @@ def _observation_for_slot(
         # drift fails closed loudly and is never misrecorded as an upstream
         # data rejection.
         try:
-            observation, _ = observation_from_ten_symbol_bars_sidecar(sidecar)
+            observation, _ = observation_from_ten_symbol_bars_sidecar(
+                sidecar,
+                symbols=config.symbols,
+                bars_sidecar_contract=config.bars_sidecar_contract,
+            )
         except CryptoMarketObservationError as exc:
             raise CryptoTenSymbolObservationRuntimeError(
                 "runtime_bars_sidecar_invalid"
@@ -1033,6 +1140,7 @@ def _observation_for_slot(
             store=store,
             manifest=manifest,
             window=window,
+            config=config,
         )
     observation, rows_by_symbol, spread = lazy.collect(window)
     store.write_bars_sidecar(
@@ -1041,9 +1149,10 @@ def _observation_for_slot(
             profile_sha256=manifest.profile.profile_sha256,
             observation=observation,
             rows_by_symbol=rows_by_symbol,
+            bars_sidecar_contract=config.bars_sidecar_contract,
         )
     )
-    return observation, _fresh_spread_block(store=store, spread=spread)
+    return observation, _fresh_spread_block(store=store, spread=spread, config=config)
 
 
 def _fresh_cycle(
@@ -1052,6 +1161,7 @@ def _fresh_cycle(
     lazy: _LazyObservationPort,
     manifest: CryptoTenSymbolObservationRuntimeManifest,
     target_window_end: datetime,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     """Query one slot and record exactly one terminal or reject event."""
 
@@ -1070,6 +1180,7 @@ def _fresh_cycle(
             lazy=lazy,
             manifest=manifest,
             window=window,
+            config=config,
         )
     except CryptoMarketObservationError as exc:
         result = _append_reject(
@@ -1077,6 +1188,7 @@ def _fresh_cycle(
             manifest=manifest,
             window=window,
             reason_code=str(exc),
+            config=config,
         )
         store.clear_pending(_iso_utc(window.window_end))
         return result
@@ -1086,6 +1198,7 @@ def _fresh_cycle(
             window=window,
             observation=observation,
             spread_block=spread_block,
+            config=config,
         )
     )
     store.clear_pending(_iso_utc(window.window_end))
@@ -1113,6 +1226,7 @@ def _attempt_outage_gap_recovery(
     rejected_window: CryptoObservationWindow,
     current_window: CryptoObservationWindow,
     reason_code: str,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     """Append one checksum-bound data_gap after the current window passes."""
 
@@ -1129,6 +1243,7 @@ def _attempt_outage_gap_recovery(
             lazy=lazy,
             manifest=manifest,
             window=current_window,
+            config=config,
         )
     except CryptoMarketObservationError as exc:
         return _append_reject(
@@ -1136,6 +1251,7 @@ def _attempt_outage_gap_recovery(
             manifest=manifest,
             window=current_window,
             reason_code=str(exc),
+            config=config,
         )
     stored = store.append_event(
         _data_gap_event(
@@ -1146,6 +1262,7 @@ def _attempt_outage_gap_recovery(
             reason_code=reason_code,
             observation=observation,
             spread_block=spread_block,
+            config=config,
         )
     )
     return {
@@ -1172,6 +1289,7 @@ def run_crypto_ten_symbol_observation_once(
     transport_factory: Callable[..., HTTPTransport] = (build_runtime_transport),
     invocation_budget_seconds: float | None = None,
     retry_sleep: Callable[[float], None] = time.sleep,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     """Recover pending work, then process missing windows in slot order."""
 
@@ -1196,18 +1314,23 @@ def run_crypto_ten_symbol_observation_once(
     token, root = _require_exact_service_paths(
         token_file=token_file,
         output_root=output_root,
+        config=config,
     )
-    manifest = load_crypto_ten_symbol_observation_runtime_manifest(runtime_manifest)
+    manifest = load_crypto_ten_symbol_observation_runtime_manifest(
+        runtime_manifest,
+        config=config,
+    )
     if root != manifest.output_root:
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_output_root_invalid"
         )
     current_window = crypto_ten_symbol_observation_window(now)
-    store = CryptoTenSymbolObservationStore(root)
+    store = CryptoTenSymbolObservationStore(root, contracts=config.store_contracts)
     lazy = _LazyObservationPort(
         manifest=manifest,
         token_file=token,
         transport_factory=bounded_transport_factory,
+        config=config,
         retry_sleep=retry_sleep,
         budget_check=lambda: _remaining_invocation_seconds(
             invocation_started_at, float(budget_seconds)
@@ -1294,6 +1417,7 @@ def run_crypto_ten_symbol_observation_once(
                             lazy=lazy,
                             manifest=manifest,
                             target_window_end=pending_slot,
+                            config=config,
                         )
                     except _InvocationBudgetExhausted:
                         budget_deferred = True
@@ -1335,6 +1459,7 @@ def run_crypto_ten_symbol_observation_once(
                         lazy=lazy,
                         manifest=manifest,
                         target_window_end=target_window_end,
+                        config=config,
                     )
                 except _InvocationBudgetExhausted:
                     budget_deferred = True
@@ -1365,6 +1490,7 @@ def run_crypto_ten_symbol_observation_once(
                             rejected_window=target_window,
                             current_window=current_window,
                             reason_code=str(result["reason_code"]),
+                            config=config,
                         )
                     except _InvocationBudgetExhausted:
                         budget_deferred = True
@@ -1560,8 +1686,11 @@ if __name__ == "__main__":
 __all__ = [
     "COLLECT_RETRY_DELAY_SECONDS",
     "CRYPTO_TEN_SYMBOL_RUNTIME_CONTRACT",
+    "CryptoTenSymbolObservationRuntimeConfig",
     "CryptoTenSymbolObservationRuntimeError",
     "CryptoTenSymbolObservationRuntimeManifest",
+    "FORTY_SYMBOL_RUNTIME_CONFIG",
+    "TEN_SYMBOL_RUNTIME_CONFIG",
     "HISTORICAL_GAP_RECOVERY_REASONS",
     "HISTORICAL_WINDOW_UNRECOVERABLE_REASON",
     "INVOCATION_BUDGET_SECONDS",

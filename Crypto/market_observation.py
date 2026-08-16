@@ -7,7 +7,7 @@ but has no capital, order, model, ledger, timer, or promotion authority.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -53,6 +53,54 @@ OBSERVATION_SYMBOLS = (
     "SOLUSDT",
     "TRXUSDT",
     "XRPUSDT",
+)
+
+# Frozen 40-symbol research universe.  This is a *new* versioned universe, not
+# an in-place widening of ``OBSERVATION_SYMBOLS``: the ten-symbol append-only
+# store and the v2 factor projection both require ``len(sources) ==
+# len(OBSERVATION_SYMBOLS)`` and order equality, so the ten-symbol chain stays
+# read-only and the forty-symbol chain gets its own family below.
+OBSERVATION_SYMBOLS_V40 = (
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "BNBUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "TRXUSDT",
+    "LINKUSDT",
+    "AVAXUSDT",
+    "BCHUSDT",
+    "LTCUSDT",
+    "DOTUSDT",
+    "NEARUSDT",
+    "SUIUSDT",
+    "APTUSDT",
+    "UNIUSDT",
+    "ATOMUSDT",
+    "XLMUSDT",
+    "HBARUSDT",
+    "ETCUSDT",
+    "FILUSDT",
+    "INJUSDT",
+    "ARBUSDT",
+    "OPUSDT",
+    "AAVEUSDT",
+    "GRTUSDT",
+    "TIAUSDT",
+    "SEIUSDT",
+    "ONDOUSDT",
+    "LDOUSDT",
+    "CRVUSDT",
+    "ENAUSDT",
+    "WLDUSDT",
+    "STRKUSDT",
+    "JUPUSDT",
+    "PYTHUSDT",
+    "FETUSDT",
+    "RENDERUSDT",
+    "POLUSDT",
 )
 
 
@@ -263,6 +311,11 @@ class CryptoMarketObservation:
     execution_eligible: bool = False
     capital_write_eligible: bool = False
     model_authority: bool = False
+    symbols: tuple[str, ...] = field(
+        default=OBSERVATION_SYMBOLS,
+        compare=False,
+        hash=False,
+    )
 
     def __post_init__(self) -> None:
         if self.authority != "none" or any(
@@ -274,7 +327,7 @@ class CryptoMarketObservation:
             )
         ):
             raise CryptoMarketObservationError("crypto_observation_authority_invalid")
-        if tuple(source.symbol for source in self.sources) != OBSERVATION_SYMBOLS:
+        if tuple(source.symbol for source in self.sources) != self.symbols:
             raise CryptoMarketObservationError("crypto_observation_sources_incomplete")
         expected_market_data = _canonical_sha256(self.to_market_data_payload())
         if self.market_data_sha256 != expected_market_data:
@@ -414,6 +467,7 @@ def _collect_market_observation_rows_with_catalog(
     catalog: CatalogEnvelope,
     expected_catalog_version: str,
     window: CryptoObservationWindow,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
 ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
     """Collect the cohort and also return the validated raw bar rows.
 
@@ -430,7 +484,7 @@ def _collect_market_observation_rows_with_catalog(
         raise CryptoMarketObservationError("crypto_observation_catalog_version_drift")
     sources: list[CryptoObservationSource] = []
     rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
-    for symbol in OBSERVATION_SYMBOLS:
+    for symbol in symbols:
         dataset_id = _bar_dataset_id(symbol)
         _verify_catalog(catalog, dataset_id)
         run = collect_query_pages(
@@ -488,6 +542,7 @@ def _collect_market_observation_rows_with_catalog(
         sources=sources_tuple,
         market_data_sha256=market_data_sha256,
         observation_sha256=_canonical_sha256(payload),
+        symbols=symbols,
     ), rows_by_symbol
 
 
@@ -497,6 +552,7 @@ def _collect_market_observation_with_catalog(
     catalog: CatalogEnvelope,
     expected_catalog_version: str,
     window: CryptoObservationWindow,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
 ) -> CryptoMarketObservation:
     """Collect the cohort against an already-observed catalog envelope.
 
@@ -511,11 +567,13 @@ def _collect_market_observation_with_catalog(
         catalog=catalog,
         expected_catalog_version=expected_catalog_version,
         window=window,
+        symbols=symbols,
     )
     return observation
 
 
 TEN_SYMBOL_BARS_SIDECAR_CONTRACT = "tradingagent.crypto.ten_symbol_observation_bars.v1"
+FORTY_SYMBOL_BARS_SIDECAR_CONTRACT = "tradingagent.crypto.forty_symbol_observation_bars.v1"
 
 
 def _wire_rows_sha256(value: object) -> str:
@@ -591,6 +649,7 @@ def build_ten_symbol_bars_sidecar(
     profile_sha256: str,
     observation: CryptoMarketObservation,
     rows_by_symbol: Mapping[str, Any],
+    bars_sidecar_contract: str = TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
 ) -> dict[str, Any]:
     """Assemble the immutable per-slot bars sidecar payload.
 
@@ -619,7 +678,7 @@ def build_ten_symbol_bars_sidecar(
         _verify_sidecar_rows(source, rows)
         sources.append({**source.to_payload(), "rows": rows})
     return {
-        "contract": TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
+        "contract": bars_sidecar_contract,
         "window_end": _iso(window.window_end),
         "observation_cutoff": _iso(window.observation_cutoff),
         "catalog_version": observation.catalog_version,
@@ -636,6 +695,9 @@ def build_ten_symbol_bars_sidecar(
 
 def observation_from_ten_symbol_bars_sidecar(
     payload: Mapping[str, Any],
+    *,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    bars_sidecar_contract: str = TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
 ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
     """Re-derive and verify one slot observation from its bars sidecar.
 
@@ -661,7 +723,7 @@ def observation_from_ten_symbol_bars_sidecar(
         "execution_eligible",
         "capital_write_eligible",
         "model_authority",
-    } or payload.get("contract") != TEN_SYMBOL_BARS_SIDECAR_CONTRACT:
+    } or payload.get("contract") != bars_sidecar_contract:
         raise CryptoMarketObservationError(reason)
     if (
         payload.get("authority") != "none"
@@ -687,9 +749,7 @@ def observation_from_ten_symbol_bars_sidecar(
     ):
         raise CryptoMarketObservationError(reason)
     raw_sources = payload.get("sources")
-    if not isinstance(raw_sources, list) or len(raw_sources) != len(
-        OBSERVATION_SYMBOLS
-    ):
+    if not isinstance(raw_sources, list) or len(raw_sources) != len(symbols):
         raise CryptoMarketObservationError(reason)
     expected_keys = {
         "symbol",
@@ -708,7 +768,7 @@ def observation_from_ten_symbol_bars_sidecar(
     sources: list[CryptoObservationSource] = []
     rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
     for index, raw in enumerate(raw_sources):
-        symbol = OBSERVATION_SYMBOLS[index]
+        symbol = symbols[index]
         if not isinstance(raw, Mapping) or set(raw) != expected_keys:
             raise CryptoMarketObservationError(reason)
         if raw.get("symbol") != symbol or raw.get("dataset_id") != _bar_dataset_id(
@@ -738,6 +798,7 @@ def observation_from_ten_symbol_bars_sidecar(
         sources=tuple(sources),
         market_data_sha256=payload.get("market_data_sha256"),
         observation_sha256=payload.get("observation_sha256"),
+        symbols=symbols,
     )
     return observation, rows_by_symbol
 
@@ -760,6 +821,10 @@ BOOK_TICKER_ROW_COUNT = 1
 TEN_SYMBOL_SPREAD_CONTRACT = "tradingagent.crypto.ten_symbol_observation_spread.v1"
 TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT = (
     "tradingagent.crypto.ten_symbol_observation_spreads.v1"
+)
+FORTY_SYMBOL_SPREAD_CONTRACT = "tradingagent.crypto.forty_symbol_observation_spread.v1"
+FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT = (
+    "tradingagent.crypto.forty_symbol_observation_spreads.v1"
 )
 
 
@@ -976,8 +1041,9 @@ def collect_book_ticker_spread_entries(
     catalog: CatalogEnvelope,
     expected_catalog_version: str,
     window: CryptoObservationWindow,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
 ) -> list[dict[str, Any]]:
-    """Sample all ten book tickers against one observed catalog envelope.
+    """Sample all book tickers for one universe against one observed catalog.
 
     Every per-symbol failure is captured as a rejected entry so one symbol's
     drift, staleness or transport fault never withholds the other snapshots.
@@ -992,13 +1058,17 @@ def collect_book_ticker_spread_entries(
         raise CryptoMarketObservationError("crypto_spread_catalog_version_drift")
     return [
         _collect_book_ticker_entry(client, catalog=catalog, symbol=symbol, window=window)
-        for symbol in OBSERVATION_SYMBOLS
+        for symbol in symbols
     ]
 
 
-def _validate_spread_entries(value: object) -> list[dict[str, Any]]:
+def _validate_spread_entries(
+    value: object,
+    *,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+) -> list[dict[str, Any]]:
     reason = "crypto_observation_spreads_sidecar_invalid"
-    if not isinstance(value, list) or len(value) != len(OBSERVATION_SYMBOLS):
+    if not isinstance(value, list) or len(value) != len(symbols):
         raise CryptoMarketObservationError(reason)
     sampled_keys = {
         "symbol",
@@ -1022,7 +1092,7 @@ def _validate_spread_entries(value: object) -> list[dict[str, Any]]:
     }
     entries: list[dict[str, Any]] = []
     for index, item in enumerate(value):
-        symbol = OBSERVATION_SYMBOLS[index]
+        symbol = symbols[index]
         if not isinstance(item, Mapping):
             raise CryptoMarketObservationError(reason)
         entry = dict(item)
@@ -1079,6 +1149,7 @@ def build_spread_event_block(
     entries: list[dict[str, Any]],
     catalog_version: str | None,
     spread_sha256: str | None,
+    spread_contract: str = TEN_SYMBOL_SPREAD_CONTRACT,
 ) -> dict[str, Any]:
     """Derive the event-facing spread status block from validated entries."""
 
@@ -1095,7 +1166,7 @@ def build_spread_event_block(
     else:
         status = "unavailable"
     return {
-        "contract": TEN_SYMBOL_SPREAD_CONTRACT,
+        "contract": spread_contract,
         "status": status,
         "reason_code": None,
         "sampled_symbol_count": len(sampled),
@@ -1106,13 +1177,17 @@ def build_spread_event_block(
     }
 
 
-def unavailable_spread_event_block(reason_code: str) -> dict[str, Any]:
+def unavailable_spread_event_block(
+    reason_code: str,
+    *,
+    spread_contract: str = TEN_SYMBOL_SPREAD_CONTRACT,
+) -> dict[str, Any]:
     """The leg-wide degradation block when no per-symbol evidence exists."""
 
     if not isinstance(reason_code, str) or not reason_code:
         raise CryptoMarketObservationError("crypto_spread_reason_invalid")
     return {
-        "contract": TEN_SYMBOL_SPREAD_CONTRACT,
+        "contract": spread_contract,
         "status": "unavailable",
         "reason_code": reason_code,
         "sampled_symbol_count": 0,
@@ -1129,6 +1204,8 @@ def build_ten_symbol_spreads_sidecar(
     profile_sha256: str,
     catalog_version: str,
     entries: list[dict[str, Any]],
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    spreads_sidecar_contract: str = TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 ) -> dict[str, Any]:
     """Assemble the immutable per-slot spreads sidecar payload.
 
@@ -1145,9 +1222,9 @@ def build_ten_symbol_spreads_sidecar(
         raise CryptoMarketObservationError("crypto_observation_spreads_sidecar_invalid")
     if not isinstance(catalog_version, str) or not catalog_version:
         raise CryptoMarketObservationError("crypto_observation_spreads_sidecar_invalid")
-    normalized = _validate_spread_entries(entries)
+    normalized = _validate_spread_entries(entries, symbols=symbols)
     return {
-        "contract": TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+        "contract": spreads_sidecar_contract,
         "window_end": _iso(window.window_end),
         "observation_cutoff": _iso(window.observation_cutoff),
         "catalog_version": catalog_version,
@@ -1163,6 +1240,9 @@ def build_ten_symbol_spreads_sidecar(
 
 def validate_ten_symbol_spreads_sidecar(
     payload: Mapping[str, Any],
+    *,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    spreads_sidecar_contract: str = TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 ) -> list[dict[str, Any]]:
     """Re-derive and verify one slot's spreads sidecar, returning its entries.
 
@@ -1187,7 +1267,7 @@ def validate_ten_symbol_spreads_sidecar(
         "execution_eligible",
         "capital_write_eligible",
         "model_authority",
-    } or payload.get("contract") != TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT:
+    } or payload.get("contract") != spreads_sidecar_contract:
         raise CryptoMarketObservationError(reason)
     if (
         payload.get("authority") != "none"
@@ -1205,7 +1285,7 @@ def validate_ten_symbol_spreads_sidecar(
     catalog_version = payload.get("catalog_version")
     if not isinstance(catalog_version, str) or not catalog_version:
         raise CryptoMarketObservationError(reason)
-    entries = _validate_spread_entries(payload.get("entries"))
+    entries = _validate_spread_entries(payload.get("entries"), symbols=symbols)
     for entry in entries:
         if entry["status"] != "sampled":
             continue
@@ -1222,8 +1302,9 @@ def collect_market_observation(
     *,
     expected_catalog_version: str,
     window: CryptoObservationWindow,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
 ) -> CryptoMarketObservation:
-    """Return a zero-authority ten-symbol read-only observation.
+    """Return a zero-authority read-only observation for one universe.
 
     The function intentionally does not replay, persist, schedule, or invoke
     any capital/model path. A caller may compare repeated reports separately.
@@ -1237,6 +1318,7 @@ def collect_market_observation(
         catalog=catalog,
         expected_catalog_version=expected_catalog_version,
         window=window,
+        symbols=symbols,
     )
 
 
@@ -1245,8 +1327,12 @@ __all__ = [
     "BAR_FIELDS",
     "BOOK_TICKER_FIELDS",
     "BOOK_TICKER_ROW_COUNT",
+    "FORTY_SYMBOL_BARS_SIDECAR_CONTRACT",
+    "FORTY_SYMBOL_SPREAD_CONTRACT",
+    "FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT",
     "OBSERVATION_CONTRACT",
     "OBSERVATION_SYMBOLS",
+    "OBSERVATION_SYMBOLS_V40",
     "TEN_SYMBOL_BARS_SIDECAR_CONTRACT",
     "TEN_SYMBOL_SPREAD_CONTRACT",
     "TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT",

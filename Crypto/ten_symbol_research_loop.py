@@ -255,9 +255,14 @@ def _validated_current(evolution: Path) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def _open_store(root: Path):
+def _open_store(
+    root: Path,
+    config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
+):
     try:
-        return projection._open_store(root)
+        return projection._open_store(root, config)
     except projection.CryptoTenSymbolFactorProjectionError as exc:
         raise CryptoTenSymbolResearchLoopError(
             "research_loop_root_incomplete"
@@ -280,6 +285,9 @@ def _terminal_unit_material(units: Sequence[Mapping[str, Any]]) -> list[dict[str
 
 def _merge_eligible_bars(
     eligible: Sequence[Mapping[str, Any]],
+    config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     """Merge eligible sidecar windows into one validated history per symbol.
 
@@ -291,13 +299,13 @@ def _merge_eligible_bars(
     """
 
     raw: dict[str, dict[datetime, dict[str, Any]]] = {
-        symbol: {} for symbol in _SYMBOLS
+        symbol: {} for symbol in config.symbols
     }
     for unit in eligible:
         rows_by_symbol = unit["rows_by_symbol"]
         if not isinstance(rows_by_symbol, dict):
             raise CryptoTenSymbolResearchLoopError("research_loop_unit_invalid")
-        for symbol in _SYMBOLS:
+        for symbol in config.symbols:
             rows = rows_by_symbol.get(symbol)
             if not isinstance(rows, list):
                 raise CryptoTenSymbolResearchLoopError("research_loop_unit_invalid")
@@ -323,7 +331,7 @@ def _merge_eligible_bars(
                 bucket[open_time] = dict(row)
     rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
     meta: dict[str, Any] = {}
-    for symbol in _SYMBOLS:
+    for symbol in config.symbols:
         ordered = [raw[symbol][open_time] for open_time in sorted(raw[symbol])]
         try:
             validated, gaps = prescreen._validate_history_rows(ordered, symbol=symbol)
@@ -621,6 +629,7 @@ def _build_report(
     meta: Mapping[str, Any],
     summary: Mapping[str, Any],
     diff: Mapping[str, Any],
+    symbols: Sequence[str] = OBSERVATION_SYMBOLS,
 ) -> dict[str, Any]:
     report = {
         "contract": REVIEW_REPORT_CONTRACT,
@@ -634,7 +643,7 @@ def _build_report(
             "execution": "not_connected",
         },
         "registered_candidate_ids": list(REGISTERED_CANDIDATE_IDS),
-        "symbols": list(_SYMBOLS),
+        "symbols": list(symbols),
         "horizon_bars": list(horizons),
         "horizon_minutes": [horizon * 5 for horizon in horizons],
         "source": {
@@ -670,6 +679,9 @@ def run_ten_symbol_research_loop_once(
     *,
     store_root: Path | str,
     horizon_bars: Sequence[int] | None = None,
+    config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
 ) -> dict[str, Any]:
     """Re-estimate the registered candidates on the latest store evidence.
 
@@ -684,7 +696,7 @@ def run_ten_symbol_research_loop_once(
     _assert_simulation_only()
     horizons = _validate_horizon_bars(horizon_bars)
     root = Path(store_root)
-    store = _open_store(root)
+    store = _open_store(root, config)
     if store.pending_record_read_only() is not None:
         return _result(status="deferred_core_pending")
     try:
@@ -694,7 +706,7 @@ def run_ten_symbol_research_loop_once(
     if not events:
         return _result(status="deferred_core_pending")
     try:
-        units = projection._build_units(store)
+        units = projection._build_units(store, config=config)
     except projection.CryptoTenSymbolFactorProjectionError as exc:
         raise CryptoTenSymbolResearchLoopError("research_loop_core_invalid") from exc
     if not units:
@@ -739,7 +751,7 @@ def run_ten_symbol_research_loop_once(
                     horizon_bars=list(horizons),
                     **counts,
                 )
-            rows_by_symbol, meta = _merge_eligible_bars(eligible)
+            rows_by_symbol, meta = _merge_eligible_bars(eligible, config)
             analyses: dict[str, Any] = {}
             for horizon in horizons:
                 try:
@@ -768,6 +780,7 @@ def run_ten_symbol_research_loop_once(
                 meta=meta,
                 summary=summary,
                 diff=diff,
+                symbols=config.symbols,
             )
             report_path = evolution / "reports" / f"{report['report_sha256']}.json"
             projection._write_immutable(report_path, report)
