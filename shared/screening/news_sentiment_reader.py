@@ -183,7 +183,20 @@ class NewsSentimentReader:
             ),
             transport=transport,
         )
-        client.get_catalog()
+        catalog = client.get_catalog()
+        # Clamp the row request to the dataset's declared page limit so a
+        # generous default never produces a 413 payload-too-large response.
+        page_size: int | None = None
+        for item in getattr(catalog, "data", ()) or ():
+            if isinstance(item, Mapping) and item.get("dataset_id") == dataset_id:
+                limits = item.get("limits")
+                if isinstance(limits, Mapping):
+                    declared = limits.get("max_page_size")
+                    if type(declared) is int and declared > 0:
+                        page_size = declared
+                break
+        if page_size is not None:
+            max_rows = min(int(max_rows), page_size)
         return cls(
             client,
             schema_major=schema_major,

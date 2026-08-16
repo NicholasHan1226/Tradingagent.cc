@@ -164,7 +164,12 @@ def _catalog_payload():
         "api_version": "v1",
         "catalog_version": CATALOG_VERSION,
         "request_id": "catalog-req",
-        "data": [{"dataset_id": NEWS_DATASET_ID}],
+        "data": [
+            {
+                "dataset_id": NEWS_DATASET_ID,
+                "limits": {"max_page_size": 250, "max_lookback_days": 36500},
+            }
+        ],
     }
 
 
@@ -230,6 +235,30 @@ def test_from_runtime_observes_catalog_before_query():
     assert evidence.code_matches == 1
     assert any(url.endswith("/v1/catalog") for _, url in transport.calls)
     assert any(url.endswith("/v1/query") for _, url in transport.calls)
+
+
+def test_from_runtime_clamps_max_rows_to_dataset_page_size():
+    rows = [_row("2026-08-16 10:00:00", title="新闻", content="300012", channels="要闻")]
+    transport = FakeTransport(
+        _catalog_payload(),
+        _query_payload(rows),
+    )
+
+    def transport_factory(transport_id, *, token_file, base_url):
+        return transport
+
+    reader = NewsSentimentReader.from_runtime(
+        base_url="https://fixture.invalid",
+        token_file="/run/secrets/tradingagent/fixture.token",
+        expected_catalog_version=CATALOG_VERSION,
+        schema_major=1,
+        access_policy_id="ta-paper-read-v1",
+        transport_factory=transport_factory,
+        max_rows=2000,
+    )
+    # The fixture catalog declares max_page_size=250 below, so the reader must
+    # clamp 2000 down to 250 before issuing the query.
+    assert reader._max_rows == 250
 
 
 class EmptySentimentReader:
