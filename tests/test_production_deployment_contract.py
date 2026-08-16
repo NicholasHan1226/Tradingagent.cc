@@ -33,7 +33,7 @@ def test_main_ci_publishes_the_tested_release_artifact() -> None:
     assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in workflow
 
 
-def test_deploy_workflow_is_exact_sha_and_artifact_gated() -> None:
+def test_deploy_workflow_is_exact_sha_artifact_and_current_main_gated() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
 
     assert "workflow_run:" in workflow
@@ -45,9 +45,13 @@ def test_deploy_workflow_is_exact_sha_and_artifact_gated() -> None:
     assert "actions: read" in workflow
     assert "actions/download-artifact@v5" in workflow
     assert "run-id: ${{ github.event.workflow_run.id }}" in workflow
-    assert "ref: ${{ github.event.workflow_run.head_sha }}" in workflow
     assert "tar -xOf \"$archive\" ./.source-sha" in workflow
+    assert "id: publish" in workflow
+    assert workflow.count('gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"') == 2
+    assert "Skip stale deployment" in workflow
+    assert "Main advanced during upload" in workflow
     assert "sudo -n /usr/local/sbin/tradingagent-release" in workflow
+    assert "if: steps.publish.outputs.published == 'true'" in workflow
     assert "deploy/release.sh" not in workflow
 
 
@@ -59,6 +63,8 @@ def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
     assert "arguments are not accepted" in helper
     assert "root:root" in helper
     assert "unsupported archive member type" in helper
+    assert "validate_immutable_release()" in helper
+    assert "validate_immutable_release \"$release_dir\"" in helper
     assert "find \"$staging_dir\" -type d -exec chmod 0755" in helper
     assert "find \"$staging_dir\" -type f -perm /0111 -exec chmod 0555" in helper
     assert "find \"$staging_dir\" -type f ! -perm /0111 -exec chmod 0444" in helper
@@ -78,3 +84,4 @@ def test_server_bootstrap_grants_only_the_fixed_release_helper() -> None:
     assert "visudo -cf" in bootstrap
     assert "release root must already be root:root" in bootstrap
     assert "current must already be an immutable-release symlink" in bootstrap
+    assert "deployment spool is not empty" in bootstrap
