@@ -60,11 +60,6 @@ jobs:
             MAIN_CHANGED_FILES="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${CURRENT_MAIN_SHA}" --jq '.files[].filename')"
 
             NEED_FRESH_BASE=false
-            if grep -Eq '^(AGENTS\.md$|CONTRIBUTING\.md$|\.github/|deploy/|shared/|requirements[^/]*$|pyproject\.toml$|front/package(-lock)?\.json$|docs/EVOLUTION_PROGRAM\.md$|docs/operations\.md$)' <<<"$CHANGED_FILES"; then
-              NEED_FRESH_BASE=true
-              echo "PR touches shared/governance/deployment authority and requires a fresh main base."
-            fi
-
             OVERLAP="$(comm -12 \
               <(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d' | sort -u) \
               <(printf '%s\n' "$MAIN_CHANGED_FILES" | sed '/^$/d' | sort -u) || true)"
@@ -72,6 +67,18 @@ jobs:
               NEED_FRESH_BASE=true
               echo "PR overlaps files changed on main since its base:"
               printf '%s\n' "$OVERLAP"
+            fi
+
+            CORE_RE='^(deploy/|shared/|requirements[^/]*$|pyproject\.toml$|front/package(-lock)?\.json$)'
+            GOVERNANCE_RE='^(AGENTS\.md$|CONTRIBUTING\.md$|\.github/|docs/EVOLUTION_PROGRAM\.md$|docs/operations\.md$)'
+
+            if grep -Eq "$CORE_RE" <<<"$CHANGED_FILES"; then
+              NEED_FRESH_BASE=true
+              echo "PR changes shared core/deployment authority; any main advance requires integration on a fresh base."
+            elif grep -Eq "$GOVERNANCE_RE" <<<"$CHANGED_FILES" && \
+                 grep -Eq "${CORE_RE}|${GOVERNANCE_RE}" <<<"$MAIN_CHANGED_FILES"; then
+              NEED_FRESH_BASE=true
+              echo "Governance PR and main both changed governance/core authority since the frozen base."
             fi
 
             if [[ "$NEED_FRESH_BASE" == "true" ]]; then
@@ -83,7 +90,7 @@ jobs:
               exit 0
             fi
 
-            echo "Main advanced only through disjoint, non-authority paths; preserve parallelism and merge the tested PR head."
+            echo "Main advanced only through disjoint authority domains; preserve parallelism and merge the tested PR head."
           fi
 
           MERGE_JSON="$(gh api \
