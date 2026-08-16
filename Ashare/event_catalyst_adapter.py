@@ -233,7 +233,8 @@ def catalyst_entry_from_lockup_row(
     ``hard_date``; the direction is ``negative`` by convention (new sellable
     supply) and stays an explicit hypothesis, not a calibrated claim.  Rows
     with missing/blank required fields, malformed dates, non-positive share
-    counts, or symbols outside the mainboard research scope fail closed.
+    counts, or symbols outside the shared A-share research scope
+    (mainboard + ChiNext + STAR common stock) fail closed.
     """
 
     if dataset_id != SHARE_FLOAT_DATASET_ID:

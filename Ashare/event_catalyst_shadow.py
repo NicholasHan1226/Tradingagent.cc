@@ -32,7 +32,7 @@ import math
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
-from shared.universe.policy import classify_instrument
+from shared.universe.policy import ashare_research_scope_allowed
 
 
 EVENT_CATALYST_SHADOW_CONTRACT = (
@@ -139,15 +139,19 @@ def _positive_price(value: object, reason: str) -> float:
     return float(value)
 
 
-def _mainboard_symbol(value: object, reason: str) -> str:
+def _research_scope_symbol(value: object, reason: str) -> str:
+    """Validate a symbol against the shared A-share research scope.
+
+    The research scope (mainboard + ChiNext + STAR common stock, per
+    ``shared.universe.policy.ashare_research_scope_allowed``) is wider than
+    the execution scope on purpose: shadow labels never place orders, and
+    execution authority stays gated by the frozen mainboard scope policy.
+    """
+
     symbol = _text(value, reason).upper()
-    eligibility = classify_instrument(symbol, instrument_type="common_stock")
-    if (
-        not eligibility.order_identity_allowed
-        or eligibility.normalized_symbol != symbol
-    ):
+    if not ashare_research_scope_allowed(symbol, instrument_type="common_stock"):
         raise EventCatalystShadowError(
-            "event_catalyst_symbol_outside_mainboard_scope"
+            "event_catalyst_symbol_outside_research_scope"
         )
     return symbol
 
@@ -181,8 +185,9 @@ class CatalystEntry:
     """One frozen catalyst-calendar entry supplied by the caller.
 
     ``symbol`` is required for instrument-level events and must stay inside the
-    mainboard-only research scope; market-wide events instead carry an
-    ``entity`` (for example ``CN-MACRO``) and no symbol.
+    shared A-share research scope (mainboard + ChiNext + STAR common stock);
+    market-wide events instead carry an ``entity`` (for example ``CN-MACRO``)
+    and no symbol.
     """
 
     event_id: str
@@ -215,7 +220,7 @@ class CatalystEntry:
         )
         if self.symbol is not None:
             object.__setattr__(
-                self, "symbol", _mainboard_symbol(self.symbol, "unused")
+                self, "symbol", _research_scope_symbol(self.symbol, "unused")
             )
         elif self.entity is None:
             raise EventCatalystShadowError(

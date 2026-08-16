@@ -47,7 +47,7 @@ from shared.review.decision_ledger import (
     ExposureDisposition,
     InMemoryDecisionLedger,
 )
-from shared.universe.policy import classify_instrument
+from shared.universe.policy import ashare_research_scope_allowed
 
 
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
@@ -228,16 +228,12 @@ def _mainboard_symbol_allowlist(
             item,
             "ashare_evidence_allowed_symbols_invalid",
         ).upper()
-        eligibility = classify_instrument(
+        if not ashare_research_scope_allowed(
             symbol,
             instrument_type="common_stock",
-        )
-        if (
-            not eligibility.order_identity_allowed
-            or eligibility.normalized_symbol != symbol
         ):
             raise AshareEvidenceContractError(
-                "ashare_evidence_allowed_symbol_outside_mainboard_scope"
+                "ashare_evidence_allowed_symbol_outside_research_scope"
             )
         normalized.append(symbol)
     if len(normalized) != len(set(normalized)):
@@ -933,16 +929,12 @@ class EventEvidenceSnapshot:
                 "ashare_evidence_reference_binding_invalid"
             )
         if self.symbol is not None:
-            eligibility = classify_instrument(
+            if not ashare_research_scope_allowed(
                 self.symbol,
                 instrument_type="common_stock",
-            )
-            if (
-                not eligibility.order_identity_allowed
-                or eligibility.normalized_symbol != self.symbol
             ):
                 raise AshareEvidenceContractError(
-                    "ashare_evidence_symbol_outside_mainboard_scope"
+                    "ashare_evidence_symbol_outside_research_scope"
                 )
         if self.title is None and self.content is None:
             raise AshareEvidenceContractError("ashare_evidence_event_text_missing")
@@ -1466,15 +1458,14 @@ def _map_run(
                     and raw_symbol_text not in allowed_symbols
                 ):
                     continue
-                eligibility = classify_instrument(
+                if not ashare_research_scope_allowed(
                     raw_symbol_text,
                     instrument_type="common_stock",
-                )
-                if not eligibility.order_identity_allowed:
+                ):
                     raise AshareEvidenceContractError(
-                        "ashare_evidence_symbol_outside_mainboard_scope"
+                        "ashare_evidence_symbol_outside_research_scope"
                     )
-                symbol = eligibility.normalized_symbol
+                symbol = raw_symbol_text
             elif allowed_symbols is not None:
                 continue
         event_time, precision, known_time_proven = _event_time(

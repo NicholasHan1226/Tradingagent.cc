@@ -32,12 +32,14 @@ SYMBOL = "600519.SH"
 EVENT_DATE = date(2026, 8, 5)
 
 POLICY_DOC = {
-    "policy_id": "event-catalyst-promotion-v1",
+    "policy_id": "event-catalyst-promotion-v2",
     "min_labeled_observations": 60,
     "min_distinct_event_clusters": 10,
     "min_time_windows": 4,
     "min_window_hit_rate": 0.6,
-    "cost_per_round_trip": 0.003,
+    # Derived from the unified research cost model
+    # (ashare-research-cost-v1 round trip at 10000 shares x 10 CNY = 30.2bps).
+    "cost_per_round_trip": 0.00302,
     "demote_recent_labels": 20,
     "demote_max_hit_rate": 0.4,
 }
@@ -103,6 +105,23 @@ class TestLoadFrozenPolicy:
         with pytest.raises(EventCatalystRunnerError) as excinfo:
             load_frozen_policy(path)
         assert excinfo.value.reason_code == "event_catalyst_runner_policy_drift"
+
+    def test_cost_below_shared_model_fails_closed(self, tmp_path):
+        path, _ = _policy_file(tmp_path)
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        # v1's standalone 0.003 undercuts the unified cost model floor
+        # (30.2bps); re-registering the drifted hash must still fail closed.
+        doc["cost_per_round_trip"] = 0.003
+        doc["policy_sha256"] = PromotionPolicy(
+            **{name: doc[name] for name in POLICY_DOC}
+        ).policy_sha256
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        with pytest.raises(EventCatalystRunnerError) as excinfo:
+            load_frozen_policy(path)
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_runner_cost_below_shared_model"
+        )
 
     def test_unreadable_policy_fails_closed(self, tmp_path):
         with pytest.raises(EventCatalystRunnerError) as excinfo:

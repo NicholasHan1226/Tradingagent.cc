@@ -102,16 +102,22 @@ class TestDisclosureSnapshotAdapter:
             == "event_catalyst_adapter_symbol_missing"
         )
 
-    def test_rejects_mainboard_out_of_scope_symbol(self):
-        # The evidence layer itself fail-closes before the adapter runs.
+    def test_rejects_out_of_research_scope_symbol(self):
+        # The evidence layer itself fail-closes before the adapter runs;
+        # Beijing-board names stay outside the research scope.
         from Ashare.event_evidence import AshareEvidenceContractError
 
         with pytest.raises(AshareEvidenceContractError) as excinfo:
-            _snapshot(symbol="688981.SH")
+            _snapshot(symbol="430047.BJ")
         assert (
             excinfo.value.reason_code
-            == "ashare_evidence_symbol_outside_mainboard_scope"
+            == "ashare_evidence_symbol_outside_research_scope"
         )
+
+    def test_accepts_star_symbol_in_research_scope(self):
+        # STAR names are research-scope evidence even though execution
+        # authority remains mainboard-only.
+        assert _snapshot(symbol="688981.SH").symbol == "688981.SH"
 
 
 def _doc(**overrides):
@@ -299,20 +305,34 @@ class TestLockupRowAdapter:
             == "event_catalyst_adapter_lockup_share_invalid"
         )
 
-    def test_rejects_star_market_symbol(self):
+    def test_accepts_star_market_lockup_row(self):
+        # STAR lockup expiries are valid research-scope catalyst entries.
+        from Ashare.event_catalyst_adapter import (
+            catalyst_entry_from_lockup_row,
+        )
+
+        entry = catalyst_entry_from_lockup_row(
+            self._row(ts_code="688981.SH"),
+            dataset_id="cn.dataset.share_float",
+            receipt_id="receipt-9",
+        )
+        assert entry.symbol == "688981.SH"
+        assert entry.event_type == "lockup_expiry"
+
+    def test_rejects_beijing_market_symbol(self):
         from Ashare.event_catalyst_adapter import (
             catalyst_entry_from_lockup_row,
         )
 
         with pytest.raises(EventCatalystAdapterError) as excinfo:
             catalyst_entry_from_lockup_row(
-                self._row(ts_code="688981.SH"),
+                self._row(ts_code="430047.BJ"),
                 dataset_id="cn.dataset.share_float",
                 receipt_id="receipt-9",
             )
         assert (
             excinfo.value.reason_code
-            == "event_catalyst_symbol_outside_mainboard_scope"
+            == "event_catalyst_symbol_outside_research_scope"
         )
 
 

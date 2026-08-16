@@ -111,6 +111,52 @@ CANONICAL_MAINBOARD_SCOPE_POLICY_SHA256 = hashlib.sha256(
 ).hexdigest()
 
 
+# Research scope deliberately extends beyond execution scope.  Recording
+# research labels for ChiNext/STAR names never confers order authority —
+# execution remains gated by ``order_identity_allowed`` on the same frozen
+# Phase-1 contract above.  Beijing board and B-shares stay out of both.
+ASHARE_RESEARCH_SCOPE_ROLES = frozenset(
+    {
+        InstrumentRole.MAINBOARD_COMMON_STOCK,
+        InstrumentRole.CHINEXT_COMMON_STOCK,
+        InstrumentRole.STAR_COMMON_STOCK,
+    }
+)
+
+
+def ashare_research_scope_eligibility(
+    symbol: Any,
+    *,
+    instrument_type: Any = "common_stock",
+) -> "InstrumentEligibility":
+    """Classify one symbol for research-label use (no execution authority).
+
+    Returns the underlying :class:`InstrumentEligibility`; callers should
+    check ``role in ASHARE_RESEARCH_SCOPE_ROLES`` and keep using
+    ``normalized_symbol``.  This is the single shared predicate for the
+    research scope so no subsystem invents its own board rules.
+    """
+
+    return classify_instrument(symbol, instrument_type=instrument_type)
+
+
+def ashare_research_scope_allowed(
+    symbol: Any,
+    *,
+    instrument_type: Any = "common_stock",
+) -> bool:
+    """True when a native canonical symbol is inside the research scope."""
+
+    eligibility = ashare_research_scope_eligibility(
+        symbol,
+        instrument_type=instrument_type,
+    )
+    return (
+        eligibility.role in ASHARE_RESEARCH_SCOPE_ROLES
+        and eligibility.normalized_symbol == symbol
+    )
+
+
 class CanonicalMainboardScopePolicy:
     """Stateless, immutable port for the one frozen Phase-1 scope contract."""
 

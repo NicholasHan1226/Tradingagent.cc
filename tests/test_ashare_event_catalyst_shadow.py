@@ -56,20 +56,27 @@ class TestCatalystEntryContract:
         assert entry.symbol == SYMBOL
         assert entry.event_type in EVENT_TYPES
 
-    def test_rejects_non_mainboard_symbol(self):
+    def test_accepts_chinext_symbol_in_research_scope(self):
+        # Research scope covers ChiNext; execution scope stays mainboard-only.
+        assert _entry(symbol="300750.SZ").symbol == "300750.SZ"
+
+    def test_accepts_star_symbol_in_research_scope(self):
+        assert _entry(symbol="688981.SH").symbol == "688981.SH"
+
+    def test_rejects_beijing_symbol_outside_research_scope(self):
         with pytest.raises(EventCatalystShadowError) as excinfo:
-            _entry(symbol="300750.SZ")
+            _entry(symbol="430047.BJ")
         assert (
             excinfo.value.reason_code
-            == "event_catalyst_symbol_outside_mainboard_scope"
+            == "event_catalyst_symbol_outside_research_scope"
         )
 
-    def test_rejects_star_market_symbol(self):
+    def test_rejects_b_share_symbol_outside_research_scope(self):
         with pytest.raises(EventCatalystShadowError) as excinfo:
-            _entry(symbol="688981.SH")
+            _entry(symbol="200002.SZ")
         assert (
             excinfo.value.reason_code
-            == "event_catalyst_symbol_outside_mainboard_scope"
+            == "event_catalyst_symbol_outside_research_scope"
         )
 
     def test_rejects_unknown_event_type(self):

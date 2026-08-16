@@ -44,6 +44,10 @@ from Ashare.event_catalyst_promotion import (
     SCORED_HYPOTHESES,
     evaluate_promotion,
 )
+from shared.execution.cost_policy import (
+    ASHARE_RESEARCH_COST_POLICY_V1,
+    estimate_round_trip_cost,
+)
 from shared.review.sample_journal import SampleJournal
 
 
@@ -59,8 +63,28 @@ DEFAULT_POLICY_PATH = (
     REPO_ROOT
     / "Ashare"
     / "policies"
-    / "event_catalyst_promotion_v1.json"
+    / "event_catalyst_promotion_v2.json"
 )
+
+# Reference fill used to derive the cost floor from the shared, versioned
+# A-share research cost policy (shared/execution/cost_policy.py).  A frozen
+# promotion policy must never assume cheaper trading than the unified model;
+# the gate subtracts cost_per_round_trip from expectancy, so a policy below
+# this floor would overstate expectancy and fail closed here.
+_COST_FLOOR_REFERENCE_QUANTITY = 10_000
+_COST_FLOOR_REFERENCE_PRICE = 10.0
+
+
+def shared_cost_floor_per_round_trip() -> float:
+    """Round-trip cost floor from the unified A-share research cost model."""
+
+    estimate = estimate_round_trip_cost(
+        quantity=_COST_FLOOR_REFERENCE_QUANTITY,
+        entry_reference_price=_COST_FLOOR_REFERENCE_PRICE,
+        exit_reference_price=_COST_FLOOR_REFERENCE_PRICE,
+        policy=ASHARE_RESEARCH_COST_POLICY_V1,
+    )
+    return estimate.total_cost_bps_on_entry / 10_000.0
 
 _POLICY_FIELDS = (
     "policy_id",
@@ -116,6 +140,10 @@ def load_frozen_policy(path: Path | str) -> PromotionPolicy:
     if registered != policy.policy_sha256:
         raise EventCatalystRunnerError(
             "event_catalyst_runner_policy_drift"
+        )
+    if float(policy.cost_per_round_trip) < shared_cost_floor_per_round_trip() - 1e-12:
+        raise EventCatalystRunnerError(
+            "event_catalyst_runner_cost_below_shared_model"
         )
     return policy
 

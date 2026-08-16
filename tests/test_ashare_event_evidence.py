@@ -1230,6 +1230,26 @@ def test_replay_drift_and_duplicate_identity_fail_closed() -> None:
         )
 
 
+@pytest.mark.parametrize("symbol", ["300001.SZ", "688981.SH"])
+def test_chinext_and_star_rows_are_inside_research_scope(symbol: str) -> None:
+    # Research scope covers ChiNext and STAR common stock; only execution
+    # authority remains mainboard-only.
+    transport = _Transport(
+        rows_by_dataset={"cn.dataset.anns_d": [_row(symbol=symbol)]}
+    )
+    port, profile, audit, _ = _profile_and_port(transport)
+
+    snapshot = port.load_event_snapshot(
+        profile=profile,
+        filters={},
+        decision_time=DECISION_TIME,
+        audit_ledger=audit,
+    )
+
+    assert snapshot.same_observation is True
+    assert [event.symbol for event in snapshot.events] == [symbol]
+
+
 @pytest.mark.parametrize(
     ("row", "reason"),
     [
@@ -1238,12 +1258,14 @@ def test_replay_drift_and_duplicate_identity_fail_closed() -> None:
             "ashare_evidence_event_time_after_availability",
         ),
         (
-            _row(symbol="300001.SZ"),
-            "ashare_evidence_symbol_outside_mainboard_scope",
+            # Beijing board stays outside the research scope.
+            _row(symbol="430047.BJ"),
+            "ashare_evidence_symbol_outside_research_scope",
         ),
         (
-            _row(symbol="688001.SH"),
-            "ashare_evidence_symbol_outside_mainboard_scope",
+            # B-shares stay outside the research scope.
+            _row(symbol="200002.SZ"),
+            "ashare_evidence_symbol_outside_research_scope",
         ),
     ],
 )
@@ -1305,8 +1327,8 @@ def test_full_market_snapshot_can_be_scoped_to_frozen_mainboard_allowlist() -> N
     [
         ((), "ashare_evidence_allowed_symbols_invalid"),
         (
-            ("300001.SZ",),
-            "ashare_evidence_allowed_symbol_outside_mainboard_scope",
+            ("430047.BJ",),
+            "ashare_evidence_allowed_symbol_outside_research_scope",
         ),
         (
             ("600000.SH", "600000.SH"),

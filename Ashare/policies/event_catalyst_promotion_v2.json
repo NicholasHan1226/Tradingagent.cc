@@ -1,0 +1,13 @@
+{
+  "policy_id": "event-catalyst-promotion-v2",
+  "min_labeled_observations": 60,
+  "min_distinct_event_clusters": 10,
+  "min_time_windows": 4,
+  "min_window_hit_rate": 0.6,
+  "cost_per_round_trip": 0.00302,
+  "demote_recent_labels": 20,
+  "demote_max_hit_rate": 0.4,
+  "policy_sha256": "6ef7cc12214869dfe4876c1ad7762a8acc38c1a4c2d10f4c681ec7640572c36b",
+  "registered_at": "2026-08-17T00:00:00+08:00",
+  "registration_note": "Frozen pre-registered thresholds for the event-catalyst shadow factor promotion gate; identical thresholds to v1 except cost_per_round_trip, which is now derived from the unified research cost model instead of a standalone constant. cost_per_round_trip=0.00302 = estimate_round_trip_cost(quantity=10000, price=10.0, policy=ashare-research-cost-v1): commission 2.5bps x2 + sell stamp duty 5bps + transfer fee 0.1bps x2 + one-way slippage 10bps x2 = 30.2bps (v1's 0.003 understated the shared model by 0.2bps). The runner additionally fails closed (event_catalyst_runner_cost_below_shared_model) if any future policy undercuts the shared-model floor. Any change requires a new policy_id artifact; editing this file fails the drift check."
+}
