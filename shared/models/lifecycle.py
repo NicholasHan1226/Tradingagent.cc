@@ -1,4 +1,11 @@
-"""Scientific validation plan and manual-only model lifecycle state machine."""
+"""Scientific validation plan and model lifecycle state machine.
+
+Human reviewers may follow every manual transition.  Automation may follow the
+same forward edges (never RETIRED) and may additionally enter CURRENT, but only
+when the transition is bound to a valid promotion evidence reference.  All
+records stay simulation-only: real trading, live transition and automatic risk
+expansion remain permanently disabled.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,28 @@ from .release_manifest import ModelReleaseManifest
 
 
 _ASHARE_MARKETS = frozenset({"ashare", "a_share", "a-share", "a股", "cn", "china"})
+
+PROMOTION_EVIDENCE_REFERENCE_PREFIX = "promotion-evidence:"
+
+
+def is_promotion_evidence_reference(value: object) -> bool:
+    """Return True for a ``promotion-evidence:<sha256>`` reference string."""
+
+    if not isinstance(value, str) or not value.startswith(
+        PROMOTION_EVIDENCE_REFERENCE_PREFIX
+    ):
+        return False
+    digest = value[len(PROMOTION_EVIDENCE_REFERENCE_PREFIX) :]
+    return len(digest) == 64 and all(
+        char in "0123456789abcdef" for char in digest
+    )
+
+
+def promotion_evidence_reference(evidence_sha256: str) -> str:
+    """Bind a content-addressed evidence digest into a promotion reference."""
+
+    _require_sha256(evidence_sha256, "evidence_sha256")
+    return PROMOTION_EVIDENCE_REFERENCE_PREFIX + evidence_sha256
 
 
 class LifecycleContractError(ValueError):
@@ -609,7 +638,7 @@ class LifecycleRecord:
             or self.account_type != "simulated"
             or self.real_trading_enabled is not False
             or self.live_transition_authorized is not False
-            or self.automatic_promotion_enabled is not False
+            or not isinstance(self.automatic_promotion_enabled, bool)
             or self.automatic_risk_expansion_enabled is not False
         ):
             raise LifecycleContractError("simulation_only_contract_violated")
@@ -648,7 +677,11 @@ def transition_model(
     reason: str,
     approval_reference: Optional[str] = None,
 ) -> LifecycleRecord:
-    """Return a new immutable record; automation may only quarantine."""
+    """Return a new immutable record.
+
+    Automation may follow the forward manual edges (never RETIRED) and may
+    enter CURRENT only when bound to a valid promotion evidence reference.
+    """
 
     if not isinstance(record, LifecycleRecord):
         raise LifecycleContractError("lifecycle_record_invalid")
@@ -663,20 +696,22 @@ def transition_model(
     _require_text(reason, "reason")
 
     if actor is LifecycleActor.AUTOMATION:
-        if target is not ModelLifecycleState.QUARANTINE:
+        automatic_targets = _MANUAL_TRANSITIONS[record.state] - {
+            ModelLifecycleState.RETIRED,
+        }
+        if target not in automatic_targets:
             raise LifecycleContractError("automatic_action_forbidden")
+        if target is ModelLifecycleState.CURRENT and not (
+            is_promotion_evidence_reference(approval_reference)
+        ):
+            raise LifecycleContractError(
+                "automatic_current_requires_promotion_evidence_reference"
+            )
     elif target not in _MANUAL_TRANSITIONS[record.state]:
         raise LifecycleContractError("lifecycle_transition_forbidden")
 
-    if (
-        actor is LifecycleActor.AUTOMATION
-        and record.state is ModelLifecycleState.RETIRED
-    ):
-        raise LifecycleContractError("lifecycle_transition_forbidden")
     if target is ModelLifecycleState.CURRENT:
-        if actor is not LifecycleActor.HUMAN_REVIEWER:
-            raise LifecycleContractError("automatic_action_forbidden")
-        if not approval_reference:
+        if actor is LifecycleActor.HUMAN_REVIEWER and not approval_reference:
             raise LifecycleContractError("current_requires_manual_approval_reference")
 
     return replace(
@@ -685,4 +720,11 @@ def transition_model(
         recorded_at=recorded_at,
         transition_reason=reason,
         approval_reference=approval_reference,
+        automatic_promotion_enabled=(
+            record.automatic_promotion_enabled
+            or (
+                actor is LifecycleActor.AUTOMATION
+                and target is ModelLifecycleState.CURRENT
+            )
+        ),
     )

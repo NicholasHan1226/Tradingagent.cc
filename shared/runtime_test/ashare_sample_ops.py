@@ -3,9 +3,15 @@
 
 The append-only ``SampleJournal`` remains the only sample fact source.  This
 operation materializes due forward labels, writes a reproducible KPI
-projection, records the manual-only evolution assessment, and persists the
-A-share maturity state.  It has no broker, order, email, capital creation, or
-live transition path.
+projection, records the evolution assessment, and persists the A-share
+maturity state.  When the assessment carries ``promotion_evidence_ready=True``
+the evidence-gated automatic Champion promotion is executed into the
+simulation-only Champion selection registry without a human gate.  Challenger
+candidates default to the offline-learning producer
+(:mod:`Ashare.challenger_producer`), which derives candidates from the same
+KPI projection; an explicit ``challenger_candidates`` argument always takes
+precedence.  It has no broker, order, email, capital creation, or live
+transition path.
 """
 
 from __future__ import annotations
@@ -24,9 +30,16 @@ from time import perf_counter, process_time
 from typing import Any, Mapping, Optional, Sequence
 from uuid import uuid4
 
+from Ashare.challenger_producer import (
+    ChallengerProducerError,
+    build_challenger_candidates,
+)
 from Ashare.evolution_controller import (
     build_evolution_decision,
+    run_automatic_promotion,
 )
+from Ashare.promotion_executor import PromotionExecutionError
+from shared.models.champion_registry import ChampionRegistryError
 from shared.models.lifecycle import ValidationPlan
 from shared.review.market_maturity import AshareEvidence, assess_ashare_maturity
 from shared.review.forward_labels import validate_point_in_time_lineage
@@ -612,6 +625,7 @@ def run_ashare_sample_ops(
     backlog_window_days: int = DEFAULT_BACKLOG_WINDOW_DAYS,
     label_batch_size: int = 200,
     validation_plan: Optional[ValidationPlan] = None,
+    challenger_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Run one bounded, sim-only label/KPI/decision/maturity cycle."""
 
@@ -724,6 +738,39 @@ def run_ashare_sample_ops(
         authority_scope=scope,
         target_trade_date=selected_trade_date,
     )
+    if decision.get("promotion_evidence_ready") is True:
+        try:
+            promotion_recorded_at = datetime.now(timezone.utc)
+            produced_candidates = (
+                list(challenger_candidates)
+                if challenger_candidates is not None
+                else build_challenger_candidates(
+                    kpi,
+                    decision=decision,
+                    validation_plan=validation_plan,
+                    recorded_at=promotion_recorded_at,
+                )
+            )
+            decision = run_automatic_promotion(
+                decision,
+                registry_root=selected_review_dir / "champion_registry",
+                challenger_candidates=produced_candidates,
+                recorded_at=promotion_recorded_at,
+            )
+        except (
+            ChallengerProducerError,
+            ChampionRegistryError,
+            PromotionExecutionError,
+        ) as exc:
+            decision["promotion_execution"] = {
+                "status": "error",
+                "reason": str(exc),
+                "actor": "automation",
+                "simulation_only": True,
+                "real_trading_enabled": False,
+                "live_transition_authorized": False,
+                "automatic_risk_expansion_enabled": False,
+            }
     decision.update(common_projection_metadata)
     decision["live_execution_enabled"] = False
     maturity = _build_maturity(
@@ -849,7 +896,7 @@ def run_ashare_sample_ops(
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Persist sim-only A-share labels, KPIs, manual decision, and maturity."
+        description="Persist sim-only A-share labels, KPIs, evolution decision, and maturity."
     )
     parser.add_argument("--journal-path", type=Path, default=DEFAULT_JOURNAL_PATH)
     parser.add_argument("--review-dir", type=Path, default=DEFAULT_REVIEW_DIR)

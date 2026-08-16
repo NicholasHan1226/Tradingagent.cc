@@ -88,7 +88,7 @@ def test_legacy_portfolio_evolution_is_not_an_evolution_authority() -> None:
     assert decision["automatic_risk_expansion_enabled"] is False
 
 
-def test_rich_positive_sample_evidence_can_only_become_manual_review_candidate() -> (
+def test_rich_positive_sample_evidence_becomes_automatic_promotion_ready() -> (
     None
 ):
     decision = build_evolution_decision(
@@ -97,12 +97,23 @@ def test_rich_positive_sample_evidence_can_only_become_manual_review_candidate()
         target_trade_date="20260713",
     )
 
-    assert decision["state"] == "manual_review_candidate"
-    assert decision["recommended_action"] == "manual_review_only"
+    assert decision["state"] == "automatic_promotion_ready"
+    assert decision["recommended_action"] == "execute_automatic_promotion"
+    assert decision["promotion_evidence_ready"] is True
+    assert decision["policy"]["automatic_promotion_enabled"] is True
     assert decision["automatic_promotion_enabled"] is False
     assert decision["automatic_risk_expansion_enabled"] is False
     assert decision["live_transition_authorized"] is False
+    assert decision["real_trading_enabled"] is False
     assert "expand_risk_candidate" not in json.dumps(decision)
+
+    context = decision_market_context(
+        decision,
+        target_trade_date="20260713",
+        authority_scope=AUTHORITY,
+    )
+    assert context["automatic_promotion_enabled"] is True
+    assert context["automatic_risk_expansion_enabled"] is False
 
 
 def test_authority_generation_mismatch_cannot_enter_context_or_write(

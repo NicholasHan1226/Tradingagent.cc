@@ -1,6 +1,6 @@
 # TradingAgent 项目规则
 
-> 阅读顺序：本文件 → `../autodev-control/AUTODEV_STATE.json` 与本轮新鲜运行读回 → [STATUS.md](STATUS.md) 历史快照 → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。
+> 阅读顺序：本文件 → `../autodev-control/AUTODEV_STATE.json` 与本轮新鲜运行读回 → [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md) 规划权威 → [STATUS.md](STATUS.md) 历史快照 → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。
 
 ## 项目定位
 
@@ -8,6 +8,7 @@
 - TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。认证只允许最终HTTP transport从仓外、绝对路径、可信owner、精确`0600`且无symlink/硬链接别名的TA专用token file注入Bearer header；禁止明文token环境变量、manifest/日志/回执泄露、401/403重试和任何legacy/provider fallback。TradingDatas fresh handoff 前只允许 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID。
 - MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
 - 当前目标是验证可持续自我改进的自动量化闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。长期方向是在逐市场明确授权后由 TA 接管决策与执行，而不是把人工计划永久作为核心流程。
+- 系统总目标、A股/Crypto/CNFutures 独立阶段、研究轨和执行优先级以 `docs/EVOLUTION_PROGRAM.md` 为规划 authority；它不代表当前运行事实，也不授予真实资金权限。各市场按证据独立前进，不使用一套全市场共享的线性晋级门禁。
 
 ## TradingDatas 消费分层
 
@@ -32,9 +33,9 @@
 
 - `REAL_TRADING_ENABLED=false`；当前记录必须是 `capital_layer=simulated`、`account_type=simulated`、`real_trading_enabled=false`。
 - 任一真实资金、live broker、direct execution、真实账户或签名密钥标记必须 fail closed，不能静默降级为 simulated/shadow。
-- A股首 1–2 周只跑模拟；第 5、10 个交易日是人工复核点，不是自动实盘日期。
-- 自动 champion 晋级、自动风险扩张和自动 live transition 永久关闭。即使 `promotion_evidence_ready=true`，也只表示证据检查通过，不构成授权。
-- 未来量化 A股实盘只能在 named strategy、数据、样本外、成本、风控、账户、券商适配和合规门禁分别通过且 Nicholas 明确确认后启用；自动晋级和自动切实盘继续永久关闭。TradingCopilot 的人工计划与个人申报账户不构成量化实盘过渡，也不得发送邮件或连接券商。
+- A股前期只跑模拟；第 5、10 个交易日等历史检查点只可作为自动证据/报告检查点，不构成人工晋级门禁，也不是自动实盘日期。模拟生命周期以市场自身科学证据为准。
+- 模拟盘域内策略/因子晋级全自动化：`promotion_evidence_ready=true` 即构成模拟盘 Champion 自动晋级授权，由证据绑定的 registry receipt 直接执行，任何环节不设人工复核门禁。自动风险扩张和自动 live transition 永久关闭。
+- 未来量化 A股实盘只能在 named strategy、数据、样本外、成本、风控、账户、券商适配和合规门禁分别通过且 Nicholas 明确确认后启用；自动切实盘继续永久关闭。TradingCopilot 的人工计划与个人申报账户不构成量化实盘过渡，也不得发送邮件或连接券商。
 - CNFutures 当前暂停；既有模拟合同与证据只读保留，无实盘日期，也不绑定或阻塞 A股/Crypto 进度。
 
 ## A股样本与组合执行
@@ -88,8 +89,8 @@
 
 - A股与 Crypto 使用各自长期固定 Git worktree 和独立分支；CNFutures 保留隔离 worktree/分支作为暂停边界，不得在 Nicholas 明确恢复前启动写入。`shared/governance/market_lanes.yaml` 定义机器可读的单写者路径边界。
 - `shared/governance/runtime_topology.yaml` 定义机器可读的运行放置边界。当前可使用单机进程隔离；未来拆分服务器时只改变 deployment profile 和仓外 endpoint/credential provisioning，不改变市场领域合同、资本 authority、状态 namespace 或 TradingDatas catalog/query 协议。
-- 每个市场最多一个 active writer，使用独立 fault domain、writer identity、state namespace 和 service prefix；故障切换必须先人工 fencing 再激活备用节点。禁止多个主机同时写同一市场账本、通过 NFS/共享 SQLite 形成隐式双写，或让只读前端成为资本/订单/模型 authority。
-- 市场 core 与离线 learning 是两个故障域：学习失败不能使五分钟/会话核心失败；learning 只生成 Challenger/校准/研究 artifact，自动 promotion 和风险扩张继续关闭。单机 profile 可同机运行；拆分 profile 可按市场迁移，也可把三市场 learning 放到独立共享计算主机，但各市场输出 namespace 继续分离且研究主机不得拥有资本、订单或账本写权限。
+- 每个市场最多一个 active writer，使用独立 fault domain、writer identity、state namespace 和 service prefix；故障切换必须先完成机器可验证的 fencing 再激活备用节点。禁止多个主机同时写同一市场账本、通过 NFS/共享 SQLite 形成隐式双写，或让只读前端成为资本/订单/模型 authority。
+- 市场 core 与离线 learning 是两个故障域：学习失败不能使五分钟/会话核心失败；learning 只生成 Challenger/校准/研究 artifact，模拟盘 Champion 自动 promotion 由市场自身科学证据门禁直接执行、不设人工门禁，风险扩张继续关闭。单机 profile 可同机运行；拆分 profile 可按市场迁移，也可把三市场 learning 放到独立共享计算主机，但各市场输出 namespace 继续分离且研究主机不得拥有资本、订单或账本写权限。
 - 三个市场的模拟撮合合同和未来实盘适配器族必须各自独立：A股保留现金股票/T+1/整手语义，CNFutures保留多空/开平/保证金/夜盘语义，Crypto保留小数数量/最小名义金额/Testnet与Live分账语义。共享内核只可提供BrokerPort、outbox、幂等、审计和对账接口，禁止共享provider payload、账户、密钥、订单状态机、风险或资本authority。
 - 市场 owner 只能修改本市场目录、同前缀测试和局部文档。`shared/**`、根文档、前端和其它市场目录一律只可提交 handoff 提案，由共享内核单写者统一实现。
 - 每个 slice 开工前必须运行 `python3 scripts/validate_market_lane.py --lane <ashare|cnfutures|crypto>`，并要求当时的 `main` 为 `behind=0`；错误 worktree、错误分支、开工时已落后或越权路径必须 fail closed。Controller 随派单记录该次通过校验的完整 commit 作为冻结 base。开发中无关 `main` 前进不得迫使 lane 重做；交接和提交前改用 `--base-ref <controller-recorded-full-sha>` 校验精确 patch 与路径所有权，禁止 lane 自选旧 SHA。Controller 明确分配的 one-shot 隔离候选可显式追加 `--isolated-candidate`，以完整 frozen SHA 作为 `--base-ref` 并逐个传入 `--allowed-path <repo-relative-file>`；该模式只绕过固定 worktree/branch identity，不放宽 lane ownership、路径、祖先关系或 freshness 门禁。Controller 验收时仍须在最新 `main` 上一次重放精确 patch、处理冲突并复测。输出的 `base_head/lane_head/ahead/behind` 只描述本次所选验证 base，不得冒充当前主线同步证据。
@@ -99,8 +100,9 @@
 
 ## 验收与发布边界
 
-- 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)。
+- 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)；系统与市场演进计划见 [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md)。
 - GitHub 传输优先使用 Nicholas 已登录的 `gh` HTTPS 凭据链：先核对 `gh auth status`，仓库 `origin` 固定为 `https://github.com/NicholasHan1226/Tradingagent.cc.git`。若 `git@github.com` 的 SSH/22 端口失败一次，不重复重试或上报为长期 blocker；立即验证 HTTPS `git ls-remote`，切换现有 remote 后 fetch。不得输出 token，也不得另建凭据或绕过 host-key 校验。
-- 当前跨线机器事实写入 `../autodev-control/AUTODEV_STATE.json`，但每个运行结论仍须由本轮新鲜读回验证；[STATUS.md](STATUS.md) 是 2026-08-02/03 历史快照。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
+- GitHub Actions 是可选附加验证，不是 merge/deploy authority。Actions 无额度、billing blocked、skipped 或未触发时，只要当期任务的确定性本地/服务器测试、diff/ancestry 检查、release preflight、rollback 与新鲜 readback 成立，正常开发、合并、内部 sim-only 部署和模拟生命周期必须继续。
+- 当前跨线机器事实写入 `../autodev-control/AUTODEV_STATE.json`，但每个运行结论仍须由本轮新鲜读回验证；[STATUS.md](STATUS.md) 是历史快照。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
 - 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
-- Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、测试与独立审计通过且 release preflight/回滚路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路或项目既定部署与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、安装或启用 cron/service、真实模型网络调用、邮件/GUI 外部写入、broker 或真实交易；这些动作仍须由当期任务明确包含并通过各自门禁。
+- Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、确定性测试/审计通过且 release preflight、rollback 与新鲜 readback 路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路、不可变 release、既有内部 sim-only localhost service/timer 的安装/启用/切换与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、未经当期任务包含的外部模型网络调用、邮件/GUI 外部写入、自动风险扩张、broker 或真实交易/live transition；这些动作仍须由当期任务明确包含并通过各自独立 authority。

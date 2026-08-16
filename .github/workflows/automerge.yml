@@ -1,0 +1,71 @@
+name: Automerge Trusted Agent PRs
+
+on:
+  workflow_run:
+    workflows:
+      - TradingAgent Tests
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  TRUSTED_PR_AUTHOR: NicholasHan1226
+
+jobs:
+  merge:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Merge verified trusted PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PRS_JSON: ${{ toJson(github.event.workflow_run.pull_requests) }}
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="$(jq -r '.[0].number // empty' <<<"$PRS_JSON")"
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "No pull request is associated with this successful workflow run."
+            exit 0
+          fi
+
+          PR_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          BASE_REF="$(jq -r '.base.ref' <<<"$PR_JSON")"
+          BASE_SHA="$(jq -r '.base.sha' <<<"$PR_JSON")"
+          HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")"
+          HEAD_SHA="$(jq -r '.head.sha' <<<"$PR_JSON")"
+          AUTHOR="$(jq -r '.user.login' <<<"$PR_JSON")"
+          DRAFT="$(jq -r '.draft' <<<"$PR_JSON")"
+
+          [[ "$BASE_REF" == "main" ]] || { echo "Skip: base is not main."; exit 0; }
+          [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" ]] || { echo "Skip: fork PRs never auto-merge."; exit 0; }
+          [[ "$AUTHOR" == "$TRUSTED_PR_AUTHOR" ]] || { echo "Skip: PR author is not trusted."; exit 0; }
+          [[ "$DRAFT" == "false" ]] || { echo "Skip: draft PR."; exit 0; }
+          [[ "$HEAD_SHA" == "$RUN_HEAD_SHA" ]] || { echo "Skip: tested SHA no longer matches PR head."; exit 0; }
+
+          CHANGED_FILES="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
+          if grep -Eq '^\.github/workflows/' <<<"$CHANGED_FILES"; then
+            echo "Skip: workflow-governance changes require a separate trusted bootstrap merge."
+            exit 0
+          fi
+
+          CURRENT_MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$BASE_SHA" != "$CURRENT_MAIN_SHA" ]]; then
+            echo "Base advanced after this CI run; update the PR branch and let CI rerun."
+            gh api \
+              --method PUT \
+              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/update-branch" \
+              -f expected_head_sha="$HEAD_SHA"
+            exit 0
+          fi
+
+          gh api \
+            --method PUT \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
+            -f merge_method=squash \
+            -f sha="$HEAD_SHA"

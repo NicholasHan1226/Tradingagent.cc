@@ -523,3 +523,158 @@ def test_render_report_marks_non_evidence_and_overlap() -> None:
     assert "每 12 槽取 1" in report
     assert "结论与预注册建议" in report
     assert "AAA" in report
+
+
+def test_analyze_default_horizon_is_byte_identical_to_explicit_1h() -> None:
+    rows_by_symbol = {
+        "AAA": _typed_bars([format(100 + 2 * i, "f") for i in range(40)]),
+        "BBB": _typed_bars([format(100 + i, "f") for i in range(40)]),
+    }
+
+    default_result = analyze(rows_by_symbol)
+    explicit_result = analyze(rows_by_symbol, horizon_bars=12)
+
+    assert json.dumps(default_result, sort_keys=True) == json.dumps(
+        explicit_result, sort_keys=True
+    )
+    assert default_result["forward_horizon_bars"] == 12
+    assert default_result["forward_horizon_minutes"] == 60
+    assert default_result["non_overlap_stride"] == 12
+
+
+def test_analyze_rejects_unknown_horizon() -> None:
+    rows_by_symbol = {"AAA": _typed_bars(["100"] * 40)}
+    for bad in (0, 13, 60, -12, "48", True, None):
+        with pytest.raises(
+            CryptoTenSymbolFactorPrescreenError,
+            match="prescreen_horizon_invalid",
+        ):
+            analyze(rows_by_symbol, horizon_bars=bad)  # type: ignore[arg-type]
+
+
+def test_analyze_aux_horizon_forward_label_and_stride() -> None:
+    count = 80
+    rows_by_symbol = {
+        "AAA": _typed_bars([format(100 + 2 * i, "f") for i in range(count)]),
+        "BBB": _typed_bars([format(100 + i, "f") for i in range(count)]),
+        "CCC": _typed_bars(["100"] * count, quote_volume="1000000000"),
+        "DDD": _typed_bars(
+            [format(200 - i, "f") for i in range(count)], quote_volume="1"
+        ),
+    }
+
+    result = analyze(rows_by_symbol, horizon_bars=48)
+
+    assert result["forward_horizon_bars"] == 48
+    assert result["forward_horizon_minutes"] == 240
+    assert result["non_overlap_stride"] == 48
+    candidates = _candidates(result)
+    xs = candidates["xs_rs"]
+    # Slots with a full 13-bar window and a +48 forward bar.
+    assert xs["evaluation_slots"] == count - 12 - 48
+    top_1 = xs["variants"]["top_1"]
+    # Every slot still picks AAA (steepest 1h return); the forward close is
+    # now 48 bars ahead, not 12.
+    slots = sorted(slot for slot in range(12, count - 48))
+    expected_net = sum(
+        (
+            _expected_cost_adjusted(
+                format(100 + 2 * slot, "f"), format(100 + 2 * (slot + 48), "f")
+            )
+            for slot in slots
+        ),
+        Decimal("0"),
+    ) / Decimal(len(slots))
+    assert Decimal(top_1["mean_net"]) == expected_net
+    expected_gross = sum(
+        (
+            Decimal(format(100 + 2 * (slot + 48), "f"))
+            / Decimal(format(100 + 2 * slot, "f"))
+            - 1
+            for slot in slots
+        ),
+        Decimal("0"),
+    ) / Decimal(len(slots))
+    assert Decimal(top_1["mean_gross"]) == expected_gross
+    # Cost drag is exactly gross minus net per sample mean here.
+    assert Decimal(top_1["mean_gross"]) > Decimal(top_1["mean_net"])
+    # Non-overlapping subsample keeps every 48th slot at the 4h horizon.
+    subset = top_1["non_overlapping"]
+    assert subset["stride"] == 48
+    assert subset["slot_count"] == 1
+    assert subset["signal_count"] == 1
+    assert Decimal(subset["mean_gross"]) > Decimal(subset["mean_net"])
+    assert "240min" in top_1["metric_basis"]
+    assert "about 48x" in top_1["metric_basis"]
+
+
+def test_analyze_aux_horizon_gross_matches_raw_close_ratio() -> None:
+    closes = (
+        ["100"] * 12
+        + ["99"]
+        + ["99"] * 11
+        + ["101"] * 156
+    )
+    rows_by_symbol = {
+        "REV": _typed_bars(closes),
+        "FLAT": _typed_bars(["50"] * len(closes)),
+    }
+
+    result = analyze(rows_by_symbol, horizon_bars=144)
+    reversal = _candidates(result)["short_reversal"]
+    strict = reversal["variants"]["strict"]
+
+    assert result["non_overlap_stride"] == 144
+    assert strict["signal_count"] > 0
+    # Every strict signal enters at 99 and exits 144 bars later at 101.
+    assert Decimal(strict["mean_gross"]) == Decimal("101") / Decimal("99") - 1
+    assert Decimal(strict["mean_net"]) == _expected_cost_adjusted("99", "101")
+
+
+def test_render_report_aux_horizon_labels_and_gross_columns() -> None:
+    rows_by_symbol = {
+        "AAA": _typed_bars([format(100 + 2 * i, "f") for i in range(80)]),
+        "BBB": _typed_bars([format(100 + i, "f") for i in range(80)]),
+    }
+    result = analyze(rows_by_symbol, horizon_bars=48)
+
+    report = render_report(result)
+
+    assert "forward 240min（48 槽）" in report
+    assert "每 48 槽取 1" in report
+    assert "mean_gross" in report
+    assert "非重叠 gross" in report
+    default_report = render_report(analyze(rows_by_symbol))
+    assert "forward 1h（12 槽）" in default_report
+    assert "每 12 槽取 1" in default_report
+
+
+def test_cli_horizon_bars_round_trip(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    _write_raw_dir(raw_dir)
+
+    exit_code = prescreen.main(
+        ["--raw-dir", str(raw_dir), "--horizon-bars", "288"]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    result = json.loads(captured.out)
+    assert result["forward_horizon_bars"] == 288
+    assert result["forward_horizon_minutes"] == 1440
+    assert result["non_overlap_stride"] == 288
+
+    bad_exit = prescreen.main(
+        ["--raw-dir", str(raw_dir), "--horizon-bars", "13"]
+    )
+    captured = capsys.readouterr()
+    assert bad_exit == 2
+    assert captured.out == ""
+    assert captured.err.strip() == (
+        "crypto ten-symbol factor prescreen failed closed"
+    )

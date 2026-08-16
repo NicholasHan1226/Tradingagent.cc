@@ -640,7 +640,8 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 - spreads sidecar（book_ticker 实测点差采样，附加证据）：每个 fresh 槽在
   10 币 13 根 bar 采集成功后，追加采样 10 个
   `crypto.spot.binance.<symbol>.book_ticker` current snapshot（best
-  bid/ask 与 qty），供后续因子研究/费用后评估用实测点差替代假设成本。
+  bid/ask 与 qty），供点差投影聚合、并由费用后评估用实测点差替代假设
+  滑点成本。
   点差是**附加、降级容忍**的证据，绝不进入资本/策略路径，也绝不允许其失败
   导致 bar 观测丢失：spread leg 使用独立 client（dataset_ids 只配置 10 个
   book_ticker 数据集）与独立 catalog 读，因此 book_ticker 数据集缺失或合同
@@ -677,10 +678,11 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   "pending/同槽恢复不需要网络或 token" 不变式；spreads sidecar 本地校验失
   败一律 fail closed（`runtime_spreads_sidecar_invalid`），绝不记为
   data_reject。每 cycle 请求数为 22（bar leg 1 catalog + 10 query，spread
-  leg 1 catalog + 10 query），仍受同一 120 秒绝对预算约束。点差数据本批只
-  落账：factor v2 投影与费用后评估暂不改 record/评估合同，消费方经 store
-  事件链 + `spreads/<slot>.json` 用与 bars sidecar 相同的只读路径获取实测
-  点差。
+  leg 1 catalog + 10 query），仍受同一 120 秒绝对预算约束。点差数据的
+  消费方是独立的 detached 只读投影 `ten_symbol_spread_projection.py`
+  （见"十币种实测点差投影"章）：它经 store 事件链 + `spreads/<slot>.json`
+  用与 bars sidecar 相同的只读路径获取实测点差；factor v2 投影与费用后
+  评估的 record/评估合同均不变。
 
 ### slot / backlog / gap 语义
 
@@ -714,7 +716,11 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   完整恢复不同，因为积累器的 pending 不含任何已验证数据。
 - data_gap 合同：current-read 查询不带 `as_of`，历史槽的
   `observed_at` 必然越过其 cutoff（`crypto_observation_watermark_invalid`），
-  因此历史窗口确定不可恢复，不伪造 PIT。只有 pending 为空、目标历史槽严格
+  因此历史窗口确定不可恢复，不伪造 PIT。历史槽若因上游采集缺口导致源行
+  永久缺失，则每次重试都在形状门禁失败
+  （`crypto_observation_query_shape_invalid`），同样确定不可恢复；两种
+  reason 都只在目标历史槽严格落后当前槽时进入缺口恢复，当前槽的合同漂移
+  仍然 fail closed。只有 pending 为空、目标历史槽严格
   落后当前槽、且当前 10 币 13 根窗口全部 catalog/receipt/lineage/freshness/
   quality 门禁通过时，才追加一条 `data_gap`：记录精确 skipped range、拒绝
   原因与被拒窗口，并内嵌恢复首窗的完整 observation 证据；恢复槽不另写普通
@@ -751,11 +757,12 @@ manifest 在引入点差采样后继续有效，无需重新生成。部署 runb
 - 没有横截面 factor/IC 声称、rules dataset、历史回填证据化；50 标签初筛
   不构成晋级。factor v2 消费端已作为 install-default 不启用的 detached
   候选存在（见下章），不代表已启用或已有样本。
-- book_ticker 点差只落账（事件 `spread` 状态块 + spreads sidecar），尚未
-  接入 factor v2 投影 record 或费用后策略评估；后续接法是新增一个 detached
-  只读投影（镜像 bars sidecar 消费路径：事件链 `spread_sha256` 逐值比对 +
-  sidecar 重算），把实测点差作为样本级成本证据供费用后评估替代假设成本，
-  该投影同样需要独立候选与验收。
+- book_ticker 点差落账（事件 `spread` 状态块 + spreads sidecar）已被独立的
+  detached 只读投影消费（见"十币种实测点差投影"章）：镜像 bars sidecar
+  消费路径（事件链 `spread_sha256` 逐值比对 + sidecar 重算），把实测点差
+  聚合为样本级成本证据研究 artifact；factor v2 投影 record 合同不变，
+  费用后策略评估已按该章合约接入实测半点差替代假设滑点（逐单元
+  `cost_source` 标记，样本不足回退假设成本，见评估章成本口径条目）。
 - systemd unit 是 install-default 不启用的候选，不代表现役 timer 状态。
 - 该链不读取/写入 core、资本、learning、Champion 或 `evolution/`，也不构成
   任何 PIT 回填或交易 authority。
@@ -851,6 +858,33 @@ sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
   `downweight`，否则 `retain_for_more_evidence`；**recommendation 只基于
   required 60min 口径**（晋级判据不扩口径），`evaluated_status` 固定
   `exploratory_insufficient_edge`，不构成 edge、晋级或参数变更授权。
+- 成本口径与实测点差接入：成本 = 既有 taker fee（label 内
+  `fee_rate=0.001` 双边，逐项重算校验）+ 每边滑点。滑点优先取
+  `ten_symbol_spread_projection` 当前 checkpoint 绑定 artifact 的实测
+  点差（消费纪律见"十币种实测点差投影"章）：逐评估单元（source slot
+  × symbol）取该 symbol 在不晚于样本槽日的最近一个**充足样本** UTC
+  日桶的 `p75_bps` 半值作为每边滑点；桶充足阈值
+  `SPREAD_COST_MIN_BUCKET_SAMPLES=12`（≥ 当日 288 个 5 分钟槽中的 12
+  个样本，即至少一小时覆盖——低于一小时时 type-7 p75 只在不足十个
+  观测间插值，只反映日内短窗口而非当日点差区间，故不外推）。样本
+  不足的 symbol/桶、无 checkpoint 绑定 artifact、或投影命名空间尚未
+  产出时，单元回退假设成本（2bps/边）并显式标记，绝不静默混合。
+  checkpoint/artifact 链校验失败、artifact 缺失/损坏或 metric 合同
+  漂移一律 fail closed（`evaluation_spread_artifact_invalid`）。
+- 成本可见性：每个 horizon×假设的评估 artifact 带 `cost_model`（fee、
+  假设滑点、实测规则、阈值、spread artifact 绑定或 null）且 metrics
+  含精确 `cost_source_counts`；逐单元
+  （observation_id/symbol/horizon 列表、`cost_source: assumed|measured`、
+  实际每边滑点 bps、所用桶日期与样本数）写入 immutable 伴随 artifact
+  `evolution/ten_symbol_factor_research/
+  strategy_evaluation_cost_attributions/{outcome}.json`（contract
+  `...evaluation_cost_attribution.v1`，自含
+  `cost_attribution_sha256`，由 bundle 的
+  `cost_attribution_sha256` 字段绑定；评估自身不回读该文件，主 bundle
+  保持 O(1) 大小）。评估 outcome 身份纳入所消费 spread 投影的
+  `outcome_sha256`：实测证据更新会重评估同样本，而不是被 compact
+  checkpoint 掩盖；incremental 快速路径语义不变（新 outcome 只在
+  full scrub 后的完整评估产生）。
 - artifact immutable 写入
   `evolution/ten_symbol_factor_research/strategy_evaluations/{outcome_sha}.json`
   （outcome = resolved 样本集合的确定性 sha，只有样本集合变化才前进）；
@@ -874,6 +908,95 @@ sidecar。它与 core/资本/learning/Champion 完全不共享写权限，固定
   成熟度达标后的独立 slice）；50 标签初筛与评估 recommendation 均不构成
   edge、晋级或参数变更授权；不做历史回填证据化；unit 不代表现役 timer
   状态。
+
+## 十币种实测点差投影（detached 只读研究 artifact）
+
+`ten_symbol_spread_projection.py` 是观测积累器 spreads sidecar 的
+detached 只读消费投影：把落账的 book_ticker 实测点差聚合成样本级成本
+证据研究 artifact，供后续费用后评估用实测点差替代假设成本。它与
+factor v2 投影相互独立（独立投影根
+`<store_root>/evolution/ten_symbol_spread_projection/`、独立锁、独立
+checkpoint），不读写 core/资本/order/Champion/learning，也不改 factor
+v2 的 record/label/evaluation 合同；固定 `authority=none`、
+`research_only=true`、零网络。
+
+### 证据绑定与 fail-closed 纪律
+
+- 输入单位是 terminal 槽（`observation` 或 `data_gap` 恢复首窗）。事件链
+  由 store 只读校验；每槽先 shape-check 事件 `spread` 状态块（contract
+  `tradingagent.crypto.ten_symbol_observation_spread.v1`、status/计数/
+  reason 一致性），再按 bars sidecar 消费先例逐值比对：
+  `validate_ten_symbol_spreads_sidecar` 从持久化 sidecar 独立重算每 symbol
+  行 digest 与顶层 `spread_sha256`，并由 entries 重建状态块与事件块
+  canonical 逐值比对，sidecar `window_end`/`profile_sha256` 同时与事件
+  比对。任何漂移（`ten_symbol_spread_projection_spread_digest_mismatch`）
+  或 sidecar 本地校验失败
+  （`ten_symbol_spread_projection_sidecar_invalid`）一律 fail closed，
+  绝不静默剔除该槽后继续。
+- 槽位排除只发生在三种显式情形并逐一记录进 artifact 的
+  `skipped_slots`：旧槽无 `spread` 键（`feature_ineligible`，同
+  pre-sidecar 先例）、leg-wide 降级无 sidecar（`spread_unavailable`
+  + reason code）、事件声称有点差证据但 sidecar 缺失（`sidecar_missing`，
+  镜像 bars sidecar 缺失即 ineligible 的先例）。data_gap 覆盖的历史跳过
+  区间从未有点差证据，不参与统计。
+- 聚合只计 `sampled` 条目；`rejected` 条目只进入拒收计数与
+  `rejected_reason_counts`，绝不进入点差统计。
+
+### 聚合口径与 artifact 合约
+
+- 有界窗口 = symbol × UTC 自然日（`aggregation_window=
+  utc_calendar_day_per_symbol`）。点差定义：`(ask-bid)/mid*10000` bps，
+  `mid=(ask+bid)/2`；样本在摄入时统一量化到 1e-8 bps
+  （ROUND_HALF_EVEN），统计输出同精度；分位数用 type-7 线性插值。
+- 每桶产出：sample_count、rejected_count、rejection_rate、
+  rejected_reason_counts、slot_count、first/last slot 与
+  first/last observed_at、spread bps 的 mean/median/p25/p75/min/max
+  （无样本时全 null）；另有 `symbol_totals` 与全局 `totals` 汇总。
+- artifact（contract
+  `tradingagent.crypto.ten_symbol_spread_projection.v1`）immutable 写入
+  `evolution/ten_symbol_spread_projection/artifacts/{outcome_sha}.json`，
+  自含 `artifact_sha256` 与 `outcome_sha256`；`source` 块绑定 store 链
+  head checksum、每个被消费槽的 `window_end + source_event_checksum +
+  spread_sha256` 三件套以及全部 skipped 槽。outcome = 被消费源集合 +
+  skipped 集合的确定性 sha，只有输入集合变化才前进。
+- compact `spread_projection_checkpoint.json`（contract
+  `tradingagent.crypto.ten_symbol_spread_projection_checkpoint.v1`，
+  tmp+os.replace 原子覆写）记录 last_projected_outcome_sha256/
+  artifact_sha256；重跑先校验 checkpoint 与其绑定的 artifact，同 outcome
+  返回 `no_new_outcome` 且字节不变——幂等可重跑。checkpoint/artifact
+  篡改 fail closed。无 sampled 样本返回
+  `insufficient_spread_samples` 不产 artifact；观测 pending 非空返回
+  `deferred_core_pending`；退出码经
+  `ten_symbol_spread_projection_exit_code`（authority 字段不符即 2）。
+- 每次运行从已验证事件链确定性重建全量库存（O(N) 读），无增量
+  catch-up 合同；artifact 因含逐槽绑定而随历史线性增长，读取沿用与
+  factor 投影共享的 2 MiB canonical artifact 上限，超限 fail closed。
+
+### 费用后评估的消费接入（已实现）
+
+费用后评估 `ten_symbol_factor_strategy_evaluation.py` 已按本章合约消费
+点差 artifact（见"费用后策略评估（scrub 下游）"章的成本口径条目）：
+只读取 checkpoint 绑定的当前 artifact，先经
+`spread_projection._validated_current` 重放 checkpoint→artifact 链
+（checkpoint 自校验、绑定 `artifact_sha256`/`outcome_sha256`、authority
+字段），再逐项比对 `spread_metric` 合同（公式/聚合窗口/分位数方法），
+任何缺失（链内 artifact 文件）、损坏、篡改或合同漂移 fail closed
+（`evaluation_spread_artifact_invalid`），绝不降级消费。投影命名空间
+不存在或从未产出 artifact 是唯一允许的降级：全部单元显式回退假设
+成本并标记 `cost_source=assumed`。消费规则：逐评估单元取
+`buckets[symbol]` 中不晚于样本槽日的最近一个 sample_count ≥ 12 的
+UTC 日桶 `p75_bps` 半值作每边滑点（替代
+`crypto-round-trip-taker-v1` 的假设 2bps，taker fee 不变），样本不足
+不外推；`source.spread_sources` 提供逐槽证据回溯。评估结论仍是
+research-only：artifact 不作为实时成本、执行信号或晋级证据。
+
+### 明确未实现
+
+- 点差 artifact 的消费仅限上述费用后评估成本替代，未接入任何策略
+  晋级/参数变更逻辑；无 worker CLI 与 systemd unit（当前由显式一次性
+  调用运行）；不做跨日
+  滚动窗口、成交量加权深度点差或 HAC 显著性；投影不构成成本、edge、
+  晋级或参数变更授权。
 
 ## 验证
 
@@ -901,6 +1024,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_obs
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research_worker.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_strategy_evaluation.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_spread_projection.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 

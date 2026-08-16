@@ -31,7 +31,7 @@
 - reservation、fill/sell/close commit、reconcile 使用 stable reference、PIT lineage、source fingerprints、checksum chain、ledger-head CAS 和 crash-replay outbox。
 - observation 不受成熟阈值阻断；execution-eligible fill 必须有实际价格、数量、费用/滑点、市场证据和资本 commit。
 - observation/exploration/exploitation/chain validation 分层；风格 shadow 不能成为资金或组合权益。
-- SampleJournal/KPI 是唯一演化 authority；所有自动 promotion、自动风险扩张和 live transition 关闭。
+- SampleJournal/KPI 是唯一演化 authority；证据达标时模拟盘 Champion 自动 promotion 直接执行、不设人工门禁；自动风险扩张和 live transition 继续关闭。
 - 任何 live/real 标记 fail closed，不自动降级。
 - Mini/Hermes 模拟桥与 `RealSignalQueue` 已从源码退役，禁止成为新依赖或兼容 fallback。`ASHARE_SIM_HERMES_ENABLED`、`ASHARE_SIM_WEBHOOK_ENABLED` 只是在安装态清理阶段保持为必须等于零的墓碑变量；任何 truthy/未知值仍须 fail closed。
 - maintenance/backfill/smoke/bootstrap/dry-run 必须隔离或显式排除，不污染交易量、PnL、KPI 和成熟度。

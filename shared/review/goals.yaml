@@ -1,52 +1,69 @@
-# 阶段目标 — review 系统据此判定"实际 vs 预期"
-# 逐级晋升: sim → shadow → real → scaled. 前阶未绿不进后阶.
+# LEGACY REVIEW-DIAGNOSTIC COMPATIBILITY ONLY
+#
+# This file is consumed by the legacy daily-review comparison layer. It is NOT
+# a strategy/model lifecycle authority, promotion/demotion authority, risk
+# expansion authority, or live-transition authority.
+#
+# Planning authority: docs/EVOLUTION_PROGRAM.md
+# A-share lifecycle authority: SampleJournal/KPI scientific evidence plus the
+# evidence-bound Champion Registry receipt chain.
+# Crypto automatic lifecycle authority: not yet implemented; see C3 in the
+# evolution program. CNFutures is paused.
+#
+# The numeric values below are intentionally preserved for output compatibility
+# while review is migrated to market-specific descriptive scorecards. Do not
+# interpret the historical sim -> shadow -> real -> scaled labels as an
+# automatic or human approval ladder.
 
 stage_1_sim:
-  description: "模拟盘: 验证策略逻辑可跑通, 无实盘压力"
+  description: "模拟盘 review diagnostic: 验证策略逻辑与样本表现"
   win_rate: 0.55
   sharpe: 0.5
   max_drawdown: 0.10
-  monthly_return: positive       # 月度收益为正即可(>0)
-  beat_benchmark: false           # 模拟盘不要求跑赢基准
-  consecutive_weeks_required: 2   # 连续2周达标才晋升
+  monthly_return: positive
+  beat_benchmark: false
+  consecutive_weeks_required: 2
 
 stage_2_shadow:
-  description: "影子盘: 真实价格但无真钱, 验证滑点/执行/心理偏差"
+  description: "影子盘 legacy review diagnostic: 真实价格、无真钱"
   win_rate: 0.60
   sharpe: 1.0
   max_drawdown: 0.08
-  beat_benchmark: true            # 必须跑赢沪深300
+  beat_benchmark: true
   consecutive_weeks_required: 2
 
 stage_3_real:
-  description: "实盘小仓位: 真钱小注, 验证执行偏差与情绪"
+  description: "历史兼容 diagnostic only；不得据此授权真实资金"
   win_rate: 0.60
-  annual_beat_benchmark: 0.05     # 年化跑赢基准5%
+  annual_beat_benchmark: 0.05
   max_drawdown: 0.08
-  consecutive_weeks_required: 4   # 实盘要求更长观察期
+  consecutive_weeks_required: 4
 
 stage_4_scaled:
-  description: "规模化: 仓位放大, 验证容量与稳定性"
+  description: "历史兼容 diagnostic only；不得据此扩大风险或仓位"
   win_rate: 0.65
-  annual_beat_benchmark: 0.10     # 年化跑赢基准10%
+  annual_beat_benchmark: 0.10
   max_drawdown: 0.05
   consecutive_weeks_required: 8
 
-# 降级触发(任一命中即降级)
+# Legacy review hints only. They may generate diagnostics; they cannot mutate
+# lifecycle state or capital/risk authority.
 demotion_rules:
   win_rate_below: 0.50
-  consecutive_weeks_below: 2      # 连续2周胜率<50% → 降级
-  max_drawdown_breach: 1.5        # 回撤达门槛1.5倍 → 立即降级
-  freeze_violation: true          # 冻结期内 in-sample 调参 → 立即降级
+  consecutive_weeks_below: 2
+  max_drawdown_breach: 1.5
+  freeze_violation: true
 
-# 升级触发
+# Legacy review hints only. Actual market promotion must come from that
+# market's scientific evolution authority.
 promotion_rules:
-  shadow_positive_consecutive_weeks: 2   # 影子盘连续2周为正 → 升级
-  all_stage_goals_met_consecutive_weeks: 2  # 所有阶段目标连续达标 → 升级
+  shadow_positive_consecutive_weeks: 2
+  all_stage_goals_met_consecutive_weeks: 2
 
-# 自愈阈值
+# Operational diagnostic thresholds only. Ordinary repair/self-heal should run
+# autonomously; an alert is observability, not a workflow approval gate.
 self_heal_thresholds:
-  data_stale_minutes: 60          # 数据陈旧>60分钟 → 巡逻检出
-  error_rate_pct: 10              # 错误率>10% → 修复
-  pnl_drawdown_pct: 5             # 单日回撤>5% → 紧急自愈
-  emergency_alert_minutes: 10     # 修复失败10分钟内升级人工
+  data_stale_minutes: 60
+  error_rate_pct: 10
+  pnl_drawdown_pct: 5
+  emergency_alert_minutes: 10

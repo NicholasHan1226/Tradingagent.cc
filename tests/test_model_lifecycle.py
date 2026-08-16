@@ -14,6 +14,7 @@ from shared.models.lifecycle import (
     TradingSessionCalendarAuthorityVerification,
     ValidationPlan,
     build_validation_plan,
+    promotion_evidence_reference,
     transition_model,
 )
 from shared.models.release_manifest import (
@@ -479,14 +480,13 @@ def test_manual_lifecycle_follows_draft_to_current_without_enabling_live() -> No
 @pytest.mark.parametrize(
     "target",
     [
-        ModelLifecycleState.BACKTEST,
         ModelLifecycleState.SHADOW,
         ModelLifecycleState.REVIEW,
         ModelLifecycleState.CURRENT,
         ModelLifecycleState.RETIRED,
     ],
 )
-def test_automation_cannot_promote_or_retire_challenger(
+def test_automation_cannot_skip_edges_or_retire_challenger(
     target: ModelLifecycleState,
 ) -> None:
     record = LifecycleRecord.draft(manifest=_manifest(), recorded_at=NOW)
@@ -502,7 +502,51 @@ def test_automation_cannot_promote_or_retire_challenger(
         )
 
 
-def test_automation_can_only_quarantine() -> None:
+def test_automation_current_requires_promotion_evidence_reference() -> None:
+    record = LifecycleRecord.draft(manifest=_manifest(), recorded_at=NOW)
+    for target in (
+        ModelLifecycleState.BACKTEST,
+        ModelLifecycleState.SHADOW,
+        ModelLifecycleState.REVIEW,
+    ):
+        record = transition_model(
+            record,
+            target=target,
+            actor=LifecycleActor.AUTOMATION,
+            recorded_at=NOW,
+            reason="evidence_ready_forward_step",
+        )
+    assert record.automatic_promotion_enabled is False
+
+    with pytest.raises(
+        LifecycleContractError,
+        match="promotion_evidence_reference",
+    ):
+        transition_model(
+            record,
+            target=ModelLifecycleState.CURRENT,
+            actor=LifecycleActor.AUTOMATION,
+            recorded_at=NOW,
+            reason="automated_attempt_without_evidence",
+            approval_reference="fake-approval",
+        )
+
+    promoted = transition_model(
+        record,
+        target=ModelLifecycleState.CURRENT,
+        actor=LifecycleActor.AUTOMATION,
+        recorded_at=NOW,
+        reason="promotion_evidence_ready",
+        approval_reference=promotion_evidence_reference("9" * 64),
+    )
+    assert promoted.state is ModelLifecycleState.CURRENT
+    assert promoted.automatic_promotion_enabled is True
+    assert promoted.real_trading_enabled is False
+    assert promoted.live_transition_authorized is False
+    assert promoted.automatic_risk_expansion_enabled is False
+
+
+def test_automation_can_quarantine_without_evidence_reference() -> None:
     record = LifecycleRecord.draft(manifest=_manifest(), recorded_at=NOW)
 
     quarantined = transition_model(
@@ -533,11 +577,10 @@ def test_current_record_requires_manual_approval_even_when_directly_loaded() -> 
     [
         "real_trading_enabled",
         "live_transition_authorized",
-        "automatic_promotion_enabled",
         "automatic_risk_expansion_enabled",
     ],
 )
-def test_lifecycle_record_rejects_live_or_automatic_authority(
+def test_lifecycle_record_rejects_live_or_risk_expansion_authority(
     field_name: str,
 ) -> None:
     draft = LifecycleRecord.draft(manifest=_manifest(), recorded_at=NOW)
@@ -547,6 +590,30 @@ def test_lifecycle_record_rejects_live_or_automatic_authority(
             **{
                 **draft.__dict__,
                 field_name: True,
+            }
+        )
+
+
+def test_lifecycle_record_allows_simulation_only_automatic_promotion_flag() -> None:
+    draft = LifecycleRecord.draft(manifest=_manifest(), recorded_at=NOW)
+
+    record = LifecycleRecord(
+        **{
+            **draft.__dict__,
+            "automatic_promotion_enabled": True,
+        }
+    )
+
+    assert record.automatic_promotion_enabled is True
+    assert record.real_trading_enabled is False
+    assert record.live_transition_authorized is False
+    assert record.automatic_risk_expansion_enabled is False
+
+    with pytest.raises(LifecycleContractError, match="simulation_only"):
+        LifecycleRecord(
+            **{
+                **draft.__dict__,
+                "automatic_promotion_enabled": "yes",
             }
         )
 

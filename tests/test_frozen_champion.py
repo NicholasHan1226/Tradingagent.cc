@@ -116,7 +116,7 @@ def test_exact_feature_contract_fails_closed() -> None:
         )
 
 
-def test_challenger_is_shadow_only_and_cannot_be_promoted_automatically() -> None:
+def test_challenger_promotion_requires_evidence_bound_registry_path() -> None:
     challenger = ShadowChallenger(
         challenger_id="candidate-2",
         version="0.1.0",
@@ -124,6 +124,8 @@ def test_challenger_is_shadow_only_and_cannot_be_promoted_automatically() -> Non
     )
     assert challenger.execution_eligible is False
     assert challenger.lifecycle_state == "shadow_only"
+    # A bare, evidence-less promotion call stays forbidden; automatic promotion
+    # flows only through the evidence-bound Champion selection registry path.
     with pytest.raises(ChampionContractError, match="automatic_promotion_forbidden"):
         challenger.promote_automatically()
 
