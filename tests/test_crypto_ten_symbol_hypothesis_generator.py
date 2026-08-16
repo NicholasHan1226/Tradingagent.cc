@@ -14,6 +14,7 @@ import Crypto.ten_symbol_factor_prescreen as prescreen
 from Crypto.ten_symbol_observation_store import CryptoTenSymbolObservationStore
 from Crypto.ten_symbol_hypothesis_generator import (
     B_CLASS_PLANES,
+    BLOCKED_REGISTRATION_STATUS,
     CHECKPOINT_FILENAME,
     DATA_PLANE_MANIFEST_CONTRACT,
     GENERATION_CONFIG,
@@ -288,7 +289,7 @@ def test_feasibility_boundaries() -> None:
         bars=37,
         planes={"open_interest_5m": {"status": "available", "sample_count": 10000}},
     )
-    assert boundary["status"] == "feasible_for_manual_evaluation"
+    assert boundary["status"] == "feasible_for_auto_registration"
     assert all(check["ok"] for check in boundary["checks"])
 
     one_bar_short = _feasibility(
@@ -337,7 +338,7 @@ def test_feasibility_boundaries() -> None:
         bars=25,
         planes={"realized_spreads": {"status": "available", "sample_count": 12}},
     )
-    assert spread_ok["status"] == "feasible_for_manual_evaluation"
+    assert spread_ok["status"] == "feasible_for_auto_registration"
     spread_short = _feasibility(
         "spread_regime__t1p0_narrow",
         bars=25,
@@ -409,7 +410,7 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
     assert result["terminal_slot_count"] == 30
     assert result["eligible_slot_count"] == 30
     assert result["loop_stage"] == GENERATOR_STAGE
-    assert result["manual_review_required"] is True
+    assert result["automatic_registration"] is True
     assert ten_symbol_hypothesis_generator_exit_code(result) == 0
     _assert_recursive_non_authority(result)
 
@@ -419,11 +420,11 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
     assert proposal["loop_stage"] == GENERATOR_STAGE
     assert proposal["generation_config_id"] == GENERATION_CONFIG_ID
     assert proposal["stage_boundaries"]["registration"] == (
-        "manual_only_no_auto_register"
+        "auto_register_feasible"
     )
     assert proposal["stage_boundaries"]["evaluation"] == "not_run_by_generator"
     assert proposal["stage_boundaries"]["scheduler"] == "detached_one_shot_no_systemd"
-    assert proposal["stage_boundaries"]["promotion"] == "manual_review_only"
+    assert proposal["stage_boundaries"]["promotion"] == "automatic_sim_domain"
     assert proposal["candidate_count"] == 23
     assert proposal["source"]["data_plane_manifest_sha256"] is None
     assert proposal["source"]["plane_states"]["ohlcv_bars"] == {
@@ -434,16 +435,21 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
     for plane in B_CLASS_PLANES:
         assert proposal["source"]["plane_states"][plane]["status"] == "unavailable"
     for candidate in proposal["candidates"]:
-        assert candidate["registration_status"] == REGISTRATION_STATUS
+        assert candidate["registration_status"] == BLOCKED_REGISTRATION_STATUS
         assert candidate["registered_into_prescreen"] is False
         assert candidate["registered_into_evaluation"] is False
         # Without a data-plane manifest every B-class candidate is blocked.
         assert candidate["feasibility"]["status"] == "blocked"
-    assert proposal["review"]["recommendation"] == "manual_review_required"
-    assert proposal["review"]["registration"] == "not_registered"
+    assert proposal["review"]["recommendation"] == "automatic_registration"
+    assert proposal["review"]["registration"] == "auto_registered_feasible"
     assert set(proposal["review"]["per_candidate"]) == {
         candidate["candidate_id"] for candidate in proposal["candidates"]
     }
+    assert all(
+        entry["recommendation"] == "blocked"
+        and entry["automatic_action"] == "none"
+        for entry in proposal["review"]["per_candidate"].values()
+    )
     _assert_recursive_non_authority(proposal)
 
     proposal_path = _proposal_path(root, result["proposal_sha256"])
@@ -506,9 +512,23 @@ def test_generator_manifest_controls_b_class_feasibility(
     assert {
         candidate_id
         for candidate_id, status in feasibility.items()
-        if status == "feasible_for_manual_evaluation"
+        if status == "feasible_for_auto_registration"
     } == expected_feasible
     assert result["feasible_candidate_count"] == len(expected_feasible)
+    registration = {
+        candidate["candidate_id"]: candidate
+        for candidate in proposal["candidates"]
+    }
+    for candidate_id in expected_feasible:
+        entry = registration[candidate_id]
+        assert entry["registration_status"] == REGISTRATION_STATUS
+        assert entry["registered_into_prescreen"] is True
+        assert entry["registered_into_evaluation"] is True
+    for candidate_id, entry in registration.items():
+        if candidate_id not in expected_feasible:
+            assert entry["registration_status"] == BLOCKED_REGISTRATION_STATUS
+            assert entry["registered_into_prescreen"] is False
+            assert entry["registered_into_evaluation"] is False
     blocked_bars = feasibility["oi_change_rate__l48_t0p01"]
     assert blocked_bars == "blocked"
     candidate = next(

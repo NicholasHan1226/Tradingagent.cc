@@ -39,7 +39,11 @@ from Crypto.factor_research import (
     _signal,
 )
 from Crypto.fixture_sim.contracts import _assert_simulation_only
-from Crypto.round_trip_capital import SLIPPAGE_BPS, TAKER_FEE_RATE
+from Crypto.round_trip_capital import (
+    ROUND_TRIP_CAPITAL_POLICY,
+    SLIPPAGE_BPS,
+    TAKER_FEE_RATE,
+)
 import Crypto.ten_symbol_factor_research as projection
 import Crypto.ten_symbol_spread_projection as spread_projection
 from Crypto.ten_symbol_observation_store import (
@@ -47,13 +51,17 @@ from Crypto.ten_symbol_observation_store import (
 )
 
 
-EVALUATION_CONTRACT = "tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v1"
+EVALUATION_CONTRACT = "tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v2"
 EVALUATION_BUNDLE_CONTRACT = (
-    "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_bundle.v1"
+    "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_bundle.v2"
 )
 EVALUATION_CHECKPOINT_CONTRACT = (
-    "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_checkpoint.v1"
+    "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_checkpoint.v2"
 )
+CHAMPION_PROMOTION_RECEIPT_CONTRACT = (
+    "tradingagent.crypto.ten_symbol_champion_promotion_receipt.v1"
+)
+CHAMPION_PROMOTION_DIRNAME = "champion_promotions"
 HORIZON_MINUTES = 60
 AUXILIARY_HORIZONS = (240, 720, 1440)
 EVALUATION_HORIZONS = (HORIZON_MINUTES, *AUXILIARY_HORIZONS)
@@ -1009,6 +1017,102 @@ def _strategy_identity(strategy_name: str, hypothesis_id: str) -> dict[str, Any]
     }
 
 
+def _select_champion(
+    required_evaluations: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Select the automatic simulation-domain Champion from 60min evidence.
+
+    A candidate is eligible only when it emitted at least one signal and its
+    cost-adjusted net return is strictly positive.  The eligible candidate
+    with the highest cost-adjusted net return wins; ties break on strategy
+    name so the selection stays deterministic.  No eligible candidate means
+    no automatic Champion replacement (``None``).
+    """
+
+    if not isinstance(required_evaluations, Mapping):
+        raise CryptoTenSymbolFactorStrategyEvaluationError(
+            "evaluation_champion_selection_invalid"
+        )
+    eligible: list[tuple[Decimal, str, dict[str, Any]]] = []
+    for name, item in required_evaluations.items():
+        if not isinstance(name, str) or not isinstance(item, Mapping):
+            raise CryptoTenSymbolFactorStrategyEvaluationError(
+                "evaluation_champion_selection_invalid"
+            )
+        metrics = item.get("metrics")
+        if not isinstance(metrics, Mapping):
+            raise CryptoTenSymbolFactorStrategyEvaluationError(
+                "evaluation_champion_selection_invalid"
+            )
+        signal_count = metrics.get("signal_count")
+        mean_text = metrics.get("cost_adjusted_net_return")
+        if (
+            isinstance(signal_count, bool)
+            or not isinstance(signal_count, int)
+            or signal_count <= 0
+            or mean_text is None
+        ):
+            continue
+        mean = _decimal(mean_text, "champion_cost_adjusted_net_return")
+        if mean <= Decimal("0"):
+            continue
+        eligible.append((mean, name, dict(item)))
+    if not eligible:
+        return None
+    eligible.sort(key=lambda row: (-row[0], row[1]))
+    mean, name, item = eligible[0]
+    return {
+        "champion_id": name,
+        "champion_sha256": item["strategy_version"],
+        "strategy_name": name,
+        "strategy_version": item["strategy_version"],
+        "factor_hypothesis_id": item["factor_hypothesis_id"],
+        "feature_set_id": item["feature_set_id"],
+        "feature_set_version": item["feature_set_version"],
+        "cost_policy_id": item["cost_policy_id"],
+        "cost_adjusted_net_return": _text(mean),
+        "cash_baseline_delta": item["metrics"].get("cash_baseline_delta"),
+        "selection_rule": "highest_positive_cost_adjusted_net_return",
+        "simulated_capital_authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
+        "simulated_capital_allocated": True,
+        "automatic_champion_replacement": True,
+        "promotion_authorized": True,
+        "automatic_promotion_enabled": True,
+        "automatic_risk_expansion_enabled": False,
+        "real_trading_enabled": False,
+    }
+
+
+def _champion_promotion_receipt(
+    *,
+    champion: Mapping[str, Any] | None,
+    outcome: str,
+    evaluation_as_of: datetime,
+) -> dict[str, Any] | None:
+    """Return an immutable, content-addressed automatic promotion receipt."""
+
+    if champion is None:
+        return None
+    receipt = {
+        "contract": CHAMPION_PROMOTION_RECEIPT_CONTRACT,
+        "event_type": "automatic_champion_promotion",
+        "champion": dict(champion),
+        "evaluation_outcome_sha256": outcome,
+        "evaluation_as_of": _iso(evaluation_as_of),
+        "simulated_capital_authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
+        "simulated_capital_allocated": champion["simulated_capital_allocated"],
+        "automatic_champion_replacement": True,
+        "promotion_authorized": True,
+        "automatic_promotion_enabled": True,
+        "automatic_risk_expansion_enabled": False,
+        "real_trading_enabled": False,
+        "authority": "none",
+        "research_only": True,
+    }
+    receipt["promotion_receipt_sha256"] = _sha(receipt)
+    return receipt
+
+
 def _evaluate_strategy(
     *,
     strategy_name: str,
@@ -1334,6 +1438,12 @@ def run_ten_symbol_factor_strategy_evaluation(
                     for name, hypothesis_id in STRATEGY_HYPOTHESIS_PAIRS.items()
                 }
             required_evaluations = evaluations_by_horizon[str(HORIZON_MINUTES)]
+            champion = _select_champion(required_evaluations)
+            promotion_receipt = _champion_promotion_receipt(
+                champion=champion,
+                outcome=outcome,
+                evaluation_as_of=as_of,
+            )
             cost_attribution_units = sorted(
                 unit_costs.values(),
                 key=lambda unit: (unit["market_slot"], unit["symbol"]),
@@ -1377,10 +1487,20 @@ def run_ten_symbol_factor_strategy_evaluation(
                     name: value["recommendation"]["shadow_only_action"]
                     for name, value in required_evaluations.items()
                 },
+                "champion": champion,
+                "champion_promotion_receipt_sha256": (
+                    promotion_receipt["promotion_receipt_sha256"]
+                    if promotion_receipt is not None
+                    else None
+                ),
                 **_safe(),
             }
             artifact["artifact_sha256"] = _sha(artifact)
-            for name in ("strategy_evaluations", COST_ATTRIBUTION_DIRNAME):
+            for name in (
+                "strategy_evaluations",
+                COST_ATTRIBUTION_DIRNAME,
+                CHAMPION_PROMOTION_DIRNAME,
+            ):
                 directory = evolution / name
                 if directory.exists() or directory.is_symlink():
                     if directory.is_symlink() or not directory.is_dir():
@@ -1396,6 +1516,13 @@ def run_ten_symbol_factor_strategy_evaluation(
             projection._write_immutable(
                 evolution / "strategy_evaluations" / f"{outcome}.json", artifact
             )
+            if promotion_receipt is not None:
+                projection._write_immutable(
+                    evolution
+                    / CHAMPION_PROMOTION_DIRNAME
+                    / f"{promotion_receipt['promotion_receipt_sha256']}.json",
+                    promotion_receipt,
+                )
             checkpoint = {
                 "contract": EVALUATION_CHECKPOINT_CONTRACT,
                 "last_evaluated_outcome_sha256": outcome,
@@ -1452,6 +1579,8 @@ def run_ten_symbol_factor_strategy_evaluation_fast(
 
 
 __all__ = [
+    "CHAMPION_PROMOTION_DIRNAME",
+    "CHAMPION_PROMOTION_RECEIPT_CONTRACT",
     "COST_ATTRIBUTION_CONTRACT",
     "COST_POLICY_ID",
     "EVALUATION_BUNDLE_CONTRACT",
