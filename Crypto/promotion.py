@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only Crypto research scorecard with promotion authority removed."""
+"""Read-only Crypto research scorecard pending the C3 automatic lifecycle gate.
+
+This module intentionally has no lifecycle mutation authority.  It must not
+turn the absence of the C3 Champion/Challenger registry into a human approval
+gate: evidence remains read-only until the automatic scientific gate and its
+durable simulation-only receipt chain are implemented.
+"""
 
 from __future__ import annotations
 
@@ -60,11 +66,19 @@ class CryptoStrategyPromotion:
             "capital_layer": "shadow",
             "target_layer": "shadow",
             "tier": evidence_tier,
+            # C3 has not yet installed a durable simulation lifecycle authority.
+            # Therefore this scorecard cannot register/promote a candidate, but
+            # the blocker is machine evidence/implementation -- not a person.
             "eligible_for_sim": False,
             "automatic_promotion_enabled": False,
             "promotion_authority": False,
-            "manual_review_required": True,
-            "retirement_reason": "automatic_crypto_promotion_retired",
+            "manual_review_required": False,
+            "human_approval_required": False,
+            "automatic_scientific_gate_required": True,
+            "lifecycle_state": "automatic_scientific_gate_pending",
+            "lifecycle_blocker": "crypto_c3_registry_not_implemented",
+            # Compatibility field retained for readers of the old projection.
+            "retirement_reason": "crypto_c3_registry_not_implemented",
             "real_execution": False,
             "validation": validation,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
