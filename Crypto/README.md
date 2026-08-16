@@ -998,6 +998,66 @@ research-only：artifact 不作为实时成本、执行信号或晋级证据。
   滚动窗口、成交量加权深度点差或 HAC 显著性；投影不构成成本、edge、
   晋级或参数变更授权。
 
+## 研究进化闭环 第一阶段（假设重估调度器，detached 只读）
+
+`ten_symbol_research_loop.py` 是研究进化闭环的第一阶段：一个离线、只读、
+detached 的假设研究调度器。输入为观测 store 根目录加预筛配置
+（`--horizon-bars`，默认 12,48,144,288 即 60/240/720/1440min），行为是把
+**已注册**的四个预筛候选（`xs_rs`、`short_reversal`、`amihud_illiquidity`、
+`momentum_vol_regime`）在最新观测证据上自动重估，产出供人工评审的
+immutable 评审报告 artifact。第一阶段不生成新假设、不改评估逻辑、不接
+systemd、不接执行；晋级永远人工。
+
+### 数据路径与证据绑定
+
+- 输入单位是 terminal 槽；事件链由 store 只读校验（`events_read_only`），
+  每槽 bars sidecar 复用 factor v2 投影的 `_build_units` 资格门禁：独立重算
+  per-source digest 并与 store 事件逐值比对。sidecar 缺失或 digest 漂移的槽
+  标记 ineligible、视同 gap 切断 bar 历史；事件链损坏一律 fail closed。
+- eligible 槽的 13 根窗口按 `open_time` 合并为每 symbol 的单调递增历史，
+  同一 open_time 的行内容冲突 fail closed；合并后重走预筛的行校验
+  （`_validate_history_rows`），缺口只记录不填补。
+- 评估口径完全复用 `ten_symbol_factor_prescreen.analyze`（同一成本模型
+  `crypto-round-trip-taker-v1`、同一特征/标签/非重叠子样本口径），不复制
+  不修改；预筛顶层 banner 描述其自身历史回填路径，不嵌入本 artifact，数据
+  出处由 artifact 自有 `source` 块声明。注册集合漂移（candidate id 集合
+  变化）fail closed。
+
+### Artifact 合约
+
+- 评审报告（contract
+  `tradingagent.crypto.ten_symbol_research_loop_review.v1`）immutable 写入
+  `<store_root>/evolution/ten_symbol_research_loop/reports/{report_sha256}.json`，
+  自含 `report_sha256`；内容包括：store 链绑定（event 计数、head
+  checksum、逐槽 terminal_units 三件套与其聚合 sha）、数据窗口、每个
+  horizon 的完整预筛分析、`metrics_summary`（每候选 × horizon × variant
+  的费用前 `mean_gross` 与费用后 `mean_net`、hit_rate、baseline_delta、
+  非重叠子样本指标）、`diff_vs_previous`（与上一份报告的逐 cell 对比：
+  change 分类、计数差、Decimal 指标差）以及固定
+  `review.recommendation=manual_review_required`（每候选同）。artifact
+  因含逐槽绑定随历史线性增长，读取沿用共享 2 MiB canonical 上限，超限
+  fail closed。
+- compact `research_loop_checkpoint.json`（contract
+  `tradingagent.crypto.ten_symbol_research_loop_checkpoint.v1`，原子覆写）
+  绑定 `last_input_digest` 与 `report_sha256`。input digest 覆盖 horizon
+  配置、store 链 head 与逐槽资格材料：同输入重跑先重验 checkpoint 与其
+  绑定报告，返回 `no_new_input` 且 artifact 字节不变（幂等）；checkpoint
+  或报告篡改 fail closed。无 terminal 事件返回 `deferred_core_pending`，
+  全部槽 ineligible 返回 `insufficient_eligible_slots`（非错误）；退出码经
+  `ten_symbol_research_loop_exit_code`（authority 字段或
+  `manual_review_required` 不符即 2）。
+- 一次性 CLI：`python3 -m Crypto.ten_symbol_research_loop --store-root
+  <path> [--horizon-bars 12,48,144,288]`；无 worker、无 systemd unit。
+
+### 后续阶段路线图（均未实现、未授权）
+
+1. **假设生成器**：从既有观测/点差/OI 等 B 类证据派生新候选假设，输出仍
+   只是研究 artifact；
+2. **自动注册评审**：生成的新假设经独立合同注册进重估集合（注册集合漂移
+   当前 fail closed，届时需显式扩展），调度器自动纳入重估；
+3. **晋级仍永久人工**：任何阶段都不授予自动晋级、自动风险扩张或执行
+   authority。
+
 ## 验证
 
 ```bash
@@ -1025,6 +1085,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_fac
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_research_worker.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_strategy_evaluation.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_spread_projection.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_research_loop.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
