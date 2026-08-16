@@ -130,10 +130,23 @@ def _front_run_bars() -> list[DailyBar]:
 
 
 class TestShadowBatch:
-    def test_front_run_classified_with_realize_hypothesis(self):
+    def test_moderate_front_run_maps_to_realize_hypothesis(self):
         batch = build_catalyst_shadow_batch(
             [_entry()],
-            {SYMBOL: _front_run_bars()},
+            {SYMBOL: _ramped_bars(0.6)},  # +6% into the event
+            as_of=AS_OF,
+        )
+        observation = batch.observations[0]
+        assert observation.observation_status == "observed"
+        assert observation.pre_return == pytest.approx(0.06, abs=0.01)
+        assert observation.anticipation_class == "front_run"
+        assert observation.anticipation_intensity == "moderate"
+        assert observation.positioning_hypothesis == "realize_on_event"
+
+    def test_extreme_front_run_maps_to_reduce_on_confirmation(self):
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: _front_run_bars()},  # +12% into the event
             as_of=AS_OF,
         )
         assert isinstance(batch, CatalystShadowBatch)
@@ -143,7 +156,10 @@ class TestShadowBatch:
         assert observation.observation_status == "observed"
         assert observation.pre_return == pytest.approx(0.12, abs=0.01)
         assert observation.anticipation_class == "front_run"
-        assert observation.positioning_hypothesis == "realize_on_event"
+        assert observation.anticipation_intensity == "extreme"
+        assert observation.positioning_hypothesis == (
+            "reduce_on_event_confirmation"
+        )
         assert observation.post_label_state == "labeled"
         assert observation.post_return == pytest.approx(0.0, abs=0.001)
 
@@ -283,6 +299,7 @@ class TestAuthorityLocks:
                 post_window_sessions=observation.post_window_sessions,
                 pre_return=observation.pre_return,
                 anticipation_class=observation.anticipation_class,
+                anticipation_intensity=observation.anticipation_intensity,
                 positioning_hypothesis=observation.positioning_hypothesis,
                 post_return=observation.post_return,
                 post_label_state=observation.post_label_state,
@@ -316,6 +333,7 @@ class TestAuthorityLocks:
                 post_window_sessions=observation.post_window_sessions,
                 pre_return=observation.pre_return,
                 anticipation_class=observation.anticipation_class,
+                anticipation_intensity=observation.anticipation_intensity,
                 positioning_hypothesis="no_signal",
                 post_return=observation.post_return,
                 post_label_state=observation.post_label_state,

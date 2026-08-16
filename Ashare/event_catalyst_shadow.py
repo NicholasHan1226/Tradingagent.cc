@@ -5,8 +5,9 @@ daily bars into deterministic, receipt-bound shadow observations.  It encodes
 the front-running hypothesis under study:
 
 * ``front_run`` — the symbol already moved materially *before* a hard-dated
-  event, so the event itself is treated as a realization (sell-the-news)
-  candidate, not an entry.
+  event.  Moderate runs (3%..10% pre-event) map to ``realize_on_event``;
+  extreme runs (>=10%) map to ``reduce_on_event_confirmation``, because the
+  offline sample showed extreme anticipation can extend after confirmation.
 * ``sell_off`` — the symbol was marked down into the event, so event
   confirmation is treated as a hold-through candidate.
 * ``quiet`` — no anticipatory move; no positioning signal.
@@ -35,7 +36,7 @@ from shared.universe.policy import classify_instrument
 
 
 EVENT_CATALYST_SHADOW_CONTRACT = (
-    "tradingagent.ashare.event_catalyst_shadow.v1"
+    "tradingagent.ashare.event_catalyst_shadow.v2"
 )
 
 EVENT_TYPES = (
@@ -55,8 +56,10 @@ DATE_CONFIDENCE_LEVELS = (
 )
 IMPACT_DIRECTIONS = ("positive", "negative", "unclear")
 ANTICIPATION_CLASSES = ("front_run", "sell_off", "quiet")
+ANTICIPATION_INTENSITIES = ("moderate", "extreme")
 POSITIONING_HYPOTHESES = (
     "realize_on_event",
+    "reduce_on_event_confirmation",
     "hold_through_event",
     "no_signal",
 )
@@ -65,6 +68,7 @@ POST_LABEL_STATES = ("labeled", "pending")
 DEFAULT_PRE_WINDOW_SESSIONS = 10
 DEFAULT_POST_WINDOW_SESSIONS = 5
 FRONT_RUN_THRESHOLD = 0.03
+EXTREME_FRONT_RUN_THRESHOLD = 0.10
 SELL_OFF_THRESHOLD = -0.03
 
 _SHA256_HEX = frozenset("0123456789abcdef")
@@ -248,6 +252,24 @@ def _classify_anticipation(pre_return: float) -> str:
     return "quiet"
 
 
+def _anticipation_intensity(
+    anticipation_class: str, pre_return: float
+) -> str | None:
+    """Split front-running into moderate vs extreme anticipation.
+
+    Offline sample evidence (2025-01..2026-08 mainboard tech, 56 policy-event
+    observations) showed moderate front-runs (3%..10% pre-event) reliably
+    faded after the event while extreme runs (>=10%) often persisted, so the
+    two regimes must not share one exit hypothesis.
+    """
+
+    if anticipation_class != "front_run":
+        return None
+    if pre_return >= EXTREME_FRONT_RUN_THRESHOLD:
+        return "extreme"
+    return "moderate"
+
+
 _HYPOTHESIS_BY_CLASS = MappingProxyType(
     {
         "front_run": "realize_on_event",
@@ -255,6 +277,19 @@ _HYPOTHESIS_BY_CLASS = MappingProxyType(
         "quiet": "no_signal",
     }
 )
+
+
+def _positioning_hypothesis(
+    anticipation_class: str, intensity: str | None
+) -> str:
+    if anticipation_class == "front_run":
+        if intensity == "extreme":
+            # Extreme anticipation marks a strong catalyst; confirmation can
+            # extend the move, so the hypothesis is a confirmation-gated
+            # reduction, never an automatic full exit.
+            return "reduce_on_event_confirmation"
+        return "realize_on_event"
+    return _HYPOTHESIS_BY_CLASS[anticipation_class]
 
 
 @dataclass(frozen=True)
@@ -273,6 +308,7 @@ class CatalystShadowObservation:
     post_window_sessions: int
     pre_return: float | None
     anticipation_class: str | None
+    anticipation_intensity: str | None
     positioning_hypothesis: str | None
     post_return: float | None
     post_label_state: str
@@ -325,8 +361,17 @@ class CatalystShadowObservation:
                 raise EventCatalystShadowError(
                     "event_catalyst_obs_class_invalid"
                 )
+            expected_intensity = _anticipation_intensity(
+                self.anticipation_class, float(self.pre_return)
+            )
+            if self.anticipation_intensity != expected_intensity:
+                raise EventCatalystShadowError(
+                    "event_catalyst_obs_intensity_mismatch"
+                )
             if (
-                _HYPOTHESIS_BY_CLASS[self.anticipation_class]
+                _positioning_hypothesis(
+                    self.anticipation_class, self.anticipation_intensity
+                )
                 != self.positioning_hypothesis
             ):
                 raise EventCatalystShadowError(
@@ -336,6 +381,7 @@ class CatalystShadowObservation:
             if (
                 self.pre_return is not None
                 or self.anticipation_class is not None
+                or self.anticipation_intensity is not None
                 or self.positioning_hypothesis is not None
             ):
                 raise EventCatalystShadowError(
@@ -481,6 +527,7 @@ def _observe_one(
 
     pre_return: float | None = None
     anticipation_class: str | None = None
+    intensity: str | None = None
     hypothesis: str | None = None
     status = "insufficient_history"
     post_return: float | None = None
@@ -502,7 +549,8 @@ def _observe_one(
                 - 1.0
             )
             anticipation_class = _classify_anticipation(pre_return)
-            hypothesis = _HYPOTHESIS_BY_CLASS[anticipation_class]
+            intensity = _anticipation_intensity(anticipation_class, pre_return)
+            hypothesis = _positioning_hypothesis(anticipation_class, intensity)
             status = "observed"
             post_end = event_index + post_window
             if post_end < len(bars):
@@ -516,6 +564,7 @@ def _observe_one(
         "observation_status": status,
         "pre_return": pre_return,
         "anticipation_class": anticipation_class,
+        "anticipation_intensity": intensity,
         "positioning_hypothesis": hypothesis,
         "post_return": post_return,
         "post_label_state": post_label_state,
@@ -533,6 +582,7 @@ def _observe_one(
         post_window_sessions=post_window,
         pre_return=pre_return,
         anticipation_class=anticipation_class,
+        anticipation_intensity=intensity,
         positioning_hypothesis=hypothesis,
         post_return=post_return,
         post_label_state=post_label_state,
