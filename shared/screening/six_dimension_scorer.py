@@ -873,7 +873,12 @@ def _score_technical(ts_code: str, date: str, config: dict[str, Any]) -> float |
 
 
 def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float | None:
-    """情绪维度 — 从 SharedSignals sentiment read model 聚合个股情绪信号。"""
+    """情绪维度 — SharedSignals sentiment 优先，TradingDatas news 只作客观计数补充。
+
+    SharedSignals sentiment 无证据时，若调用方注入了 ``_news_sentiment_reader``，
+    则读取 ``cn.dataset.news`` 时间窗内的客观命中/计数作为 evidence；该路径不
+    推断方向，得分保持中性 0.5，仅让 sentiment 维度标注“有数据支撑”。
+    """
     try:
         dim_cfg = config.get("dimensions", {}).get("sentiment", {})
         extreme_threshold = _safe_float(dim_cfg.get("extreme_threshold", 0.85), 0.85)
@@ -924,6 +929,28 @@ def _score_sentiment(ts_code: str, date: str, config: dict[str, Any]) -> float |
             weighted += _direction_score(impact_hint) * conf
             total_weight += conf
         if total_weight <= 1e-9:
+            news_reader = config.get("_news_sentiment_reader")
+            if news_reader is not None:
+                news = news_reader.read_evidence(
+                    ts_code, date, name=config.get("_symbol_name")
+                )
+                if news.has_evidence:
+                    _mark_evidence(
+                        config,
+                        "sentiment",
+                        source="TradingDatas news sentiment",
+                        rows=news.total_rows,
+                        reason=news.reason,
+                    )
+                else:
+                    _mark_evidence(
+                        config,
+                        "sentiment",
+                        source="TradingDatas news sentiment",
+                        rows=0,
+                        reason=news.reason,
+                    )
+                return 0.5
             _mark_evidence(
                 config,
                 "sentiment",
