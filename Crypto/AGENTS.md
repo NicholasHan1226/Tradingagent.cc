@@ -120,7 +120,7 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
 - `market_data.py` 只接受显式注入的 TradingDatas V1 证据，不得恢复旧 provider 专用入口。
 - `adapter.py` 只保留显式 reader 下的 market/universe/strategy 研究映射，不拥有资金、成交、Testnet 或 Live authority；未来三类 broker adapter 仍须分别实现，不能复活 tombstone。
 - `capital_policy.py` 是 `crypto-capital-v1` 原生 10,000 USDT 本地 fixture opening baseline 的单一代码来源；它不是 execution、durable receipt、production 或 live capital authority。`config.yaml` 只声明账户币种和风险参数，shared kernel 只能引用而不能另设数值。
-- `report.py` 与 `validation.py` 只生成研究辅助证据；`promotion.py` 是只读 scorecard，永久 `eligible_for_sim=false`、`promotion_authority=false`，不能自行晋级或扩风险。
+- `report.py` 与 `validation.py` 只生成研究辅助证据；`promotion.py` 当前是 C2 只读 scorecard，固定 `eligible_for_sim=false`、`promotion_authority=false`；它等待 C3 simulation-only Challenger/Champion registry 与自动科学门实现，当前不能注册、晋级或扩风险。
 - LLM sidecar 必须在核心 cycle lock 之外独立追加并限制读取大小；损坏或写入失败只形成无权威 degraded 诊断，不得回滚、重复或阻断已提交的核心资本与 bundle replay。
 - 现役 generation-2 epoch 仍是 `crypto-capital-v1` buy/observe-only，禁止把
   新候选写入其 root。`round_trip_capital.py` 与
@@ -325,8 +325,8 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   校验的调用方数据面 manifest 声明，未声明即 unavailable），产出
   `<store_root>/evolution/ten_symbol_hypothesis_generator/` 下 checksum
   绑定的 immutable 注册提案（每候选固定
-  `registration_status=pending_manual_review`，review 固定
-  `manual_review_required`）与 compact checkpoint；同输入重跑
+  `registration_status=automatic_scientific_gate_pending`，并固定
+  `manual_review_required=false`、`human_approval_required=false`、`automatic_scientific_gate_required=true`）与 compact checkpoint；同输入重跑
   `no_new_input` 且字节不变（幂等），配置漂移、manifest/链/checkpoint/
   提案篡改一律 fail closed。第二阶段不自动注册进预筛/重估/评估集合
   （注册须人工评审后独立变更）、不运行任何评估、不接 systemd、无

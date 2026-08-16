@@ -288,7 +288,7 @@ def test_feasibility_boundaries() -> None:
         bars=37,
         planes={"open_interest_5m": {"status": "available", "sample_count": 10000}},
     )
-    assert boundary["status"] == "feasible_for_manual_evaluation"
+    assert boundary["status"] == "feasible_for_automatic_scientific_gate"
     assert all(check["ok"] for check in boundary["checks"])
 
     one_bar_short = _feasibility(
@@ -337,7 +337,7 @@ def test_feasibility_boundaries() -> None:
         bars=25,
         planes={"realized_spreads": {"status": "available", "sample_count": 12}},
     )
-    assert spread_ok["status"] == "feasible_for_manual_evaluation"
+    assert spread_ok["status"] == "feasible_for_automatic_scientific_gate"
     spread_short = _feasibility(
         "spread_regime__t1p0_narrow",
         bars=25,
@@ -409,7 +409,9 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
     assert result["terminal_slot_count"] == 30
     assert result["eligible_slot_count"] == 30
     assert result["loop_stage"] == GENERATOR_STAGE
-    assert result["manual_review_required"] is True
+    assert result["manual_review_required"] is False
+    assert result["human_approval_required"] is False
+    assert result["automatic_scientific_gate_required"] is True
     assert ten_symbol_hypothesis_generator_exit_code(result) == 0
     _assert_recursive_non_authority(result)
 
@@ -439,7 +441,10 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
         assert candidate["registered_into_evaluation"] is False
         # Without a data-plane manifest every B-class candidate is blocked.
         assert candidate["feasibility"]["status"] == "blocked"
-    assert proposal["review"]["recommendation"] == "manual_review_required"
+    assert proposal["review"]["recommendation"] == "automatic_scientific_gate_pending"
+    assert proposal["manual_review_required"] is False
+    assert proposal["human_approval_required"] is False
+    assert proposal["automatic_scientific_gate_required"] is True
     assert proposal["review"]["registration"] == "not_registered"
     assert set(proposal["review"]["per_candidate"]) == {
         candidate["candidate_id"] for candidate in proposal["candidates"]
@@ -506,7 +511,7 @@ def test_generator_manifest_controls_b_class_feasibility(
     assert {
         candidate_id
         for candidate_id, status in feasibility.items()
-        if status == "feasible_for_manual_evaluation"
+        if status == "feasible_for_automatic_scientific_gate"
     } == expected_feasible
     assert result["feasible_candidate_count"] == len(expected_feasible)
     blocked_bars = feasibility["oi_change_rate__l48_t0p01"]

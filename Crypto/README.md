@@ -1034,7 +1034,7 @@ systemd、不接执行；晋级永远人工。
   的费用前 `mean_gross` 与费用后 `mean_net`、hit_rate、baseline_delta、
   非重叠子样本指标）、`diff_vs_previous`（与上一份报告的逐 cell 对比：
   change 分类、计数差、Decimal 指标差）以及固定
-  `review.recommendation=manual_review_required`（每候选同）。artifact
+  `review.recommendation=automatic_scientific_gate_pending`（每候选同），并显式声明 `manual_review_required=false`、`human_approval_required=false`、`automatic_scientific_gate_required=true`。artifact
   因含逐槽绑定随历史线性增长，读取沿用共享 2 MiB canonical 上限，超限
   fail closed。
 - compact `research_loop_checkpoint.json`（contract
@@ -1045,7 +1045,7 @@ systemd、不接执行；晋级永远人工。
   或报告篡改 fail closed。无 terminal 事件返回 `deferred_core_pending`，
   全部槽 ineligible 返回 `insufficient_eligible_slots`（非错误）；退出码经
   `ten_symbol_research_loop_exit_code`（authority 字段或
-  `manual_review_required` 不符即 2）。
+  自动科学门/非人工审批字段不符即 2）。
 - 一次性 CLI：`python3 -m Crypto.ten_symbol_research_loop --store-root
   <path> [--horizon-bars 12,48,144,288]`；无 worker、无 systemd unit。
 
@@ -1109,7 +1109,7 @@ head/index、绝不写任何 store 文件；任一损坏或合同漂移 fail clo
 只读、detached 的假设生成器。它把仓内冻结、版本化的生成配置
 （`crypto-ten-symbol-hypothesis-generation-v1`：因子族 × 参数网格 ×
 horizon）确定性展开为候选假设集，对每个候选做轻量可行性检查（所需数据面
-可用性与样本量下限），产出一份供人工评审的 immutable 注册提案 artifact。
+可用性与样本量下限），产出一份等待 C3 自动科学门的 immutable 注册提案 artifact。
 第二阶段**不自动注册**（全部候选固定
 `registration_status=pending_manual_review`、`registered_into_prescreen/
 registered_into_evaluation=false`，预筛与一阶段注册集合保持不变、漂移仍
@@ -1132,7 +1132,7 @@ fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永�
 - 配置校验严格（family 集合与顺序、模板占位符与参数键一一对应、variant
   唯一、horizon 为允许子集且排序、Decimal 文本可解析）：任何配置漂移 fail
   closed（`hypothesis_generator_config_drift`）；改动网格须换 config id 并
-  走人工评审。
+  走独立机器验证。
 - 候选 id 形如 `<family>__<variant>`，与预筛/一阶段注册集合保证不相交。
 
 ### 可行性检查与数据面
@@ -1149,9 +1149,8 @@ fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永�
   `tradingagent.crypto.ten_symbol_hypothesis_generator_data_planes.v1`，严格
   shape 校验、available 必须带 sample_count、禁止声明 ohlcv_bars）声明；
   未声明 plane 一律 `unavailable`，`accumulating` 不算 available。
-- 逐候选 `feasibility.status ∈ {feasible_for_manual_evaluation, blocked}`
-  附逐 plane 检查（observed vs min、reason code）；可行性只影响人工评审
-  排序，不改变固定 `pending_manual_review` 状态。
+- 逐候选 `feasibility.status ∈ {feasible_for_automatic_scientific_gate, blocked}`
+  附逐 plane 检查（observed vs min、reason code）；可行性只为后续自动科学门提供排序/证据，不改变固定 `automatic_scientific_gate_pending` 状态。
 
 ### Artifact 合约
 
@@ -1163,7 +1162,7 @@ fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永�
   （event 计数、head checksum、逐槽 terminal_units 聚合 sha、数据窗口）、
   数据面 manifest sha 与 plane 状态、逐候选定义（假设文本、依据、所需证据、
   参数、horizon、可行性）以及固定
-  `review.recommendation=manual_review_required`（每候选同）。
+  `review.recommendation=automatic_scientific_gate_pending`（每候选同），并显式声明 `manual_review_required=false`、`human_approval_required=false`、`automatic_scientific_gate_required=true`。
 - compact `hypothesis_generator_checkpoint.json`（contract
   `tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v1`，原子
   覆写）绑定 `last_input_digest` 与 `proposal_sha256`。input digest 覆盖
@@ -1173,7 +1172,7 @@ fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永�
   `deferred_core_pending`，全部槽 ineligible 返回
   `insufficient_eligible_slots`（非错误）；退出码经
   `ten_symbol_hypothesis_generator_exit_code`（authority 字段或
-  `manual_review_required` 不符即 2）。
+  自动科学门/非人工审批字段不符即 2）。
 - 一次性 CLI：`python3 -m Crypto.ten_symbol_hypothesis_generator
   --store-root <path> [--data-plane-manifest <path>]`；无 worker、无
   systemd unit。测试：

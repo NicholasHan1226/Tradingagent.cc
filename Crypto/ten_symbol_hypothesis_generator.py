@@ -6,19 +6,19 @@ versioned in-repository generation config (factor family x parameter grid x
 label horizons) deterministically expands into a candidate hypothesis set;
 every candidate passes a lightweight feasibility check (required data-plane
 availability and minimum sample sizes) and the whole set is emitted as one
-immutable, checksum-bound *registration proposal* artifact for human review.
+immutable, checksum-bound *registration proposal* artifact awaiting the C3 automatic scientific gate.
 
 Stage-2 boundaries, all hard-coded:
 
 - no automatic registration: candidates are proposals only, fixed
-  ``registration_status=pending_manual_review``; they are never added to the
+  ``registration_status=automatic_scientific_gate_pending``; they are never added to the
   pre-screen or evaluation registered sets (stage-1 registered-set drift
-  stays fail closed; registration is a separate human-reviewed change);
+  stays fail closed; registration remains disabled until the C3 automatic scientific gate exists);
 - no evaluation: the generator never runs the pre-screen, the factor
   projection or the strategy evaluation on the candidates;
 - no scheduler installation: one-shot invocation only, no systemd unit;
-- no promotion, ever automatic: the review block is fixed
-  ``manual_review_required`` and promotion stays a human decision.
+- no lifecycle mutation in Stage-2: the proposal explicitly requires the C3
+  automatic scientific gate, while automatic registration/promotion remains disabled here.
 
 Input integrity mirrors the stage-1 precedent: the observation store event
 chain is verified read-only, every terminal slot's bars sidecar is
@@ -65,7 +65,7 @@ DATA_PLANE_MANIFEST_CONTRACT = (
 CHECKPOINT_FILENAME = "hypothesis_generator_checkpoint.json"
 GENERATOR_STAGE = "stage_2_hypothesis_generation_proposal_only"
 GENERATION_CONFIG_ID = "crypto-ten-symbol-hypothesis-generation-v1"
-REGISTRATION_STATUS = "pending_manual_review"
+REGISTRATION_STATUS = "automatic_scientific_gate_pending"
 _VARIANT_PATTERN = re.compile(r"^[a-z0-9_]+$")
 
 # Frozen data-plane registry.  ``ohlcv_bars`` is measured directly from the
@@ -107,7 +107,7 @@ B_CLASS_PLANES = tuple(
 
 # Frozen, versioned generation config: factor family x parameter grid x
 # horizons.  Any drift against this schema fails closed; changing the grid
-# requires a new config id in a human-reviewed change.
+# requires a new config id in an independently validated change.
 GENERATION_CONFIG: dict[str, Any] = {
     "config_id": GENERATION_CONFIG_ID,
     "evidence_class": "B",
@@ -360,7 +360,9 @@ def _result(*, status: str, **fields: Any) -> dict[str, Any]:
         "status": status,
         "loop_stage": GENERATOR_STAGE,
         "learning_mode": "detached_offline_worker",
-        "manual_review_required": True,
+        "manual_review_required": False,
+        "human_approval_required": False,
+        "automatic_scientific_gate_required": True,
         **fields,
         **projection._non_authority_fields(),
     }
@@ -730,7 +732,7 @@ def _candidate_feasibility(
         )
     return {
         "status": (
-            "feasible_for_manual_evaluation"
+            "feasible_for_automatic_scientific_gate"
             if all(check["ok"] for check in checks)
             else "blocked"
         ),
@@ -812,7 +814,9 @@ def _load_proposal(evolution: Path, proposal_sha256: str) -> dict[str, Any]:
     if (
         proposal.get("contract") != PROPOSAL_CONTRACT
         or proposal.get("loop_stage") != GENERATOR_STAGE
-        or proposal.get("manual_review_required") is not True
+        or proposal.get("manual_review_required") is not False
+        or proposal.get("human_approval_required") is not False
+        or proposal.get("automatic_scientific_gate_required") is not True
         or proposal.get("generation_config_id") != GENERATION_CONFIG_ID
         or claimed != _sha256(material)
         or claimed != proposal_sha256
@@ -923,17 +927,19 @@ def _build_proposal(
         "candidate_count": len(candidates),
         "candidates": [dict(candidate) for candidate in candidates],
         "review": {
-            "recommendation": "manual_review_required",
+            "recommendation": "automatic_scientific_gate_pending",
             "registration": "not_registered",
             "per_candidate": {
                 candidate["candidate_id"]: {
-                    "recommendation": "manual_review_required",
+                    "recommendation": "automatic_scientific_gate_pending",
                     "automatic_action": "none",
                 }
                 for candidate in candidates
             },
         },
-        "manual_review_required": True,
+        "manual_review_required": False,
+        "human_approval_required": False,
+        "automatic_scientific_gate_required": True,
         **projection._non_authority_fields(),
     }
     proposal["proposal_sha256"] = _sha256(proposal)
@@ -1081,7 +1087,7 @@ def run_ten_symbol_hypothesis_generation_once(
         proposal_path=str(proposal_path),
         candidate_count=len(candidates),
         feasible_candidate_count=sum(
-            candidate["feasibility"]["status"] == "feasible_for_manual_evaluation"
+            candidate["feasibility"]["status"] == "feasible_for_automatic_scientific_gate"
             for candidate in candidates
         ),
         last_eligible_slot=projection._iso(eligible[-1]["slot"]),
@@ -1099,7 +1105,9 @@ def ten_symbol_hypothesis_generator_exit_code(result: Mapping[str, Any]) -> int:
         return 2
     return (
         0
-        if result.get("manual_review_required") is True
+        if result.get("manual_review_required") is False
+        and result.get("human_approval_required") is False
+        and result.get("automatic_scientific_gate_required") is True
         and result.get("loop_stage") == GENERATOR_STAGE
         and all(
             result.get(key) == value
