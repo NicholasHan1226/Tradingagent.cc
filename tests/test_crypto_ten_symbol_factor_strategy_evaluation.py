@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ import pytest
 from Crypto.market_observation import FIVE_MINUTES, OBSERVATION_SYMBOLS
 from Crypto.round_trip_capital import SLIPPAGE_BPS, TAKER_FEE_RATE
 from Crypto.ten_symbol_factor_strategy_evaluation import (
+    COST_ATTRIBUTION_CONTRACT,
     COST_POLICY_ID,
     EVALUATION_BUNDLE_CONTRACT,
     CryptoTenSymbolFactorStrategyEvaluationError,
@@ -21,6 +23,10 @@ from Crypto.ten_symbol_factor_strategy_evaluation import (
 )
 from Crypto.ten_symbol_factor_research import (
     run_crypto_ten_symbol_factor_research_full_scrub,
+)
+from Crypto.ten_symbol_spread_projection import (
+    CHECKPOINT_FILENAME as SPREAD_CHECKPOINT_FILENAME,
+    run_crypto_ten_symbol_spread_projection,
 )
 from tests.test_crypto_ten_symbol_observation_runtime import (
     _factory,
@@ -34,6 +40,7 @@ from tests.test_crypto_ten_symbol_support import (
     CATALOG_VERSION,
     WINDOW_END,
     TenSymbolFixtureTransport,
+    generated_book_ticker_row,
     iso,
     query_metadata,
 )
@@ -632,3 +639,416 @@ def test_all_four_horizons_evaluated_and_outcome_tracks_aux_growth(
         )
         assert f"{bars - 1}/{bars}" in aux["metrics"]["metric_basis"]
         assert f"1/{bars}" in aux["metrics"]["metric_basis"]
+
+
+# ---------------------------------------------------------------------------
+# Measured-spread cost model consumption
+# ---------------------------------------------------------------------------
+
+
+def _canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _write_canonical(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(
+        json.dumps(
+            payload,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _accumulate_with_spreads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    count: int,
+    *,
+    book_ticker_metadata_mutator: Any = None,
+) -> Path:
+    # Pin every leg's observed_at inside each slot's watermark window so the
+    # spread leg is sampled (not rejected) at every accumulated slot.
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    for index in range(count):
+        end = WINDOW_END + index * timedelta(minutes=5)
+        receipt = _run(
+            tmp_path,
+            token_file,
+            output_root,
+            now=end + timedelta(seconds=55),
+            transport_factory=_factory(
+                TenSymbolFixtureTransport(
+                    observed_at=end + timedelta(seconds=20),
+                    book_ticker_metadata_mutator=book_ticker_metadata_mutator,
+                )
+            ),
+        )
+        assert receipt["status"] == "completed"
+    return output_root
+
+
+def _expected_measured_half_spread_bps(symbol: str) -> Decimal:
+    row = generated_book_ticker_row(symbol)
+    bid = Decimal(row["bid_price"])
+    ask = Decimal(row["ask_price"])
+    spread_bps = (
+        (ask - bid) / ((ask + bid) / Decimal(2)) * Decimal(10000)
+    ).quantize(Decimal("0.00000001"))
+    return spread_bps / Decimal(2)
+
+
+def _measured_cost_adjusted(symbol: str) -> Decimal:
+    # Flat fixture: entry == exit, so the label net is fee-only; the
+    # evaluation then applies the measured half-spread per side.
+    net = (Decimal("1") - FEE) / (Decimal("1") + FEE) - Decimal("1")
+    slip = _expected_measured_half_spread_bps(symbol) / Decimal("10000")
+    return (Decimal("1") + net) * (Decimal("1") - slip) ** 2 - Decimal("1")
+
+
+def _attribution_dir(root: Path) -> Path:
+    return (
+        root
+        / "evolution"
+        / "ten_symbol_factor_research"
+        / "strategy_evaluation_cost_attributions"
+    )
+
+
+def _attribution(root: Path, outcome: str) -> dict[str, Any]:
+    return json.loads(
+        (_attribution_dir(root) / f"{outcome}.json").read_text(encoding="utf-8")
+    )
+
+
+def test_evaluation_substitutes_measured_half_spread_costs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate_with_spreads(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+    spread = run_crypto_ten_symbol_spread_projection(output_root=output_root)
+    assert spread["status"] == "projected"
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    assert artifact["status"] == "shadow_evaluated"
+    cost_model = artifact["cost_model"]
+    assert cost_model["cost_policy_id"] == COST_POLICY_ID
+    assert cost_model["fee_rate"] == "0.001"
+    assert cost_model["assumed_slippage_bps_each_side"] == "2"
+    assert cost_model["spread_quantile"] == "p75_bps"
+    assert cost_model["min_spread_samples_per_bucket"] == 12
+    assert cost_model["spread_artifact"] == {
+        "outcome_sha256": spread["outcome_sha256"],
+        "artifact_sha256": spread["artifact_sha256"],
+        "projected_through_slot": spread["projected_through_slot"],
+    }
+    assert len(artifact["cost_attribution_sha256"]) == 64
+    _assert_recursive_non_authority(artifact)
+
+    momentum = artifact["evaluations"]["60"]["momentum"]
+    assert momentum["cost_model"]["spread_artifact"]["outcome_sha256"] == (
+        spread["outcome_sha256"]
+    )
+    assert momentum["metrics"]["cost_source_counts"] == {
+        "measured": 20,
+        "assumed": 0,
+    }
+    assert momentum["baseline"]["cost_source_counts"] == {
+        "measured": 20,
+        "assumed": 0,
+    }
+    expected_mean = sum(
+        (_measured_cost_adjusted(symbol) for symbol in OBSERVATION_SYMBOLS),
+        Decimal("0"),
+    ) / Decimal(len(OBSERVATION_SYMBOLS))
+    assert (
+        abs(
+            Decimal(momentum["metrics"]["cost_adjusted_net_return"])
+            - expected_mean
+        )
+        < Decimal("1e-24")
+    )
+    # The fixture's measured half-spread (~5-9 bps/side) exceeds the assumed
+    # 2 bps, so measured-cost evaluation is strictly more conservative.
+    assert expected_mean < _cost_adjusted(Decimal("1"), Decimal("1"))
+
+    attribution = _attribution(
+        output_root, artifact["last_evaluated_outcome_sha256"]
+    )
+    assert attribution["contract"] == COST_ATTRIBUTION_CONTRACT
+    assert attribution["unit_count"] == 20
+    assert attribution["measured_unit_count"] == 20
+    assert attribution["assumed_unit_count"] == 0
+    material = dict(attribution)
+    claimed = material.pop("cost_attribution_sha256")
+    assert claimed == artifact["cost_attribution_sha256"]
+    assert claimed == _canonical_sha256(material)
+    _assert_recursive_non_authority(attribution)
+    day = WINDOW_END.date().isoformat()
+    assert [unit["market_slot"] for unit in attribution["units"]] == sorted(
+        unit["market_slot"] for unit in attribution["units"]
+    )
+    for unit in attribution["units"]:
+        assert unit["horizon_minutes"] == [60]
+        assert unit["cost_source"] == "measured"
+        assert unit["spread_bucket_day"] == day
+        assert unit["spread_sample_count"] == 14
+        assert unit["slippage_bps_each_side"] == format(
+            _expected_measured_half_spread_bps(unit["symbol"]), "f"
+        )
+
+
+def test_evaluation_marks_insufficient_spread_units_assumed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def go_stale(dataset_id: str, metadata: dict[str, Any]) -> None:
+        if dataset_id.endswith("ethusdt.book_ticker"):
+            metadata["freshness"] = {"state": "stale", "stale": True}
+
+    output_root = _accumulate_with_spreads(
+        monkeypatch, tmp_path, 14, book_ticker_metadata_mutator=go_stale
+    )
+    _scrub(output_root)
+    spread = run_crypto_ten_symbol_spread_projection(output_root=output_root)
+    assert spread["status"] == "projected"
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    momentum = artifact["evaluations"]["60"]["momentum"]
+    assert momentum["metrics"]["cost_source_counts"] == {
+        "measured": 18,
+        "assumed": 2,
+    }
+    attribution = _attribution(
+        output_root, artifact["last_evaluated_outcome_sha256"]
+    )
+    assert attribution["measured_unit_count"] == 18
+    assert attribution["assumed_unit_count"] == 2
+    eth_units = [
+        unit for unit in attribution["units"] if unit["symbol"] == "ETHUSDT"
+    ]
+    assert len(eth_units) == 2
+    for unit in eth_units:
+        assert unit["cost_source"] == "assumed"
+        assert unit["slippage_bps_each_side"] == "2"
+        assert unit["spread_bucket_day"] is None
+        assert unit["spread_sample_count"] is None
+    for unit in attribution["units"]:
+        if unit["symbol"] != "ETHUSDT":
+            assert unit["cost_source"] == "measured"
+
+
+def test_evaluation_never_extrapolates_thin_day_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Only the first three slots sample spreads, so every symbol's day bucket
+    # has 3 samples (< 12): the artifact loads, but every unit keeps the
+    # assumed cost instead of extrapolating from a thin bucket.
+    cutoff = iso(WINDOW_END + timedelta(minutes=15))
+
+    def stale_after_cutoff(dataset_id: str, metadata: dict[str, Any]) -> None:
+        if metadata["observed_at"] >= cutoff:
+            metadata["freshness"] = {"state": "stale", "stale": True}
+
+    output_root = _accumulate_with_spreads(
+        monkeypatch, tmp_path, 14, book_ticker_metadata_mutator=stale_after_cutoff
+    )
+    _scrub(output_root)
+    spread = run_crypto_ten_symbol_spread_projection(output_root=output_root)
+    assert spread["status"] == "projected"
+    assert spread["sampled_entry_count"] == 30
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    assert artifact["cost_model"]["spread_artifact"] is not None
+    momentum = artifact["evaluations"]["60"]["momentum"]
+    assert momentum["metrics"]["cost_source_counts"] == {
+        "measured": 0,
+        "assumed": 20,
+    }
+    assert Decimal(momentum["metrics"]["cost_adjusted_net_return"]) == (
+        _cost_adjusted(Decimal("1"), Decimal("1"))
+    )
+    attribution = _attribution(
+        output_root, artifact["last_evaluated_outcome_sha256"]
+    )
+    assert attribution["assumed_unit_count"] == 20
+    assert all(
+        unit["cost_source"] == "assumed" and unit["spread_bucket_day"] is None
+        for unit in attribution["units"]
+    )
+
+
+def test_evaluation_without_spread_artifact_marks_all_units_assumed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate_with_spreads(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    assert artifact["cost_model"]["spread_artifact"] is None
+    momentum = artifact["evaluations"]["60"]["momentum"]
+    assert momentum["metrics"]["cost_source_counts"] == {
+        "measured": 0,
+        "assumed": 20,
+    }
+    assert Decimal(momentum["metrics"]["cost_adjusted_net_return"]) == (
+        _cost_adjusted(Decimal("1"), Decimal("1"))
+    )
+    attribution = _attribution(
+        output_root, artifact["last_evaluated_outcome_sha256"]
+    )
+    assert attribution["measured_unit_count"] == 0
+    assert attribution["assumed_unit_count"] == 20
+    for unit in attribution["units"]:
+        assert unit["cost_source"] == "assumed"
+        assert unit["slippage_bps_each_side"] == "2"
+        assert unit["spread_bucket_day"] is None
+
+
+def test_evaluation_with_empty_spread_namespace_stays_assumed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate_with_spreads(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+    # The projection namespace exists but never produced a checkpoint.
+    (output_root / "evolution" / "ten_symbol_spread_projection").mkdir()
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    assert artifact["status"] == "shadow_evaluated"
+    assert artifact["cost_model"]["spread_artifact"] is None
+    assert artifact["evaluations"]["60"]["momentum"]["metrics"][
+        "cost_source_counts"
+    ] == {"measured": 0, "assumed": 20}
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["checkpoint", "artifact_corrupt", "artifact_missing", "metric_drift"],
+)
+def test_evaluation_fails_closed_on_spread_artifact_tamper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    output_root = _accumulate_with_spreads(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+    spread = run_crypto_ten_symbol_spread_projection(output_root=output_root)
+    assert spread["status"] == "projected"
+    evolution = output_root / "evolution" / "ten_symbol_spread_projection"
+    checkpoint_path = evolution / SPREAD_CHECKPOINT_FILENAME
+    artifact_path = evolution / "artifacts" / f"{spread['outcome_sha256']}.json"
+
+    if tamper == "checkpoint":
+        payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        payload["artifact_sha256"] = "0" * 64
+        _write_canonical(checkpoint_path, payload)
+    elif tamper == "artifact_corrupt":
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        payload["totals"]["sample_count"] = 999
+        artifact_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    elif tamper == "artifact_missing":
+        artifact_path.unlink()
+    elif tamper == "metric_drift":
+        # A self-consistent forgery: both digests are recomputed, so only
+        # the consumer-side metric-contract check can reject it.
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["spread_metric"]["quantile_method"] = "nearest_rank"
+        material = dict(artifact)
+        artifact["artifact_sha256"] = _canonical_sha256(material)
+        _write_canonical(artifact_path, artifact)
+        checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        checkpoint["artifact_sha256"] = artifact["artifact_sha256"]
+        material = dict(checkpoint)
+        claimed = material.pop("checkpoint_sha256")
+        assert claimed != _canonical_sha256(material)
+        checkpoint["checkpoint_sha256"] = _canonical_sha256(material)
+        _write_canonical(checkpoint_path, checkpoint)
+
+    with pytest.raises(
+        CryptoTenSymbolFactorStrategyEvaluationError,
+        match="evaluation_spread_artifact_invalid",
+    ):
+        run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+    assert not _attribution_dir(output_root).exists()
+
+
+def test_evaluation_outcome_tracks_spread_artifact_updates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate_with_spreads(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+    run_crypto_ten_symbol_spread_projection(output_root=output_root)
+    first = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+    assert first["status"] == "shadow_evaluated"
+    outcome = first["last_evaluated_outcome_sha256"]
+    bundle_bytes = (_artifact_dir(output_root) / f"{outcome}.json").read_bytes()
+    attribution_bytes = (
+        _attribution_dir(output_root) / f"{outcome}.json"
+    ).read_bytes()
+
+    rerun = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+    assert rerun["status"] == "no_new_outcome"
+    assert (_artifact_dir(output_root) / f"{outcome}.json").read_bytes() == (
+        bundle_bytes
+    )
+    assert (_attribution_dir(output_root) / f"{outcome}.json").read_bytes() == (
+        attribution_bytes
+    )
+
+    # One more observation slot: the resolved sample inventory is unchanged
+    # (no scrub), but new measured spread evidence must re-evaluate.
+    token_file = tmp_path / "tradingdatas-crypto-read.token"
+    end = WINDOW_END + timedelta(minutes=70)
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=end + timedelta(seconds=55),
+        transport_factory=_factory(
+            TenSymbolFixtureTransport(observed_at=end + timedelta(seconds=20))
+        ),
+    )
+    assert receipt["status"] == "completed"
+    second_spread = run_crypto_ten_symbol_spread_projection(output_root=output_root)
+    assert second_spread["status"] == "projected"
+
+    second = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+
+    assert second["status"] == "shadow_evaluated"
+    assert second["last_evaluated_outcome_sha256"] != outcome
+    assert second["cost_model"]["spread_artifact"]["outcome_sha256"] == (
+        second_spread["outcome_sha256"]
+    )
+    second_attribution = _attribution(
+        output_root, second["last_evaluated_outcome_sha256"]
+    )
+    assert second_attribution["measured_unit_count"] == 20
+    assert all(
+        unit["spread_sample_count"] == 15
+        for unit in second_attribution["units"]
+    )
+
+    third = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+    assert third["status"] == "no_new_outcome"
+    assert third["artifact_sha256"] == second["artifact_sha256"]
