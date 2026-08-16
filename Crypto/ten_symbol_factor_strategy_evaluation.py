@@ -8,6 +8,15 @@ store event checksum, bars-sidecar sha, checkpoint chain replay, cost policy,
 gross/net recomputation, causality), and produces one immutable evaluation
 artifact per resolved outcome covering all three pre-registered hypotheses.
 It has no core, capital, order, Champion, or network access.
+
+When the detached realized-spread projection has produced a checkpoint-bound
+artifact, the evaluation substitutes the measured per-symbol half-spread
+(p75 of the most recent sufficiently sampled UTC-day bucket on or before the
+sample slot's day) for the assumed slippage leg, keeping the existing taker
+fee; units without sufficient measured evidence keep the assumed cost and
+are explicitly marked ``cost_source=assumed`` -- the two sources are never
+silently mixed.  A missing projection namespace degrades explicitly to
+all-assumed; a corrupt or tampered checkpoint/artifact chain fails closed.
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from Crypto.factor_research import (
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.round_trip_capital import SLIPPAGE_BPS, TAKER_FEE_RATE
 import Crypto.ten_symbol_factor_research as projection
+import Crypto.ten_symbol_spread_projection as spread_projection
 from Crypto.ten_symbol_observation_store import (
     CryptoTenSymbolObservationStoreError,
 )
@@ -55,6 +65,17 @@ STRATEGY_HYPOTHESIS_PAIRS = {
 }
 _SYMBOLS = projection._SYMBOLS
 CHECKPOINT_FILENAME = "strategy_evaluation_checkpoint.json"
+# A UTC-day bucket only qualifies as measured cost evidence with at least
+# one hour of 5-minute spread samples (12 of the day's 288 slots); below
+# that the type-7 p75 interpolates between fewer than ten observations of a
+# short intraday window and says nothing about the day's spread regime, so
+# the unit keeps the assumed cost instead of extrapolating.
+SPREAD_COST_MIN_BUCKET_SAMPLES = 12
+SPREAD_COST_QUANTILE = "p75_bps"
+COST_ATTRIBUTION_CONTRACT = (
+    "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_cost_attribution.v1"
+)
+COST_ATTRIBUTION_DIRNAME = "strategy_evaluation_cost_attributions"
 
 
 class CryptoTenSymbolFactorStrategyEvaluationError(RuntimeError):
@@ -134,6 +155,202 @@ def _cost_policy() -> dict[str, Any]:
         "fee_rate": format(TAKER_FEE_RATE, "f"),
         "slippage_bps_each_side": format(SLIPPAGE_BPS, "f"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Measured-spread cost evidence (detached read-only consumption)
+# ---------------------------------------------------------------------------
+
+_SPREAD_METRIC_EXPECTED = {
+    "metric": "realized_top_of_book_relative_spread",
+    "spread_bps_formula": "(ask_price - bid_price) / mid * 10000",
+    "mid_formula": "(ask_price + bid_price) / 2",
+    "quantile_method": "type7_linear_interpolation",
+    "aggregation_window": "utc_calendar_day_per_symbol",
+}
+
+
+def _load_spread_cost_artifact(
+    root: Path,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Return the validated (artifact, checkpoint) spread evidence, or None.
+
+    Only the compact-checkpoint-bound current artifact is consumed: the
+    checkpoint preimage, its bound ``artifact_sha256``/``outcome_sha256``
+    chain and the authority fields are all re-verified before any number is
+    trusted.  A missing projection namespace (or a namespace that never
+    produced an artifact) degrades explicitly to all-assumed costs; a
+    corrupt artifact, a tampered checkpoint, a missing checkpoint-bound
+    artifact file, or any metric-contract drift fails closed.
+    """
+
+    evolution = root / "evolution" / "ten_symbol_spread_projection"
+    if not evolution.exists():
+        return None
+    if evolution.is_symlink() or not evolution.is_dir():
+        raise CryptoTenSymbolFactorStrategyEvaluationError(
+            "evaluation_spread_artifact_invalid"
+        )
+    try:
+        checkpoint = spread_projection._validated_current(evolution)
+    except spread_projection.CryptoTenSymbolSpreadProjectionError as exc:
+        raise CryptoTenSymbolFactorStrategyEvaluationError(
+            "evaluation_spread_artifact_invalid"
+        ) from exc
+    if checkpoint is None:
+        return None
+    outcome = checkpoint["last_projected_outcome_sha256"]
+    try:
+        artifact = projection._parse_canonical(
+            evolution / "artifacts" / f"{outcome}.json",
+            reason="evaluation_spread_artifact_invalid",
+        )
+    except projection.CryptoTenSymbolFactorProjectionError as exc:
+        raise CryptoTenSymbolFactorStrategyEvaluationError(
+            "evaluation_spread_artifact_invalid"
+        ) from exc
+    metric = artifact.get("spread_metric")
+    if (
+        artifact.get("contract")
+        != spread_projection.TEN_SYMBOL_SPREAD_PROJECTION_CONTRACT
+        or not isinstance(metric, Mapping)
+        or any(
+            metric.get(key) != value
+            for key, value in _SPREAD_METRIC_EXPECTED.items()
+        )
+        or any(
+            artifact.get(key) != value
+            for key, value in projection._non_authority_fields().items()
+        )
+    ):
+        raise CryptoTenSymbolFactorStrategyEvaluationError(
+            "evaluation_spread_artifact_invalid"
+        )
+    return artifact, checkpoint
+
+
+def _spread_cost_index(
+    artifact: Mapping[str, Any],
+) -> dict[str, list[tuple[str, Decimal, int]]]:
+    """Index eligible per-day buckets: symbol -> ascending (day, p75, count).
+
+    A bucket is eligible only with at least
+    ``SPREAD_COST_MIN_BUCKET_SAMPLES`` sampled entries and a positive
+    quantile value; anything else is never extrapolated and the consuming
+    unit falls back to the assumed cost policy.
+    """
+
+    reason = "evaluation_spread_artifact_invalid"
+    buckets = artifact.get("buckets")
+    if not isinstance(buckets, Mapping):
+        raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+    index: dict[str, list[tuple[str, Decimal, int]]] = {}
+    for symbol, days in buckets.items():
+        if (
+            not isinstance(symbol, str)
+            or symbol not in _SYMBOLS
+            or not isinstance(days, Mapping)
+        ):
+            raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+        eligible: list[tuple[str, Decimal, int]] = []
+        for day, stats in days.items():
+            if not isinstance(day, str):
+                raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+            try:
+                parsed_day = datetime.strptime(day, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise CryptoTenSymbolFactorStrategyEvaluationError(reason) from exc
+            if day != parsed_day.isoformat():
+                raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+            if not isinstance(stats, Mapping):
+                raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+            sample_count = stats.get("sample_count")
+            quantile = stats.get(SPREAD_COST_QUANTILE)
+            if (
+                isinstance(sample_count, bool)
+                or not isinstance(sample_count, int)
+                or sample_count < 0
+            ):
+                raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+            if quantile is None:
+                continue
+            value = _decimal(quantile, "spread_bucket_quantile")
+            if value <= 0:
+                raise CryptoTenSymbolFactorStrategyEvaluationError(reason)
+            if sample_count >= SPREAD_COST_MIN_BUCKET_SAMPLES:
+                eligible.append((day, value, sample_count))
+        eligible.sort()
+        index[symbol] = eligible
+    return index
+
+
+def _spread_cost_decision(
+    index: Mapping[str, list[tuple[str, Decimal, int]]],
+    *,
+    symbol: Any,
+    slot: datetime,
+) -> dict[str, Any]:
+    """Pick one unit's slippage: measured half-spread or assumed fallback.
+
+    The measured source is the most recent eligible UTC-day bucket on or
+    before the sample slot's day, so no future spread evidence ever enters
+    a past unit's cost.  Without an eligible bucket the unit keeps the
+    assumed ``crypto-round-trip-taker-v1`` slippage and is explicitly marked
+    ``assumed``; the two sources are never silently mixed.
+    """
+
+    assumed: dict[str, Any] = {
+        "cost_source": "assumed",
+        "slippage_bps_each_side": SLIPPAGE_BPS,
+        "spread_bucket_day": None,
+        "spread_sample_count": None,
+    }
+    if not isinstance(symbol, str):
+        return assumed
+    slot_day = slot.date().isoformat()
+    chosen: tuple[str, Decimal, int] | None = None
+    for entry in index.get(symbol, ()):
+        if entry[0] > slot_day:
+            break
+        chosen = entry
+    if chosen is None:
+        return assumed
+    day, quantile, sample_count = chosen
+    return {
+        "cost_source": "measured",
+        "slippage_bps_each_side": quantile / Decimal("2"),
+        "spread_bucket_day": day,
+        "spread_sample_count": sample_count,
+    }
+
+
+def _cost_model(
+    spread: tuple[dict[str, Any], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    artifact, checkpoint = spread if spread is not None else (None, None)
+    return {
+        "cost_policy_id": COST_POLICY_ID,
+        "fee_rate": format(TAKER_FEE_RATE, "f"),
+        "assumed_slippage_bps_each_side": format(SLIPPAGE_BPS, "f"),
+        "measured_slippage_rule": (
+            "half of the day-bucket p75 spread per side, from the most"
+            " recent eligible UTC-day bucket on or before the sample slot"
+            " day; buckets below the sample threshold are never"
+            " extrapolated and the unit keeps the assumed slippage"
+        ),
+        "spread_quantile": SPREAD_COST_QUANTILE,
+        "min_spread_samples_per_bucket": SPREAD_COST_MIN_BUCKET_SAMPLES,
+        "spread_artifact": (
+            None
+            if artifact is None
+            else {
+                "outcome_sha256": artifact["outcome_sha256"],
+                "artifact_sha256": artifact["artifact_sha256"],
+                "projected_through_slot": checkpoint["projected_through_slot"],
+            }
+        ),
+    }
+
 
 
 # ---------------------------------------------------------------------------
@@ -381,8 +598,17 @@ def _inventory(
     return samples, checkpoints
 
 
-def _outcome_sha256(samples: Sequence[Mapping[str, Any]]) -> str:
-    """Identify the resolved-sample inventory; changes only when it does."""
+def _outcome_sha256(
+    samples: Sequence[Mapping[str, Any]],
+    *,
+    spread_outcome_sha256: str | None,
+) -> str:
+    """Identify the resolved-sample inventory; changes only when it does.
+
+    The consumed spread-projection outcome is part of the identity: new
+    measured cost evidence re-evaluates the same samples instead of being
+    masked by the compact checkpoint.
+    """
 
     material = {
         "samples": sorted(
@@ -390,7 +616,8 @@ def _outcome_sha256(samples: Sequence[Mapping[str, Any]]) -> str:
             f"{sample['snapshot'].get('symbol')}:"
             f"{sample['label'].get('forward_label_sha256')}"
             for sample in samples
-        )
+        ),
+        "spread_cost_outcome_sha256": spread_outcome_sha256,
     }
     return _sha(material)
 
@@ -452,6 +679,7 @@ def _resolved(
     evaluation_as_of: datetime,
     *,
     verified_chain: Mapping[str, Mapping[str, Any]] | None = None,
+    cost_decision: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], Decimal]:
     snapshot = sample.get("snapshot")
     label = sample.get("label")
@@ -649,8 +877,22 @@ def _resolved(
         raise CryptoTenSymbolFactorStrategyEvaluationError(
             "evaluation_label_return_invalid"
         )
-    slip = SLIPPAGE_BPS / Decimal("10000")
-    return dict(sample), (Decimal("1") + expected_net) * (
+    if cost_decision is None:
+        cost_decision = {
+            "cost_source": "assumed",
+            "slippage_bps_each_side": SLIPPAGE_BPS,
+            "spread_bucket_day": None,
+            "spread_sample_count": None,
+        }
+    slip = cost_decision["slippage_bps_each_side"] / Decimal("10000")
+    resolved = dict(sample)
+    resolved["cost_attribution"] = {
+        "cost_source": cost_decision["cost_source"],
+        "slippage_bps_each_side": _text(cost_decision["slippage_bps_each_side"]),
+        "spread_bucket_day": cost_decision["spread_bucket_day"],
+        "spread_sample_count": cost_decision["spread_sample_count"],
+    }
+    return resolved, (Decimal("1") + expected_net) * (
         Decimal("1") - slip
     ) ** 2 - Decimal("1")
 
@@ -680,6 +922,17 @@ def _metrics(
 ) -> dict[str, Any]:
     selected = [value for (_, value), signal in zip(rows, signals) if signal]
     count = len(rows)
+    cost_source_counts = {"measured": 0, "assumed": 0}
+    for row, _ in rows:
+        attribution = row.get("cost_attribution")
+        source = (
+            attribution.get("cost_source") if isinstance(attribution, Mapping) else None
+        )
+        if source not in cost_source_counts:
+            raise CryptoTenSymbolFactorStrategyEvaluationError(
+                "evaluation_cost_attribution_invalid"
+            )
+        cost_source_counts[source] += 1
     mean = sum(selected, Decimal("0")) / Decimal(len(selected)) if selected else None
     slot_returns: dict[datetime, list[Decimal]] = {}
     for (row, value), signal in zip(rows, signals):
@@ -700,6 +953,7 @@ def _metrics(
         "resolved_count": count,
         "signal_count": len(selected),
         "abstention_count": count - len(selected),
+        "cost_source_counts": cost_source_counts,
         "coverage": _text(Decimal(len(selected)) / Decimal(count)) if count else "0",
         "hit_rate": _text(
             Decimal(sum(value > 0 for value in selected)) / Decimal(len(selected))
@@ -763,6 +1017,7 @@ def _evaluate_strategy(
     baseline: Mapping[str, Any],
     baseline_mean: Decimal | None,
     cash_baseline: Mapping[str, Any],
+    cost_model: Mapping[str, Any],
     evaluation_as_of: datetime,
     horizon: int,
 ) -> dict[str, Any]:
@@ -791,6 +1046,7 @@ def _evaluate_strategy(
         "research_attribution": horizon != HORIZON_MINUTES,
         "resolved_count": len(rows),
         "evaluated_status": "exploratory_insufficient_edge",
+        "cost_model": dict(cost_model),
         "baseline": dict(baseline),
         "cash_baseline": dict(cash_baseline),
         "metrics": metrics,
@@ -937,7 +1193,17 @@ def run_ten_symbol_factor_strategy_evaluation(
                     "resolved_count": 0,
                     **_safe(),
                 }
-            outcome = _outcome_sha256(samples)
+            spread = _load_spread_cost_artifact(root)
+            cost_index = (
+                _spread_cost_index(spread[0]) if spread is not None else {}
+            )
+            cost_model = _cost_model(spread)
+            outcome = _outcome_sha256(
+                samples,
+                spread_outcome_sha256=(
+                    spread[0]["outcome_sha256"] if spread is not None else None
+                ),
+            )
             current = _validated_current(evolution)
             if current is not None and current.get(
                 "last_evaluated_outcome_sha256"
@@ -974,12 +1240,25 @@ def run_ten_symbol_factor_strategy_evaluation(
             # any sample carrying a different chain object fails closed.
             verified_chain = _verify_chain_replay(samples[0])
             shared_chain = samples[0]["projection_checkpoint_chain"]
+            unit_costs: dict[tuple[str, str], dict[str, Any]] = {}
             for sample in samples:
                 if sample["projection_checkpoint_chain"] is not shared_chain:
                     raise CryptoTenSymbolFactorStrategyEvaluationError(
                         "evaluation_checkpoint_chain_invalid"
                     )
-                resolved = _resolved(sample, as_of, verified_chain=verified_chain)
+                decision = _spread_cost_decision(
+                    cost_index,
+                    symbol=sample["snapshot"].get("symbol"),
+                    slot=_utc(
+                        sample["snapshot"].get("market_slot"), "market_slot"
+                    ),
+                )
+                resolved = _resolved(
+                    sample,
+                    as_of,
+                    verified_chain=verified_chain,
+                    cost_decision=decision,
+                )
                 identity = (
                     sample.get("segment_id"),
                     resolved[0]["snapshot"].get("observation_id"),
@@ -991,6 +1270,23 @@ def run_ten_symbol_factor_strategy_evaluation(
                         "evaluation_sample_duplicate"
                     )
                 identities.add(identity)
+                unit_key = (
+                    str(resolved[0]["snapshot"].get("observation_id")),
+                    str(resolved[0]["snapshot"].get("symbol")),
+                )
+                unit = unit_costs.get(unit_key)
+                if unit is None:
+                    unit = {
+                        "observation_id": unit_key[0],
+                        "symbol": unit_key[1],
+                        "market_slot": str(
+                            resolved[0]["snapshot"].get("market_slot")
+                        ),
+                        "horizon_minutes": [],
+                        **resolved[0]["cost_attribution"],
+                    }
+                    unit_costs[unit_key] = unit
+                unit["horizon_minutes"].append(int(sample["horizon_minutes"]))
                 rows_by_horizon[int(sample["horizon_minutes"])].append(resolved)
             required_rows = rows_by_horizon[HORIZON_MINUTES]
             if not required_rows:
@@ -1031,12 +1327,38 @@ def run_ten_symbol_factor_strategy_evaluation(
                         baseline=baseline,
                         baseline_mean=baseline_mean,
                         cash_baseline=cash_baseline,
+                        cost_model=cost_model,
                         evaluation_as_of=as_of,
                         horizon=horizon,
                     )
                     for name, hypothesis_id in STRATEGY_HYPOTHESIS_PAIRS.items()
                 }
             required_evaluations = evaluations_by_horizon[str(HORIZON_MINUTES)]
+            cost_attribution_units = sorted(
+                unit_costs.values(),
+                key=lambda unit: (unit["market_slot"], unit["symbol"]),
+            )
+            measured_unit_count = sum(
+                unit["cost_source"] == "measured"
+                for unit in cost_attribution_units
+            )
+            attribution = {
+                "contract": COST_ATTRIBUTION_CONTRACT,
+                "last_evaluated_outcome_sha256": outcome,
+                "evaluation_as_of": _iso(as_of),
+                "unit_count": len(cost_attribution_units),
+                "measured_unit_count": measured_unit_count,
+                "assumed_unit_count": (
+                    len(cost_attribution_units) - measured_unit_count
+                ),
+                "cost_model": cost_model,
+                # One entry per resolved (slot, symbol) unit; the listed
+                # horizons share the unit's cost decision, so every evaluated
+                # sample's cost_source stays visible without silent mixing.
+                "units": cost_attribution_units,
+                **_safe(),
+            }
+            attribution["cost_attribution_sha256"] = _sha(attribution)
             artifact = {
                 "contract": EVALUATION_BUNDLE_CONTRACT,
                 "status": "shadow_evaluated",
@@ -1046,6 +1368,8 @@ def run_ten_symbol_factor_strategy_evaluation(
                 "resolved_count_by_horizon": resolved_count_by_horizon,
                 "horizon_status": horizon_status,
                 "evaluations": evaluations_by_horizon,
+                "cost_model": cost_model,
+                "cost_attribution_sha256": attribution["cost_attribution_sha256"],
                 # The recommendation deliberately stays scoped to the
                 # required 60min definition; auxiliary horizons are
                 # directional research attribution only.
@@ -1056,15 +1380,22 @@ def run_ten_symbol_factor_strategy_evaluation(
                 **_safe(),
             }
             artifact["artifact_sha256"] = _sha(artifact)
-            directory = evolution / "strategy_evaluations"
-            if directory.exists() or directory.is_symlink():
-                if directory.is_symlink() or not directory.is_dir():
-                    raise CryptoTenSymbolFactorStrategyEvaluationError(
-                        "evaluation_directory_invalid"
-                    )
-            else:
-                directory.mkdir(mode=0o700)
-            projection._write_immutable(directory / f"{outcome}.json", artifact)
+            for name in ("strategy_evaluations", COST_ATTRIBUTION_DIRNAME):
+                directory = evolution / name
+                if directory.exists() or directory.is_symlink():
+                    if directory.is_symlink() or not directory.is_dir():
+                        raise CryptoTenSymbolFactorStrategyEvaluationError(
+                            "evaluation_directory_invalid"
+                        )
+                else:
+                    directory.mkdir(mode=0o700)
+            projection._write_immutable(
+                evolution / COST_ATTRIBUTION_DIRNAME / f"{outcome}.json",
+                attribution,
+            )
+            projection._write_immutable(
+                evolution / "strategy_evaluations" / f"{outcome}.json", artifact
+            )
             checkpoint = {
                 "contract": EVALUATION_CHECKPOINT_CONTRACT,
                 "last_evaluated_outcome_sha256": outcome,
@@ -1121,10 +1452,13 @@ def run_ten_symbol_factor_strategy_evaluation_fast(
 
 
 __all__ = [
+    "COST_ATTRIBUTION_CONTRACT",
     "COST_POLICY_ID",
     "EVALUATION_BUNDLE_CONTRACT",
     "EVALUATION_CHECKPOINT_CONTRACT",
     "EVALUATION_CONTRACT",
+    "SPREAD_COST_MIN_BUCKET_SAMPLES",
+    "SPREAD_COST_QUANTILE",
     "STRATEGY_HYPOTHESIS_PAIRS",
     "CryptoTenSymbolFactorStrategyEvaluationError",
     "run_ten_symbol_factor_strategy_evaluation",
