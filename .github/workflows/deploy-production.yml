@@ -73,8 +73,11 @@ jobs:
 
           source_sha="$(tar -xOf "$archive" ./.source-sha | tr -d '\r\n')"
           [[ "$source_sha" == "$DEPLOY_SHA" ]]
-          tar -tzf "$archive" \
-            | grep -Fxq './front/dist-server/server/tradingAgentSnapshotHttp.js'
+          tar -tzf "$archive" > "$RUNNER_TEMP/archive-listing.txt"
+          # grep -q closes the pipe early on match; listing first avoids a
+          # SIGPIPE failure from tar under pipefail.
+          grep -Fxq './front/dist-server/server/tradingAgentSnapshotHttp.js' \
+            "$RUNNER_TEMP/archive-listing.txt"
 
           checksum="$(awk 'NR == 1 {print $1}' "$checksum_file")"
           [[ "$checksum" =~ ^[0-9a-f]{64}$ ]]
