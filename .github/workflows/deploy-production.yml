@@ -19,7 +19,7 @@ jobs:
   deploy:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.head_branch == 'main' &&
       vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
@@ -29,10 +29,28 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
-      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
       DEPLOY_RUN_ID: ${{ github.event.workflow_run.id }}
 
     steps:
+      - name: Discover tested release identity
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifacts_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/artifacts?per_page=100")"
+          mapfile -t artifact_names < <(
+            jq -r '.artifacts[] | select(.expired == false) | .name' <<<"$artifacts_json" \
+              | grep -E '^tradingagent-release-[0-9a-f]{40}$' || true
+          )
+          [[ "${#artifact_names[@]}" -eq 1 ]]
+          artifact_name="${artifact_names[0]}"
+          deploy_sha="${artifact_name#tradingagent-release-}"
+          [[ "$deploy_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+          printf 'deploy_sha=%s\n' "$deploy_sha" >> "$GITHUB_OUTPUT"
+          printf 'DEPLOY_SHA=%s\n' "$deploy_sha" >> "$GITHUB_ENV"
+
       - name: Validate deployment configuration
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -51,7 +69,7 @@ jobs:
       - name: Download tested release artifact
         uses: actions/download-artifact@v5
         with:
-          name: tradingagent-release-${{ github.event.workflow_run.head_sha }}
+          name: ${{ steps.source.outputs.artifact_name }}
           path: ${{ runner.temp }}/release-artifact
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
@@ -74,8 +92,6 @@ jobs:
           source_sha="$(tar -xOf "$archive" ./.source-sha | tr -d '\r\n')"
           [[ "$source_sha" == "$DEPLOY_SHA" ]]
           tar -tzf "$archive" > "$RUNNER_TEMP/archive-listing.txt"
-          # grep -q closes the pipe early on match; listing first avoids a
-          # SIGPIPE failure from tar under pipefail.
           grep -Fxq './front/dist-server/server/tradingAgentSnapshotHttp.js' \
             "$RUNNER_TEMP/archive-listing.txt"
 

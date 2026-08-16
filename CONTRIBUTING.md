@@ -11,23 +11,36 @@ This repository uses an agent-first, machine-gated workflow. Routine human code 
 5. Open a pull request to `main`. Human review is not required.
 6. Pull-request CI is the routine Git merge gate. A failing, missing, cancelled, or stale CI result must not auto-merge.
 7. A successful CI run may be squash-merged automatically only when the tested SHA is still the current PR head and the PR comes from a trusted same-repository branch.
-8. Main advancing after CI does **not** automatically serialize every agent. If the PR touches only disjoint market/local files and none of its files were changed on `main` since the recorded base, it may merge against current `main` without a forced branch update. If files overlap, or the PR touches shared/governance/deployment authority, the branch must be refreshed and CI rerun.
+8. Main advancing after CI does **not** automatically serialize every agent. Freshness is determined by exact file overlap and authority domain:
+   - exact file overlap always requires refresh and CI rerun;
+   - shared core/deployment/dependency changes require a fresh base after any `main` advance;
+   - governance/workflow/documentation changes require refresh when `main` also changed governance/core authority since the frozen base;
+   - disjoint market-local changes may remain parallel.
 9. Fork PRs and untrusted authors never auto-merge.
 10. Keep candidate, GitHub `main`, server release, effective runtime, data readback, and live-trading authority as separate evidence layers. Passing GitHub CI does not by itself authorize production or real trading.
 11. Do not put secrets, credentials, databases, runtime state, logs, broker material, or production artifacts in Git.
 
-## Fresh-base authority paths
+## Authority domains
 
-These paths are deliberately conservative and require a current-`main` integration check whenever `main` advanced after the PR base:
+### Shared core / deployment
 
-- `.github/**`
-- root `AGENTS.md` and `CONTRIBUTING.md`
+Any `main` advance requires fresh-base integration for PRs touching:
+
 - `deploy/**`
 - `shared/**`
 - dependency roots such as `requirements*`, `pyproject.toml`, and frontend package manifests
+
+### Governance
+
+Governance changes include:
+
+- `.github/**`
+- root `AGENTS.md` and `CONTRIBUTING.md`
 - `docs/EVOLUTION_PROGRAM.md` and `docs/operations.md`
 
-A market-scoped PR can still require a fresh base when another merged change touched the same file. File overlap always wins over directory ownership.
+A governance-only PR does not need to chase unrelated A-share/Crypto/local-market commits forever. It must refresh when exact files overlap or when `main` changed governance/shared-core authority after its frozen base.
+
+Market-scoped changes outside these authority paths may proceed in parallel when their exact changed files do not overlap changes merged to `main` after the PR base.
 
 ## Workflow-governance changes
 
@@ -39,7 +52,7 @@ If GitHub Actions is temporarily unavailable, leave the affected PR unmerged rat
 
 ## Post-merge and deployment
 
-Every merge creates a new `main` SHA. Production deployment must depend on successful validation of that exact current `main` SHA and must re-check that it is still current before cutover. This post-merge exact-SHA gate is what prevents a clean but semantically incompatible parallel merge from being deployed silently.
+Every autonomous merge explicitly dispatches a second validation run bound to the resulting exact `main` SHA. That exact-main run must pass before its SHA-bound release artifact is eligible for production deployment. Deployment still re-checks that the tested SHA is current immediately before cutover. This prevents a clean but semantically incompatible combination of independently tested PRs from being deployed silently.
 
 ## Authority boundary
 
