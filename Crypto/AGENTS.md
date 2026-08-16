@@ -306,6 +306,16 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   新假设（注册集合漂移 fail closed）、不接 systemd、无 worker；晋级
   永远人工。固定 `authority=none`、零 core/资本/order/Champion/
   learning 写权限，不构成 edge、晋级或参数变更授权。
+- `ten_symbol_health_watch.py` 是十币种观测链与 TradingDatas 数据面的
+  只读健康检查器：只经 store lock-free 只读路径读取，绝不重建
+  head/index、绝不写任何 store 文件；检查 latest_terminal_slot 滞后
+  （600s degraded / 900s failed）、最近 12 槽 reject/gap 占比
+  （>0 degraded / >0.25 failed）、spreads sidecar 采样完整性（缺失
+  degraded、校验失败 fail closed）与 TD catalog/query 活性及
+  bars/book_ticker/open_interest freshness。输出单份机器可读 JSON
+  （contract `tradingagent.crypto.ten_symbol_health_watch.v1`），退出码
+  0/1/2。固定 `authority=none`、零 core/资本/order/Champion/learning
+  写权限；无 systemd unit，安装/启用须经 Nicholas 明确批准。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached

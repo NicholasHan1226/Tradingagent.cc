@@ -1058,6 +1058,52 @@ systemd、不接执行；晋级永远人工。
 3. **晋级仍永久人工**：任何阶段都不授予自动晋级、自动风险扩张或执行
    authority。
 
+## 十币种观测链只读健康检查（health watch）
+
+`ten_symbol_health_watch.py` 是十币种观测积累器与 TradingDatas 数据面的
+独立只读 watchdog（G5 `delayed_paper_health.py` 的 ten-symbol 对应物）：
+只经 store 的 lock-free 只读路径读事件链与 sidecar，绝不重建
+head/index、绝不写任何 store 文件；任一损坏或合同漂移 fail closed。
+固定 `authority=none`、零 capital/order/model/promotion 权限。背景是
+9 小时级停滞无告警事故，目标是让停滞与数据面异常以机器可读状态暴露。
+
+### 检查项与阈值依据
+
+- `observation_chain_lag`：`latest_terminal_slot` 距 now 的滞后。观测
+  timer 在 bar close+3m25s 启动、cutoff 为 close+55s，健康链滞后恒小于
+  约 9 分钟；>600s（错过一个完整 timer 周期）记 degraded，>900s
+  （15 分钟，事故复盘阈值）记 failed。pending 槽位作为证据带出。
+- `reject_gap_rate`：最近 12 个 terminal 槽（1 小时）内 data_gap 与
+  data_reject 的占比；>0 记 degraded，>0.25 记 failed。
+- `spread_sampling`：最近 12 个 terminal 槽中携带 `spread` 块的槽
+  （无块视同 feature-ineligible 不罚）；sidecar 缺失、槽级
+  degraded/unavailable 记 degraded；sidecar 校验失败或 digest 漂移一律
+  fail closed。
+- `tradingdatas`：经冻结 runtime manifest 与专用 token leaf 构造
+  transport，读 `GET /v1/catalog` 并逐族做一次有界 `POST /v1/query`
+  探活：10 个冻结 bar dataset 的 catalog 指纹漂移 fail closed；bars
+  freshness 预算 1800s（6 根 5m bar），book_ticker 600s，
+  open_interest 3600s（本仓尚无冻结 OI cadence 合同，只能 degrade 不能
+  单独 fail）；catalog/query 不可达或 bar 族失败记 failed，其余族异常
+  记 degraded。open_interest dataset 仅从实测 catalog 发现（
+  `*.open_interest` 后缀），不猜 provider 名称。
+
+### 输出与退出码
+
+- 单份 JSON（contract
+  `tradingagent.crypto.ten_symbol_health_watch.v1`）：总体
+  `status ∈ ok/degraded/failed`（取各检查项最坏值）、每检查项
+  status/reason_code/证据摘要、阈值回显与固定 authority 字段；authority
+  字段漂移退出码直接为 2。
+- 退出码：0=ok，1=degraded，2=failed 或任何异常（fail closed，stderr
+  只输出固定脱敏文案）。
+- 一次性 CLI：`python3 -m Crypto.ten_symbol_health_watch --store-root
+  <path> --runtime-manifest <path> [--token-file <path>]`；store root
+  必须等于 manifest 冻结的
+  `/var/lib/tradingagent/crypto-ten-symbol-observation`，token leaf 固定
+  为 `/run/secrets/tradingagent/tradingdatas-crypto-read.token`。**不接
+  systemd**；timer 安装/启用须经 Nicholas 明确批准。
+
 ## 验证
 
 ```bash
@@ -1086,6 +1132,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_fac
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_factor_strategy_evaluation.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_spread_projection.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_research_loop.py
+REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_ten_symbol_health_watch.py
 REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 ```
 
