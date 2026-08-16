@@ -102,7 +102,7 @@
 
 - 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)；系统与市场演进计划见 [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md)。
 - GitHub 传输优先使用 Nicholas 已登录的 `gh` HTTPS 凭据链：先核对 `gh auth status`，仓库 `origin` 固定为 `https://github.com/NicholasHan1226/Tradingagent.cc.git`。若 `git@github.com` 的 SSH/22 端口失败一次，不重复重试或上报为长期 blocker；立即验证 HTTPS `git ls-remote`，切换现有 remote 后 fetch。不得输出 token，也不得另建凭据或绕过 host-key 校验。
-- GitHub Actions 是可选附加验证，不是 merge/deploy authority。Actions 无额度、billing blocked、skipped 或未触发时，只要当期任务的确定性本地/服务器测试、diff/ancestry 检查、release preflight、rollback 与新鲜 readback 成立，正常开发、合并、内部 sim-only 部署和模拟生命周期必须继续。
+- 当前公共仓库的 pull-request CI 是日常代码合并 gate：正常 PR 只有在当前 head SHA 的配置测试全部通过后才可自动合并；共享/治理/部署路径或与 `main` 新提交存在文件重叠时，还必须先更新到 fresh `main` 并重跑 CI。`main` 合并后的 exact-SHA CI/打包证据是 GitHub 自动生产部署的代码 gate。Actions/CI 只管理 Git 集成与部署证据，不是 runtime/data truth，也不授予策略晋级、风险扩张、broker 或真实交易权限。若 Actions 临时不可用，已运行的市场 core、数据采集和模拟生命周期继续按各自 runtime evidence 运转，但普通代码 PR 不得因此绕过 `main` gate；独立 fallback runner 需另行形成同等级机器证据后才能替代。
 - 当前跨线机器事实写入 `../autodev-control/AUTODEV_STATE.json`，但每个运行结论仍须由本轮新鲜读回验证；[STATUS.md](STATUS.md) 是历史快照。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
 - 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
 - Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、确定性测试/审计通过且 release preflight、rollback 与新鲜 readback 路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路、不可变 release、既有内部 sim-only localhost service/timer 的安装/启用/切换与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、未经当期任务包含的外部模型网络调用、邮件/GUI 外部写入、自动风险扩张、broker 或真实交易/live transition；这些动作仍须由当期任务明确包含并通过各自独立 authority。
