@@ -78,7 +78,7 @@ class CryptoP1ToolsTest(unittest.TestCase):
         self.assertEqual(result["oos_count"], 2)
         self.assertEqual(result["total_pnl"], 5.0)
 
-    def test_strategy_scorecard_never_auto_promotes_to_sim(self) -> None:
+    def test_strategy_scorecard_stays_read_only_pending_automatic_c3_gate(self) -> None:
         config = CryptoConfig(
             promotion={"min_shadow_trades": 3, "min_positive_days_pct": 0.6},
         )
@@ -98,7 +98,11 @@ class CryptoP1ToolsTest(unittest.TestCase):
         self.assertFalse(result["eligible_for_sim"])
         self.assertFalse(result["automatic_promotion_enabled"])
         self.assertFalse(result["promotion_authority"])
-        self.assertTrue(result["manual_review_required"])
+        self.assertFalse(result["manual_review_required"])
+        self.assertFalse(result["human_approval_required"])
+        self.assertTrue(result["automatic_scientific_gate_required"])
+        self.assertEqual(result["lifecycle_state"], "automatic_scientific_gate_pending")
+        self.assertEqual(result["lifecycle_blocker"], "crypto_c3_registry_not_implemented")
         self.assertEqual(result["target_layer"], "shadow")
         self.assertFalse(result["real_execution"])
 
