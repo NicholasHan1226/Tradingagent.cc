@@ -715,7 +715,11 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   完整恢复不同，因为积累器的 pending 不含任何已验证数据。
 - data_gap 合同：current-read 查询不带 `as_of`，历史槽的
   `observed_at` 必然越过其 cutoff（`crypto_observation_watermark_invalid`），
-  因此历史窗口确定不可恢复，不伪造 PIT。只有 pending 为空、目标历史槽严格
+  因此历史窗口确定不可恢复，不伪造 PIT。历史槽若因上游采集缺口导致源行
+  永久缺失，则每次重试都在形状门禁失败
+  （`crypto_observation_query_shape_invalid`），同样确定不可恢复；两种
+  reason 都只在目标历史槽严格落后当前槽时进入缺口恢复，当前槽的合同漂移
+  仍然 fail closed。只有 pending 为空、目标历史槽严格
   落后当前槽、且当前 10 币 13 根窗口全部 catalog/receipt/lineage/freshness/
   quality 门禁通过时，才追加一条 `data_gap`：记录精确 skipped range、拒绝
   原因与被拒窗口，并内嵌恢复首窗的完整 observation 证据；恢复槽不另写普通

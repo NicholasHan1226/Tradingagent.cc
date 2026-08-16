@@ -90,10 +90,19 @@ MAX_COLLECT_ATTEMPTS = 3
 COLLECT_RETRY_DELAY_SECONDS = 20.0
 OUTAGE_GAP_CONTRACT = TEN_SYMBOL_DATA_GAP_CONTRACT
 HISTORICAL_WINDOW_UNRECOVERABLE_REASON = "crypto_observation_watermark_invalid"
-HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
-    {HISTORICAL_WINDOW_UNRECOVERABLE_REASON}
-)
 WARMUP_WINDOW_INCOMPLETE_REASON = "crypto_observation_query_shape_invalid"
+HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
+    {
+        HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
+        # A historical slot whose source rows are permanently missing (e.g. an
+        # upstream collection gap) fails the shape gate on every retry and can
+        # never complete; only ever gap-recovered when the slot is strictly
+        # historical (guarded at the call site), so contract drift on the
+        # current slot still fails closed.  The gap contract records the
+        # skipped range explicitly.
+        WARMUP_WINDOW_INCOMPLETE_REASON,
+    }
+)
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXPECTED_SAFETY = {
     "real_trading_enabled": False,

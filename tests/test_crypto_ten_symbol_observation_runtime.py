@@ -640,6 +640,89 @@ def test_outage_gap_recovers_latest_window_after_unrecoverable_history(
     assert store.checkpoint()["observation_count"] == 2
 
 
+def test_outage_gap_recovers_after_permanently_missing_source_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class MissingRowsTransport(TenSymbolFixtureTransport):
+        """The historical window permanently lacks two source bars."""
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            response = super().__call__(**kwargs)
+            body = kwargs.get("json_body")
+            if (
+                kwargs.get("method") != "GET"
+                and isinstance(body, dict)
+                and str(body.get("dataset_id", "")).endswith(".5m")
+            ):
+                last_open = datetime.fromisoformat(
+                    str(body["filters"]["open_time"]["between"][1]).replace(
+                        "Z", "+00:00"
+                    )
+                )
+                if last_open < current_end - timedelta(minutes=5):
+                    payload = copy.deepcopy(dict(response.json_body))
+                    payload["data"] = list(payload["data"])[:11]
+                    return HTTPResponse(200, payload)
+            return response
+
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    first = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(TenSymbolFixtureTransport()),
+    )
+    assert first["status"] == "completed"
+    current_end = WINDOW_END + timedelta(minutes=30)
+    current_now = current_end + timedelta(seconds=55)
+    transport = MissingRowsTransport(
+        observed_at=current_end + timedelta(seconds=20)
+    )
+
+    recovered = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=current_now,
+        transport_factory=_factory(transport),
+    )
+
+    assert recovered["status"] == "completed"
+    assert recovered["outage_gap_recovered"] is True
+    assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
+        "fresh_query",
+        "outage_gap_recovery",
+    ]
+    reject_cycle = recovered["cycle_results"][0]
+    assert reject_cycle["result"]["status"] == "data_reject"
+    assert (
+        reject_cycle["result"]["reason_code"]
+        == "crypto_observation_query_shape_invalid"
+    )
+    gap_result = recovered["cycle_results"][1]["result"]
+    assert gap_result["status"] == "completed"
+    assert gap_result["skipped_from"] == iso(WINDOW_END + timedelta(minutes=5))
+    assert gap_result["skipped_to"] == iso(WINDOW_END + timedelta(minutes=25))
+
+    store = CryptoTenSymbolObservationStore(output_root)
+    gaps = store.data_gap_events()
+    assert len(gaps) == 1
+    assert gaps[0]["reason_code"] == "crypto_observation_query_shape_invalid"
+    assert store.checkpoint()["latest_terminal_slot"] == iso(current_end)
+    _assert_recursive_non_authority(recovered)
+
+    replay = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=current_now,
+        transport_factory=_forbidden_factory,
+    )
+    assert replay["status"] == "noop"
+
+
 def test_gap_recovery_requires_complete_current_window(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
