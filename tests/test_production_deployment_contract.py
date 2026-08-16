@@ -48,7 +48,7 @@ def test_deploy_workflow_is_exact_sha_and_artifact_gated() -> None:
     assert "ref: ${{ github.event.workflow_run.head_sha }}" in workflow
     assert "tar -xOf \"$archive\" ./.source-sha" in workflow
     assert "sudo -n /usr/local/sbin/tradingagent-release" in workflow
-    assert "scp \"${scp_opts[@]}\" \\\n            deploy/release.sh" not in workflow
+    assert "deploy/release.sh" not in workflow
 
 
 def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
