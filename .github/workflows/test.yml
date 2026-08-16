@@ -1,12 +1,19 @@
-name: Optional TradingAgent Tests
+name: TradingAgent Tests
 
-# Hosted Actions is supplemental only. Normal autonomous validation/merge must
-# remain possible when Actions capacity or billing is unavailable.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
+
+concurrency:
+  group: tradingagent-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
