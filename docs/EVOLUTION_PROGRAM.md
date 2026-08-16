@@ -23,7 +23,7 @@ The optimization objective is **not** “maximize backtest return.” The system
 - **Deploy and observe before polishing.** Prefer a small working vertical slice that produces real evidence over a large refactor that delays runtime.
 - **Evidence-based exits, not calendar gates.** A phase advances when its evidence conditions are met; “day 5”, “week 2”, or a human checkpoint is not a simulation promotion authority.
 - **Independent market progress.** A-share, Crypto, and CNFutures do not share a global stage gate. One market's missing data must not block another market's safe progress.
-- **No GitHub Actions dependency.** Local/server deterministic validation and fresh runtime readback are sufficient for normal autonomous merge/deploy when Actions are unavailable. Actions may provide optional extra evidence only.
+- **Machine-gated integration, runtime independence.** Public-repository PR CI is the routine Git merge gate, and exact-current-`main` CI/artifact evidence is the GitHub deployment code gate. These gates require no human approval. A temporary CI outage must not stop already-running market/data/simulation loops, but it also does not authorize bypassing `main`; an independent fallback runner may replace CI only after it provides equivalent machine-verifiable evidence.
 - **One fact, one authority.** Runtime truth belongs in machine artifacts/receipts/ledgers; planning belongs here; architecture rationale belongs in ADRs; historical readbacks belong in reports/`STATUS.md`.
 - **Research is just-in-time.** External research must answer a concrete market/data/statistical/execution question and produce an implementable contract, test, or evaluation rule. Do not create open-ended research programs that block runtime.
 - **Simulation autonomy, live separation.** Strategy/factor/model lifecycle inside simulation can be automatic; automatic risk expansion and automatic live transition remain disabled.
@@ -139,14 +139,14 @@ Priority exits for A3:
 
 **Overall target:** a 24/7 multi-asset spot simulation system with trustworthy TradingDatas market data, exchange-rule-aware execution, continuous delayed-paper samples, factor/strategy OOS evaluation, and the same evidence-driven automatic Challenger/Champion lifecycle as A-share—without giving the research/learning process capital or live authority.
 
-Current assessment: **C2 rolling evaluation.** Ten-symbol observation and delayed-paper/factor research are running, but `Crypto/promotion.py` remains a read-only scorecard with automatic promotion retired.
+Current assessment: **C2 rolling evaluation.** Ten-symbol observation and delayed-paper/factor research are running, while the current promotion scorecard remains read-only because the C3 scientific registry/receipt authority has not yet been implemented. The blocker is machine evidence/implementation, not human approval.
 
 Phases:
 
 - **C0 Data health:** stable 5-minute bars/rules/book-ticker for the frozen multi-symbol universe; gaps/freshness/receipt/lineage observable and self-healing.
 - **C1 Delayed-paper capital loop:** restart-safe simulated capital/ledger, deterministic quote/fill model, fee/spread/slippage and exchange filters, idempotent round trips.
 - **C2 Scientific factor/strategy evaluation:** rolling OOS/time-split factor evidence, baseline comparison, cost sensitivity, symbol/regime coverage, negative results retained.
-- **C3 Autonomous simulation evolution:** replace the retired manual-review promotion scorecard with an evidence-bound Challenger/Champion registry and automatic simulation-only promotion/demotion/rollback.
+- **C3 Autonomous simulation evolution:** replace the read-only evidence-pending scorecard with an evidence-bound Challenger/Champion registry and automatic simulation-only promotion/demotion/rollback.
 - **C4 Multi-asset/regime portfolio evolution:** allocation across symbols/strategies is costed, risk-bounded, capacity-aware and independently replayable; perpetual-market data may be research context but cannot silently change spot execution authority.
 - **C5 Live-readiness dossier:** optional future authenticated account/testnet/live-adapter readiness package; no automatic key/account creation or live transition.
 
@@ -220,13 +220,13 @@ The controller/agents should choose the smallest next slice that advances one ac
 
 1. fix data/runtime failures that stop active sampling;
 2. keep TradingDatas high-value datasets fresh and queryable;
-3. remove governance/process gates that depend on unavailable GitHub Actions or human review;
+3. keep Git integration/deployment machine-gated without human approvals while keeping already-running market/data/simulation loops independent of temporary CI outages;
 4. preserve rollback and append-only evidence.
 
 ### P1 — close active evolution loops
 
 1. A-share: prove and harden automatic promotion/demotion/rollback on real simulation evidence;
-2. Crypto: migrate from read-only/manual-review promotion semantics to a scientific simulation-only evolution controller;
+2. Crypto: migrate from read-only evidence-pending semantics to a scientific simulation-only evolution controller;
 3. make review dashboards descriptive only and point lifecycle decisions to each market's real evolution authority.
 
 ### P2 — improve scientific quality
@@ -251,6 +251,8 @@ Refactor large files, packages, deployment mechanics, or documentation when they
 
 - **Current runtime truth:** fresh server/API/receipt/ledger/readback and `AUTODEV_STATE.json`.
 - **Evolution program:** this document.
+- **Git merge authority:** current PR-head CI plus path-aware freshness/overlap rules; no routine human approval.
+- **GitHub deployment code authority:** successful exact-current-`main` CI/artifact plus deployment preflight/rollback checks; deployment success still does not prove runtime/data health.
 - **A-share lifecycle authority:** SampleJournal/KPI scientific gate + evidence-bound registry receipts.
 - **Crypto lifecycle authority:** currently none for automatic promotion; C3 is the target migration.
 - **CNFutures lifecycle authority:** none while paused.

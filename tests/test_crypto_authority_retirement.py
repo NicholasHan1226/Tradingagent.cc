@@ -211,7 +211,7 @@ def test_shared_shadow_broker_rejects_crypto_before_any_file_write(
     assert not root.exists()
 
 
-def test_promotion_scorecard_is_read_only_and_never_eligible() -> None:
+def test_promotion_scorecard_is_read_only_and_waits_for_automatic_gate() -> None:
     records = [
         {
             "trade_date": "2026-07-20",
@@ -234,7 +234,11 @@ def test_promotion_scorecard_is_read_only_and_never_eligible() -> None:
     assert result["eligible_for_sim"] is False
     assert result["automatic_promotion_enabled"] is False
     assert result["promotion_authority"] is False
-    assert result["manual_review_required"] is True
+    assert result["manual_review_required"] is False
+    assert result["human_approval_required"] is False
+    assert result["automatic_scientific_gate_required"] is True
+    assert result["lifecycle_state"] == "automatic_scientific_gate_pending"
+    assert result["lifecycle_blocker"] == "crypto_c3_registry_not_implemented"
     assert result["target_layer"] == "shadow"
     assert result["tier"] != "sim"
 

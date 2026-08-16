@@ -8,6 +8,7 @@ on:
       - completed
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -50,22 +51,65 @@ jobs:
 
           CHANGED_FILES="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
           if grep -Eq '^\.github/workflows/' <<<"$CHANGED_FILES"; then
-            echo "Skip: workflow-governance changes require a separate trusted bootstrap merge."
+            echo "Skip: workflow-governance changes require a separate trusted controller merge."
             exit 0
           fi
 
           CURRENT_MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           if [[ "$BASE_SHA" != "$CURRENT_MAIN_SHA" ]]; then
-            echo "Base advanced after this CI run; update the PR branch and let CI rerun."
-            gh api \
-              --method PUT \
-              "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/update-branch" \
-              -f expected_head_sha="$HEAD_SHA"
-            exit 0
+            MAIN_CHANGED_FILES="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${CURRENT_MAIN_SHA}" --jq '.files[].filename')"
+
+            NEED_FRESH_BASE=false
+            OVERLAP="$(comm -12 \
+              <(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d' | sort -u) \
+              <(printf '%s\n' "$MAIN_CHANGED_FILES" | sed '/^$/d' | sort -u) || true)"
+            if [[ -n "$OVERLAP" ]]; then
+              NEED_FRESH_BASE=true
+              echo "PR overlaps files changed on main since its base:"
+              printf '%s\n' "$OVERLAP"
+            fi
+
+            CORE_RE='^(deploy/|shared/|requirements[^/]*$|pyproject\.toml$|front/package(-lock)?\.json$)'
+            GOVERNANCE_RE='^(AGENTS\.md$|CONTRIBUTING\.md$|\.github/|docs/EVOLUTION_PROGRAM\.md$|docs/operations\.md$)'
+
+            if grep -Eq "$CORE_RE" <<<"$CHANGED_FILES"; then
+              NEED_FRESH_BASE=true
+              echo "PR changes shared core/deployment authority; any main advance requires integration on a fresh base."
+            elif grep -Eq "$GOVERNANCE_RE" <<<"$CHANGED_FILES" && \
+                 grep -Eq "${CORE_RE}|${GOVERNANCE_RE}" <<<"$MAIN_CHANGED_FILES"; then
+              NEED_FRESH_BASE=true
+              echo "Governance PR and main both changed governance/core authority since the frozen base."
+            fi
+
+            if [[ "$NEED_FRESH_BASE" == "true" ]]; then
+              gh api \
+                --method PUT \
+                "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/update-branch" \
+                -f expected_head_sha="$HEAD_SHA"
+              echo "Branch update requested; CI must rerun on the refreshed head."
+              exit 0
+            fi
+
+            echo "Main advanced only through disjoint authority domains; preserve parallelism and merge the tested PR head."
           fi
 
-          gh api \
+          MERGE_JSON="$(gh api \
             --method PUT \
             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
             -f merge_method=squash \
-            -f sha="$HEAD_SHA"
+            -f sha="$HEAD_SHA")"
+          MERGED="$(jq -r '.merged // false' <<<"$MERGE_JSON")"
+          MERGE_SHA="$(jq -r '.sha // empty' <<<"$MERGE_JSON")"
+          [[ "$MERGED" == "true" ]]
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          # A merge performed with GITHUB_TOKEN does not create a follow-up
+          # push workflow run. workflow_dispatch is an explicit GitHub-supported
+          # exception, so dispatch the exact new main SHA for post-merge tests,
+          # release packaging and (when enabled) deployment.
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/dispatches" \
+            -f ref=main \
+            -f "inputs[expected_sha]=$MERGE_SHA"
+          echo "Dispatched exact-main validation for $MERGE_SHA"

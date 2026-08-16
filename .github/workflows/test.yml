@@ -7,6 +7,12 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact main commit SHA to validate and package
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,13 +21,28 @@ concurrency:
   group: tradingagent-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Validate source identity
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Verify checkout identity
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -54,8 +75,22 @@ jobs:
       run:
         working-directory: front
     steps:
+      - name: Validate source identity
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Verify checkout identity
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -81,3 +116,40 @@ jobs:
           SHAREDSIGNALS_API_URL: ""
           MARKETGRAPH_API_URL: ""
         run: npm run build:all
+
+      - name: Package tested release
+        run: |
+          set -euo pipefail
+          release_root="$(mktemp -d "$RUNNER_TEMP/tradingagent-release-root.XXXXXX")"
+          trap 'rm -rf -- "$release_root"' EXIT
+
+          git -C "$GITHUB_WORKSPACE" archive "$SOURCE_SHA" \
+            | tar -x -C "$release_root"
+
+          test -d dist
+          test -d dist-server
+          rm -rf -- "$release_root/front/dist" "$release_root/front/dist-server"
+          cp -a dist "$release_root/front/dist"
+          cp -a dist-server "$release_root/front/dist-server"
+          printf '%s\n' "$SOURCE_SHA" > "$release_root/.source-sha"
+
+          test -f "$release_root/front/dist-server/server/tradingAgentSnapshotHttp.js"
+          tar -C "$release_root" -czf "$RUNNER_TEMP/tradingagent-${SOURCE_SHA}.tar.gz" .
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "tradingagent-${SOURCE_SHA}.tar.gz" \
+              > "tradingagent-${SOURCE_SHA}.tar.gz.sha256"
+          )
+
+      - name: Upload tested release
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingagent-release-${{ env.SOURCE_SHA }}
+          path: |
+            ${{ runner.temp }}/tradingagent-${{ env.SOURCE_SHA }}.tar.gz
+            ${{ runner.temp }}/tradingagent-${{ env.SOURCE_SHA }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 3

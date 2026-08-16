@@ -316,6 +316,22 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   （contract `tradingagent.crypto.ten_symbol_health_watch.v1`），退出码
   0/1/2。固定 `authority=none`、零 core/资本/order/Champion/learning
   写权限；无 systemd unit，安装/启用须经 Nicholas 明确批准。
+- `ten_symbol_hypothesis_generator.py` 是研究进化闭环第二阶段：离线、
+  只读、detached 一次性假设生成器。仓内冻结版本化生成配置
+  （`crypto-ten-symbol-hypothesis-generation-v1`，五族 B 类因子、每族
+  ≤5 组参数、horizon 12/48/144/288，共 23 候选）确定性展开候选假设，
+  逐候选做轻量可行性检查（ohlcv_bars 由已验证 store 链实测样本量，
+  realized_spreads/open_interest_5m/premium_index 三 plane 只能由严格
+  校验的调用方数据面 manifest 声明，未声明即 unavailable），产出
+  `<store_root>/evolution/ten_symbol_hypothesis_generator/` 下 checksum
+  绑定的 immutable 注册提案（每候选固定
+  `registration_status=pending_manual_review`，review 固定
+  `manual_review_required`）与 compact checkpoint；同输入重跑
+  `no_new_input` 且字节不变（幂等），配置漂移、manifest/链/checkpoint/
+  提案篡改一律 fail closed。第二阶段不自动注册进预筛/重估/评估集合
+  （注册须人工评审后独立变更）、不运行任何评估、不接 systemd、无
+  worker；晋级永远人工。固定 `authority=none`、零 core/资本/order/
+  Champion/learning 写权限，不构成 edge、晋级或参数变更授权。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached
