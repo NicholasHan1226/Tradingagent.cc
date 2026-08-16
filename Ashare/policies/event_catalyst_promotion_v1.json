@@ -1,0 +1,13 @@
+{
+  "policy_id": "event-catalyst-promotion-v1",
+  "min_labeled_observations": 60,
+  "min_distinct_event_clusters": 10,
+  "min_time_windows": 4,
+  "min_window_hit_rate": 0.6,
+  "cost_per_round_trip": 0.003,
+  "demote_recent_labels": 20,
+  "demote_max_hit_rate": 0.4,
+  "policy_sha256": "0c52a9fba66646838e5e6a060072fac9184cf3d20fd4034243b8ea11d44766f9",
+  "registered_at": "2026-08-16T00:00:00+08:00",
+  "registration_note": "Frozen pre-registered thresholds for the event-catalyst shadow factor promotion gate. Thresholds exceed the pilot evidence base (56 observations, 7 event clusters, 2 time windows) so graduation requires strictly more independent evidence than the exploratory study. cost_per_round_trip=0.003 covers mainboard commission + sell-side stamp duty + slippage at ~30bps. Any change requires a new policy_id artifact; editing this file fails the drift check."
+}

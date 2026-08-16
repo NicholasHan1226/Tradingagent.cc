@@ -117,6 +117,9 @@ def catalyst_entry_from_disclosure_snapshot(
             source_ref=snapshot.evidence_ref,
             entity=snapshot.entity,
             symbol=snapshot.symbol,
+            # One disclosure snapshot is one underlying event; the cluster id
+            # is explicit so journal-side grouping never parses event ids.
+            event_cluster_id=f"disclosure:{snapshot.evidence_ref}",
         )
     except EventCatalystShadowError as exc:
         raise EventCatalystAdapterError(exc.reason_code) from exc
@@ -207,6 +210,7 @@ def catalyst_entries_from_calendar_document(
                     source_ref=source_ref,
                     entity=entity,
                     symbol=symbol,
+                    event_cluster_id=f"{calendar_id}:{event_id}",
                 )
             )
         except EventCatalystShadowError as exc:
@@ -284,6 +288,10 @@ def catalyst_entry_from_lockup_row(
             source_ref=f"td-v1:{dataset_id}:{receipt}",
             entity=holder,
             symbol=symbol,
+            # All holders unlocked on one float_date for one symbol share the
+            # same underlying event cluster; receipts identify the row, not
+            # the event.
+            event_cluster_id=f"lockup:{dataset_id}:{symbol}:{float_date.isoformat()}",
         )
     except EventCatalystShadowError as exc:
         raise EventCatalystAdapterError(exc.reason_code) from exc

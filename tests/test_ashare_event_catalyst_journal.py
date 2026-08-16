@@ -217,3 +217,18 @@ class TestAppendShadowBatchToJournal:
         assert (
             excinfo.value.reason_code == "event_catalyst_journal_journal_invalid"
         )
+
+
+class TestExplicitClusterPropagation:
+    def test_explicit_cluster_id_wins_over_heuristic(self):
+        batch = build_catalyst_shadow_batch(
+            [_entry(event_id="legacy-1:%s" % SYMBOL,
+                    event_cluster_id="cal-2026h2:entry-3")],
+            {SYMBOL: _bars(date(2026, 7, 15), 21, step=0.5)},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (record,) = journal_records_from_shadow_batch(batch)
+        assert record["event_cluster_id"] == "cal-2026h2:entry-3"
+        assert record["style"] == "event_catalyst_shadow"

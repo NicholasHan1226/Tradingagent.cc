@@ -770,10 +770,11 @@ class FileModeTests(unittest.TestCase):
             content = Path(output_path).read_text()
             self.assertNotIn("job_sim_market_health.sh", content)
             self.assertNotIn("job_equity_snapshots.sh", content)
-            self.assertIn(
+            self.assertNotIn(
                 "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
                 content,
             )
+            self.assertIn("event_catalyst_promotion.sh", content)
             self.assertNotIn("/cron/health_check.sh", content)
             self.assertNotIn("job_ashare_", content)
             self.assertNotIn("job_market_capital_reconcile.sh ashare", content)
@@ -802,10 +803,11 @@ class FileModeTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertNotIn("job_sim_market_health.sh", out)
             self.assertNotIn("job_equity_snapshots.sh", out)
-            self.assertIn(
+            self.assertNotIn(
                 "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
                 out,
             )
+            self.assertIn("event_catalyst_promotion.sh", out)
             self.assertNotIn("/cron/health_check.sh", out)
             self.assertNotIn("job_ashare_", out)
             self.assertNotIn("job_market_capital_reconcile.sh ashare", out)

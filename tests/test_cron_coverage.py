@@ -23,17 +23,25 @@ class CronCoverageTest(unittest.TestCase):
         schedules = "\n".join(cron_coverage.tradingagent_entries(template))
         return environment + "\n" + schedules
 
-    def test_all_market_jobs_are_paused_until_tradingdatas_fresh_handoff(self) -> None:
+    def test_only_journal_research_job_is_scheduled(self) -> None:
+        # Market-data jobs stay unscheduled pending the TradingDatas fresh
+        # handoff; the single active entry is the journal-only, research-only
+        # event-catalyst promotion gate (no collection, no broker, no
+        # capital mutation), activated as a reviewed scheduler change.
+        expected = [
+            "40 16 * * 1-5 /opt/investment/tradingagent/cron/"
+            "event_catalyst_promotion.sh"
+        ]
         for path in (
             cron_coverage.ROOT / "crontab.txt",
             cron_coverage.ROOT / "shared/crontab.txt",
         ):
             text = path.read_text()
-            self.assertIn(
+            self.assertNotIn(
                 "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff",
                 text,
             )
-            self.assertEqual(cron_coverage.tradingagent_entries(text), [])
+            self.assertEqual(cron_coverage.tradingagent_entries(text), expected)
 
     def test_template_entries_are_in_sync(self) -> None:
         report = cron_coverage.check_cron_coverage(
@@ -187,11 +195,10 @@ class CronCoverageTest(unittest.TestCase):
 
     def test_rejects_live_or_wrong_timezone_for_every_tradingagent_entry(self) -> None:
         template = (cron_coverage.ROOT / "shared/crontab.txt").read_text()
-        retired_schedule = (
-            "*/5 * * * * /opt/investment/tradingagent/shared/wrappers/"
-            "job_crypto_sim.sh"
-        )
-        valid = self._installed_ta_block(template) + "\n" + retired_schedule
+        # The template now carries exactly one active journal-research
+        # entry, so the installed block alone exercises the per-entry
+        # environment checks.
+        valid = self._installed_ta_block(template)
         expected_count = 1
 
         for old, new, expected_field in (

@@ -181,10 +181,13 @@ class CatalystEntry:
     source_ref: str
     entity: str | None = None
     symbol: str | None = None
+    event_cluster_id: str | None = None
 
     def __post_init__(self) -> None:
         _text(self.event_id, "event_catalyst_event_id_invalid")
         _text(self.source_ref, "event_catalyst_source_ref_invalid")
+        if self.event_cluster_id is not None:
+            _text(self.event_cluster_id, "event_catalyst_cluster_id_invalid")
         if self.event_type not in EVENT_TYPES:
             raise EventCatalystShadowError("event_catalyst_event_type_invalid")
         if self.date_confidence not in DATE_CONFIDENCE_LEVELS:
@@ -219,6 +222,7 @@ class CatalystEntry:
             "source_ref": self.source_ref,
             "entity": self.entity,
             "symbol": self.symbol,
+            "event_cluster_id": self.event_cluster_id,
         }
 
 
@@ -315,6 +319,7 @@ class CatalystShadowObservation:
     observation_status: str
     input_receipt_sha256: str
     observation_sha256: str
+    event_cluster_id: str | None = None
     shadow_only: bool = True
     calibrated_probability: None = None
     candidate_eligible: bool = False
@@ -341,6 +346,10 @@ class CatalystShadowObservation:
         _session_date(
             self.scheduled_date, "event_catalyst_obs_scheduled_invalid"
         )
+        if self.event_cluster_id is not None:
+            _text(
+                self.event_cluster_id, "event_catalyst_obs_cluster_id_invalid"
+            )
         _aware(self.as_of, "event_catalyst_obs_as_of_invalid")
         for field_name in ("pre_window_sessions", "post_window_sessions"):
             value = getattr(self, field_name)
@@ -568,6 +577,7 @@ def _observe_one(
         "positioning_hypothesis": hypothesis,
         "post_return": post_return,
         "post_label_state": post_label_state,
+        "event_cluster_id": entry.event_cluster_id,
     }
     return CatalystShadowObservation(
         event_id=entry.event_id,
@@ -589,6 +599,7 @@ def _observe_one(
         observation_status=status,
         input_receipt_sha256=input_receipt,
         observation_sha256=_sha256(observation_material),
+        event_cluster_id=entry.event_cluster_id,
     )
 
 

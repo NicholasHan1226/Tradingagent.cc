@@ -45,12 +45,17 @@ class EventCatalystJournalError(ValueError):
         self.reason_code = reason_code
 
 
-def _event_cluster_id(event_id: str, symbol: str | None) -> str:
-    """Cluster key grouping every symbol row of one underlying event.
+SHADOW_RESEARCH_STYLE = "event_catalyst_shadow"
 
-    Adapters mint ``{calendar}:{entry}`` ids shared across symbols, while
-    research runs often use ``{event}:{symbol}``; stripping a trailing
-    ``:{symbol}`` normalizes both to the underlying event.
+
+def _event_cluster_id(event_id: str, symbol: str | None) -> str:
+    """Fallback cluster key when the entry carries no explicit cluster id.
+
+    New adapters set ``event_cluster_id`` at the source; this heuristic
+    remains only for legacy research runs that minted ``{event}:{symbol}``
+    ids without one.  Stripping a trailing ``:{symbol}`` normalizes both
+    ``{calendar}:{entry}`` and ``{event}:{symbol}`` styles to the
+    underlying event.
     """
 
     if symbol and event_id.endswith(f":{symbol}"):
@@ -84,6 +89,7 @@ def journal_records_from_shadow_batch(
                 "record_type": "shadow_research",
                 "sample_layers": ["shadow_research"],
                 "sample_intent": "shadow",
+                "style": SHADOW_RESEARCH_STYLE,
                 "market": "CN-A",
                 "research_contract": batch.contract,
                 "bridge_contract": EVENT_CATALYST_JOURNAL_CONTRACT,
@@ -91,8 +97,11 @@ def journal_records_from_shadow_batch(
                     f"catalyst:{observation.observation_sha256[:32]}"
                 ),
                 "event_id": observation.event_id,
-                "event_cluster_id": _event_cluster_id(
-                    observation.event_id, observation.symbol
+                "event_cluster_id": (
+                    observation.event_cluster_id
+                    or _event_cluster_id(
+                        observation.event_id, observation.symbol
+                    )
                 ),
                 "event_type": observation.event_type,
                 "symbol": observation.symbol,

@@ -11,6 +11,7 @@ from Ashare.event_catalyst_adapter import (
     EventCatalystAdapterError,
     catalyst_entries_from_calendar_document,
     catalyst_entry_from_disclosure_snapshot,
+    catalyst_entry_from_lockup_row,
 )
 from Ashare.event_catalyst_shadow import CatalystEntry
 from Ashare.event_evidence import EventEvidenceSnapshot
@@ -313,3 +314,37 @@ class TestLockupRowAdapter:
             excinfo.value.reason_code
             == "event_catalyst_symbol_outside_mainboard_scope"
         )
+
+
+class TestExplicitEventClusterIds:
+    def test_disclosure_cluster_id_matches_event_id(self):
+        entry = catalyst_entry_from_disclosure_snapshot(_snapshot())
+        assert entry.event_cluster_id == entry.event_id
+        assert entry.event_cluster_id.startswith("disclosure:")
+
+    def test_calendar_cluster_id_shares_calendar_scope(self):
+        entries = catalyst_entries_from_calendar_document(_doc())
+        for entry in entries:
+            assert entry.event_cluster_id == entry.event_id
+
+    def test_lockup_cluster_drops_row_identity(self):
+        row = {
+            "ts_code": "002475.SZ",
+            "ann_date": "20260810",
+            "float_date": "20260915",
+            "float_share": 12500000.0,
+            "float_ratio": 1.73,
+            "holder_name": "示例控股股东",
+            "share_type": "首发原股东限售股份",
+        }
+        other_holder = dict(row, holder_name="另一股东")
+        first = catalyst_entry_from_lockup_row(
+            row, dataset_id="cn.dataset.share_float", receipt_id="r1"
+        )
+        second = catalyst_entry_from_lockup_row(
+            other_holder, dataset_id="cn.dataset.share_float", receipt_id="r2"
+        )
+        # Same symbol + same float_date = one underlying unlock event,
+        # regardless of holder row or ingestion receipt.
+        assert first.event_cluster_id == second.event_cluster_id
+        assert first.event_id != second.event_id

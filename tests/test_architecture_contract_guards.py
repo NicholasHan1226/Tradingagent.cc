@@ -1235,10 +1235,16 @@ def test_cron_templates_do_not_schedule_unconditionally_retired_generic_jobs() -
             and "=" not in line.split()[0]
             and "/opt/investment/tradingagent/" in line
         ]
-        assert active_ta_lines == [], (relative_crontab, active_ta_lines)
+        # Journal-only research automation was activated as a reviewed
+        # scheduler change; every other TradingAgent job stays unscheduled.
+        assert active_ta_lines == [
+            "40 16 * * 1-5 /opt/investment/tradingagent/cron/"
+            "event_catalyst_promotion.sh"
+        ], (relative_crontab, active_ta_lines)
+        assert "/shared/wrappers/" not in "\n".join(active_ta_lines)
         assert (
             "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
-            in schedule
+            not in schedule
         )
 
 

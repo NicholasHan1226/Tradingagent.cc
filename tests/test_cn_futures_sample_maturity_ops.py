@@ -547,10 +547,6 @@ def test_sample_ops_wrapper_is_retired_and_cron_templates_remain_paused() -> Non
     )
     for relative in ("shared/crontab.txt", "crontab.txt"):
         schedule = (root / relative).read_text(encoding="utf-8")
-        assert (
-            "TRADINGAGENT_SCHEDULE_STATE=paused_until_tradingdatas_fresh_handoff"
-            in schedule
-        )
         for entry in entries:
             assert entry not in schedule
 
