@@ -21,6 +21,7 @@ def test_explicit_sample_layers_cover_every_required_bucket_without_collapsing_t
         "exit_stop",
         "risk_reject",
         "chain_validation",
+        "shadow_research",
     )
 
     assert classify_sample_layers({"record_type": "prediction"}) == (
@@ -42,6 +43,12 @@ def test_explicit_sample_layers_cover_every_required_bucket_without_collapsing_t
     assert classify_sample_layers({"sample_classification": "chain_validation"}) == (
         "chain_validation",
     )
+    assert classify_sample_layers({"record_type": "shadow_research"}) == (
+        "shadow_research",
+    )
+    assert classify_sample_layers(
+        {"record_type": "shadow_research", "sample_layers": ["shadow_research"]}
+    ) == ("shadow_research",)
 
 
 def test_fixture_records_are_excluded_from_all_kpi_and_promotion_evidence():

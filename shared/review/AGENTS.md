@@ -20,6 +20,7 @@
 5. `exit_stop`
 6. `risk_reject`
 7. `chain_validation`
+8. `shadow_research`（纯研究事实：如事件催化剂 shadow 标签；只作审计与晋级门禁输入，永不进入成交、胜率或订单路径统计）
 
 chain validation、盘外、缺来源/lineage、弱成交证据或 capital commit pending 样本只保留审计，不进入胜率、expectancy、费用后 PnL 或晋级证据。
 
