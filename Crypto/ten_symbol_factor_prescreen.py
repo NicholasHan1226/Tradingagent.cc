@@ -51,6 +51,8 @@ PRESCREEN_CONTRACT = "tradingagent.crypto.ten_symbol_factor_prescreen.v1"
 RAW_CONTRACT = "tradingagent.crypto.ten_symbol_factor_prescreen_raw.v1"
 FIVE_MINUTES = timedelta(minutes=5)
 HORIZON_BARS = 12
+AUX_HORIZON_BARS = (48, 144, 288)
+ALLOWED_HORIZON_BARS = (HORIZON_BARS, *AUX_HORIZON_BARS)
 PAGE_LIMIT = 500
 MAX_FETCH_WINDOWS = 400
 MAX_RAW_BYTES = 512 * 1024 * 1024
@@ -613,11 +615,24 @@ def _features(bars: Sequence[Mapping[str, Any]]) -> dict[str, Decimal]:
     }
 
 
+def _validate_horizon_bars(horizon_bars: Any) -> int:
+    if (
+        not isinstance(horizon_bars, int)
+        or isinstance(horizon_bars, bool)
+        or horizon_bars not in ALLOWED_HORIZON_BARS
+    ):
+        raise CryptoTenSymbolFactorPrescreenError("prescreen_horizon_invalid")
+    return horizon_bars
+
+
 def _symbol_evaluation_rows(
     bars_by_symbol: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, dict[datetime, dict[str, Any]]]:
     """Per symbol, map slot -> {features, forward_return} where fully proven."""
 
+    horizon_bars = _validate_horizon_bars(horizon_bars)
     result: dict[str, dict[datetime, dict[str, Any]]] = {}
     for symbol, bars in bars_by_symbol.items():
         by_open = {bar["open_time"]: bar for bar in bars}
@@ -633,7 +648,7 @@ def _symbol_evaluation_rows(
                 for earlier, later in zip(window_opens, window_opens[1:])
             ):
                 continue
-            future_open = slot + HORIZON_BARS * FIVE_MINUTES
+            future_open = slot + horizon_bars * FIVE_MINUTES
             future = by_open.get(future_open)
             if future is None:
                 continue
@@ -642,6 +657,8 @@ def _symbol_evaluation_rows(
                 "features": _features(window),
                 "entry": by_open[slot]["close"],
                 "exit": future["close"],
+                "forward_gross": future["close"] / by_open[slot]["close"]
+                - Decimal("1"),
                 "forward_return": _cost_adjusted_return(
                     by_open[slot]["close"], future["close"]
                 ),
@@ -650,30 +667,45 @@ def _symbol_evaluation_rows(
     return result
 
 
-_METRIC_BASIS = (
-    "cost model identical to the evidence chain (fee 0.001 each side plus"
-    " 2bps slippage each side); equal-weight equity curve per 5m slot;"
-    " overlapping 1h labels across 5m slots inflate the effective sample"
-    " size about 12x; non_overlapping keeps every 12th slot; historical"
-    " backfill without PIT proof; not promotion evidence"
-)
+def _horizon_label(horizon_bars: int) -> str:
+    return "1h" if horizon_bars == 12 else f"{horizon_bars * 5}min"
+
+
+def _metric_basis(horizon_bars: int) -> str:
+    label = _horizon_label(horizon_bars)
+    return (
+        "cost model identical to the evidence chain (fee 0.001 each side plus"
+        " 2bps slippage each side); equal-weight equity curve per 5m slot;"
+        f" overlapping {label} labels across 5m slots inflate the effective"
+        f" sample size about {horizon_bars}x; non_overlapping keeps every"
+        f" {horizon_bars}th slot; historical backfill without PIT proof;"
+        " not promotion evidence"
+    )
+
+
+_METRIC_BASIS = _metric_basis(HORIZON_BARS)
 
 
 def _sample_metrics(
-    samples: Sequence[tuple[datetime, Decimal]],
+    samples: Sequence[tuple[datetime, Decimal, Decimal]],
     *,
     universe_count: int,
     baseline_mean: Decimal | None,
     universe_slots: Sequence[datetime],
     stride: int = 1,
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, Any]:
     selected = list(samples)
-    returns = [value for _, value in selected]
+    returns = [net for _, net, _gross in selected]
+    gross_returns = [gross for _, _net, gross in selected]
     count = len(returns)
     mean = sum(returns, Decimal("0")) / Decimal(count) if returns else None
+    mean_gross = (
+        sum(gross_returns, Decimal("0")) / Decimal(count) if gross_returns else None
+    )
     slot_returns: dict[datetime, list[Decimal]] = {}
-    for slot, value in selected:
-        slot_returns.setdefault(slot, []).append(value)
+    for slot, net, _gross in selected:
+        slot_returns.setdefault(slot, []).append(net)
     equity = Decimal("1")
     peak = equity
     maximum_drawdown = Decimal("0")
@@ -686,8 +718,13 @@ def _sample_metrics(
             maximum_drawdown = max(maximum_drawdown, (peak - equity) / peak)
     slots = sorted(universe_slots)
     kept_slots = set(slots[::stride])
-    kept = [value for slot, value in selected if slot in kept_slots]
-    kept_mean = sum(kept, Decimal("0")) / Decimal(len(kept)) if kept else None
+    kept = [(net, gross) for slot, net, gross in selected if slot in kept_slots]
+    kept_net = [net for net, _gross in kept]
+    kept_gross = [gross for _net, gross in kept]
+    kept_mean = sum(kept_net, Decimal("0")) / Decimal(len(kept)) if kept else None
+    kept_mean_gross = (
+        sum(kept_gross, Decimal("0")) / Decimal(len(kept)) if kept else None
+    )
     metrics = {
         "universe_count": universe_count,
         "signal_count": count,
@@ -699,7 +736,9 @@ def _sample_metrics(
         )
         if returns
         else None,
+        "mean_gross": _text(mean_gross),
         "mean_net": _text(mean),
+        "median_gross": _text(_median(gross_returns)),
         "median_net": _text(_median(returns)),
         "baseline_delta": _text(mean - baseline_mean)
         if mean is not None and baseline_mean is not None
@@ -709,7 +748,7 @@ def _sample_metrics(
         "turnover": _text(Decimal(count) / Decimal(universe_count))
         if universe_count
         else "0",
-        "metric_basis": _METRIC_BASIS,
+        "metric_basis": _metric_basis(horizon_bars),
     }
     if stride > 1:
         metrics["non_overlapping"] = {
@@ -717,12 +756,13 @@ def _sample_metrics(
             "slot_count": len(kept_slots),
             "signal_count": len(kept),
             "hit_rate": _text(
-                Decimal(sum(value > 0 for value in kept)) / Decimal(len(kept))
+                Decimal(sum(value > 0 for value in kept_net)) / Decimal(len(kept))
             )
             if kept
             else None,
+            "mean_gross": _text(kept_mean_gross),
             "mean_net": _text(kept_mean),
-            "median_net": _text(_median(kept)),
+            "median_net": _text(_median(kept_net)),
             "baseline_delta": None,
         }
     return metrics
@@ -751,10 +791,10 @@ def _signal_snapshot(features: Mapping[str, Decimal]) -> dict[str, Any]:
 
 
 def _per_symbol_breakdown(
-    rows: Sequence[tuple[str, datetime, bool, Decimal]],
+    rows: Sequence[tuple[str, datetime, bool, Decimal, Decimal]],
 ) -> dict[str, Any]:
     breakdown: dict[str, Any] = {}
-    for symbol, _slot, signaled, value in rows:
+    for symbol, _slot, signaled, value, _gross in rows:
         entry = breakdown.setdefault(
             symbol, {"signal_count": 0, "returns": [], "positive": 0}
         )
@@ -788,7 +828,9 @@ def _evaluate_xs_rs(
     universe: Mapping[str, Mapping[datetime, Mapping[str, Any]]],
     *,
     symbols: Sequence[str],
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, Any]:
+    stride = horizon_bars
     slots = sorted(
         slot
         for slot in universe[symbols[0]]
@@ -800,7 +842,7 @@ def _evaluate_xs_rs(
     }
     for top_k in (1, 2, 3):
         k = min(top_k, len(symbols))
-        portfolio: list[tuple[datetime, Decimal]] = []
+        portfolio: list[tuple[datetime, Decimal, Decimal]] = []
         baseline: list[tuple[datetime, Decimal]] = []
         for slot in slots:
             ranked = sorted(
@@ -815,7 +857,11 @@ def _evaluate_xs_rs(
                 (universe[symbol][slot]["forward_return"] for symbol in chosen),
                 Decimal("0"),
             ) / Decimal(k)
-            portfolio.append((slot, value))
+            gross = sum(
+                (universe[symbol][slot]["forward_gross"] for symbol in chosen),
+                Decimal("0"),
+            ) / Decimal(k)
+            portfolio.append((slot, value, gross))
             baseline.append(
                 (
                     slot,
@@ -846,10 +892,11 @@ def _evaluate_xs_rs(
             universe_count=len(slots),
             baseline_mean=baseline_mean,
             universe_slots=slots,
-            stride=NON_OVERLAP_STRIDE,
+            stride=stride,
+            horizon_bars=horizon_bars,
         )
         subset = metrics["non_overlapping"]
-        kept_slots = set(sorted(slot for slot, _ in portfolio)[::NON_OVERLAP_STRIDE])
+        kept_slots = set(sorted(slot for slot, _, _ in portfolio)[::stride])
         subset["baseline_delta"] = _text(
             _baseline_delta_subset(
                 Decimal(metrics["non_overlapping"]["mean_net"])
@@ -898,10 +945,11 @@ def _evaluate_short_reversal(
     universe: Mapping[str, Mapping[datetime, Mapping[str, Any]]],
     *,
     symbols: Sequence[str],
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, Any]:
     universe_rows: list[tuple[str, datetime, Decimal]] = []
-    strict_rows: list[tuple[str, datetime, bool, Decimal]] = []
-    naive_rows: list[tuple[str, datetime, bool, Decimal]] = []
+    strict_rows: list[tuple[str, datetime, bool, Decimal, Decimal]] = []
+    naive_rows: list[tuple[str, datetime, bool, Decimal, Decimal]] = []
     for symbol in symbols:
         for slot in sorted(universe[symbol]):
             row = universe[symbol][slot]
@@ -912,8 +960,12 @@ def _evaluate_short_reversal(
                 and features["return_15m"] > Decimal("-0.001")
             )
             naive = features["return_1h"] < 0
-            strict_rows.append((symbol, slot, strict, row["forward_return"]))
-            naive_rows.append((symbol, slot, naive, row["forward_return"]))
+            strict_rows.append(
+                (symbol, slot, strict, row["forward_return"], row["forward_gross"])
+            )
+            naive_rows.append(
+                (symbol, slot, naive, row["forward_return"], row["forward_gross"])
+            )
     universe_count = len(universe_rows)
     universe_slots = sorted({slot for _, slot, _ in universe_rows})
     baseline_mean = (
@@ -924,13 +976,18 @@ def _evaluate_short_reversal(
     )
     variants: dict[str, Any] = {}
     for variant, rows in (("strict", strict_rows), ("naive", naive_rows)):
-        selected = [(slot, value) for _, slot, signaled, value in rows if signaled]
+        selected = [
+            (slot, value, gross)
+            for _, slot, signaled, value, gross in rows
+            if signaled
+        ]
         metrics = _sample_metrics(
             selected,
             universe_count=universe_count,
             baseline_mean=baseline_mean,
             universe_slots=universe_slots,
-            stride=NON_OVERLAP_STRIDE,
+            stride=horizon_bars,
+            horizon_bars=horizon_bars,
         )
         variants[variant] = metrics
     return {
@@ -952,13 +1009,14 @@ def _evaluate_amihud(
     universe: Mapping[str, Mapping[datetime, Mapping[str, Any]]],
     *,
     symbols: Sequence[str],
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, Any]:
     slots = sorted(
         slot
         for slot in universe[symbols[0]]
         if all(slot in universe[symbol] for symbol in symbols)
     )
-    portfolio: list[tuple[datetime, Decimal]] = []
+    portfolio: list[tuple[datetime, Decimal, Decimal]] = []
     baseline: list[tuple[datetime, Decimal]] = []
     inclusion: dict[str, dict[str, Any]] = {
         symbol: {"inclusion_count": 0, "returns": []} for symbol in symbols
@@ -983,7 +1041,11 @@ def _evaluate_amihud(
             (universe[symbol][slot]["forward_return"] for symbol in chosen),
             Decimal("0"),
         ) / Decimal(len(chosen))
-        portfolio.append((slot, value))
+        gross = sum(
+            (universe[symbol][slot]["forward_gross"] for symbol in chosen),
+            Decimal("0"),
+        ) / Decimal(len(chosen))
+        portfolio.append((slot, value, gross))
         baseline.append(
             (
                 slot,
@@ -1011,10 +1073,11 @@ def _evaluate_amihud(
         portfolio,
         universe_count=len(portfolio),
         baseline_mean=baseline_mean,
-        universe_slots=[slot for slot, _ in portfolio],
-        stride=NON_OVERLAP_STRIDE,
+        universe_slots=[slot for slot, _, _ in portfolio],
+        stride=horizon_bars,
+        horizon_bars=horizon_bars,
     )
-    kept_slots = set(sorted(slot for slot, _ in portfolio)[::NON_OVERLAP_STRIDE])
+    kept_slots = set(sorted(slot for slot, _, _ in portfolio)[::horizon_bars])
     metrics["non_overlapping"]["baseline_delta"] = _text(
         _baseline_delta_subset(
             Decimal(metrics["non_overlapping"]["mean_net"])
@@ -1052,8 +1115,9 @@ def _evaluate_momentum_vol_regime(
     universe: Mapping[str, Mapping[datetime, Mapping[str, Any]]],
     *,
     symbols: Sequence[str],
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, Any]:
-    rows: list[tuple[str, datetime, Decimal, Decimal, bool]] = []
+    rows: list[tuple[str, datetime, Decimal, Decimal, Decimal, bool]] = []
     for symbol in symbols:
         for slot in sorted(universe[symbol]):
             row = universe[symbol][slot]
@@ -1065,6 +1129,7 @@ def _evaluate_momentum_vol_regime(
                     slot,
                     features["realized_volatility_1h"],
                     row["forward_return"],
+                    row["forward_gross"],
                     signaled,
                 )
             )
@@ -1083,13 +1148,14 @@ def _evaluate_momentum_vol_regime(
         ("low_vol_half", lambda vol: median_vol is not None and vol < median_vol),
     ):
         half = [row for row in rows if predicate(row[2])]
-        selected = [(row[1], row[3]) for row in half if row[4]]
+        selected = [(row[1], row[3], row[4]) for row in half if row[5]]
         metrics = _sample_metrics(
             selected,
             universe_count=len(half),
             baseline_mean=baseline_mean,
             universe_slots=universe_slots,
-            stride=NON_OVERLAP_STRIDE,
+            stride=horizon_bars,
+            horizon_bars=horizon_bars,
         )
         variants[variant] = metrics
     return {
@@ -1108,13 +1174,15 @@ def analyze(
     rows_by_symbol: Mapping[str, Sequence[Mapping[str, Any]]],
     *,
     meta: Mapping[str, Any] | None = None,
+    horizon_bars: int = HORIZON_BARS,
 ) -> dict[str, Any]:
     """Evaluate all four A-class candidates over validated typed bars."""
 
+    horizon_bars = _validate_horizon_bars(horizon_bars)
     symbols = tuple(rows_by_symbol.keys())
     if not symbols:
         raise CryptoTenSymbolFactorPrescreenError("prescreen_symbols_invalid")
-    universe = _symbol_evaluation_rows(rows_by_symbol)
+    universe = _symbol_evaluation_rows(rows_by_symbol, horizon_bars=horizon_bars)
     data_window = (
         dict(meta)
         if meta is not None
@@ -1137,13 +1205,18 @@ def analyze(
             "fee_rate": format(TAKER_FEE_RATE, "f"),
             "slippage_bps_each_side": format(SLIPPAGE_BPS, "f"),
         },
-        "forward_horizon_bars": HORIZON_BARS,
-        "non_overlap_stride": NON_OVERLAP_STRIDE,
+        "forward_horizon_bars": horizon_bars,
+        "forward_horizon_minutes": horizon_bars * 5,
+        "non_overlap_stride": horizon_bars,
         "candidates": [
-            _evaluate_xs_rs(universe, symbols=symbols),
-            _evaluate_short_reversal(universe, symbols=symbols),
-            _evaluate_amihud(universe, symbols=symbols),
-            _evaluate_momentum_vol_regime(universe, symbols=symbols),
+            _evaluate_xs_rs(universe, symbols=symbols, horizon_bars=horizon_bars),
+            _evaluate_short_reversal(
+                universe, symbols=symbols, horizon_bars=horizon_bars
+            ),
+            _evaluate_amihud(universe, symbols=symbols, horizon_bars=horizon_bars),
+            _evaluate_momentum_vol_regime(
+                universe, symbols=symbols, horizon_bars=horizon_bars
+            ),
         ],
         **_non_evidence_fields(),
     }
@@ -1166,12 +1239,13 @@ def _metrics_row(name: str, metrics: Mapping[str, Any]) -> str:
     subset = metrics.get("non_overlapping") or {}
     return (
         f"| {name} | {metrics.get('signal_count')} / {metrics.get('universe_count')}"
-        f" | {_fmt(metrics.get('hit_rate'))} | {_fmt(metrics.get('mean_net'))}"
+        f" | {_fmt(metrics.get('hit_rate'))} | {_fmt(metrics.get('mean_gross'))}"
+        f" | {_fmt(metrics.get('mean_net'))}"
         f" | {_fmt(metrics.get('median_net'))} | {_fmt(metrics.get('baseline_delta'))}"
         f" | {_fmt(metrics.get('cash_delta'))} | {_fmt(metrics.get('max_drawdown'))}"
         f" | {_fmt(metrics.get('turnover'))}"
         f" | {subset.get('signal_count', '—')} / {subset.get('slot_count', '—')}"
-        f" | {_fmt(subset.get('mean_net'))} |"
+        f" | {_fmt(subset.get('mean_gross'))} | {_fmt(subset.get('mean_net'))} |"
     )
 
 
@@ -1198,6 +1272,8 @@ def render_report(result: Mapping[str, Any]) -> str:
         for candidate in result["candidates"]
     }
     window = result["data_window"]
+    horizon_bars = result["forward_horizon_bars"]
+    horizon_label = _horizon_label(horizon_bars)
     lines = [
         "# Crypto 10 币 5m A 类候选因子预筛（非证据研究）",
         "",
@@ -1212,15 +1288,17 @@ def render_report(result: Mapping[str, Any]) -> str:
         " OHLCV，经 catalog/query 契约拉取并落盘为 canonical raw JSON（含"
         " receipt/data_through/observed_at 汇总）；行校验 UTC、OHLC 一致、"
         "Decimal；5 分钟缺口只记录不填补。",
-        "- 标签：forward 1h（12 槽）close→close；成本与证据链同一口径：fee"
+        f"- 标签：forward {horizon_label}（{horizon_bars} 槽）close→close；信号"
+        "特征仍为 1h/15m 口径不变；成本与证据链同一口径：fee"
         " 0.001 双边 + slippage 2bps 双边，"
         "`(1+net)*(1-slip)^2-1`。",
-        "- 口径：每个候选同时报全样本与**非重叠子样本**（每 12 槽取 1，"
+        "- 口径：每个候选同时报全样本与**非重叠子样本**（每"
+        f" {result['non_overlap_stride']} 槽取 1，"
         f"stride={result['non_overlap_stride']}），重叠标签对样本量的虚增在"
         "结果表中直接对比。",
-        "- 指标：signal/universe、hit_rate、mean/median net、vs always-invest"
-        " 基线、vs cash、等权权益曲线 max drawdown、turnover；per-symbol"
-        " 分解见各候选小节。",
+        "- 指标：signal/universe、hit_rate、mean gross（费用前）/mean/median"
+        " net（费用后）、vs always-invest 基线、vs cash、等权权益曲线 max"
+        " drawdown、turnover；per-symbol 分解见各候选小节。",
         "",
         "## 数据窗口",
         "",
@@ -1234,11 +1312,11 @@ def render_report(result: Mapping[str, Any]) -> str:
             f" | {item['last_open_time']} | {item.get('gap_count', 0)} |"
         )
     header = (
-        "| variant | signal/universe | hit_rate | mean_net | median_net"
-        " | Δ baseline | Δ cash | maxDD | turnover"
-        " | 非重叠 signal/slots | 非重叠 mean |"
+        "| variant | signal/universe | hit_rate | mean_gross | mean_net"
+        " | median_net | Δ baseline | Δ cash | maxDD | turnover"
+        " | 非重叠 signal/slots | 非重叠 gross | 非重叠 mean |"
     )
-    divider = "|---|---|---|---|---|---|---|---|---|---|---|"
+    divider = "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     for candidate_id, title in (
         ("xs_rs", "XS-RS 横截面相对强弱（long top-k 等权，永远在场）"),
         ("short_reversal", "短期反转（per-symbol 超跌企稳做多）"),
@@ -1359,6 +1437,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", type=str)
     parser.add_argument("--end", type=str)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--horizon-bars", type=int, default=HORIZON_BARS)
     args = parser.parse_args(argv)
     try:
         _assert_simulation_only()
@@ -1394,7 +1473,7 @@ def main(argv: list[str] | None = None) -> int:
             _emit(summary)
             return 0
         rows_by_symbol, meta = load_raw_dir(args.raw_dir)
-        result = analyze(rows_by_symbol, meta=meta)
+        result = analyze(rows_by_symbol, meta=meta, horizon_bars=args.horizon_bars)
         if args.report is not None:
             report_text = render_report(result)
             _write_file_atomic(
@@ -1412,6 +1491,9 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "ALLOWED_HORIZON_BARS",
+    "AUX_HORIZON_BARS",
+    "HORIZON_BARS",
     "NON_OVERLAP_STRIDE",
     "PAGE_LIMIT",
     "PRESCREEN_CONTRACT",
