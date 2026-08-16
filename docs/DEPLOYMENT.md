@@ -32,17 +32,19 @@ The script does **not** install dependencies, alter `/etc/tradingagent`, enable 
 
 ## GitHub production environment
 
-Create a GitHub Environment named `production` and configure these secrets:
+Create a GitHub Environment named `production` and configure these environment secrets:
 
 - `DEPLOY_HOST` — production server hostname or IP address.
 - `DEPLOY_USER` — dedicated unprivileged deployment account.
 - `DEPLOY_SSH_KEY` — private key used only by that deployment account.
 - `DEPLOY_KNOWN_HOSTS` — trusted `known_hosts` entry for the production SSH server. Do not disable host-key checking.
 
-Configure these repository or environment variables:
+Configure these **repository variables** under Actions variables:
 
 - `DEPLOY_ENABLED` — keep absent or `false` during bootstrap; set exactly to `true` only when server preparation is complete.
 - `DEPLOY_PORT` — optional SSH port; defaults to `22`.
+
+`DEPLOY_ENABLED` must be a repository-level variable because it is evaluated in the job-level `if:` gate before the job is sent to a runner. Environment-level configuration variables are not suitable for this pre-run gate.
 
 Secrets must not be committed to this repository, copied into documentation, or sent through application configuration.
 
@@ -66,7 +68,7 @@ A production deployment runs only when all of the following are true:
 1. `TradingAgent Tests` completed successfully;
 2. the successful run was a `push` run;
 3. the tested branch was `main`;
-4. `DEPLOY_ENABLED` is exactly `true`;
+4. the repository variable `DEPLOY_ENABLED` is exactly `true`;
 5. the `production` Environment secrets are present;
 6. SSH host-key verification succeeds.
 
@@ -88,7 +90,7 @@ After the atomic switch, the workflow reads:
 
 and fails unless it exactly matches the tested commit SHA.
 
-This is a release-integrity check, not an application-level health check. An HTTP/service health check should be added only when a canonical production health endpoint or command is defined.
+This is a release-integrity check, not an application-level health check. The repository already exposes the loopback-only read API health route at `http://127.0.0.1:8787/healthz`; wiring service restart plus this application-level health check is a separate follow-up because the current bootstrap intentionally grants no systemd restart permission.
 
 ## Rollback
 
