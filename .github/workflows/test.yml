@@ -83,7 +83,6 @@ jobs:
         run: npm run build:all
 
       - name: Package tested release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
           release_root="$(mktemp -d "$RUNNER_TEMP/tradingagent-release-root.XXXXXX")"
