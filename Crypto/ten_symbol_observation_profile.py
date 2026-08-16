@@ -9,7 +9,7 @@ or digest drift fails closed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from typing import Any, Mapping
@@ -18,6 +18,7 @@ from Crypto.market_observation import (
     BAR_COUNT,
     BAR_FIELDS,
     OBSERVATION_SYMBOLS,
+    OBSERVATION_SYMBOLS_V40,
     _catalog_row,
     _verify_catalog,
 )
@@ -26,6 +27,7 @@ from shared.governance.evidence_readiness import dataset_contract_fingerprint
 
 
 TEN_SYMBOL_PROFILE_CONTRACT = "tradingagent.crypto.ten_symbol_observation_profile.v1"
+FORTY_SYMBOL_PROFILE_CONTRACT = "tradingagent.crypto.forty_symbol_observation_profile.v1"
 QUERY_ORDER = ("symbol:asc", "open_time:asc")
 IDENTITY_FIELDS = ("symbol", "open_time")
 FILTER_BINDINGS = (
@@ -67,11 +69,13 @@ def _bar_dataset_id(symbol: str) -> str:
     return f"crypto.spot.binance.{symbol.lower()}.5m"
 
 
-def consumer_profile_payload() -> dict[str, Any]:
-    """The uniform bounded consumer query shape shared by all ten datasets."""
+def consumer_profile_payload(
+    profile_contract: str = TEN_SYMBOL_PROFILE_CONTRACT,
+) -> dict[str, Any]:
+    """The uniform bounded consumer query shape shared by every dataset."""
 
     return {
-        "contract": TEN_SYMBOL_PROFILE_CONTRACT,
+        "contract": profile_contract,
         "bar_count": BAR_COUNT,
         "selected_fields": list(BAR_FIELDS),
         "query_order": list(QUERY_ORDER),
@@ -83,8 +87,10 @@ def consumer_profile_payload() -> dict[str, Any]:
     }
 
 
-def consumer_profile_sha256() -> str:
-    return _canonical_sha256(consumer_profile_payload())
+def consumer_profile_sha256(
+    profile_contract: str = TEN_SYMBOL_PROFILE_CONTRACT,
+) -> str:
+    return _canonical_sha256(consumer_profile_payload(profile_contract))
 
 
 @dataclass(frozen=True)
@@ -92,9 +98,14 @@ class TenSymbolDatasetContract:
     symbol: str
     dataset_id: str
     catalog_contract_sha256: str
+    symbols: tuple[str, ...] = field(
+        default=OBSERVATION_SYMBOLS,
+        compare=False,
+        hash=False,
+    )
 
     def __post_init__(self) -> None:
-        if self.symbol not in OBSERVATION_SYMBOLS:
+        if self.symbol not in self.symbols:
             raise CryptoTenSymbolProfileError("ten_symbol_profile_symbol_invalid")
         if self.dataset_id != _bar_dataset_id(self.symbol):
             raise CryptoTenSymbolProfileError("ten_symbol_profile_dataset_invalid")
@@ -115,13 +126,25 @@ class CryptoTenSymbolObservationProfile:
     datasets: tuple[TenSymbolDatasetContract, ...]
     consumer_profile_sha256: str
     profile_sha256: str
+    symbols: tuple[str, ...] = field(
+        default=OBSERVATION_SYMBOLS,
+        compare=False,
+        hash=False,
+    )
+    profile_contract: str = field(
+        default=TEN_SYMBOL_PROFILE_CONTRACT,
+        compare=False,
+        hash=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.catalog_version, str) or not self.catalog_version:
             raise CryptoTenSymbolProfileError("ten_symbol_profile_catalog_invalid")
-        if tuple(dataset.symbol for dataset in self.datasets) != OBSERVATION_SYMBOLS:
+        if tuple(dataset.symbol for dataset in self.datasets) != self.symbols:
             raise CryptoTenSymbolProfileError("ten_symbol_profile_datasets_invalid")
-        if self.consumer_profile_sha256 != consumer_profile_sha256():
+        if self.consumer_profile_sha256 != consumer_profile_sha256(
+            self.profile_contract
+        ):
             raise CryptoTenSymbolProfileError("ten_symbol_profile_sha256_mismatch")
         if self.profile_sha256 != self._compute_profile_sha256():
             raise CryptoTenSymbolProfileError("ten_symbol_profile_sha256_mismatch")
@@ -131,9 +154,9 @@ class CryptoTenSymbolObservationProfile:
 
     def to_payload(self, *, include_digest: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "contract": TEN_SYMBOL_PROFILE_CONTRACT,
+            "contract": self.profile_contract,
             "catalog_version": self.catalog_version,
-            "consumer": consumer_profile_payload(),
+            "consumer": consumer_profile_payload(self.profile_contract),
             "consumer_profile_sha256": self.consumer_profile_sha256,
             "datasets": [dataset.to_payload() for dataset in self.datasets],
         }
@@ -147,6 +170,8 @@ class CryptoTenSymbolObservationProfile:
         catalog: CatalogEnvelope,
         *,
         expected_catalog_version: str,
+        symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+        profile_contract: str = TEN_SYMBOL_PROFILE_CONTRACT,
     ) -> "CryptoTenSymbolObservationProfile":
         if not isinstance(catalog, CatalogEnvelope):
             raise CryptoTenSymbolProfileError("ten_symbol_profile_catalog_invalid")
@@ -158,7 +183,7 @@ class CryptoTenSymbolObservationProfile:
                 "ten_symbol_profile_catalog_version_drift"
             )
         datasets: list[TenSymbolDatasetContract] = []
-        for symbol in OBSERVATION_SYMBOLS:
+        for symbol in symbols:
             dataset_id = _bar_dataset_id(symbol)
             # Reuse the market-observation hard catalog gates unchanged.
             _verify_catalog(catalog, dataset_id)
@@ -174,13 +199,14 @@ class CryptoTenSymbolObservationProfile:
                     symbol=symbol,
                     dataset_id=dataset_id,
                     catalog_contract_sha256=contract_sha256,
+                    symbols=symbols,
                 )
             )
-        consumer_sha256 = consumer_profile_sha256()
+        consumer_sha256 = consumer_profile_sha256(profile_contract)
         material = {
-            "contract": TEN_SYMBOL_PROFILE_CONTRACT,
+            "contract": profile_contract,
             "catalog_version": expected_catalog_version,
-            "consumer": consumer_profile_payload(),
+            "consumer": consumer_profile_payload(profile_contract),
             "consumer_profile_sha256": consumer_sha256,
             "datasets": [dataset.to_payload() for dataset in datasets],
         }
@@ -189,6 +215,8 @@ class CryptoTenSymbolObservationProfile:
             datasets=tuple(datasets),
             consumer_profile_sha256=consumer_sha256,
             profile_sha256=_canonical_sha256(material),
+            symbols=symbols,
+            profile_contract=profile_contract,
         )
 
     def verify_catalog(self, catalog: CatalogEnvelope) -> None:
@@ -211,6 +239,9 @@ class CryptoTenSymbolObservationProfile:
 
 def load_ten_symbol_observation_profile_payload(
     payload: Mapping[str, Any],
+    *,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    profile_contract: str = TEN_SYMBOL_PROFILE_CONTRACT,
 ) -> CryptoTenSymbolObservationProfile:
     if not isinstance(payload, Mapping):
         raise CryptoTenSymbolProfileError("ten_symbol_profile_payload_invalid")
@@ -221,9 +252,9 @@ def load_ten_symbol_observation_profile_payload(
         "consumer_profile_sha256",
         "datasets",
         "profile_sha256",
-    } or payload.get("contract") != TEN_SYMBOL_PROFILE_CONTRACT:
+    } or payload.get("contract") != profile_contract:
         raise CryptoTenSymbolProfileError("ten_symbol_profile_payload_invalid")
-    if payload.get("consumer") != consumer_profile_payload():
+    if payload.get("consumer") != consumer_profile_payload(profile_contract):
         raise CryptoTenSymbolProfileError("ten_symbol_profile_consumer_drift")
     raw_datasets = payload.get("datasets")
     if not isinstance(raw_datasets, list):
@@ -242,6 +273,7 @@ def load_ten_symbol_observation_profile_payload(
                     symbol=item["symbol"],
                     dataset_id=item["dataset_id"],
                     catalog_contract_sha256=item["catalog_contract_sha256"],
+                    symbols=symbols,
                 )
             )
         except (TypeError, KeyError) as exc:
@@ -256,6 +288,35 @@ def load_ten_symbol_observation_profile_payload(
         datasets=tuple(datasets),
         consumer_profile_sha256=str(payload.get("consumer_profile_sha256")),
         profile_sha256=str(payload.get("profile_sha256")),
+        symbols=symbols,
+        profile_contract=profile_contract,
+    )
+
+
+def build_forty_symbol_observation_profile(
+    catalog: CatalogEnvelope,
+    *,
+    expected_catalog_version: str,
+) -> CryptoTenSymbolObservationProfile:
+    """Build the versioned forty-symbol observation profile from one catalog."""
+
+    return CryptoTenSymbolObservationProfile.from_catalog(
+        catalog,
+        expected_catalog_version=expected_catalog_version,
+        symbols=OBSERVATION_SYMBOLS_V40,
+        profile_contract=FORTY_SYMBOL_PROFILE_CONTRACT,
+    )
+
+
+def load_forty_symbol_observation_profile_payload(
+    payload: Mapping[str, Any],
+) -> CryptoTenSymbolObservationProfile:
+    """Load and verify a versioned forty-symbol observation profile payload."""
+
+    return load_ten_symbol_observation_profile_payload(
+        payload,
+        symbols=OBSERVATION_SYMBOLS_V40,
+        profile_contract=FORTY_SYMBOL_PROFILE_CONTRACT,
     )
 
 
@@ -266,11 +327,14 @@ __all__ = [
     "MAX_ROWS",
     "PAGE_LIMIT",
     "QUERY_ORDER",
+    "FORTY_SYMBOL_PROFILE_CONTRACT",
     "TEN_SYMBOL_PROFILE_CONTRACT",
     "CryptoTenSymbolObservationProfile",
     "CryptoTenSymbolProfileError",
     "TenSymbolDatasetContract",
+    "build_forty_symbol_observation_profile",
     "consumer_profile_payload",
     "consumer_profile_sha256",
+    "load_forty_symbol_observation_profile_payload",
     "load_ten_symbol_observation_profile_payload",
 ]

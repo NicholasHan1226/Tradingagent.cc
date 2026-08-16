@@ -26,13 +26,14 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 import urllib.error
 
 from Crypto.market_observation import (
     BAR_FIELDS,
     BOOK_TICKER_FIELDS,
     OBSERVATION_SYMBOLS,
+    TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     _book_ticker_dataset_id,
     validate_ten_symbol_spreads_sidecar,
 )
@@ -40,12 +41,16 @@ from Crypto.market_observation import CryptoMarketObservationError
 from Crypto.ten_symbol_observation_profile import CryptoTenSymbolProfileError
 from Crypto.ten_symbol_observation_runtime import (
     RUNTIME_TOKEN_FILE,
+    TEN_SYMBOL_RUNTIME_CONFIG,
+    CryptoTenSymbolObservationRuntimeConfig,
     CryptoTenSymbolObservationRuntimeManifest,
     crypto_ten_symbol_observation_window,
     load_crypto_ten_symbol_observation_runtime_manifest,
 )
 from Crypto.ten_symbol_observation_store import (
+    TEN_SYMBOL_CONTRACTS,
     TERMINAL_SLOT_TYPES,
+    CryptoTenSymbolObservationContracts,
     CryptoTenSymbolObservationStore,
     CryptoTenSymbolObservationStoreError,
     _market_slot,
@@ -262,6 +267,8 @@ def _check_spread_sampling(
     *,
     store: CryptoTenSymbolObservationStore,
     events: list[dict[str, Any]],
+    symbols: Sequence[str] = OBSERVATION_SYMBOLS,
+    spreads_sidecar_contract: str = TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 ) -> dict[str, Any]:
     terminal = _terminal_events(events)[-WINDOW_SLOTS:]
     eligible = [event for event in terminal if "spread" in event]
@@ -314,14 +321,18 @@ def _check_spread_sampling(
             # A recorded missing sidecar is a degradation, not corruption.
             evidence["missing_sidecar_slots"] += 1
             continue
-        entries = validate_ten_symbol_spreads_sidecar(sidecar)
+        entries = validate_ten_symbol_spreads_sidecar(
+            sidecar,
+            symbols=symbols,
+            spreads_sidecar_contract=spreads_sidecar_contract,
+        )
         del entries
         if sidecar.get("spread_sha256") != spread_sha256:
             raise CryptoTenSymbolHealthWatchError(
                 "crypto_ten_symbol_health_spread_sidecar_digest_mismatch"
             )
     evidence["sampled_symbol_ratio"] = sampled_symbols / (
-        len(OBSERVATION_SYMBOLS) * len(eligible)
+        len(symbols) * len(eligible)
     )
     if (
         evidence["missing_sidecar_slots"]
@@ -655,7 +666,10 @@ def _check_tradingdatas(
     )
 
 
-def _open_store_read_only(store_root: Path) -> CryptoTenSymbolObservationStore:
+def _open_store_read_only(
+    store_root: Path,
+    contracts: CryptoTenSymbolObservationContracts = TEN_SYMBOL_CONTRACTS,
+) -> CryptoTenSymbolObservationStore:
     root = Path(store_root)
     if not root.is_absolute():
         raise CryptoTenSymbolHealthWatchError(
@@ -673,7 +687,7 @@ def _open_store_read_only(store_root: Path) -> CryptoTenSymbolObservationStore:
         raise CryptoTenSymbolHealthWatchError(
             "crypto_ten_symbol_health_store_uninitialized"
         )
-    return CryptoTenSymbolObservationStore(root)
+    return CryptoTenSymbolObservationStore(root, contracts=contracts)
 
 
 def build_ten_symbol_health_report(
@@ -684,15 +698,18 @@ def build_ten_symbol_health_report(
     token_file: Path | str = DEFAULT_TOKEN_FILE,
     transport_factory: Callable[..., HTTPTransport] | None = None,
     timeout_seconds: float = HEALTH_WATCH_TIMEOUT_SECONDS,
+    symbols: Sequence[str] = OBSERVATION_SYMBOLS,
+    contracts: CryptoTenSymbolObservationContracts = TEN_SYMBOL_CONTRACTS,
+    spreads_sidecar_contract: str = TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 ) -> dict[str, Any]:
-    """Build one no-write health snapshot for the ten-symbol chain."""
+    """Build one no-write health snapshot for one observation chain."""
 
     factory = build_runtime_transport if transport_factory is None else transport_factory
     observed = _utc_now(now)
     checks: dict[str, dict[str, Any]] = {}
     network_used = False
     try:
-        store = _open_store_read_only(store_root)
+        store = _open_store_read_only(store_root, contracts)
         events = store.events_read_only()
         pending = store.pending_record_read_only()
         checks["observation_chain_lag"] = _check_observation_chain_lag(
@@ -701,7 +718,12 @@ def build_ten_symbol_health_report(
             now=observed,
         )
         checks["reject_gap_rate"] = _check_reject_gap_rate(events=events)
-        checks["spread_sampling"] = _check_spread_sampling(store=store, events=events)
+        checks["spread_sampling"] = _check_spread_sampling(
+            store=store,
+            events=events,
+            symbols=symbols,
+            spreads_sidecar_contract=spreads_sidecar_contract,
+        )
     except CryptoTenSymbolObservationStoreError as exc:
         checks.update(_failed_store_checks(str(exc)))
     except (
@@ -777,6 +799,7 @@ def run_health_watch_once(
     token_file: Path | str = DEFAULT_TOKEN_FILE,
     now: datetime,
     transport_factory: Callable[..., HTTPTransport] | None = None,
+    runtime_config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
 ) -> dict[str, Any]:
     root = Path(store_root)
     token = Path(token_file)
@@ -788,7 +811,10 @@ def run_health_watch_once(
         raise CryptoTenSymbolHealthWatchError(
             "crypto_ten_symbol_health_paths_must_be_absolute"
         )
-    manifest = load_crypto_ten_symbol_observation_runtime_manifest(runtime_manifest)
+    manifest = load_crypto_ten_symbol_observation_runtime_manifest(
+        runtime_manifest,
+        config=runtime_config,
+    )
     # The loader already pins the manifest output root to the frozen runtime
     # root; the caller-supplied store root must be exactly that root.
     if root != manifest.output_root:
@@ -801,6 +827,9 @@ def run_health_watch_once(
         runtime_manifest=manifest,
         token_file=token,
         transport_factory=transport_factory,
+        symbols=runtime_config.symbols,
+        contracts=runtime_config.store_contracts,
+        spreads_sidecar_contract=runtime_config.spreads_sidecar_contract,
     )
 
 

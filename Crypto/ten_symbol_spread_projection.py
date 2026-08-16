@@ -29,13 +29,16 @@ from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.market_observation import (
     OBSERVATION_SYMBOLS,
     TEN_SYMBOL_SPREAD_CONTRACT,
+    TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     CryptoMarketObservationError,
     build_spread_event_block,
     validate_ten_symbol_spreads_sidecar,
 )
 import Crypto.ten_symbol_factor_research as projection
 from Crypto.ten_symbol_observation_store import (
+    TEN_SYMBOL_CONTRACTS,
     TERMINAL_SLOT_TYPES,
+    CryptoTenSymbolObservationContracts,
     CryptoTenSymbolObservationStore,
     CryptoTenSymbolObservationStoreError,
 )
@@ -144,21 +147,29 @@ def _result(*, status: str, **fields: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _open_store(root: Path) -> CryptoTenSymbolObservationStore:
+def _open_store(
+    root: Path,
+    contracts: CryptoTenSymbolObservationContracts = TEN_SYMBOL_CONTRACTS,
+) -> CryptoTenSymbolObservationStore:
     required = (root, root / "slot_index")
     if any(not path.exists() or path.is_symlink() for path in required):
         raise CryptoTenSymbolSpreadProjectionError(
             "ten_symbol_spread_projection_root_incomplete"
         )
     try:
-        return CryptoTenSymbolObservationStore(root)
+        return CryptoTenSymbolObservationStore(root, contracts=contracts)
     except (CryptoTenSymbolObservationStoreError, OSError, ValueError) as exc:
         raise CryptoTenSymbolSpreadProjectionError(
             "ten_symbol_spread_projection_core_invalid"
         ) from exc
 
 
-def _validate_spread_block(event: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_spread_block(
+    event: Mapping[str, Any],
+    *,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    spread_contract: str = TEN_SYMBOL_SPREAD_CONTRACT,
+) -> dict[str, Any]:
     """Shape-check one terminal event's spread status block.
 
     The store verifies chain integrity and the fixed authority fields but
@@ -180,23 +191,23 @@ def _validate_spread_block(event: Mapping[str, Any]) -> dict[str, Any]:
     spread_sha256 = block.get("spread_sha256")
     catalog_version = block.get("catalog_version")
     if (
-        block.get("contract") != TEN_SYMBOL_SPREAD_CONTRACT
+        block.get("contract") != spread_contract
         or status not in _SPREAD_STATUSES
         or isinstance(sampled, bool)
         or not isinstance(sampled, int)
         or isinstance(rejected, bool)
         or not isinstance(rejected, int)
-        or not (0 <= sampled <= len(_SYMBOLS))
-        or not (0 <= rejected <= len(_SYMBOLS))
+        or not (0 <= sampled <= len(symbols))
+        or not (0 <= rejected <= len(symbols))
         # Per-symbol evidence binds exactly one entry per symbol; a leg-wide
         # degradation has no per-symbol evidence and reports zero counts.
-        or (spread_sha256 is not None and sampled + rejected != len(_SYMBOLS))
+        or (spread_sha256 is not None and sampled + rejected != len(symbols))
         or (spread_sha256 is None and (sampled != 0 or rejected != 0))
         or not isinstance(reasons, dict)
         or len(reasons) != rejected
         or any(
             not isinstance(symbol, str)
-            or symbol not in _SYMBOLS
+            or symbol not in symbols
             or not isinstance(code, str)
             or not code
             for symbol, code in reasons.items()
@@ -223,6 +234,9 @@ def _bind_slot_evidence(
     block: Mapping[str, Any],
     *,
     window_end_iso: str,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    spread_contract: str = TEN_SYMBOL_SPREAD_CONTRACT,
+    spreads_sidecar_contract: str = TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 ) -> list[dict[str, Any]] | None:
     """Return the slot's verified spread entries, or None when the sidecar
     is missing.
@@ -244,13 +258,18 @@ def _bind_slot_evidence(
     if sidecar is None:
         return None
     try:
-        entries = validate_ten_symbol_spreads_sidecar(sidecar)
+        entries = validate_ten_symbol_spreads_sidecar(
+            sidecar,
+            symbols=symbols,
+            spreads_sidecar_contract=spreads_sidecar_contract,
+        )
     except CryptoMarketObservationError as exc:
         raise CryptoTenSymbolSpreadProjectionError(reason) from exc
     rebuilt = build_spread_event_block(
         entries=entries,
         catalog_version=sidecar["catalog_version"],
         spread_sha256=str(sidecar["spread_sha256"]),
+        spread_contract=spread_contract,
     )
     if (
         _canonical_json(rebuilt) != _canonical_json(dict(block))
@@ -516,6 +535,10 @@ def _validated_current(evolution: Path) -> dict[str, Any] | None:
 def run_crypto_ten_symbol_spread_projection(
     *,
     output_root: Path | str,
+    symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    contracts: CryptoTenSymbolObservationContracts = TEN_SYMBOL_CONTRACTS,
+    spread_contract: str = TEN_SYMBOL_SPREAD_CONTRACT,
+    spreads_sidecar_contract: str = TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 ) -> dict[str, Any]:
     """Aggregate verified spreads sidecars into one immutable artifact.
 
@@ -530,7 +553,7 @@ def run_crypto_ten_symbol_spread_projection(
 
     _assert_simulation_only()
     root = Path(output_root)
-    store = _open_store(root)
+    store = _open_store(root, contracts)
     if store.pending_record_read_only() is not None:
         return _result(status="deferred_core_pending")
     try:
@@ -540,8 +563,8 @@ def run_crypto_ten_symbol_spread_projection(
             "ten_symbol_spread_projection_core_invalid"
         ) from exc
 
-    buckets: dict[str, dict[str, _Bucket]] = {symbol: {} for symbol in _SYMBOLS}
-    symbol_totals: dict[str, _Bucket] = {symbol: _Bucket() for symbol in _SYMBOLS}
+    buckets: dict[str, dict[str, _Bucket]] = {symbol: {} for symbol in symbols}
+    symbol_totals: dict[str, _Bucket] = {symbol: _Bucket() for symbol in symbols}
     totals = _Bucket()
     spread_sources: list[dict[str, Any]] = []
     skipped_slots: list[dict[str, Any]] = []
@@ -567,7 +590,11 @@ def run_crypto_ten_symbol_spread_projection(
                 {"window_end": window_end_iso, "reason": "feature_ineligible"}
             )
             continue
-        block = _validate_spread_block(event)
+        block = _validate_spread_block(
+            event,
+            symbols=symbols,
+            spread_contract=spread_contract,
+        )
         if block["spread_sha256"] is None:
             skipped_slots.append(
                 {
@@ -578,7 +605,13 @@ def run_crypto_ten_symbol_spread_projection(
             )
             continue
         entries = _bind_slot_evidence(
-            store, event, block, window_end_iso=window_end_iso
+            store,
+            event,
+            block,
+            window_end_iso=window_end_iso,
+            symbols=symbols,
+            spread_contract=spread_contract,
+            spreads_sidecar_contract=spreads_sidecar_contract,
         )
         if entries is None:
             skipped_slots.append(
@@ -673,7 +706,7 @@ def run_crypto_ten_symbol_spread_projection(
                 "spread_sources": spread_sources,
                 "skipped_slots": skipped_slots,
             },
-            "symbols": list(_SYMBOLS),
+            "symbols": list(symbols),
             "buckets": {
                 symbol: {
                     day: bucket.stats()
