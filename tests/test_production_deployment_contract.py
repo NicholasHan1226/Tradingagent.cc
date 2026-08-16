@@ -21,16 +21,34 @@ def test_production_deployment_shell_scripts_parse() -> None:
         )
 
 
-def test_main_ci_publishes_the_tested_release_artifact() -> None:
+def test_main_ci_publishes_the_exact_tested_release_artifact() -> None:
     workflow = _read(".github/workflows/test.yml")
 
+    assert "workflow_dispatch:" in workflow
+    assert "expected_sha:" in workflow
+    assert "SOURCE_SHA:" in workflow
+    assert "ref: ${{ env.SOURCE_SHA }}" in workflow
+    assert '[[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]' in workflow
     assert "npm run build:all" in workflow
     assert "Package tested release" in workflow
-    assert "git -C \"$GITHUB_WORKSPACE\" archive \"$GITHUB_SHA\"" in workflow
+    assert 'git -C "$GITHUB_WORKSPACE" archive "$SOURCE_SHA"' in workflow
+    assert 'printf \'%s\\n\' "$SOURCE_SHA" > "$release_root/.source-sha"' in workflow
     assert "front/dist-server/server/tradingAgentSnapshotHttp.js" in workflow
     assert "actions/upload-artifact@v4" in workflow
-    assert "name: tradingagent-release-${{ github.sha }}" in workflow
+    assert "name: tradingagent-release-${{ env.SOURCE_SHA }}" in workflow
     assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in workflow
+    assert "github.event_name == 'workflow_dispatch'" in workflow
+
+
+def test_automerge_dispatches_the_resulting_exact_main_sha() -> None:
+    workflow = _read(".github/workflows/automerge.yml")
+
+    assert "actions: write" in workflow
+    assert 'MERGE_JSON="$(gh api' in workflow
+    assert "MERGE_SHA=" in workflow
+    assert "actions/workflows/test.yml/dispatches" in workflow
+    assert "inputs[expected_sha]=$MERGE_SHA" in workflow
+    assert "Dispatched exact-main validation" in workflow
 
 
 def test_deploy_workflow_is_exact_sha_artifact_and_current_main_gated() -> None:
@@ -40,9 +58,12 @@ def test_deploy_workflow_is_exact_sha_artifact_and_current_main_gated() -> None:
     assert "- TradingAgent Tests" in workflow
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "github.event.workflow_run.event == 'push'" in workflow
+    assert "github.event.workflow_run.event == 'workflow_dispatch'" in workflow
     assert "github.event.workflow_run.head_branch == 'main'" in workflow
     assert "vars.DEPLOY_ENABLED == 'true'" in workflow
     assert "actions: read" in workflow
+    assert "Discover tested release identity" in workflow
+    assert "tradingagent-release-[0-9a-f]{40}" in workflow
     assert "actions/download-artifact@v5" in workflow
     assert "run-id: ${{ github.event.workflow_run.id }}" in workflow
     assert "tar -xOf \"$archive\" ./.source-sha" in workflow
