@@ -251,7 +251,15 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   record/receipt/checkpoint 三件套、store 事件 checksum 与 bars sidecar
   sha 双重绑定、checkpoint 链重放、cost policy
   `crypto-round-trip-taker-v1` 逐项比对、gross/net 重算、future 不晚于
-  evaluation_as_of），失败一律 fail closed 不跳过。每个 horizon × 每个
+  evaluation_as_of），失败一律 fail closed 不跳过。成本滑点腿接入
+  `ten_symbol_spread_projection` 的 checkpoint 绑定 artifact：逐单元
+  取不晚于样本槽日的最近充足日桶（sample_count ≥ 12）p75 半点差作
+  每边滑点，fee 口径不变；投影命名空间缺失或桶样本不足时显式回退
+  假设成本并逐单元标记 `cost_source: assumed|measured`（bundle 内
+  `cost_model`/`cost_source_counts` + immutable 伴随
+  `strategy_evaluation_cost_attributions/{outcome}.json` 逐单元清单），
+  链校验/合同漂移 fail closed；评估 outcome 身份纳入所消费 spread
+  outcome，实测证据更新即重评估。每个 horizon × 每个
   预注册假设各产出一份评估，在同一 immutable bundle 内按 horizon 分组
   （always-invest 基线、cash 基线、signal/abstention/coverage/hit_rate/
   cost_adjusted_net_return/baseline_delta/cash_baseline_delta/drawdown/
@@ -282,8 +290,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   sidecar 缺失只显式剔除该槽并记录，sidecar 损坏或 digest 漂移一律
   fail closed；rejected 条目只计拒收统计，绝不进入点差统计。固定
   `authority=none`、`research_only=true`、零网络、零 core/资本/order/
-  Champion/learning 写权限；不接任何策略/评估逻辑，费用后评估对
-  artifact 的消费接入需独立候选与验收。
+  Champion/learning 写权限；投影自身不接任何策略/评估逻辑，费用后
+  评估对 artifact 的消费已在
+  `ten_symbol_factor_strategy_evaluation.py` 按上述合约实现。
 - `ten_symbol_research_loop.py` 是研究进化闭环第一阶段：离线、只读、
   detached 一次性假设重估调度器。输入为观测 store 根目录与预筛
   horizon 配置；复用 factor v2 投影的 sidecar 资格门禁与
