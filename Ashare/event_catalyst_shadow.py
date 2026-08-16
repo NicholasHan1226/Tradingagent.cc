@@ -154,14 +154,26 @@ def _mainboard_symbol(value: object, reason: str) -> str:
 
 @dataclass(frozen=True)
 class DailyBar:
-    """One injected daily close; provider rows remain caller-validated."""
+    """One injected daily bar; provider rows remain caller-validated.
+
+    ``high`` is optional: close-only rows keep working, but intraday
+    (rally) labels are only computed when every post-window bar carries a
+    high.
+    """
 
     trade_date: date
     close: float
+    high: float | None = None
 
     def __post_init__(self) -> None:
         _session_date(self.trade_date, "event_catalyst_bar_date_invalid")
         _positive_price(self.close, "event_catalyst_bar_close_invalid")
+        if self.high is not None:
+            _positive_price(self.high, "event_catalyst_bar_high_invalid")
+            if float(self.high) < float(self.close) * (1.0 - 1e-9):
+                raise EventCatalystShadowError(
+                    "event_catalyst_bar_high_invalid"
+                )
 
 
 @dataclass(frozen=True)
@@ -320,6 +332,14 @@ class CatalystShadowObservation:
     input_receipt_sha256: str
     observation_sha256: str
     event_cluster_id: str | None = None
+    # Intraday rally labels (v3 additive): only set when the observation is
+    # labeled AND every post-window bar carried a daily high.  They answer
+    # the "sell into the rally" question the close-only post_return cannot:
+    # how high did price trade after the event, on which session, and what
+    # would a pre-positioned buyer have realized selling that high.
+    post_max_intraday_premium: float | None = None
+    post_optimal_exit_offset: int | None = None
+    post_optimal_exit_return: float | None = None
     shadow_only: bool = True
     calibrated_probability: None = None
     candidate_eligible: bool = False
@@ -400,6 +420,46 @@ class CatalystShadowObservation:
             raise EventCatalystShadowError(
                 "event_catalyst_obs_status_invalid"
             )
+        intraday_fields = (
+            self.post_max_intraday_premium,
+            self.post_optimal_exit_offset,
+            self.post_optimal_exit_return,
+        )
+        if any(value is None for value in intraday_fields) != all(
+            value is None for value in intraday_fields
+        ):
+            raise EventCatalystShadowError(
+                "event_catalyst_obs_intraday_payload_mismatch"
+            )
+        if self.post_max_intraday_premium is not None:
+            if (
+                self.post_label_state != "labeled"
+                or self.observation_status != "observed"
+            ):
+                raise EventCatalystShadowError(
+                    "event_catalyst_obs_intraday_payload_mismatch"
+                )
+            for value in (
+                self.post_max_intraday_premium,
+                self.post_optimal_exit_return,
+            ):
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                ):
+                    raise EventCatalystShadowError(
+                        "event_catalyst_obs_intraday_return_invalid"
+                    )
+            if (
+                isinstance(self.post_optimal_exit_offset, bool)
+                or not isinstance(self.post_optimal_exit_offset, int)
+                or self.post_optimal_exit_offset < 0
+                or self.post_optimal_exit_offset > self.post_window_sessions
+            ):
+                raise EventCatalystShadowError(
+                    "event_catalyst_obs_intraday_offset_invalid"
+                )
         if self.post_label_state not in POST_LABEL_STATES:
             raise EventCatalystShadowError(
                 "event_catalyst_obs_label_state_invalid"
@@ -528,7 +588,8 @@ def _observe_one(
                 None
                 if bars is None
                 else [
-                    [bar.trade_date.isoformat(), bar.close] for bar in bars
+                    [bar.trade_date.isoformat(), bar.close, bar.high]
+                    for bar in bars
                 ]
             ),
         }
@@ -541,6 +602,9 @@ def _observe_one(
     status = "insufficient_history"
     post_return: float | None = None
     post_label_state = "pending"
+    post_max_intraday_premium: float | None = None
+    post_optimal_exit_offset: int | None = None
+    post_optimal_exit_return: float | None = None
 
     if bars is not None:
         event_index = next(
@@ -567,6 +631,18 @@ def _observe_one(
                     bars[post_end].close / bars[event_index].close - 1.0
                 )
                 post_label_state = "labeled"
+                window_bars = bars[event_index : post_end + 1]
+                if all(bar.high is not None for bar in window_bars):
+                    event_close = bars[event_index].close
+                    pre_event_close = bars[event_index - 1].close
+                    best_offset = max(
+                        range(len(window_bars)),
+                        key=lambda offset: float(window_bars[offset].high),
+                    )
+                    best_high = float(window_bars[best_offset].high)
+                    post_max_intraday_premium = best_high / event_close - 1.0
+                    post_optimal_exit_offset = best_offset
+                    post_optimal_exit_return = best_high / pre_event_close - 1.0
 
     observation_material = {
         "input_receipt_sha256": input_receipt,
@@ -578,6 +654,9 @@ def _observe_one(
         "post_return": post_return,
         "post_label_state": post_label_state,
         "event_cluster_id": entry.event_cluster_id,
+        "post_max_intraday_premium": post_max_intraday_premium,
+        "post_optimal_exit_offset": post_optimal_exit_offset,
+        "post_optimal_exit_return": post_optimal_exit_return,
     }
     return CatalystShadowObservation(
         event_id=entry.event_id,
@@ -600,6 +679,9 @@ def _observe_one(
         input_receipt_sha256=input_receipt,
         observation_sha256=_sha256(observation_material),
         event_cluster_id=entry.event_cluster_id,
+        post_max_intraday_premium=post_max_intraday_premium,
+        post_optimal_exit_offset=post_optimal_exit_offset,
+        post_optimal_exit_return=post_optimal_exit_return,
     )
 
 

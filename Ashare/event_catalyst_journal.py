@@ -115,6 +115,17 @@ def journal_records_from_shadow_batch(
                 "post_window_sessions": observation.post_window_sessions,
                 "pre_return": float(observation.pre_return),
                 "post_return": float(observation.post_return),
+                "post_max_intraday_premium": (
+                    None
+                    if observation.post_max_intraday_premium is None
+                    else float(observation.post_max_intraday_premium)
+                ),
+                "post_optimal_exit_offset": observation.post_optimal_exit_offset,
+                "post_optimal_exit_return": (
+                    None
+                    if observation.post_optimal_exit_return is None
+                    else float(observation.post_optimal_exit_return)
+                ),
                 "observation_sha256": observation.observation_sha256,
                 "input_receipt_sha256": observation.input_receipt_sha256,
                 "batch_receipt_sha256": batch.batch_receipt_sha256,

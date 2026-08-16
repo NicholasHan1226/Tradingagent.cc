@@ -345,3 +345,112 @@ class TestAuthorityLocks:
             excinfo.value.reason_code
             == "event_catalyst_obs_hypothesis_mismatch"
         )
+
+
+class TestIntradayRallyLabels:
+    def _bars_with_highs(self, *, margin: float = 0.3):
+        return [
+            DailyBar(
+                trade_date=bar.trade_date,
+                close=bar.close,
+                high=round(bar.close + margin, 4),
+            )
+            for bar in _bars(date(2026, 7, 15), 21, step=0.5)
+        ]
+
+    def test_labeled_observation_computes_rally_labels(self):
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: self._bars_with_highs()},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (observation,) = batch.observations
+        assert observation.post_label_state == "labeled"
+        # Window = event day + 5 sessions; highs rise with closes, so the
+        # best high is the last bar (offset 5).
+        assert observation.post_optimal_exit_offset == 5
+        event_close = 100.0 + 0.5 * 15
+        best_high = 100.0 + 0.5 * 20 + 0.3
+        assert observation.post_max_intraday_premium == pytest.approx(
+            best_high / event_close - 1.0
+        )
+        pre_event_close = 100.0 + 0.5 * 14
+        assert observation.post_optimal_exit_return == pytest.approx(
+            best_high / pre_event_close - 1.0
+        )
+
+    def test_event_day_rally_is_offset_zero(self):
+        bars = self._bars_with_highs(margin=0.1)
+        # Event day spikes intraday, later sessions do not exceed it.
+        spiked = DailyBar(
+            trade_date=bars[15].trade_date,
+            close=bars[15].close,
+            high=bars[15].close + 5.0,
+        )
+        bars = list(bars[:15]) + [spiked] + list(bars[16:])
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: bars},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (observation,) = batch.observations
+        assert observation.post_optimal_exit_offset == 0
+        assert observation.post_max_intraday_premium == pytest.approx(
+            5.0 / bars[15].close, abs=1e-9
+        )
+
+    def test_close_only_bars_leave_intraday_labels_none(self):
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: _bars(date(2026, 7, 15), 21, step=0.5)},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (observation,) = batch.observations
+        assert observation.post_label_state == "labeled"
+        assert observation.post_max_intraday_premium is None
+        assert observation.post_optimal_exit_offset is None
+        assert observation.post_optimal_exit_return is None
+
+    def test_partial_highs_in_window_leave_labels_none(self):
+        bars = self._bars_with_highs()
+        # One post-window bar missing its high: no partial rally labels.
+        bars[18] = DailyBar(trade_date=bars[18].trade_date, close=bars[18].close)
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: bars},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (observation,) = batch.observations
+        assert observation.post_label_state == "labeled"
+        assert observation.post_max_intraday_premium is None
+
+    def test_high_below_close_fails_closed(self):
+        with pytest.raises(EventCatalystShadowError) as excinfo:
+            DailyBar(trade_date=date(2026, 8, 5), close=100.0, high=99.9)
+        assert excinfo.value.reason_code == "event_catalyst_bar_high_invalid"
+
+    def test_partial_intraday_payload_rejected(self):
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: self._bars_with_highs()},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (observation,) = batch.observations
+        from dataclasses import replace
+
+        with pytest.raises(EventCatalystShadowError) as excinfo:
+            replace(observation, post_optimal_exit_offset=None)
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_obs_intraday_payload_mismatch"
+        )

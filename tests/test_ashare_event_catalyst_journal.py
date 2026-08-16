@@ -232,3 +232,34 @@ class TestExplicitClusterPropagation:
         (record,) = journal_records_from_shadow_batch(batch)
         assert record["event_cluster_id"] == "cal-2026h2:entry-3"
         assert record["style"] == "event_catalyst_shadow"
+
+
+class TestIntradayLabelsInJournalRecords:
+    def test_rally_labels_flow_into_journal_record(self):
+        bars = [
+            DailyBar(
+                trade_date=bar.trade_date,
+                close=bar.close,
+                high=round(bar.close + 0.3, 4),
+            )
+            for bar in _bars(date(2026, 7, 15), 21, step=0.5)
+        ]
+        batch = build_catalyst_shadow_batch(
+            [_entry()],
+            {SYMBOL: bars},
+            as_of=AS_OF,
+            pre_window_sessions=10,
+            post_window_sessions=5,
+        )
+        (record,) = journal_records_from_shadow_batch(batch)
+        assert record["post_optimal_exit_offset"] == 5
+        assert record["post_max_intraday_premium"] == pytest.approx(
+            (100.0 + 0.5 * 20 + 0.3) / (100.0 + 0.5 * 15) - 1.0
+        )
+        assert record["post_optimal_exit_return"] is not None
+
+    def test_close_only_batch_journals_null_intraday_fields(self):
+        (record,) = journal_records_from_shadow_batch(_labeled_batch())
+        assert record["post_max_intraday_premium"] is None
+        assert record["post_optimal_exit_offset"] is None
+        assert record["post_optimal_exit_return"] is None
