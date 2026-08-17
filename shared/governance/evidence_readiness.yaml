@@ -122,7 +122,7 @@ market_policies:
       gap_crossing_allowed: false
       full_session_required: false
     cohort_shadow:
-      target_size: 500
+      target_size: 3193
       full_cohort_required_for_delayed_paper: true
       partial_shadow_allowed: true
       minimum_coverage_ratio: 0.99

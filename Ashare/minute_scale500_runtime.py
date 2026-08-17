@@ -42,7 +42,7 @@ from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 from shared.governance.evidence_readiness import load_evidence_readiness_contract
 
 
-EXPECTED_UNIVERSE_COUNT = 500
+EXPECTED_UNIVERSE_COUNT = 3193
 FORMAL_BASE_URL = "http://127.0.0.1:18082"
 MINUTE_DATASET_ID = "cn.dataset.rt_min"
 GATE_SCHEMA = "tradingagent.ashare.scale500-acceptance.v1"
