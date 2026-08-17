@@ -32,10 +32,7 @@ def _at(value: str) -> datetime:
 def _universe(path: Path, *, count: int = EXPECTED_UNIVERSE_COUNT) -> str:
     rows = []
     for index in range(count):
-        if index % 2:
-            symbol = f"{600000 + index:06d}.SH"
-        else:
-            symbol = f"{index + 1:06d}.SZ"
+        symbol = f"{index + 1:06d}.SZ"
         rows.append(
             {
                 "symbol": symbol,
@@ -168,7 +165,7 @@ def _partial_runtime_receipt(
         "bar_end": bar_end,
         "decision_time": "2026-07-31T09:40:30+08:00",
         "observed_at": "2026-07-31T09:40:20+08:00",
-        "requested_count": 500,
+        "requested_count": EXPECTED_UNIVERSE_COUNT,
         "accepted_count": len(accepted),
         "missing_count": len(missing),
         "accepted_symbols": accepted,
@@ -296,10 +293,7 @@ def test_initialize_accepts_honest_fresh_state_bundle_flag(
 
 
 def _symbols(count: int = EXPECTED_UNIVERSE_COUNT) -> tuple[str, ...]:
-    return tuple(
-        f"{600000 + index:06d}.SH" if index % 2 else f"{index + 1:06d}.SZ"
-        for index in range(count)
-    )
+    return tuple(f"{index + 1:06d}.SZ" for index in range(count))
 
 
 def test_99_percent_partial_cohort_is_zero_notional_shadow_only() -> None:
@@ -311,7 +305,7 @@ def test_99_percent_partial_cohort_is_zero_notional_shadow_only() -> None:
         observed_at=_at("2026-07-31T13:45:20"),
         decision_time=_at("2026-07-31T13:45:30"),
     )
-    assert receipt["observed_cohort_size"] == 495
+    assert receipt["observed_cohort_size"] == EXPECTED_UNIVERSE_COUNT - 5
     assert receipt["missing_identity_count"] == 5
     assert receipt["simulated_notional_cny"] == 0
     assert receipt["simulation_timing"] == "next_bar_only"
@@ -348,7 +342,7 @@ def test_99_percent_partial_cohort_is_zero_notional_shadow_only() -> None:
 @pytest.mark.parametrize(
     ("observed", "reason"),
     [
-        (_symbols()[:-6], "coverage_insufficient"),
+        (_symbols()[:-32], "coverage_insufficient"),
         (_symbols()[:-5] + ("300001.SZ",), "silent_identity_replacement"),
         (_symbols()[:-6] + (_symbols()[0],), "observed_identity_invalid"),
         (_symbols(), "requires_partial_cohort"),
@@ -404,7 +398,7 @@ def test_initializer_publishes_pending_gate_without_state_bundle(
         "capital_authority": False,
         "execution_authority": False,
         "execution_eligible": False,
-        "expected_universe_count": 500,
+        "expected_universe_count": EXPECTED_UNIVERSE_COUNT,
         "failure_reason": None,
         "late_start": False,
         "late_start_bar_end": None,
@@ -493,11 +487,11 @@ def test_499_partial_is_persisted_shadow_without_runner_or_rollback30(
 
     assert result["status"] == "partial_cohort_shadow"
     assert result["quality_status"] == "usable_degraded"
-    assert result["accepted_count"] == 499
+    assert result["accepted_count"] == EXPECTED_UNIVERSE_COUNT - 1
     assert result["missing_count"] == 1
     assert result["selected_mode"] == "scale500"
     assert result["delayed_paper_eligible"] is False
-    assert calls[0]["partial_observation_minimum"] == 495
+    assert calls[0]["partial_observation_minimum"] == 3162
     persisted = json.loads(
         (
             scale_root
@@ -771,7 +765,7 @@ def test_authentication_failure_projects_redacted_reason_and_preserves_rollback(
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
-        ("row_count", 499, "minute_scale500_row_count_mismatch"),
+        ("row_count", EXPECTED_UNIVERSE_COUNT - 1, "minute_scale500_row_count_mismatch"),
         ("execution_authority", True, "minute_scale500_authority_violation"),
         ("capital_authority", True, "minute_scale500_authority_violation"),
         ("real_trading_enabled", True, "minute_scale500_authority_violation"),
@@ -1381,10 +1375,10 @@ def test_scale500_reference_fragment_rejects_non_500_budget() -> None:
     fragment = {
         "target_bar_end": "2026-07-31 13:10:00",
         "universe_sha256": "a" * 64,
-        "max_rows": 499,
-        "row_count": 500,
-        "cohort_count": 5,
-        "cohort_size": 100,
+        "max_rows": EXPECTED_UNIVERSE_COUNT - 1,
+        "row_count": EXPECTED_UNIVERSE_COUNT,
+        "cohort_count": 31,
+        "cohort_size": 103,
         "cohorts": [],
     }
     with pytest.raises(
