@@ -1,5 +1,23 @@
 # TradingAgent 历史状态快照
 
+## 2026-08-18 Crypto 因子/策略研究结论（阶段收尾）
+
+> `observed_at=2026-08-18T00:30:00+08:00`。40 币宇宙（spot 5m / open_interest /
+> premium_index 已回填完成）上，三条策略族在「5m 粒度 + 零售 taker 成本」下全部证伪：
+>
+> 1. 方向性因子（OHLCV/OI/premium 动量，27 候选）——费用后全负；
+> 2. 单边 funding carry——非重叠（独立）样本上无费用后为正的 cell，尾部 maxDD 趋近
+>    100%、最差单样本约 -43%；
+> 3. delta-neutral basis / cash-and-carry——组合毛 edge 最优仅 +0.056%，taker 0.48%
+>    两腿成本后 16 个 cell 全负，且「纯 premium 收敛」被二阶对冲残差系统性吃掉
+>    （组合 gross − 纯收敛 全为负）。
+>
+> 根因是 edge 量级（~0.05%）比执行成本（单边 0.24% / 双边 0.48%）小一个数量级，
+> 不是币不够或因子没找够。脚本与报告已归档至
+> `archive/crypto-carry-basis-research-20260818`（`research_only=true`、
+> `not_promotion_evidence=true`、`historical_backfill_no_pit=true`）。下一步杠杆应在
+> 低费执行（maker/限价）或周级真实 funding/perp 数据，而非继续在 5m 上换阈值/因子。
+
 ## 2026-08-16 Crypto 观测链读回
 
 > `observed_at=2026-08-16T00:22:14+08:00`。十币种观测 unit 的 effective
