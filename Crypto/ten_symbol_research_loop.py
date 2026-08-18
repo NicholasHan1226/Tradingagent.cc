@@ -16,8 +16,10 @@ Stage-1 boundaries, all hard-coded:
   ``ten_symbol_factor_prescreen.analyze`` unchanged on the bar history
   reconstructed from the verified store event chain plus bars sidecars;
 - no scheduler installation: one-shot invocation only, no systemd unit;
-- no promotion, ever automatic: the review block is fixed
-  ``manual_review_required`` and promotion stays a human decision.
+- automatic promotion stays inside the simulation domain: the review block
+  derives an evidence-bound automatic recommendation (``auto_promote`` /
+  ``auto_demote`` / ``auto_retain``) instead of a fixed
+  ``manual_review_required`` and never authorizes real trading.
 
 Input integrity mirrors the factor-projection precedent: the store event
 chain is verified read-only, every terminal slot's bars sidecar is
@@ -50,12 +52,12 @@ from Crypto.ten_symbol_observation_store import (
 )
 
 
-REVIEW_REPORT_CONTRACT = "tradingagent.crypto.ten_symbol_research_loop_review.v1"
+REVIEW_REPORT_CONTRACT = "tradingagent.crypto.ten_symbol_research_loop_review.v2"
 LOOP_CHECKPOINT_CONTRACT = (
-    "tradingagent.crypto.ten_symbol_research_loop_checkpoint.v1"
+    "tradingagent.crypto.ten_symbol_research_loop_checkpoint.v2"
 )
 CHECKPOINT_FILENAME = "research_loop_checkpoint.json"
-LOOP_STAGE = "stage_1_registered_hypothesis_reevaluation_only"
+LOOP_STAGE = "stage_1_registered_hypothesis_automatic_reevaluation"
 REGISTERED_CANDIDATE_IDS = (
     "xs_rs",
     "short_reversal",
@@ -103,7 +105,7 @@ def _result(*, status: str, **fields: Any) -> dict[str, Any]:
         "status": status,
         "loop_stage": LOOP_STAGE,
         "learning_mode": "detached_offline_worker",
-        "manual_review_required": True,
+        "automatic_reevaluation": True,
         **fields,
         **projection._non_authority_fields(),
     }
@@ -203,7 +205,7 @@ def _load_report(evolution: Path, report_sha256: str) -> dict[str, Any]:
     if (
         report.get("contract") != REVIEW_REPORT_CONTRACT
         or report.get("loop_stage") != LOOP_STAGE
-        or report.get("manual_review_required") is not True
+        or report.get("automatic_reevaluation") is not True
         or claimed != _sha256(material)
         or claimed != report_sha256
         or any(
@@ -253,9 +255,14 @@ def _validated_current(evolution: Path) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-def _open_store(root: Path):
+def _open_store(
+    root: Path,
+    config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
+):
     try:
-        return projection._open_store(root)
+        return projection._open_store(root, config)
     except projection.CryptoTenSymbolFactorProjectionError as exc:
         raise CryptoTenSymbolResearchLoopError(
             "research_loop_root_incomplete"
@@ -278,6 +285,9 @@ def _terminal_unit_material(units: Sequence[Mapping[str, Any]]) -> list[dict[str
 
 def _merge_eligible_bars(
     eligible: Sequence[Mapping[str, Any]],
+    config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     """Merge eligible sidecar windows into one validated history per symbol.
 
@@ -289,13 +299,13 @@ def _merge_eligible_bars(
     """
 
     raw: dict[str, dict[datetime, dict[str, Any]]] = {
-        symbol: {} for symbol in _SYMBOLS
+        symbol: {} for symbol in config.symbols
     }
     for unit in eligible:
         rows_by_symbol = unit["rows_by_symbol"]
         if not isinstance(rows_by_symbol, dict):
             raise CryptoTenSymbolResearchLoopError("research_loop_unit_invalid")
-        for symbol in _SYMBOLS:
+        for symbol in config.symbols:
             rows = rows_by_symbol.get(symbol)
             if not isinstance(rows, list):
                 raise CryptoTenSymbolResearchLoopError("research_loop_unit_invalid")
@@ -321,7 +331,7 @@ def _merge_eligible_bars(
                 bucket[open_time] = dict(row)
     rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
     meta: dict[str, Any] = {}
-    for symbol in _SYMBOLS:
+    for symbol in config.symbols:
         ordered = [raw[symbol][open_time] for open_time in sorted(raw[symbol])]
         try:
             validated, gaps = prescreen._validate_history_rows(ordered, symbol=symbol)
@@ -399,6 +409,54 @@ def _metrics_summary(analyses: Mapping[str, Mapping[str, Any]]) -> dict[str, Any
                 for name, metrics in variants.items()
             }
     return summary
+
+
+def _candidate_recommendation(
+    candidate_summary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Derive an evidence-bound automatic recommendation for one candidate.
+
+    The recommendation uses the best non-overlapping cost-adjusted mean net
+    across every evaluated horizon/variant; a positive value recommends
+    ``auto_promote``, a resolved non-positive value recommends
+    ``auto_demote``, and no resolved sample recommends ``auto_retain``.
+    """
+
+    if not isinstance(candidate_summary, Mapping):
+        raise CryptoTenSymbolResearchLoopError(
+            "research_loop_analysis_invalid"
+        )
+    best: Decimal | None = None
+    for horizon_key, variants in candidate_summary.items():
+        if not isinstance(horizon_key, str) or not isinstance(variants, Mapping):
+            raise CryptoTenSymbolResearchLoopError(
+                "research_loop_analysis_invalid"
+            )
+        for name, metrics in variants.items():
+            if not isinstance(name, str) or not isinstance(metrics, Mapping):
+                raise CryptoTenSymbolResearchLoopError(
+                    "research_loop_analysis_invalid"
+                )
+            value = metrics.get("non_overlapping_mean_net")
+            if value is None:
+                continue
+            parsed = _decimal_value(value)
+            if best is None or parsed > best:
+                best = parsed
+    if best is None:
+        return {
+            "recommendation": "auto_retain",
+            "automatic_action": "retain_for_more_evidence",
+        }
+    if best > Decimal("0"):
+        return {
+            "recommendation": "auto_promote",
+            "automatic_action": "promote_into_sim_capital",
+        }
+    return {
+        "recommendation": "auto_demote",
+        "automatic_action": "demote_or_retire",
+    }
 
 
 def _decimal_value(value: Any) -> Decimal | None:
@@ -571,6 +629,7 @@ def _build_report(
     meta: Mapping[str, Any],
     summary: Mapping[str, Any],
     diff: Mapping[str, Any],
+    symbols: Sequence[str] = OBSERVATION_SYMBOLS,
 ) -> dict[str, Any]:
     report = {
         "contract": REVIEW_REPORT_CONTRACT,
@@ -580,11 +639,11 @@ def _build_report(
             "hypothesis_generation": "disabled_stage_1_registered_set_only",
             "evaluation_logic": "reused_unchanged_from_prescreen",
             "scheduler": "detached_one_shot_no_systemd",
-            "promotion": "manual_review_only",
+            "promotion": "automatic_sim_domain",
             "execution": "not_connected",
         },
         "registered_candidate_ids": list(REGISTERED_CANDIDATE_IDS),
-        "symbols": list(_SYMBOLS),
+        "symbols": list(symbols),
         "horizon_bars": list(horizons),
         "horizon_minutes": [horizon * 5 for horizon in horizons],
         "source": {
@@ -603,16 +662,13 @@ def _build_report(
         "metrics_summary": dict(summary),
         "diff_vs_previous": dict(diff),
         "review": {
-            "recommendation": "manual_review_required",
+            "recommendation": "automatic_reevaluation_complete",
             "per_candidate": {
-                candidate_id: {
-                    "recommendation": "manual_review_required",
-                    "automatic_action": "none",
-                }
+                candidate_id: _candidate_recommendation(summary.get(candidate_id) or {})
                 for candidate_id in REGISTERED_CANDIDATE_IDS
             },
         },
-        "manual_review_required": True,
+        "automatic_reevaluation": True,
         **projection._non_authority_fields(),
     }
     report["report_sha256"] = _sha256(report)
@@ -623,6 +679,9 @@ def run_ten_symbol_research_loop_once(
     *,
     store_root: Path | str,
     horizon_bars: Sequence[int] | None = None,
+    config: projection.CryptoTenSymbolFactorResearchConfig = (
+        projection.TEN_SYMBOL_FACTOR_RESEARCH_CONFIG
+    ),
 ) -> dict[str, Any]:
     """Re-estimate the registered candidates on the latest store evidence.
 
@@ -637,7 +696,7 @@ def run_ten_symbol_research_loop_once(
     _assert_simulation_only()
     horizons = _validate_horizon_bars(horizon_bars)
     root = Path(store_root)
-    store = _open_store(root)
+    store = _open_store(root, config)
     if store.pending_record_read_only() is not None:
         return _result(status="deferred_core_pending")
     try:
@@ -647,7 +706,7 @@ def run_ten_symbol_research_loop_once(
     if not events:
         return _result(status="deferred_core_pending")
     try:
-        units = projection._build_units(store)
+        units = projection._build_units(store, config=config)
     except projection.CryptoTenSymbolFactorProjectionError as exc:
         raise CryptoTenSymbolResearchLoopError("research_loop_core_invalid") from exc
     if not units:
@@ -692,7 +751,7 @@ def run_ten_symbol_research_loop_once(
                     horizon_bars=list(horizons),
                     **counts,
                 )
-            rows_by_symbol, meta = _merge_eligible_bars(eligible)
+            rows_by_symbol, meta = _merge_eligible_bars(eligible, config)
             analyses: dict[str, Any] = {}
             for horizon in horizons:
                 try:
@@ -721,6 +780,7 @@ def run_ten_symbol_research_loop_once(
                 meta=meta,
                 summary=summary,
                 diff=diff,
+                symbols=config.symbols,
             )
             report_path = evolution / "reports" / f"{report['report_sha256']}.json"
             projection._write_immutable(report_path, report)
@@ -759,7 +819,7 @@ def ten_symbol_research_loop_exit_code(result: Mapping[str, Any]) -> int:
         return 2
     return (
         0
-        if result.get("manual_review_required") is True
+        if result.get("automatic_reevaluation") is True
         and result.get("loop_stage") == LOOP_STAGE
         and all(
             result.get(key) == value

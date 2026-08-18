@@ -11,8 +11,13 @@ from typing import Any
 
 import pytest
 
+from Crypto.fixture_sim.contracts import CryptoSafetyError
 from Crypto.market_observation import FIVE_MINUTES, OBSERVATION_SYMBOLS
-from Crypto.round_trip_capital import SLIPPAGE_BPS, TAKER_FEE_RATE
+from Crypto.round_trip_capital import (
+    SLIPPAGE_BPS,
+    TAKER_FEE_RATE,
+    run_round_trip_fixture_cycle,
+)
 from Crypto.ten_symbol_factor_strategy_evaluation import (
     COST_ATTRIBUTION_CONTRACT,
     COST_POLICY_ID,
@@ -24,6 +29,10 @@ from Crypto.ten_symbol_factor_strategy_evaluation import (
 from Crypto.ten_symbol_factor_research import (
     run_crypto_ten_symbol_factor_research_full_scrub,
 )
+from Crypto.ten_symbol_hypothesis_generator import (
+    run_ten_symbol_hypothesis_generation_once,
+)
+from Crypto.ten_symbol_research_loop import run_ten_symbol_research_loop_once
 from Crypto.ten_symbol_spread_projection import (
     CHECKPOINT_FILENAME as SPREAD_CHECKPOINT_FILENAME,
     run_crypto_ten_symbol_spread_projection,
@@ -221,7 +230,7 @@ def test_evaluation_metrics_baselines_and_recommendation_branches(
     }
     momentum = artifact["evaluations"]["60"]["momentum"]
     assert momentum["contract"] == (
-        "tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v1"
+        "tradingagent.crypto.ten_symbol_factor_strategy_evaluation.v2"
     )
     assert momentum["factor_hypothesis_id"] == "time_series_momentum_v1"
     assert momentum["feature_set_id"] == "crypto-5m-ohlcv-factor-research-v2"
@@ -268,6 +277,48 @@ def test_evaluation_metrics_baselines_and_recommendation_branches(
         "trend": "disable",
         "volatility": "disable",
     }
+
+    champion = artifact["champion"]
+    assert champion is not None
+    assert champion["champion_id"] == "momentum"
+    assert champion["strategy_name"] == "momentum"
+    assert champion["factor_hypothesis_id"] == "time_series_momentum_v1"
+    assert champion["simulated_capital_authority_id"] == (
+        "crypto-round-trip-capital-v1"
+    )
+    assert champion["simulated_capital_allocated"] is True
+    assert champion["selection_rule"] == (
+        "highest_positive_cost_adjusted_net_return"
+    )
+    assert len(champion["champion_sha256"]) == 64
+    assert champion["automatic_champion_replacement"] is True
+    assert champion["promotion_authorized"] is True
+    assert champion["automatic_promotion_enabled"] is True
+    assert champion["automatic_risk_expansion_enabled"] is False
+    assert champion["real_trading_enabled"] is False
+    # Top-level projection safety fields stay simulation-only.
+    assert artifact["automatic_champion_replacement"] is False
+    assert artifact["promotion_authorized"] is False
+    assert len(artifact["champion_promotion_receipt_sha256"]) == 64
+    receipt_path = (
+        output_root
+        / "evolution"
+        / "ten_symbol_factor_research"
+        / "champion_promotions"
+        / f"{artifact['champion_promotion_receipt_sha256']}.json"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["contract"] == (
+        "tradingagent.crypto.ten_symbol_champion_promotion_receipt.v1"
+    )
+    assert receipt["automatic_champion_replacement"] is True
+    assert receipt["promotion_authorized"] is True
+    assert receipt["automatic_risk_expansion_enabled"] is False
+    assert receipt["real_trading_enabled"] is False
+    assert receipt["authority"] == "none"
+    assert receipt["champion"]["champion_id"] == "momentum"
+    assert receipt["champion"]["simulated_capital_allocated"] is True
+    _assert_recursive_non_authority(receipt)
 
 
 def test_evaluation_downweights_non_positive_mean_with_exact_drawdown(
@@ -1052,3 +1103,69 @@ def test_evaluation_outcome_tracks_spread_artifact_updates(
     third = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
     assert third["status"] == "no_new_outcome"
     assert third["artifact_sha256"] == second["artifact_sha256"]
+
+
+def test_auto_selected_champion_allocates_simulated_capital(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate(
+        monkeypatch, tmp_path, 14, transport_factory=TrendingFixtureTransport
+    )
+    _scrub(output_root)
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+    champion = artifact["champion"]
+    assert champion is not None
+
+    payload = {
+        "fixture_id": "auto-champion-fixture",
+        "symbol": "BTCUSDT",
+        "execution_slot": iso(WINDOW_END),
+        "decision": {
+            "action": "buy",
+            "regime_return": "0.01",
+            "decision_return": "0.01",
+            "decision_id": "auto-champion-decision",
+        },
+        "quote": {"bid": "99999.99", "ask": "100000.01"},
+        "instrument": {
+            "price_tick": "0.01",
+            "quantity_step": "0.00001",
+            "min_quantity": "0.00001",
+            "min_notional": "5",
+        },
+        "evidence_receipt_id": "auto-champion-receipt",
+        "market_evidence_sha256": "a" * 64,
+        "champion_id": champion["champion_id"],
+        "champion_sha256": champion["champion_sha256"],
+    }
+
+    result = run_round_trip_fixture_cycle(payload, output_root=tmp_path)
+
+    assert result["order"]["side"] == "buy"
+    assert result["order"]["champion_id"] == champion["champion_id"]
+    assert result["order"]["champion_sha256"] == champion["champion_sha256"]
+    assert result["receipt"]["status"] == "fixture_simulated"
+    assert "BTCUSDT" in result["capital"]["positions"]
+    assert result["capital"]["real_trading_enabled"] is False
+    assert result["capital"]["execution_authority"] is False
+
+
+@pytest.mark.parametrize("runner", ["generator", "research_loop", "evaluation"])
+def test_automatic_promotion_fails_closed_when_real_trading_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    runner: str,
+) -> None:
+    output_root = _accumulate(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "true")
+
+    with pytest.raises(CryptoSafetyError, match="real_trading_enabled_must_be_false"):
+        if runner == "generator":
+            run_ten_symbol_hypothesis_generation_once(store_root=output_root)
+        elif runner == "research_loop":
+            run_ten_symbol_research_loop_once(store_root=output_root)
+        else:
+            run_ten_symbol_factor_strategy_evaluation(store_root=output_root)

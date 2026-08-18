@@ -13,6 +13,7 @@ It has no core, capital, order, Champion, or network access.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import fcntl
@@ -26,6 +27,8 @@ from typing import Any, Iterator, Mapping
 import uuid
 
 from Crypto.factor_research import (
+    FORTY_SYMBOL_FACTOR_SET_ID,
+    FORTY_SYMBOL_FACTOR_SET_VERSION,
     TEN_SYMBOL_FACTOR_SET_ID,
     TEN_SYMBOL_FACTOR_SET_VERSION,
     WINDOW_BARS,
@@ -37,12 +40,16 @@ from Crypto.factor_research import (
 from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.market_observation import (
     OBSERVATION_SYMBOLS,
+    OBSERVATION_SYMBOLS_V40,
     CryptoMarketObservation,
     CryptoMarketObservationError,
     observation_from_ten_symbol_bars_sidecar,
 )
 from Crypto.ten_symbol_observation_store import (
+    FORTY_SYMBOL_CONTRACTS,
+    TEN_SYMBOL_CONTRACTS,
     TERMINAL_SLOT_TYPES,
+    CryptoTenSymbolObservationContracts,
     CryptoTenSymbolObservationStore,
     CryptoTenSymbolObservationStoreError,
 )
@@ -65,7 +72,40 @@ _HORIZONS = (60, 240, 720, 1440)
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 _FULL_SCRUB_MAX_SECONDS = 110.0
 SEGMENTED_LEARNING_CONSUMER_PROFILE_ID = "crypto-5m-ohlcv-13bar-forward-labels-v2"
+FORTY_SYMBOL_SEGMENTED_LEARNING_CONSUMER_PROFILE_ID = (
+    "crypto-5m-ohlcv-13bar-forward-labels-v3"
+)
 _FIVE_MINUTES = timedelta(minutes=5)
+
+
+@dataclass(frozen=True)
+class CryptoTenSymbolFactorResearchConfig:
+    """Versioned factor-projection family: universe, feature set, namespace."""
+
+    symbols: tuple[str, ...]
+    feature_set_id: str
+    feature_set_version: int
+    consumer_profile_id: str
+    projection_namespace: str
+    store_contracts: CryptoTenSymbolObservationContracts
+
+
+TEN_SYMBOL_FACTOR_RESEARCH_CONFIG = CryptoTenSymbolFactorResearchConfig(
+    symbols=OBSERVATION_SYMBOLS,
+    feature_set_id=TEN_SYMBOL_FACTOR_SET_ID,
+    feature_set_version=TEN_SYMBOL_FACTOR_SET_VERSION,
+    consumer_profile_id=SEGMENTED_LEARNING_CONSUMER_PROFILE_ID,
+    projection_namespace="ten_symbol_factor_research",
+    store_contracts=TEN_SYMBOL_CONTRACTS,
+)
+FORTY_SYMBOL_FACTOR_RESEARCH_CONFIG = CryptoTenSymbolFactorResearchConfig(
+    symbols=OBSERVATION_SYMBOLS_V40,
+    feature_set_id=FORTY_SYMBOL_FACTOR_SET_ID,
+    feature_set_version=FORTY_SYMBOL_FACTOR_SET_VERSION,
+    consumer_profile_id=FORTY_SYMBOL_SEGMENTED_LEARNING_CONSUMER_PROFILE_ID,
+    projection_namespace="forty_symbol_factor_research",
+    store_contracts=FORTY_SYMBOL_CONTRACTS,
+)
 
 
 class CryptoTenSymbolFactorProjectionError(RuntimeError):
@@ -164,16 +204,18 @@ def _segmented_learning_policy() -> dict[str, Any]:
     }
 
 
-def _segmented_learning_consumer_profile() -> dict[str, Any]:
-    """Return the frozen ten-symbol feature/label definition for research only."""
+def _segmented_learning_consumer_profile(
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> dict[str, Any]:
+    """Return the frozen feature/label definition for research only."""
 
     return {
-        "consumer_profile_id": SEGMENTED_LEARNING_CONSUMER_PROFILE_ID,
-        "feature_set_id": TEN_SYMBOL_FACTOR_SET_ID,
-        "feature_set_version": TEN_SYMBOL_FACTOR_SET_VERSION,
+        "consumer_profile_id": config.consumer_profile_id,
+        "feature_set_id": config.feature_set_id,
+        "feature_set_version": config.feature_set_version,
         "window_bars": WINDOW_BARS,
         "bar_interval_minutes": 5,
-        "symbols": list(_SYMBOLS),
+        "symbols": list(config.symbols),
         "required_label_horizon_minutes": 60,
         "auxiliary_attribution_horizons": list(_HORIZONS[1:]),
     }
@@ -286,23 +328,39 @@ def _write_immutable(path: Path, payload: Mapping[str, Any]) -> None:
             pass
 
 
-def _root(root: Path) -> Path:
-    return root / "evolution" / "ten_symbol_factor_research"
+def _root(
+    root: Path,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> Path:
+    return root / "evolution" / config.projection_namespace
 
 
-def _paths(root: Path, observation_id: str) -> dict[str, Path]:
-    evolution = _root(root)
+def _paths(
+    root: Path,
+    observation_id: str,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> dict[str, Path]:
+    evolution = _root(root, config)
     return {
         "record": evolution / "records" / f"{observation_id}.json",
         "receipt": evolution / "receipts" / f"{observation_id}.json",
     }
 
 
-def _label_path(root: Path, observation_id: str, symbol: str, horizon: int) -> Path:
-    return _root(root) / "labels" / f"{observation_id}-{symbol.lower()}-{horizon}.json"
+def _label_path(
+    root: Path,
+    observation_id: str,
+    symbol: str,
+    horizon: int,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> Path:
+    return _root(root, config) / "labels" / f"{observation_id}-{symbol.lower()}-{horizon}.json"
 
 
-def _ensure_root(root: Path) -> Path:
+def _ensure_root(
+    root: Path,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> Path:
     parent = root / "evolution"
     if parent.exists() and (parent.is_symlink() or not parent.is_dir()):
         raise CryptoTenSymbolFactorProjectionError(
@@ -310,7 +368,7 @@ def _ensure_root(root: Path) -> Path:
         )
     if not parent.exists():
         parent.mkdir(mode=0o700, parents=True)
-    evolution = _root(root)
+    evolution = _root(root, config)
     for directory in (
         evolution,
         evolution / "records",
@@ -364,7 +422,10 @@ def _lock(evolution: Path) -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
-def _open_store(root: Path) -> CryptoTenSymbolObservationStore:
+def _open_store(
+    root: Path,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> CryptoTenSymbolObservationStore:
     required = (
         root,
         root / "slot_index",
@@ -374,7 +435,7 @@ def _open_store(root: Path) -> CryptoTenSymbolObservationStore:
             "ten_symbol_factor_projection_root_incomplete"
         )
     try:
-        return CryptoTenSymbolObservationStore(root)
+        return CryptoTenSymbolObservationStore(root, contracts=config.store_contracts)
     except (CryptoTenSymbolObservationStoreError, OSError, ValueError) as exc:
         raise CryptoTenSymbolFactorProjectionError(
             "ten_symbol_factor_projection_core_invalid"
@@ -433,7 +494,9 @@ def _event_observation_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _attach_eligibility(
-    store: CryptoTenSymbolObservationStore, unit: dict[str, Any]
+    store: CryptoTenSymbolObservationStore,
+    unit: dict[str, Any],
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> None:
     """Bind the unit's bars sidecar or mark the slot feature-ineligible.
 
@@ -459,7 +522,9 @@ def _attach_eligibility(
         return
     try:
         observation, rows_by_symbol = observation_from_ten_symbol_bars_sidecar(
-            sidecar
+            sidecar,
+            symbols=config.symbols,
+            bars_sidecar_contract=config.store_contracts.bars_sidecar,
         )
     except CryptoMarketObservationError:
         unit["ineligible_reason"] = "sidecar_digest_mismatch"
@@ -483,13 +548,16 @@ def _attach_eligibility(
 
 
 def _build_units(
-    store: CryptoTenSymbolObservationStore, *, deadline: float | None = None
+    store: CryptoTenSymbolObservationStore,
+    *,
+    deadline: float | None = None,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> list[dict[str, Any]] | None:
     units = _terminal_events(store)
     for unit in units:
         if deadline is not None and monotonic() >= deadline:
             return None
-        _attach_eligibility(store, unit)
+        _attach_eligibility(store, unit, config)
     return units
 
 
@@ -594,12 +662,15 @@ def _factor_input(
 
 def _cross_section_context(
     snapshots: Mapping[str, Mapping[str, Any]],
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> dict[str, Any]:
     """Descriptive cross-sectional ranks; context only, never a hypothesis."""
 
+    symbols = config.symbols
+
     def returns(field: str) -> dict[str, Decimal]:
         values: dict[str, Decimal] = {}
-        for symbol in _SYMBOLS:
+        for symbol in symbols:
             features = snapshots[symbol].get("features")
             if not isinstance(features, Mapping):
                 raise CryptoTenSymbolFactorProjectionError(
@@ -616,8 +687,8 @@ def _cross_section_context(
     def ranks(values: Mapping[str, Decimal]) -> dict[str, int]:
         return {
             symbol: 1
-            + sum(1 for other in _SYMBOLS if values[other] > values[symbol])
-            for symbol in _SYMBOLS
+            + sum(1 for other in symbols if values[other] > values[symbol])
+            for symbol in symbols
         }
 
     return_1h = returns("return_1h")
@@ -627,7 +698,7 @@ def _cross_section_context(
         "is_research_hypothesis": False,
         "adds_new_hypothesis": False,
         "rank_order": "1_is_highest_return_ties_share_rank",
-        "symbol_order": list(_SYMBOLS),
+        "symbol_order": list(symbols),
         "return_1h_rank": ranks(return_1h),
         "return_15m_rank": ranks(return_15m),
         "return_1h_spread": format(max(return_1h.values()) - min(return_1h.values()), "f"),
@@ -637,21 +708,26 @@ def _cross_section_context(
     }
 
 
-def _record(unit: Mapping[str, Any], *, segment_id: str) -> dict[str, Any]:
+def _record(
+    unit: Mapping[str, Any],
+    *,
+    segment_id: str,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
+) -> dict[str, Any]:
     observation = unit["observation"]
     observation_id = str(unit["observation_id"])
     snapshots: dict[str, dict[str, Any]] = {}
     prices: dict[str, str] = {}
-    for symbol in _SYMBOLS:
+    for symbol in config.symbols:
         bars, evidence, price = _factor_input(unit, symbol)
         snapshots[symbol] = build_factor_snapshot(
             observation_id=observation_id,
             symbol=symbol,
             bars=bars,
             evidence=evidence,
-            supported_symbols=_SYMBOLS,
-            feature_set_id=TEN_SYMBOL_FACTOR_SET_ID,
-            feature_set_version=TEN_SYMBOL_FACTOR_SET_VERSION,
+            supported_symbols=config.symbols,
+            feature_set_id=config.feature_set_id,
+            feature_set_version=config.feature_set_version,
         )
         prices[symbol] = price
     if not isinstance(segment_id, str) or not segment_id.startswith(
@@ -673,11 +749,9 @@ def _record(unit: Mapping[str, Any], *, segment_id: str) -> dict[str, Any]:
         "catalog_version": observation.catalog_version,
         "profile_sha256": unit["event"].get("profile_sha256"),
         "segment_id": segment_id,
-        "segmented_learning_consumer_profile_id": (
-            SEGMENTED_LEARNING_CONSUMER_PROFILE_ID
-        ),
+        "segmented_learning_consumer_profile_id": config.consumer_profile_id,
         "snapshots": snapshots,
-        "cross_section_context": _cross_section_context(snapshots),
+        "cross_section_context": _cross_section_context(snapshots, config),
         "label_anchor_prices": prices,
         **_non_authority_fields(),
     }
@@ -794,11 +868,12 @@ def _labels(
     root: Path,
     record: Mapping[str, Any],
     future_records: Mapping[str, Mapping[str, Any]],
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> int:
     created_or_verified = 0
     snapshots = record["snapshots"]
     prices = record["label_anchor_prices"]
-    for symbol in _SYMBOLS:
+    for symbol in config.symbols:
         snapshot = snapshots[symbol]
         slot = _utc(
             snapshot.get("market_slot"),
@@ -828,11 +903,13 @@ def _labels(
                 entry_price=prices[symbol],
                 exit_price=exit_price,
                 future_evidence=evidence,
-                feature_set_id=TEN_SYMBOL_FACTOR_SET_ID,
-                feature_set_version=TEN_SYMBOL_FACTOR_SET_VERSION,
+                feature_set_id=config.feature_set_id,
+                feature_set_version=config.feature_set_version,
             )
             _write_immutable(
-                _label_path(root, str(record["observation_id"]), symbol, horizon),
+                _label_path(
+                    root, str(record["observation_id"]), symbol, horizon, config
+                ),
                 label,
             )
             created_or_verified += 1
@@ -844,6 +921,7 @@ def _learning_eligible_samples(
     records: Mapping[str, Mapping[str, Any]],
     *,
     consumer_profile: Mapping[str, Any],
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> tuple[list[tuple[Mapping[str, Any], Mapping[str, Any]]], list[str]]:
     """Use the registered required label only when it remains same-segment."""
 
@@ -851,10 +929,10 @@ def _learning_eligible_samples(
     required_horizon = consumer_profile.get("required_label_horizon_minutes")
     auxiliary_horizons = consumer_profile.get("auxiliary_attribution_horizons")
     if (
-        profile_id != SEGMENTED_LEARNING_CONSUMER_PROFILE_ID
-        or consumer_profile.get("feature_set_id") != TEN_SYMBOL_FACTOR_SET_ID
-        or consumer_profile.get("feature_set_version") != TEN_SYMBOL_FACTOR_SET_VERSION
-        or consumer_profile.get("symbols") != list(_SYMBOLS)
+        profile_id != config.consumer_profile_id
+        or consumer_profile.get("feature_set_id") != config.feature_set_id
+        or consumer_profile.get("feature_set_version") != config.feature_set_version
+        or consumer_profile.get("symbols") != list(config.symbols)
         or required_horizon != 60
         or auxiliary_horizons != list(_HORIZONS[1:])
     ):
@@ -881,7 +959,7 @@ def _learning_eligible_samples(
             )
         observation_eligible = True
         symbol_samples: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
-        for symbol in _SYMBOLS:
+        for symbol in config.symbols:
             snapshot = record.get("snapshots", {}).get(symbol)
             if not isinstance(snapshot, Mapping):
                 raise CryptoTenSymbolFactorProjectionError(
@@ -899,7 +977,7 @@ def _learning_eligible_samples(
             ):
                 observation_eligible = False
                 break
-            path = _label_path(root, observation_id, symbol, required_horizon)
+            path = _label_path(root, observation_id, symbol, required_horizon, config)
             if not path.exists():
                 observation_eligible = False
                 break
@@ -957,6 +1035,7 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
     *,
     output_root: Path | str,
     _deadline: float | None = None,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> dict[str, Any]:
     """Full-scrub independent contiguous segments without crossing a gap."""
 
@@ -968,11 +1047,11 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
     )
     root = Path(output_root)
     policy = _segmented_learning_policy()
-    consumer_profile = _segmented_learning_consumer_profile()
-    store = _open_store(root)
+    consumer_profile = _segmented_learning_consumer_profile(config)
+    store = _open_store(root, config)
     if store.pending_record_read_only() is not None:
         return _result(status="deferred_core_pending")
-    units = _build_units(store, deadline=deadline)
+    units = _build_units(store, deadline=deadline, config=config)
     if units is None:
         return _result(
             status="deferred_inventory_time_budget", inventory_complete=False
@@ -986,7 +1065,7 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
             status="deferred_inventory_time_budget", inventory_complete=False
         )
     try:
-        evolution = _ensure_root(root)
+        evolution = _ensure_root(root, config)
         with _lock(evolution):
             checkpoints = _read_checkpoints(evolution)
             if len(checkpoints) > len(units):
@@ -1012,7 +1091,7 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
                 record: dict[str, Any] | None = None
                 receipt: dict[str, Any] | None = None
                 if unit["eligible"]:
-                    record = _record(unit, segment_id=segment_id)
+                    record = _record(unit, segment_id=segment_id, config=config)
                     receipt = _receipt(record)
                 else:
                     ineligible_slot_count += 1
@@ -1024,7 +1103,7 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
                     receipt=receipt,
                 )
                 last_checkpoint_sha = str(checkpoint["checkpoint_sha256"])
-                paths = _paths(root, observation_id)
+                paths = _paths(root, observation_id, config)
                 if sequence <= len(checkpoints):
                     claimed = checkpoints[sequence - 1]
                     if _canonical_json(claimed) != _canonical_json(checkpoint):
@@ -1088,7 +1167,7 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
                         label_count=label_count,
                         checkpoints=checkpoints,
                     )
-                label_count += _labels(root, item["record"], records)
+                label_count += _labels(root, item["record"], records, config)
                 verified_label_source_count += 1
             if monotonic() >= deadline:
                 return _deferred_time_budget_result(
@@ -1103,6 +1182,7 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
                 root,
                 records,
                 consumer_profile=consumer_profile,
+                config=config,
             )
             if monotonic() >= deadline:
                 return _deferred_time_budget_result(
@@ -1115,8 +1195,8 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
                 )
             report = evaluate_factor_hypotheses(
                 samples,
-                feature_set_id=TEN_SYMBOL_FACTOR_SET_ID,
-                feature_set_version=TEN_SYMBOL_FACTOR_SET_VERSION,
+                feature_set_id=config.feature_set_id,
+                feature_set_version=config.feature_set_version,
             )
     except CryptoFactorResearchError as exc:
         raise CryptoTenSymbolFactorProjectionError(
@@ -1146,7 +1226,9 @@ def run_crypto_ten_symbol_factor_research_full_scrub(
 
 
 def run_crypto_ten_symbol_factor_research_incremental(
-    *, output_root: Path | str
+    *,
+    output_root: Path | str,
+    config: CryptoTenSymbolFactorResearchConfig = TEN_SYMBOL_FACTOR_RESEARCH_CONFIG,
 ) -> dict[str, Any]:
     """Project new unlabelled observations after a verified full-scrub base.
 
@@ -1164,15 +1246,15 @@ def run_crypto_ten_symbol_factor_research_incremental(
     _assert_simulation_only()
     root = Path(output_root)
     policy = _segmented_learning_policy()
-    consumer_profile = _segmented_learning_consumer_profile()
-    store = _open_store(root)
+    consumer_profile = _segmented_learning_consumer_profile(config)
+    store = _open_store(root, config)
     if store.pending_record_read_only() is not None:
         raise CryptoTenSymbolFactorProjectionError(
             "ten_symbol_factor_projection_core_pending"
         )
     units = _terminal_events(store)
     unit_count = len(units)
-    evolution = _root(root)
+    evolution = _root(root, config)
     if not evolution.exists():
         return _result(
             status="full_scrub_required",
@@ -1235,7 +1317,7 @@ def run_crypto_ten_symbol_factor_research_incremental(
                 previous_checkpoint_sha = previous_checkpoint["checkpoint_sha256"]
             projected_count = 0
             for offset, unit in enumerate(catchup_units, start=1):
-                _attach_eligibility(store, unit)
+                _attach_eligibility(store, unit, config)
                 if (
                     previous_slot is None
                     or previous_outcome != "projected"
@@ -1250,9 +1332,9 @@ def run_crypto_ten_symbol_factor_research_incremental(
                 record = None
                 receipt = None
                 if unit["eligible"]:
-                    record = _record(unit, segment_id=segment_id)
+                    record = _record(unit, segment_id=segment_id, config=config)
                     receipt = _receipt(record)
-                    paths = _paths(root, str(unit["observation_id"]))
+                    paths = _paths(root, str(unit["observation_id"]), config)
                     _write_immutable(paths["record"], record)
                     _write_immutable(paths["receipt"], receipt)
                 new_checkpoint = _checkpoint(
@@ -1322,10 +1404,14 @@ def ten_symbol_factor_projection_exit_code(result: Mapping[str, Any]) -> int:
 
 __all__ = [
     "CryptoTenSymbolFactorProjectionError",
+    "CryptoTenSymbolFactorResearchConfig",
+    "FORTY_SYMBOL_FACTOR_RESEARCH_CONFIG",
+    "FORTY_SYMBOL_SEGMENTED_LEARNING_CONSUMER_PROFILE_ID",
     "MAX_CATCHUP_UNITS",
     "OPERATIONAL_MATURITY_CONTINUOUS_COMPLETIONS",
     "SEGMENTED_LEARNING_CONSUMER_PROFILE_ID",
     "TEN_SYMBOL_FACTOR_PROJECTION_CONTRACT",
+    "TEN_SYMBOL_FACTOR_RESEARCH_CONFIG",
     "run_crypto_ten_symbol_factor_research_full_scrub",
     "run_crypto_ten_symbol_factor_research_incremental",
     "ten_symbol_factor_projection_exit_code",

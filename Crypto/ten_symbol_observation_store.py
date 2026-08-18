@@ -18,13 +18,15 @@ import os
 import stat
 import uuid
 from contextlib import contextmanager
-from dataclasses import fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 from Crypto.market_observation import (
+    FORTY_SYMBOL_BARS_SIDECAR_CONTRACT,
+    FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
     TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
 )
@@ -36,6 +38,48 @@ TEN_SYMBOL_PENDING_CONTRACT = (
     "tradingagent.crypto.ten_symbol_observation_pending.v1"
 )
 TEN_SYMBOL_DATA_GAP_CONTRACT = "tradingagent.crypto.ten_symbol_observation_data_gap.v1"
+FORTY_SYMBOL_EVENT_CONTRACT = "tradingagent.crypto.forty_symbol_observation_event.v1"
+FORTY_SYMBOL_HEAD_CONTRACT = "tradingagent.crypto.forty_symbol_observation_head.v1"
+FORTY_SYMBOL_PENDING_CONTRACT = (
+    "tradingagent.crypto.forty_symbol_observation_pending.v1"
+)
+FORTY_SYMBOL_DATA_GAP_CONTRACT = "tradingagent.crypto.forty_symbol_observation_data_gap.v1"
+
+
+@dataclass(frozen=True)
+class CryptoTenSymbolObservationContracts:
+    """Family-scoped contract strings for one observation universe.
+
+    The ten-symbol and forty-symbol stores are distinct append-only roots, but
+    they share the store machinery.  Binding every ledger/sidecar contract
+    string through this bundle keeps the two families fail-closed against
+    cross-family reads without in-place contract mutation.
+    """
+
+    event: str
+    head: str
+    pending: str
+    data_gap: str
+    bars_sidecar: str
+    spreads_sidecar: str
+
+
+TEN_SYMBOL_CONTRACTS = CryptoTenSymbolObservationContracts(
+    event=TEN_SYMBOL_EVENT_CONTRACT,
+    head=TEN_SYMBOL_HEAD_CONTRACT,
+    pending=TEN_SYMBOL_PENDING_CONTRACT,
+    data_gap=TEN_SYMBOL_DATA_GAP_CONTRACT,
+    bars_sidecar=TEN_SYMBOL_BARS_SIDECAR_CONTRACT,
+    spreads_sidecar=TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+)
+FORTY_SYMBOL_CONTRACTS = CryptoTenSymbolObservationContracts(
+    event=FORTY_SYMBOL_EVENT_CONTRACT,
+    head=FORTY_SYMBOL_HEAD_CONTRACT,
+    pending=FORTY_SYMBOL_PENDING_CONTRACT,
+    data_gap=FORTY_SYMBOL_DATA_GAP_CONTRACT,
+    bars_sidecar=FORTY_SYMBOL_BARS_SIDECAR_CONTRACT,
+    spreads_sidecar=FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT,
+)
 EVENT_TYPES = frozenset({"observation", "data_reject", "data_gap"})
 TERMINAL_SLOT_TYPES = frozenset({"observation", "data_gap"})
 MAX_EVENTS_BYTES = 16 * 1024 * 1024
@@ -335,7 +379,17 @@ def _write_immutable_json(path: Path, value: Mapping[str, Any]) -> dict[str, Any
 class CryptoTenSymbolObservationStore:
     """Checksum-chained append-only ten-symbol observation event store."""
 
-    def __init__(self, output_root: Path | str) -> None:
+    def __init__(
+        self,
+        output_root: Path | str,
+        *,
+        contracts: CryptoTenSymbolObservationContracts = TEN_SYMBOL_CONTRACTS,
+    ) -> None:
+        if not isinstance(contracts, CryptoTenSymbolObservationContracts):
+            raise CryptoTenSymbolObservationStoreError(
+                "ten_symbol_observation_contracts_invalid"
+            )
+        self._contracts = contracts
         root = Path(output_root)
         if root.exists() and root.is_symlink():
             raise CryptoTenSymbolObservationStoreError(
@@ -414,9 +468,8 @@ class CryptoTenSymbolObservationStore:
             )
         return [path for _, path in indexed]
 
-    @staticmethod
-    def _verify_event_row(row: Mapping[str, Any]) -> None:
-        if row.get("contract") != TEN_SYMBOL_EVENT_CONTRACT:
+    def _verify_event_row(self, row: Mapping[str, Any]) -> None:
+        if row.get("contract") != self._contracts.event:
             raise CryptoTenSymbolObservationStoreError(
                 "ten_symbol_observation_event_contract_invalid"
             )
@@ -524,8 +577,8 @@ class CryptoTenSymbolObservationStore:
     # Head checkpoint
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _head_payload(
+        self,
         *,
         sequence: int,
         last_checksum: str,
@@ -542,7 +595,7 @@ class CryptoTenSymbolObservationStore:
         latest_event_checksum: str | None,
     ) -> dict[str, Any]:
         head: dict[str, Any] = {
-            "contract": TEN_SYMBOL_HEAD_CONTRACT,
+            "contract": self._contracts.head,
             "sequence": sequence,
             "last_checksum": last_checksum,
             "segment_count": segment_count,
@@ -621,7 +674,7 @@ class CryptoTenSymbolObservationStore:
         material = dict(head)
         claimed = material.pop("head_sha256", None)
         if claimed != _sha256(material) or head.get("contract") != (
-            TEN_SYMBOL_HEAD_CONTRACT
+            self._contracts.head
         ):
             raise CryptoTenSymbolObservationStoreError(
                 "ten_symbol_observation_head_invalid"
@@ -869,7 +922,7 @@ class CryptoTenSymbolObservationStore:
         *,
         slot: datetime,
     ) -> None:
-        if payload.get("contract") != TEN_SYMBOL_BARS_SIDECAR_CONTRACT:
+        if payload.get("contract") != self._contracts.bars_sidecar:
             raise CryptoTenSymbolObservationStoreError(
                 "ten_symbol_observation_bars_sidecar_invalid"
             )
@@ -928,7 +981,7 @@ class CryptoTenSymbolObservationStore:
         *,
         slot: datetime,
     ) -> None:
-        if payload.get("contract") != TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT:
+        if payload.get("contract") != self._contracts.spreads_sidecar:
             raise CryptoTenSymbolObservationStoreError(
                 "ten_symbol_observation_spreads_sidecar_invalid"
             )
@@ -976,7 +1029,7 @@ class CryptoTenSymbolObservationStore:
     # ------------------------------------------------------------------
 
     def _validate_event(self, event: Mapping[str, Any]) -> datetime:
-        if event.get("contract") != TEN_SYMBOL_EVENT_CONTRACT:
+        if event.get("contract") != self._contracts.event:
             raise CryptoTenSymbolObservationStoreError(
                 "ten_symbol_observation_event_contract_invalid"
             )
@@ -1016,7 +1069,7 @@ class CryptoTenSymbolObservationStore:
                     "ten_symbol_observation_event_reason_invalid"
                 )
         if event_type == "data_gap":
-            if event.get("gap_contract") != TEN_SYMBOL_DATA_GAP_CONTRACT:
+            if event.get("gap_contract") != self._contracts.data_gap:
                 raise CryptoTenSymbolObservationStoreError(
                     "ten_symbol_observation_gap_slot_invalid"
                 )
@@ -1169,8 +1222,7 @@ class CryptoTenSymbolObservationStore:
     # Pending marker (runtime crash bookkeeping, not evidence)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _pending_payload(record: Mapping[str, Any]) -> dict[str, Any]:
+    def _pending_payload(self, record: Mapping[str, Any]) -> dict[str, Any]:
         canonical = _canonical_value(record)
         if not isinstance(canonical, dict):
             raise CryptoTenSymbolObservationStoreError(
@@ -1194,7 +1246,7 @@ class CryptoTenSymbolObservationStore:
                 "ten_symbol_observation_pending_invalid"
             )
         payload: dict[str, Any] = {
-            "contract": TEN_SYMBOL_PENDING_CONTRACT,
+            "contract": self._contracts.pending,
             "window_end": canonical["window_end"],
             "observation_cutoff": canonical["observation_cutoff"],
             "profile_sha256": profile_sha,
@@ -1220,7 +1272,7 @@ class CryptoTenSymbolObservationStore:
         )
         if (
             claimed != expected["pending_sha256"]
-            or raw.get("contract") != TEN_SYMBOL_PENDING_CONTRACT
+            or raw.get("contract") != self._contracts.pending
         ):
             raise CryptoTenSymbolObservationStoreError(
                 "ten_symbol_observation_pending_invalid"
@@ -1264,12 +1316,19 @@ class CryptoTenSymbolObservationStore:
 
 __all__ = [
     "EVENT_TYPES",
+    "FORTY_SYMBOL_CONTRACTS",
+    "FORTY_SYMBOL_DATA_GAP_CONTRACT",
+    "FORTY_SYMBOL_EVENT_CONTRACT",
+    "FORTY_SYMBOL_HEAD_CONTRACT",
+    "FORTY_SYMBOL_PENDING_CONTRACT",
     "MAX_EVENTS_BYTES",
+    "TEN_SYMBOL_CONTRACTS",
     "TEN_SYMBOL_DATA_GAP_CONTRACT",
     "TEN_SYMBOL_EVENT_CONTRACT",
     "TEN_SYMBOL_HEAD_CONTRACT",
     "TEN_SYMBOL_PENDING_CONTRACT",
     "TERMINAL_SLOT_TYPES",
+    "CryptoTenSymbolObservationContracts",
     "CryptoTenSymbolObservationStore",
     "CryptoTenSymbolObservationStoreError",
 ]

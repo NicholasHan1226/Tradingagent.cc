@@ -120,7 +120,7 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
 - `market_data.py` 只接受显式注入的 TradingDatas V1 证据，不得恢复旧 provider 专用入口。
 - `adapter.py` 只保留显式 reader 下的 market/universe/strategy 研究映射，不拥有资金、成交、Testnet 或 Live authority；未来三类 broker adapter 仍须分别实现，不能复活 tombstone。
 - `capital_policy.py` 是 `crypto-capital-v1` 原生 10,000 USDT 本地 fixture opening baseline 的单一代码来源；它不是 execution、durable receipt、production 或 live capital authority。`config.yaml` 只声明账户币种和风险参数，shared kernel 只能引用而不能另设数值。
-- `report.py` 与 `validation.py` 只生成研究辅助证据；`promotion.py` 是只读 scorecard，永久 `eligible_for_sim=false`、`promotion_authority=false`，不能自行晋级或扩风险。
+- `report.py` 与 `validation.py` 只生成研究辅助证据；`promotion.py` 是只读 legacy scorecard，永久 `eligible_for_sim=false`、`promotion_authority=false`，不能自行晋级或扩风险。十币种自动晋级（模拟域）由 `ten_symbol_factor_strategy_evaluation.py` 的 champion 块与 `champion_promotions/` receipt 承担，实盘仍由 `REAL_TRADING_ENABLED=false` 硬闸。
 - LLM sidecar 必须在核心 cycle lock 之外独立追加并限制读取大小；损坏或写入失败只形成无权威 degraded 诊断，不得回滚、重复或阻断已提交的核心资本与 bundle replay。
 - 现役 generation-2 epoch 仍是 `crypto-capital-v1` buy/observe-only，禁止把
   新候选写入其 root。`round_trip_capital.py` 与
@@ -155,6 +155,14 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   只有 v2 投影模块显式传入 10 币 universe 与
   `crypto-5m-ohlcv-factor-research-v2`。历史回填不具备 PIT 证明时只能用于
   工程/定义检查，不得进入晋级证据。
+- **Universe 版本化（10 → 40）。** 上述 10 币链是已落盘 append-only 历史，
+  只读封存、不回写；`OBSERVATION_SYMBOLS` 冻结为 10 币，不得原地扩。新 40 币
+  研究 universe 用 `OBSERVATION_SYMBOLS_V40` + 独立 `forty_symbol_*` 契约族 +
+  独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`（thin
+  runtime `forty_symbol_observation_runtime.py`，本轮不部署、不接 systemd/晋级）。
+  40 币因子投影用 feature set `crypto-5m-ohlcv-factor-research-v3`、consumer
+  profile `crypto-5m-ohlcv-13bar-forward-labels-v3`、投影命名空间
+  `evolution/forty_symbol_factor_research/`，不写旧 `evolution/ten_symbol_factor_research/`。
 - `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
   `ten_symbol_observation_runtime.py` 组成独立的 10 币 5 分钟 shadow 观测
   积累器，为后续横截面 factor research 提供前向积累的证据级数据源。它与
@@ -268,7 +276,17 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `insufficient_resolved_samples` 不产出评估也不 fail；**recommendation
   只基于 required 60min 口径**，∈ {disable, downweight,
   retain_for_more_evidence}，`evaluated_status` 固定
-  `exploratory_insufficient_edge`。bundle 写入
+  `exploratory_insufficient_edge`。required 60min 口径完成后在模拟域内
+  **自动选 Champion**：按 highest positive cost-adjusted net return 选
+  signal>0 且费用后净收益>0 的最优假设，同收益按名字确定性 tie-break；
+  bundle 写入 `champion` 块（`champion_id`/`champion_sha256`/
+  `simulated_capital_authority_id=crypto-round-trip-capital-v1`/
+  `simulated_capital_allocated=true`）与 immutable
+  `champion_promotions/{promotion_receipt_sha256}.json`（
+  `automatic_champion_replacement=true`、`promotion_authorized=true`、
+  `automatic_risk_expansion_enabled=false`、`real_trading_enabled=false`、
+  `authority=none`）；无合格候选则 `champion=null` 且不写 receipt、不
+  自动替换。bundle 写入
   `strategy_evaluations/{outcome_sha}.json`（outcome 覆盖含 aux 在内的
   全部 resolved 样本集合）并用 compact
   `strategy_evaluation_checkpoint.json` 幂等：同 outcome 返回
@@ -278,7 +296,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   incremental 模式只走 compact checkpoint 快速路径（首次 scrub 前明确跳过
   而非 fail closed）；评估失败只记为可重试 debt，绝不改变已完成 scrub
   的事实与退出码。固定 `authority=none`，零 core/资本/order/Champion
-  写权限，不构成 edge、晋级或参数变更授权。
+  写权限；自动 Champion 只作用于模拟域，实盘仍由
+  `REAL_TRADING_ENABLED=false` 硬闸，不授予 edge、参数变更、风险扩张或
+  执行授权。
 - `ten_symbol_spread_projection.py` 是 spreads sidecar 的 detached 只读
   消费投影：镜像 bars sidecar 消费路径（事件 `spread` 状态块
   shape-check + sidecar 重算 + `spread_sha256` 逐值比对），把实测
@@ -300,12 +320,14 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   复制实现），把四个已注册预筛候选在最新观测证据上重估，产出
   `<store_root>/evolution/ten_symbol_research_loop/` 下 checksum 绑定的
   immutable 评审报告（每候选×horizon 费用前后指标、与上份报告的
-  diff、`review.recommendation` 固定 `manual_review_required`）与
+  diff、自动 `review.recommendation`：逐候选按最优非重叠费用后净收益
+  推导 `auto_promote`/`auto_demote`/`auto_retain`）与
   compact checkpoint；同输入重跑 `no_new_input` 且字节不变（幂等），
   链/sidecar/checkpoint/report 篡改一律 fail closed。第一阶段不生成
   新假设（注册集合漂移 fail closed）、不接 systemd、无 worker；晋级
-  永远人工。固定 `authority=none`、零 core/资本/order/Champion/
-  learning 写权限，不构成 edge、晋级或参数变更授权。
+  在模拟域内自动，实盘仍由 `REAL_TRADING_ENABLED=false` 硬闸。固定
+  `authority=none`、零 core/资本/order/Champion/learning 写权限，不构成
+  edge、参数变更、风险扩张或执行授权。
 - `ten_symbol_health_watch.py` 是十币种观测链与 TradingDatas 数据面的
   只读健康检查器：只经 store lock-free 只读路径读取，绝不重建
   head/index、绝不写任何 store 文件；检查 latest_terminal_slot 滞后
@@ -324,14 +346,17 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   realized_spreads/open_interest_5m/premium_index 三 plane 只能由严格
   校验的调用方数据面 manifest 声明，未声明即 unavailable），产出
   `<store_root>/evolution/ten_symbol_hypothesis_generator/` 下 checksum
-  绑定的 immutable 注册提案（每候选固定
-  `registration_status=pending_manual_review`，review 固定
-  `manual_review_required`）与 compact checkpoint；同输入重跑
+  绑定的 immutable 注册提案（feasible 候选自动
+  `registration_status=auto_registered`、
+  `registered_into_prescreen/registered_into_evaluation=true`，review 自动
+  `auto_register`/`blocked`）与 compact checkpoint；同输入重跑
   `no_new_input` 且字节不变（幂等），配置漂移、manifest/链/checkpoint/
-  提案篡改一律 fail closed。第二阶段不自动注册进预筛/重估/评估集合
-  （注册须人工评审后独立变更）、不运行任何评估、不接 systemd、无
-  worker；晋级永远人工。固定 `authority=none`、零 core/资本/order/
-  Champion/learning 写权限，不构成 edge、晋级或参数变更授权。
+  提案篡改一律 fail closed。第二阶段对 feasible 候选自动注册进预筛集合
+  （blocked 候选未注册、预筛/一阶段注册集合漂移仍 fail closed）、不运行
+  任何评估、不接 systemd、无 worker；晋级在模拟域内自动，实盘仍由
+  `REAL_TRADING_ENABLED=false` 硬闸。固定 `authority=none`、零
+  core/资本/order/Champion/learning 写权限，不构成 edge、参数变更、
+  风险扩张或执行授权。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached

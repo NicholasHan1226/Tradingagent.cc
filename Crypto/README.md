@@ -587,6 +587,18 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 
 ## 十币种 Shadow 观测积累器（零权限、独立故障域）
 
+> **Universe 版本化（10 → 40）。** 本节描述的 10 币链是已落盘的 append-only
+> 历史，**只读封存，不再回写**。新 40 币研究 universe 由
+> `market_observation.OBSERVATION_SYMBOLS_V40` 冻结，使用独立
+> `forty_symbol_*` 契约族（profile/event/head/pending/data_gap/bars/spread/
+> spreads）与独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`
+> （本轮不部署，不接 systemd/晋级），thin runtime 见
+> `forty_symbol_observation_runtime.py`。40 币因子投影使用 feature set
+> `crypto-5m-ohlcv-factor-research-v3` + consumer profile
+> `crypto-5m-ohlcv-13bar-forward-labels-v3` + 投影命名空间
+> `evolution/forty_symbol_factor_research/`，不写旧
+> `evolution/ten_symbol_factor_research/`。
+
 `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
 `ten_symbol_observation_runtime.py` 组成一条独立、append-only、receipt 绑定的
 10 币 5 分钟观测积累链，为后续 factor research 扩到 10 币（横截面研究）提供
@@ -1004,9 +1016,11 @@ research-only：artifact 不作为实时成本、执行信号或晋级证据。
 detached 的假设研究调度器。输入为观测 store 根目录加预筛配置
 （`--horizon-bars`，默认 12,48,144,288 即 60/240/720/1440min），行为是把
 **已注册**的四个预筛候选（`xs_rs`、`short_reversal`、`amihud_illiquidity`、
-`momentum_vol_regime`）在最新观测证据上自动重估，产出供人工评审的
-immutable 评审报告 artifact。第一阶段不生成新假设、不改评估逻辑、不接
-systemd、不接执行；晋级永远人工。
+`momentum_vol_regime`）在最新观测证据上自动重估，产出 immutable 自动评审
+报告 artifact（`review.recommendation=automatic_reevaluation_complete`，
+逐候选给出 `auto_promote`/`auto_demote`/`auto_retain`）。第一阶段不生成新
+假设、不改评估逻辑、不接 systemd、不接执行；晋级在模拟域内自动，实盘仍由
+`REAL_TRADING_ENABLED=false` 硬闸。
 
 ### 数据路径与证据绑定
 
@@ -1026,37 +1040,37 @@ systemd、不接执行；晋级永远人工。
 ### Artifact 合约
 
 - 评审报告（contract
-  `tradingagent.crypto.ten_symbol_research_loop_review.v1`）immutable 写入
+  `tradingagent.crypto.ten_symbol_research_loop_review.v2`）immutable 写入
   `<store_root>/evolution/ten_symbol_research_loop/reports/{report_sha256}.json`，
   自含 `report_sha256`；内容包括：store 链绑定（event 计数、head
   checksum、逐槽 terminal_units 三件套与其聚合 sha）、数据窗口、每个
   horizon 的完整预筛分析、`metrics_summary`（每候选 × horizon × variant
   的费用前 `mean_gross` 与费用后 `mean_net`、hit_rate、baseline_delta、
   非重叠子样本指标）、`diff_vs_previous`（与上一份报告的逐 cell 对比：
-  change 分类、计数差、Decimal 指标差）以及固定
-  `review.recommendation=manual_review_required`（每候选同）。artifact
+  change 分类、计数差、Decimal 指标差）以及自动
+  `review.recommendation`（每候选按最优非重叠费用后净收益推导）。artifact
   因含逐槽绑定随历史线性增长，读取沿用共享 2 MiB canonical 上限，超限
   fail closed。
 - compact `research_loop_checkpoint.json`（contract
-  `tradingagent.crypto.ten_symbol_research_loop_checkpoint.v1`，原子覆写）
+  `tradingagent.crypto.ten_symbol_research_loop_checkpoint.v2`，原子覆写）
   绑定 `last_input_digest` 与 `report_sha256`。input digest 覆盖 horizon
   配置、store 链 head 与逐槽资格材料：同输入重跑先重验 checkpoint 与其
   绑定报告，返回 `no_new_input` 且 artifact 字节不变（幂等）；checkpoint
   或报告篡改 fail closed。无 terminal 事件返回 `deferred_core_pending`，
   全部槽 ineligible 返回 `insufficient_eligible_slots`（非错误）；退出码经
   `ten_symbol_research_loop_exit_code`（authority 字段或
-  `manual_review_required` 不符即 2）。
+  `automatic_reevaluation` 不符即 2）。
 - 一次性 CLI：`python3 -m Crypto.ten_symbol_research_loop --store-root
   <path> [--horizon-bars 12,48,144,288]`；无 worker、无 systemd unit。
 
-### 后续阶段路线图（均未实现、未授权）
+### 模拟域自动晋级边界
 
-1. **假设生成器**：从既有观测/点差/OI 等 B 类证据派生新候选假设，输出仍
-   只是研究 artifact；
-2. **自动注册评审**：生成的新假设经独立合同注册进重估集合（注册集合漂移
-   当前 fail closed，届时需显式扩展），调度器自动纳入重估；
-3. **晋级仍永久人工**：任何阶段都不授予自动晋级、自动风险扩张或执行
-   authority。
+- **假设生成器（第二阶段）**：B 类候选通过可行性检查后自动标记
+  `registration_status=auto_registered` 并写入 `registered_into_prescreen/
+  registered_into_evaluation=true`；blocked 候选保持未注册。
+- **自动晋级只在模拟域**：研究/评估/Champion/模拟资金全部自动，但绝不授予
+  自动风险扩张、执行或真实交易 authority；`REAL_TRADING_ENABLED=false`
+  继续作为独立硬闸，任何 `REAL_TRADING_ENABLED=true` 都 fail closed。
 
 ## 十币种观测链只读健康检查（health watch）
 
@@ -1109,11 +1123,12 @@ head/index、绝不写任何 store 文件；任一损坏或合同漂移 fail clo
 只读、detached 的假设生成器。它把仓内冻结、版本化的生成配置
 （`crypto-ten-symbol-hypothesis-generation-v1`：因子族 × 参数网格 ×
 horizon）确定性展开为候选假设集，对每个候选做轻量可行性检查（所需数据面
-可用性与样本量下限），产出一份供人工评审的 immutable 注册提案 artifact。
-第二阶段**不自动注册**（全部候选固定
-`registration_status=pending_manual_review`、`registered_into_prescreen/
-registered_into_evaluation=false`，预筛与一阶段注册集合保持不变、漂移仍
-fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永远人工。
+可用性与样本量下限），产出一份 immutable 注册提案 artifact。第二阶段对通过
+可行性检查的候选**自动注册**（`registration_status=auto_registered`、
+`registered_into_prescreen/registered_into_evaluation=true`），blocked 候选
+保持未注册（预筛与一阶段注册集合漂移仍 fail closed）；**不运行任何
+预筛/评估**、不接 systemd；晋级在模拟域内自动，实盘仍由
+`REAL_TRADING_ENABLED=false` 硬闸。
 
 ### 生成配置与因子族
 
@@ -1149,23 +1164,24 @@ fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永�
   `tradingagent.crypto.ten_symbol_hypothesis_generator_data_planes.v1`，严格
   shape 校验、available 必须带 sample_count、禁止声明 ohlcv_bars）声明；
   未声明 plane 一律 `unavailable`，`accumulating` 不算 available。
-- 逐候选 `feasibility.status ∈ {feasible_for_manual_evaluation, blocked}`
-  附逐 plane 检查（observed vs min、reason code）；可行性只影响人工评审
-  排序，不改变固定 `pending_manual_review` 状态。
+- 逐候选 `feasibility.status ∈ {feasible_for_auto_registration, blocked}`
+  附逐 plane 检查（observed vs min、reason code）；可行性决定候选是否
+  自动注册进预筛集合（feasible 才 `auto_registered`）。
 
 ### Artifact 合约
 
 - 提案（contract
-  `tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v1`）
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v2`）
   immutable 写入
   `<store_root>/evolution/ten_symbol_hypothesis_generator/proposals/{proposal_sha256}.json`，
   自含 `proposal_sha256`；内容包括：冻结配置全文与其 sha、store 链绑定
   （event 计数、head checksum、逐槽 terminal_units 聚合 sha、数据窗口）、
   数据面 manifest sha 与 plane 状态、逐候选定义（假设文本、依据、所需证据、
-  参数、horizon、可行性）以及固定
-  `review.recommendation=manual_review_required`（每候选同）。
+  参数、horizon、可行性、注册状态）以及自动
+  `review.recommendation`（feasible 为 `auto_register`，blocked 为
+  `blocked`）。
 - compact `hypothesis_generator_checkpoint.json`（contract
-  `tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v1`，原子
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v2`，原子
   覆写）绑定 `last_input_digest` 与 `proposal_sha256`。input digest 覆盖
   配置 sha、manifest sha、store 链 head 与逐槽资格材料：同输入重跑先重验
   checkpoint 与其绑定提案，返回 `no_new_input` 且字节不变（幂等）；
@@ -1173,7 +1189,7 @@ fail closed）、**不运行任何预筛/评估**、不接 systemd；晋级永�
   `deferred_core_pending`，全部槽 ineligible 返回
   `insufficient_eligible_slots`（非错误）；退出码经
   `ten_symbol_hypothesis_generator_exit_code`（authority 字段或
-  `manual_review_required` 不符即 2）。
+  `automatic_registration` 不符即 2）。
 - 一次性 CLI：`python3 -m Crypto.ten_symbol_hypothesis_generator
   --store-root <path> [--data-plane-manifest <path>]`；无 worker、无
   systemd unit。测试：

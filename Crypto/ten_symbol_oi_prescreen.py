@@ -26,7 +26,12 @@ import sys
 from typing import Any, Mapping, Sequence
 import uuid
 
-from Crypto.market_observation import BAR_FIELDS, OBSERVATION_SYMBOLS, _verify_catalog
+from Crypto.market_observation import (
+    BAR_FIELDS,
+    OBSERVATION_SYMBOLS,
+    OBSERVATION_SYMBOLS_V40,
+    _verify_catalog,
+)
 from Crypto.round_trip_capital import SLIPPAGE_BPS, TAKER_FEE_RATE
 from Crypto.ten_symbol_hypothesis_generator import (
     GENERATION_CONFIG,
@@ -461,7 +466,7 @@ def fetch_raw_history(
     end = _aligned_slot(end_open_time)
     if end < start:
         raise CryptoTenSymbolOIPrescreenError("oi_prescreen_window_invalid")
-    if tuple(symbols) != OBSERVATION_SYMBOLS:
+    if tuple(symbols) not in (OBSERVATION_SYMBOLS, OBSERVATION_SYMBOLS_V40):
         raise CryptoTenSymbolOIPrescreenError("oi_prescreen_symbols_invalid")
     directory = Path(raw_dir)
     if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
@@ -1328,6 +1333,7 @@ def _build_fetch_client(
     token_file: Path,
     catalog_version: str,
     access_policy_id: str,
+    symbols: Sequence[str] = OBSERVATION_SYMBOLS,
 ) -> SharedSignalsV1Client:
     try:
         transport = build_runtime_transport(
@@ -1344,9 +1350,9 @@ def _build_fetch_client(
             base_url=base_url,
             expected_catalog_version=catalog_version,
             dataset_ids=frozenset(
-                _bar_dataset_id(symbol) for symbol in OBSERVATION_SYMBOLS
+                _bar_dataset_id(symbol) for symbol in symbols
             )
-            | frozenset(_oi_dataset_id(symbol) for symbol in OBSERVATION_SYMBOLS),
+            | frozenset(_oi_dataset_id(symbol) for symbol in symbols),
             access_policy_id=access_policy_id,
             catalog_version_policy="strict",
             timeout_seconds=60.0,

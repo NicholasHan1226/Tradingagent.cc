@@ -151,7 +151,7 @@ def test_research_loop_reestimates_registered_hypotheses(
     assert result["eligible_slot_count"] == 30
     assert result["horizon_bars"] == [12, 48, 144, 288]
     assert result["loop_stage"] == LOOP_STAGE
-    assert result["manual_review_required"] is True
+    assert result["automatic_reevaluation"] is True
     assert ten_symbol_research_loop_exit_code(result) == 0
     _assert_recursive_non_authority(result)
 
@@ -166,10 +166,15 @@ def test_research_loop_reestimates_registered_hypotheses(
     )
     assert report["stage_boundaries"]["scheduler"] == "detached_one_shot_no_systemd"
     assert report["diff_vs_previous"]["status"] == "initial_report"
-    assert report["review"]["recommendation"] == "manual_review_required"
+    assert report["review"]["recommendation"] == "automatic_reevaluation_complete"
     assert all(
-        entry["recommendation"] == "manual_review_required"
-        and entry["automatic_action"] == "none"
+        entry["recommendation"] in {"auto_promote", "auto_demote", "auto_retain"}
+        and entry["automatic_action"]
+        in {
+            "promote_into_sim_capital",
+            "demote_or_retire",
+            "retain_for_more_evidence",
+        }
         for entry in report["review"]["per_candidate"].values()
     )
     assert report["promotion_authorized"] is False

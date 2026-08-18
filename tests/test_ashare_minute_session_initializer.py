@@ -11,6 +11,8 @@ import pytest
 import Ashare.minute_session_initializer as initializer_module
 from Ashare.minute_session_initializer import (
     MinuteSessionInitializerError,
+    SCALE500_COHORT_COUNT,
+    SCALE500_COHORT_SIZE,
     _scaled_minute_profile,
     build_scale500_reference_envelope,
     initialize_minute_session,
@@ -339,7 +341,7 @@ def _large_universe(count: int) -> tuple[list[dict[str, Any]], list[dict[str, An
     universe: list[dict[str, Any]] = []
     daily: list[dict[str, Any]] = []
     for offset in range(count):
-        symbol = f"{600000 + offset:06d}.SH"
+        symbol = f"{offset + 1:06d}.SZ"
         universe.append(
             {
                 "symbol": symbol,
@@ -409,15 +411,15 @@ def _scale500_receipt(
 
 
 def _scale500_receipts(tmp_path: Path) -> tuple[list[str], str, list[Path]]:
-    universe, _ = _large_universe(500)
+    universe, _ = _large_universe(SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE)
     symbols = sorted(item["symbol"] for item in universe)
     digest = "1" * 64
     receipts = [
         _scale500_receipt(
             tmp_path / f"cohort-{index}.json",
-            symbols[index * 100 : (index + 1) * 100],
+            symbols[index * SCALE500_COHORT_SIZE : (index + 1) * SCALE500_COHORT_SIZE],
         )
-        for index in range(5)
+        for index in range(SCALE500_COHORT_COUNT)
     ]
     return symbols, digest, receipts
 
@@ -464,13 +466,14 @@ def test_scale500_reference_envelope_binds_five_exact_cohorts_and_slot(
     )
 
     assert envelope["target_bar_end"] == "2026-07-29 13:10:00"
-    assert envelope["max_rows"] == envelope["row_count"] == 500
+    assert (
+        envelope["max_rows"]
+        == envelope["row_count"]
+        == SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE
+    )
     assert [c["symbols"][0] for c in envelope["cohorts"]] == [
-        "600000.SH",
-        "600100.SH",
-        "600200.SH",
-        "600300.SH",
-        "600400.SH",
+        symbols[index * SCALE500_COHORT_SIZE]
+        for index in range(SCALE500_COHORT_COUNT)
     ]
 
 
@@ -584,18 +587,24 @@ def test_initializer_publishes_scale500_reference_boundary(
     tmp_path: Path,
 ) -> None:
     template = _template(tmp_path)
-    universe, daily = _large_universe(500)
+    universe, daily = _large_universe(SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE)
     (template / "universe.json").write_text(json.dumps(universe), encoding="utf-8")
     manifest = json.loads((template / "minute-manifest.json").read_text())
-    manifest["profile"].update({"max_rows": 500, "page_limit": 500, "max_pages": 1})
+    manifest["profile"].update(
+        {
+            "max_rows": SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE,
+            "page_limit": SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE,
+            "max_pages": 1,
+        }
+    )
     (template / "minute-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     symbols = sorted(item["symbol"] for item in universe)
     receipts = [
         _scale500_receipt(
             tmp_path / f"bound-{index}.json",
-            symbols[index * 100 : (index + 1) * 100],
+            symbols[index * SCALE500_COHORT_SIZE : (index + 1) * SCALE500_COHORT_SIZE],
         )
-        for index in range(5)
+        for index in range(SCALE500_COHORT_COUNT)
     ]
 
     result = initialize_minute_session(
@@ -612,9 +621,13 @@ def test_initializer_publishes_scale500_reference_boundary(
         (tmp_path / "20260729" / "minute-manifest.json").read_text()
     )
     reference = published["scale500_reference"]
-    assert reference["max_rows"] == reference["row_count"] == 500
+    assert (
+        reference["max_rows"]
+        == reference["row_count"]
+        == SCALE500_COHORT_COUNT * SCALE500_COHORT_SIZE
+    )
     assert reference["target_bar_end"] == "2026-07-29 13:10:00"
-    assert len(reference["cohorts"]) == 5
+    assert len(reference["cohorts"]) == SCALE500_COHORT_COUNT
 
 
 def test_initializer_atomically_publishes_a_named_copilot_tracking_universe(
