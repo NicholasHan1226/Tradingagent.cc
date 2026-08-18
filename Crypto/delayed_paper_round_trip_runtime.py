@@ -54,6 +54,14 @@ ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
         "crypto_5m_observation_after_cutoff",
         "crypto_5m_data_through_mismatch",
         "crypto_5m_window_incomplete",
+        # A slot whose source data is permanently missing/stale is
+        # point-in-time unrecoverable, not a transient contract error.  Gap it
+        # instead of failing the whole backlog closed so one outage window
+        # cannot pin the round-trip accumulator forever.
+        "crypto_5m_metadata_not_ready",
+        "crypto_5m_metadata_not_fresh",
+        "crypto_5m_observation_stale",
+        "crypto_5m_observation_stale_by_cutoff",
     }
 )
 ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
