@@ -1,5 +1,41 @@
 # TradingAgent 历史状态快照
 
+## 2026-08-20 服务器失败单元诊断与修复
+
+> `observed_at=2026-08-20T01:50:00+08:00`。对 monday-check 报告的 5 个 failed
+> units 完成根因定位与处置，各单元结论独立，不互相替代：
+>
+> - `tradingagent-ashare-minute-paper.service`：stale failed，8-18 起自然轮
+>   `Result=success`，无需修复。
+> - `tradingagent-crypto-round-trip-g5-acceptance.service`：设计内 KPI 门禁
+>   （样本 154 < 288 分钟阈值，`next_action=continue_core_accumulation`），
+>   非故障。
+> - `tradingagent-crypto-round-trip-g5-learning-scrub.service`：全量 scrub 运行
+>   时长随样本增长越过 `TimeoutStartSec=120s`，8-17 起每日 03:35 被 systemd
+>   TERM。修复为 900s（g4/g5 unit，commit `25f6b617`）；服务器 unit 已同步，
+>   手动触发一次全量 scrub 于 01:44:50 `status=0/SUCCESS` 完成。
+> - `tradingdatas-crypto-binance-oi-dump-collect` / `premium-dump-collect`：
+>   crypto read model `market_ingest_runs` 累积 131,198 行，越过
+>   `_MAX_INGEST_RUN_SCAN_ROWS=100_000` 全表预算，
+>   `validated_success_receipt_ids` fail closed（`receipt scan row budget
+>   exceeded`）。根因在 TradingDatas 仓（append-only 表只增不减，全局预算结构性
+>   必然越界），修复走 TradingDatas PR #244（dataset-scoped 扫描，语义等价性
+>   由 `_validate_receipt_row` 对其他已知 dataset 行恒返回 None 保证）。
+> - scale500 停摆链：8-17 09:42 首根 bar 的 500 股 rt_min 单页查询在 20s 客户端
+>   预算内未完成（失败耗时 24s = 20s 超时 + 前置开销），触发
+>   `minute_tradingdatas_request_failed` → rollback30
+>   `minute_auto_initial_bar_missing` → 设计内 OnFailure rollback 自动 disable
+>   两个 scale500 timer。修复为可选
+>   `ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS` env 覆盖（默认 20s 不变，commit
+>   `c44bda77`）；服务器 env 已设 60s，两个 timer 已重新 enable（当日 09:18 /
+>   09:42 恢复触发）。
+>
+> catalog 版本漂移（30股 `v1-1e456009…`、scale500 `v1-1a25a650…` 期望 vs
+> serving `v1-aa0653a…`）经查为 `evidence_only` 策略下的记录性漂移：
+> `cn.dataset.rt_min` 的 dataset_contract_fingerprint 一致，漂移不阻断查询，
+> 也不是 8-17 失败的原因。上述所有修复均为模拟盘域内 sim-only 配置与代码
+> 变更，不构成预测有效、晋级、风险扩张、真实资金或 live authority 证据。
+
 ## 2026-08-16 Crypto 观测链读回
 
 > `observed_at=2026-08-16T00:22:14+08:00`。十币种观测 unit 的 effective
