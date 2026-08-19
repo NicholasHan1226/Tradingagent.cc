@@ -15,7 +15,7 @@ Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=/etc/tradingagent/crypto-delayed-paper-round-trip-g5.env
 ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.delayed_paper_round_trip_learning_worker --mode full-scrub --epoch-manifest ${ROUND_TRIP_EPOCH_MANIFEST}
-TimeoutStartSec=120s
+TimeoutStartSec=900s
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
