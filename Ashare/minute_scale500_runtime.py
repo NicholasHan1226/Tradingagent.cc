@@ -35,6 +35,7 @@ from .minute_session_initializer import (
     SCALE500_COHORT_COUNT,
     SCALE500_COHORT_SIZE,
     SCALE500_REFERENCE_KEY,
+    _timeout_seconds_from_environment,
     build_scale500_reference_envelope,
     initialize_minute_session,
 )
@@ -811,6 +812,7 @@ def initialize_scale500_session(
     target_bar_end: str | None = None,
     scale500_cohort_receipts: tuple[Path | str, ...] | list[Path | str] | None = None,
     initializer: Initializer = initialize_minute_session,
+    timeout_seconds: float = 20.0,
 ) -> dict[str, object]:
     """Initialize only the isolated 500-symbol session and acceptance gate."""
 
@@ -837,6 +839,7 @@ def initialize_scale500_session(
             universe_source=universe_path,
             target_bar_end=target_bar_end,
             scale500_cohort_receipts=scale500_cohort_receipts,
+            timeout_seconds=timeout_seconds,
         )
         if (
             result.get("status") != "pass"
@@ -1410,6 +1413,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "initialize":
             if args.allow_late_start:
                 raise MinuteScale500RuntimeError("minute_scale500_late_start_run_only")
+            configured_timeout = _timeout_seconds_from_environment()
             result = initialize_scale500_session(
                 **kwargs,
                 target_bar_end=args.target_bar_end,
@@ -1417,6 +1421,9 @@ def main(argv: list[str] | None = None) -> int:
                     tuple(args.scale500_cohort_receipts)
                     if args.scale500_cohort_receipts is not None
                     else None
+                ),
+                timeout_seconds=(
+                    configured_timeout if configured_timeout is not None else 20.0
                 ),
             )
         else:

@@ -1381,3 +1381,30 @@ def test_session_units_are_preopen_simulation_only_and_sandboxed() -> None:
     assert "OnCalendar=Mon..Fri *-*-* 09:18:00" in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-session.service" in timer
+
+
+def test_timeout_seconds_from_environment_defaults_and_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from Ashare.minute_session_initializer import (
+        MinuteSessionInitializerError,
+        _timeout_seconds_from_environment,
+    )
+
+    monkeypatch.delenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", raising=False)
+    assert _timeout_seconds_from_environment() is None
+    monkeypatch.setenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "60")
+    assert _timeout_seconds_from_environment() == 60.0
+    monkeypatch.setenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "0")
+    with pytest.raises(MinuteSessionInitializerError):
+        _timeout_seconds_from_environment()
+    monkeypatch.setenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "not-a-number")
+    with pytest.raises(MinuteSessionInitializerError):
+        _timeout_seconds_from_environment()
+
+
+def test_scale500_env_example_sets_wider_session_timeout() -> None:
+    example = (
+        REPO_ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500.env.example"
+    ).read_text(encoding="utf-8")
+    assert "ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS=60" in example

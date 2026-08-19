@@ -1024,6 +1024,21 @@ def initialize_minute_session(
     }
 
 
+def _timeout_seconds_from_environment() -> float | None:
+    raw = os.environ.get("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise MinuteSessionInitializerError(
+            "minute_session_timeout_seconds_invalid"
+        ) from exc
+    if value <= 0:
+        raise MinuteSessionInitializerError("minute_session_timeout_seconds_invalid")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Prepare one private A-share delayed-paper minute session"
@@ -1090,6 +1105,9 @@ def main(argv: list[str] | None = None) -> int:
             tracking_universe_output=configured_tracking_universe_output,
             target_bar_end=args.target_bar_end,
             scale500_cohort_receipts=args.scale500_cohort_receipts,
+            timeout_seconds=(
+                _timeout_seconds_from_environment() or 20.0
+            ),
         )
     except MinuteSessionInitializerError as exc:
         print(f"minute session initializer failed closed: {exc}", file=sys.stderr)
