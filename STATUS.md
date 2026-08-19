@@ -19,7 +19,8 @@
 >   `_MAX_INGEST_RUN_SCAN_ROWS=100_000` 全表预算，
 >   `validated_success_receipt_ids` fail closed（`receipt scan row budget
 >   exceeded`）。根因在 TradingDatas 仓（append-only 表只增不减，全局预算结构性
->   必然越界），修复走 TradingDatas PR #244（dataset-scoped 扫描，语义等价性
+>   必然越界），修复走 TradingDatas 仓的 dataset-scoped 扫描 PR（对
+>   `NicholasHan1226/TradingDatas` 的跨仓候选，语义等价性
 >   由 `_validate_receipt_row` 对其他已知 dataset 行恒返回 None 保证）。
 > - scale500 停摆链：8-17 09:42 首根 bar 的 500 股 rt_min 单页查询在 20s 客户端
 >   预算内未完成（失败耗时 24s = 20s 超时 + 前置开销），触发
