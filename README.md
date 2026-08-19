@@ -134,6 +134,39 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 
 `full_acceptance --profile quick` 只聚合当前网络关闭的合同/退役回归测试；`--profile prod` 的轻量 TradingDatas runtime gate 只证明 catalog/auth/单次 dataset 启动 smoke，不能替代 integration probe 的 bounded pagination、same-observation 双跑和 research snapshot 验收。配置缺失时必须失败。`sharedsignals_evidence_contract`、`market_health`、`opening_acceptance` 与 `cn_futures_live_check` 已是 fail-closed 退役/法证墓碑，不是 TradingDatas 验收入口。`full_acceptance` 的 capital-growth profile 仍是历史综合回归工具，不是单一生产就绪事实；缺证据必须失败或明确 warning，不能用“样本不足”静默通过。
 
+
+## 自动部署
+
+项目已配置 GitHub Actions 自动部署流水线：
+
+### 部署流程
+
+1. **推送代码到 main**：直接 push 或 PR 合并
+2. **自动测试**：GitHub Actions 运行完整测试套件（约 6 分钟）
+3. **自动部署**：测试通过后，自动部署到生产服务器（约 30 秒）
+
+### 配置要求
+
+**GitHub Secrets**（`production` Environment）：
+- `DEPLOY_HOST`：服务器 IP
+- `DEPLOY_USER`：部署用户（非 root）
+- `DEPLOY_SSH_KEY`：SSH 私钥
+- `DEPLOY_KNOWN_HOSTS`：服务器主机指纹
+
+**Repository Variables**：
+- `DEPLOY_ENABLED`：`true`（启用自动部署）
+- `DEPLOY_PORT`：`22`（SSH 端口）
+
+### 查看部署状态
+
+- **Actions 标签页**：查看测试和部署工作流运行状态
+- **服务器验证**：SSH 登录服务器，检查 `/opt/investment/releases/tradingagent/current/.deployed-sha`
+
+### 回滚
+
+如果新版本有问题，可以：
+1. 推送修复 commit 到 main
+2. 或手动在服务器上切换 `/opt/investment/current` 符号链接
 ## 文档入口
 
 - [系统架构](docs/architecture.md)
