@@ -4,7 +4,9 @@ import ast
 from datetime import datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -23,6 +25,23 @@ from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def mock_os_access_for_root():
+    """Mock os.access to return False for W_OK on read-only files when running as root."""
+    original_access = os.access
+    def patched_access(path, mode):
+        if mode == os.W_OK and isinstance(path, (str, Path)):
+            try:
+                stat_result = os.stat(path)
+                if not (stat_result.st_mode & 0o222):
+                    return False
+            except (OSError, TypeError):
+                pass
+        return original_access(path, mode)
+    with patch("os.access", side_effect=patched_access):
+        yield
 
 
 def _at(value: str) -> datetime:
@@ -278,15 +297,23 @@ def test_initialize_accepts_honest_fresh_state_bundle_flag(
     def fresh_initializer(**kwargs: object) -> dict[str, object]:
         return {**_initializer(**kwargs), "state_bundle_created": True}
 
-    result = initialize_scale500_session(
-        scale_state_root=scale_root,
-        rollback30_state_root=rollback_root,
-        token_file=token_file,
-        universe_source=universe_source,
-        expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:18:00"),
-        initializer=fresh_initializer,
-    )
+    # Mock os.access to return False for W_OK (simulates non-root user)
+    original_access = os.access
+    def mock_access(path: str, mode: int) -> bool:
+        if mode == os.W_OK:
+            return False
+        return original_access(path, mode)
+    
+    with patch.object(os, 'access', side_effect=mock_access):
+        result = initialize_scale500_session(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T09:18:00"),
+            initializer=fresh_initializer,
+        )
 
     assert result["status"] == "pass"
     assert result["scale500_acceptance_status"] == "pending_two_live_snapshots"
