@@ -25,6 +25,8 @@ class ChampionRecord:
     demoted_at: Optional[str] = None
     demotion_reason: Optional[str] = None
     demotion_receipt_sha256: Optional[str] = None
+    reactivated_at: Optional[str] = None
+    reactivation_reason: Optional[str] = None
     
     def to_dict(self) -> dict:
         return asdict(self)
@@ -70,6 +72,14 @@ class CryptoChampionRegistry:
         existing = self.get_by_id(record.champion_id)
         if existing is not None:
             raise ValueError(f"Champion {record.champion_id} already registered")
+        
+        # Auto-demote old active champion for same symbol/strategy_type
+        old_active = self.get_active_champion(record.symbol, record.strategy_type)
+        if old_active is not None:
+            self.demote_champion(
+                old_active.champion_id,
+                reason="new_champion_registered",
+            )
         
         # Append to registry
         with open(self.registry_path, "a", encoding="utf-8") as f:
@@ -240,6 +250,59 @@ class CryptoChampionRegistry:
         self.update_record(record)
         
         return record
+    
+    def reactivate_champion(self, champion_id: str, reason: str) -> ChampionRecord:
+        """Reactivate a previously demoted champion
+        
+        Args:
+            champion_id: Champion ID to reactivate
+            reason: Reactivation reason
+            
+        Returns:
+            Updated ChampionRecord
+            
+        Raises:
+            ValueError: If champion not found or already active
+        """
+        record = self.get_by_id(champion_id)
+        if record is None:
+            raise ValueError(f"Champion {champion_id} not found")
+        
+        if record.status == "active":
+            raise ValueError(f"Champion {champion_id} already active")
+        
+        # Update record
+        record.status = "active"
+        record.demotion_reason = None
+        record.demoted_at = None
+        record.reactivated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        record.reactivation_reason = reason
+        
+        # Append updated record
+        self.update_record(record)
+        
+        return record
+    
+    def get_history(self, symbol: str) -> list[ChampionRecord]:
+        """Get all champion records for a symbol (any strategy type)
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            List of ChampionRecord objects
+        """
+        if not self.registry_path.exists():
+            return []
+        
+        records = []
+        with open(self.registry_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                data = json.loads(line)
+                if data.get("symbol") == symbol:
+                    records.append(ChampionRecord.from_dict(data))
+        
+        return records
     
     def get_latest_record(self, champion_id: str) -> Optional[ChampionRecord]:
         """Get the latest version of a champion record
