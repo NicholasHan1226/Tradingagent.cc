@@ -32,7 +32,16 @@
 >   premium dump 11:02:22→11:07:58，均 `Result=success`/`ExecMainStatus=0`，
 >   execute 模式全部 dataset 收到 receipt。部署时 `market_ingest_runs` 已
 >   涨至 146,158 行（结构性增长的直接证据），400k 预算留有余量。两个
->   2 小时 timer 保持 enabled，自然轮按新 release 运行。
+>   2 小时 timer 保持 enabled，自然轮按新 release 运行；切换后首个自然轮
+>   已分别读回成功（premium 11:53→11:56:55、OI 12:37→12:40:58，均
+>   `Result=success`、无 budget exceeded）。
+> - g5-acceptance 后续（8-20 补修）：此前定性为"设计内 KPI 门禁"不完全
+>   成立——其 09:05 自然轮自 8-16 起每日被 `TimeoutStartSec` 超时 TERM
+>   （仓库 unit 45s，服务器 drop-in 曾提到 300s 仍不够），报告运行时随
+>   样本增长（手动完整运行 214s，systemd 满载并发下 450s+），裁决永远
+>   写不完。修复：仓库 unit `TimeoutStartSec` 45s→900s（commit `0a81efc0`，
+>   测试锁定），服务器 drop-in 同步 300s→900s；12:31:47 手动触发完整跑
+>   到 12:39:17（7min29s）`Result=success`，明日 09:05 自然轮待读回。
 > - scale500 停摆链：8-17 09:42 首根 bar 的 500 股 rt_min 单页查询在 20s 客户端
 >   预算内未完成（失败耗时 24s = 20s 超时 + 前置开销），触发
 >   `minute_tradingdatas_request_failed` → rollback30
