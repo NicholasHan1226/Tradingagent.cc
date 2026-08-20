@@ -42,6 +42,25 @@
 >   写不完。修复：仓库 unit `TimeoutStartSec` 45s→900s（commit `0a81efc0`，
 >   测试锁定），服务器 drop-in 同步 300s→900s；12:31:47 手动触发完整跑
 >   到 12:39:17（7min29s）`Result=success`，明日 09:05 自然轮待读回。
+> - provider-native-collect（8-20 根因闭合+部署）：A股树
+>   `tradingdatas-provider-native-collect` 自 8-19 00:03 起 rt_min/rt_min_daily
+>   99%+ 轮次 `validation_failed/response_completeness returned:0`（8-14 约
+>   34% → 8-19 99%，随 universe 扩到 scale500 的 6000 码/20 批恶化），每日仅
+>   1 轮成功。生产探测证据：QuickSync 对刚结束的 5 分钟 bar 有最长一个完整
+>   bar 周期的发布延迟——带显式 trade_time 请求刚结束 8 秒的 bar，接口静默
+>   返回上一已发布 bar 的行，`fixed_field_matches`（行内 trade_time vs 请求
+>   bar_time）永不匹配；窗口每轮推进、失败 bar 永不重试 → 全天连续失败；每
+>   日唯一成功轮均为延迟启动恰好越过发布窗口的轮次。排除配额、批大小
+>   （同批 300 码现查成功返回 239 行）与代码列表问题。修复（TradingDatas
+>   merge `d711414`）：session_minute `bar_end` 回退一个 bar 周期，发布方
+>   始终有完整周期发布目标 bar；开窗轮（09:30→09:25、13:00→12:55）目标
+>   落在窗口前按 `not_due` 跳过不发幻影请求；收盘 15:00 末根 bar 由 15:05
+>   轮（session window slack）覆盖。head CI `success` 后合并，部署为 A股树
+>   新 release `/opt/investment/releases/tradingdatas/d711414…` 并原子切换
+>   `current`；16:57/17:05 自然轮 `Result=success`（17:00 轮为 firecrawl
+>   news.flash 瞬时 provider_error，与 planner 无关，次轮自愈）。修复效果
+>   待 8-21 09:30 会话自然轮读回：首计划轮应为 09:35（bar 09:30）success、
+>   data_through 推进、无 response_completeness 失败。
 > - scale500 停摆链：8-17 09:42 首根 bar 的 500 股 rt_min 单页查询在 20s 客户端
 >   预算内未完成（失败耗时 24s = 20s 超时 + 前置开销），触发
 >   `minute_tradingdatas_request_failed` → rollback30
