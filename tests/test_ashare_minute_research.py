@@ -165,10 +165,20 @@ def test_rolling_features_need_two_consecutive_completed_bars() -> None:
     assert features[0].score_semantics == "uncalibrated_deterministic_rank_score"
     assert features[0].raw_rank_score > 0
 
-    with pytest.raises(MinuteResearchContractError, match="nonconsecutive"):
+    # A gap for one symbol resets only that symbol's baseline.  The snapshot
+    # remains usable for the rest of the universe and the next bar starts a
+    # fresh baseline for the gapped symbol.
+    assert (
         engine.ingest(
             _snapshot("2026-07-27T09:50:00+08:00", close=10.2, volume=130_000)
         )
+        == ()
+    )
+    assert len(
+        engine.ingest(
+            _snapshot("2026-07-27T09:55:00+08:00", close=10.3, volume=140_000)
+        )
+    ) == 2
 
 
 def test_rank_output_cannot_masquerade_as_probability_or_execution_authority() -> None:

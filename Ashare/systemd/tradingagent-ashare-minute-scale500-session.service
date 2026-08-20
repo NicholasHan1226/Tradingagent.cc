@@ -2,7 +2,6 @@
 Description=Prepare isolated TradingAgent A-share scale-500 delayed-paper session
 Wants=network-online.target
 After=network-online.target tradingdatas-v1-internal.service
-OnFailure=tradingagent-ashare-minute-scale500-rollback.service
 ConditionPathExists=/etc/tradingagent/ashare-minute-scale500.env
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
 ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3

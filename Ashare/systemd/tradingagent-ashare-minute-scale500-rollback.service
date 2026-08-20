@@ -1,5 +1,5 @@
 [Unit]
-Description=Fail closed by stopping only the isolated A-share scale-500 units
+Description=Manual fail-closed rollback for the isolated A-share scale-500 units
 
 [Service]
 Type=oneshot

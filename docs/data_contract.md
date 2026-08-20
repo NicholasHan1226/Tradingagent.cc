@@ -695,8 +695,12 @@ service or timer.
   `calibrated_probability=null`、`expected_return_bps=null`、
   `probability_model_state=not_calibrated`、`promotion_eligible=false`、
   `execution_authority=false`。
-- `MinuteUniverseInstrument` 的交易成员仅限沪深主板普通股、上市至少30日、
-  非风险警示/退市风险，并只路由首批三个研究主题。双创/科创/行业/宽基聚合必须
+- `MinuteUniverseInstrument` 的当前交易成员仅限沪深主板普通股、上市至少30日、
+  非风险警示/退市风险，并只路由首批三个研究主题。reviewed source snapshot 可以
+  同时保留尚未达到 30 日的候选身份，但它们必须在滚动 partition 中进入
+  `pending`，不能阻塞其它合格成员，也不能进入 feature/candidate/order。实际退市、
+  停牌、风险警示、缺主数据和缺行情都要逐股保存 reason code；不能以固定全量数量
+  作为模拟启动门禁，也不能静默替换身份。双创/科创/行业/宽基聚合必须
   `context_only=true`，不能成为 feature symbol、candidate 或 order。
 - `MinutePendingFixtureOrder` 只可在完成 bar `t` 后生成，并仅由精确 `t+1`
   完成bar结算；缺失或跳过该bar形成 nonfill，不允许迟到补成交。数据失败取消未结
@@ -922,6 +926,14 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 - Quant Core 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
 - TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。每次读取返回 `ETag`，写入必须使用 `If-Match`；服务端串行化写入并校验 state hash、previous hash、sequence 与 event hash 的 append-only 链。浏览器草稿只能标为未同步状态，不得静默覆盖新版本。人工决策的计划理由/触发/失效/风险上限与事后实际动作/复盘分离，二者都不得写入量化 capital/execution/sample/decision namespace。
 - `GET /api/trading-copilot/tracking-universe` 只读取 `tradingagent.trading_copilot_tracking_universe.v1`（见 `TradingCopilot/contracts/tracking_universe.schema.json`）的 server-local regular file。它只有 `generatedAt` 与去重的 A股 `symbol/name` 映射，用于把当前会话跟踪池带入研究终端；不携带账户、行情、预测、推荐或任何执行 authority。文件缺失、格式不符、超量或软链接时必须失败关闭，前端显示等待状态而不能使用演示清单填充。
+
+`tradingagent.ashare.minute_coverage_receipt.v1` 是 delayed-paper 当前窗口的覆盖投影，
+不是全量交易资格声明。它必须绑定 `trading_date`、`bar_end`、`selected_mode`、
+`source_universe_sha256`、`universe_sha256`，并输出 `source_count`、`active_count`、
+`accepted_count`、`pending_count`、`excluded_count`、`coverage_status` 以及可验证的
+`accepted_symbols`/`missing_symbols`。`accepted_count` 可以小于 `active_count`，只表示
+本窗口已进入模拟闭环的股票数；缺失股票下一窗口重试，不能静默替换身份，也不能把
+coverage receipt 解释为 execution authority。
 - `GET /api/trading-copilot/event-timeline?symbol=<A股代码>` 只读取 `tradingagent.trading_copilot_event_timeline.v1` 与对应 `tradingagent.trading_copilot_event_timeline_receipt.v1` 的 server-local regular files。receipt 必须绑定原始 timeline SHA-256、相同 symbol、相同 generated/valid-until 字段和当前有效期；它的去重来源回执集合必须与 timeline events 的 `{sourceReceiptId, sourceReceiptSha256}` 集合精确相等。缺失、过期、软链接、篡改或不一致一律返回不可用；它不访问 provider、不生成情绪、候选、资金、订单或训练事实。空事件和 blocked dataset 只表达 coverage debt，不构成行情/舆情健康或推荐结论。
 - 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。正式投影还必须附带 `tradingagent.trading_copilot_stock_projection_receipt.v1` 独立回执、定型证据强度、数据/证据/模型/人工行动四层就绪度、A股交易约束，以及逐事件来源和内容回执。普通 signal confidence 不等于证据强度。演示数据不得冒充实时；无正式定型分析时不得自动形成人工计划。
 - Quant Core 与 TradingCopilot 的能力归属以 `TradingCopilot/contracts/shared_capability_boundary.v1.json` 为机器合同：共享项只能作为 `evidence_only` 只读投影；Quant专属资本/订单/样本/晋级与Copilot专属申报账户/持仓/人工意图禁止双向写入或身份转换。正式预测、Kronos、OOS与校准由 learning/research plane 统一产生，前端计算不得成为正式预测证据。

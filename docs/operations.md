@@ -770,6 +770,46 @@ cohort，也不会打开 learning、promotion 或 execution。
 后续发生的日内缺口按同一分段恢复规则处理，不允许跨缺口结算 pending 或沿用旧滚动
 特征。该日可以积累工程和决策样本，但不能进入完整交易日、模型晋级或离线学习验收。
 
+#### 动态证券池：rolling-eligible 与 full-universe 声明分离
+
+Scale500 的固定 3193 身份集合只适用于明确的 full-universe 覆盖声明和历史 cohort
+审计，不再作为模拟交易启动的总门禁。生产/候选运行使用同一份 reviewed source
+snapshot 派生当前 `rolling_eligible` partition：
+
+- 已满足当前主板、上市年龄、风险和数据条件的股票先进入模拟；运行结果的
+  `universe_sha256` 绑定本窗口实际 active 集合，并另存 `source_universe_sha256`；
+- 新股进入 `pending_listings`，记录 `symbol`、`listed_on`、`eligible_after` 和
+  `listed_less_than_30_days`，到达资格日后在下一个自然窗口加入；
+- 实际退市、停牌、风险警示、缺日线、缺分钟行或 receipt/lineage 不完整的股票只
+  在该股票或该 shard 上 fail closed，不能拖住其它股票，也不能由其它股票替换；
+- 当前 active 集合内部仍要求 exact row count、same observation、时间窗、分页、
+  receipt、lineage 和消费者 readback。`usable_degraded` 只能作为明确范围的观察
+  证据，不能冒充 active 模拟集合完整；
+- rolling paper runner 对当前窗口实际返回的合法股票逐股消费：缺少分钟行的股票只
+  写入本窗口 `missing_symbols`/coverage receipt，并在下一窗口重新查询；不能因为
+  一只股票缺行而让整批回滚。单只股票发生 bar gap 时只重置该股票的 rolling baseline，
+  其它股票继续产生 feature/candidate；跨窗口状态仍禁止用缺失 bar 补齐；
+- 覆盖率报告可以同时显示 `source_count`、`active_count`、`pending_count`、
+  `excluded_count` 和 `coverage_ratio`，但 coverage 未达 100% 不得反向关闭已经
+  逐股通过的模拟链。
+
+每个通过的 delayed-paper 窗口在当日目录写入
+`coverage-receipts/<HHMMSS>.json`，schema 为
+`tradingagent.ashare.minute_coverage_receipt.v1`，绑定 source/effective universe
+hash、source/active/accepted/pending/excluded 数量及 accepted/missing symbol 集合。
+该 receipt 是覆盖和消费读回证据，不是资金、订单或 live authority。
+
+Scale500 session timer 在 09:18、09:24、09:30、09:36 设置开盘前重试窗口，09:42
+开始消费第一根已完成的 09:35 bar。单次 data/readiness 失败不得通过 `OnFailure`
+关闭后续 timer；只有明确的权限、真实交易开关、状态损坏等不可恢复错误才允许人工
+执行 rollback service。初始化发现旧分区 gate 与当前 effective hash/count 不一致时，
+会先保留为 `.stale*.json` 历史证据，再创建当前分区的 pending gate。
+
+启动该模式的候选命令是在现有隔离服务参数上增加
+`Ashare.minute_scale500_runtime initialize/run --rolling-eligible`。该开关保持
+`REAL_TRADING_ENABLED=false`，不创建真实订单、资本 authority 或 live authority；
+生产切换仍需分别验证当前 release、systemd、receipt/API 和 TA consumer readback。
+
 安装候选：
 
 ```text

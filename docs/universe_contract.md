@@ -31,6 +31,19 @@ tests:
 
 后层只能增加约束，不能把前层拒绝对象重新升级为可交易标的。
 
+## 动态证券状态与滚动成员
+
+证券主数据是按决策时点生效的动态快照，不是永远固定且必须同时合格的名单。
+上市不足 30 日、实际退市、停牌、风险警示或主数据缺失都必须按证券记录稳定的
+`reason_code`，但单个证券的拒绝不得阻塞其它证券的运行。运行时应从 reviewed
+source snapshot 派生当前 `rolling_active_partition`：只有本窗口逐股通过的成员才
+进入模拟；新股进入 `pending` 并记录 `listed_on`/`eligible_after`；退市或其它失效
+成员从下一窗口移出，同时保留历史事件和排除记录。不得用其它证券静默替换缺失成员。
+
+严格的全量集合只用于覆盖率、审计或明确的“全量覆盖”声明，不得作为当前模拟交易
+启动的总门禁。对已纳入 partition 的股票，行情 receipt、时间窗、分页、lineage 和
+运行回读仍必须逐股严格完整；一批局部数据不完整只阻断该股票或该 shard。
+
 ## CoverageReceipt：行业宽度的唯一覆盖证明
 
 `tradingagent.market_context_coverage.v1` 是内容寻址、冻结 dataclass。调用者不能再传
