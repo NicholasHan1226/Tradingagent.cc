@@ -100,3 +100,8 @@ def test_round_trip_learning_scrub_units_keep_the_existing_900_second_timeout() 
         )
         assert "TimeoutStartSec=900s" in scrub
         assert "TimeoutStartSec=45s" in incremental
+
+
+def test_g5_acceptance_gate_timeout_covers_report_runtime_growth() -> None:
+    acceptance = _unit("tradingagent-crypto-round-trip-g5-acceptance.service")
+    assert "TimeoutStartSec=900s" in acceptance
