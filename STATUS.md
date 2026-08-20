@@ -19,17 +19,31 @@
 >   `_MAX_INGEST_RUN_SCAN_ROWS=100_000` 全表预算，
 >   `validated_success_receipt_ids` fail closed（`receipt scan row budget
 >   exceeded`）。根因在 TradingDatas 仓（append-only 表只增不减，全局预算结构性
->   必然越界），修复走 TradingDatas 仓的 dataset-scoped 扫描 PR（对
->   `NicholasHan1226/TradingDatas` 的跨仓候选，语义等价性
->   由 `_validate_receipt_row` 对其他已知 dataset 行恒返回 None 保证）。
+>   必然越界），修复走 TradingDatas 仓的候选 PR：第一版 dataset-scoped 扫描
+>   被该仓 tombstone fail-closed 测试正确否决（全表扫描即跨 dataset 污染
+>   防线，不能 scoped）；已改为提高 `_MAX_INGEST_RUN_SCAN_ROWS` 100k→400k
+>   加地板防回退测试，该提交 CI 通过；automerge 把 main 合入分支后触发的
+>   CI 需 workflow 审批，已批准重跑，通过后自动合并部署。
 > - scale500 停摆链：8-17 09:42 首根 bar 的 500 股 rt_min 单页查询在 20s 客户端
 >   预算内未完成（失败耗时 24s = 20s 超时 + 前置开销），触发
 >   `minute_tradingdatas_request_failed` → rollback30
 >   `minute_auto_initial_bar_missing` → 设计内 OnFailure rollback 自动 disable
 >   两个 scale500 timer。修复为可选
 >   `ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS` env 覆盖（默认 20s 不变，commit
->   `c44bda77`）；服务器 env 已设 60s，两个 timer 已重新 enable（当日 09:18 /
->   09:42 恢复触发）。
+>   `c44bda77`）；服务器 env 已设 60s。
+> - scale500 后续（8-20 收敛）：60s timeout 生效后，09:18 session 1 秒内以
+>   `minute_session_universe_ineligible` fail closed，rollback 再次停 timer。
+>   根因：/etc/tradingagent/ashare-minute-universe-scale500.json（8-18 10:31
+>   随 full-mainboard 扩容重建，3193=31×103 cohort 契约，canonical SHA
+>   `02cb3deb` 钉定）含两只 8 月 IPO：001232.SZ（08-04 上市）、603468.SH
+>   （08-06 上市），8-20 距上市不足 30 天，触发 README 明文的 listed<30 天
+>   fail-closed 红线；主板全池合格数仅 3191，无标的可补，31×103 契约无解。
+>   处置：artifact 与 SHA 保持不变（快照语义正确，红线属设计内 fail
+>   closed）；两只 IPO 分别 9-03 / 9-05 满 30 天，首个交易日 9-07（周一）
+>   session 自然全合格。已装一次性恢复 timer
+>   （tradingagent-ashare-minute-scale500-reenable.timer，OnCalendar=
+>   2026-09-07 08:50 Asia/Shanghai）到点自动 enable --now 两个 scale500
+>   timer 并自禁用；期间 30 股 rollback 链不受影响。
 >
 > catalog 版本漂移（30股 `v1-1e456009…`、scale500 `v1-1a25a650…` 期望 vs
 > serving `v1-aa0653a…`）经查为 `evidence_only` 策略下的记录性漂移：
