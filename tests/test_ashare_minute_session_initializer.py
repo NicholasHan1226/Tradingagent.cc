@@ -1229,6 +1229,45 @@ def test_incomplete_daily_universe_fails_closed(tmp_path: Path) -> None:
     assert not (tmp_path / "20260729").exists()
 
 
+def test_rolling_incomplete_daily_universe_excludes_only_missing_symbols(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        allow_pending_recent_listings=True,
+        transport_factory=_factory(FixtureTransport(omit_symbol="600000.SH")),
+    )
+
+    assert result["status"] == "pass"
+    assert result["rolling_eligible"] is True
+    assert result["active_partition_count"] == 2
+    assert result["symbol_count"] == 1
+    assert result["daily_data_excluded"] == [
+        {
+            "symbol": "600000.SH",
+            "reason": "previous_close_missing",
+            "trade_date": "20260728",
+        }
+    ]
+    manifest = json.loads(
+        (tmp_path / "20260729" / "minute-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    references = json.loads(
+        (tmp_path / "20260729" / "reference-facts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["active_partition_count"] == 2
+    assert manifest["daily_data_excluded"] == result["daily_data_excluded"]
+    assert [row["symbol"] for row in references] == ["000001.SZ"]
+
+
 def test_duplicate_daily_identity_fails_closed_without_publishing(
     tmp_path: Path,
 ) -> None:
