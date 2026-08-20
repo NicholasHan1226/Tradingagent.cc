@@ -805,7 +805,10 @@ def _validate_published_session(
         or manifest.get("universe_sha256") != universe_sha256
         or not isinstance(profile, Mapping)
         or profile.get("max_rows") != expected_universe_count
-        or profile.get("page_limit") != expected_universe_count
+        or isinstance(profile.get("page_limit"), bool)
+        or not isinstance(profile.get("page_limit"), int)
+        or profile.get("page_limit", 0) <= 0
+        or profile.get("page_limit", 0) > expected_universe_count
         or isinstance(profile.get("max_pages"), bool)
         or not isinstance(profile.get("max_pages"), int)
         or profile.get("max_pages", 0) <= 0
