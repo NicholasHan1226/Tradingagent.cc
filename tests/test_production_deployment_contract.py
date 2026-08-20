@@ -62,6 +62,7 @@ def test_deploy_workflow_requires_controller_accepted_exact_main_test_run() -> N
     assert "repository_dispatch:" in workflow
     assert "- controller-accepted-deploy" in workflow
     assert "github.event.action == 'controller-accepted-deploy'" in workflow
+    assert "github.event.sender.login == 'NicholasHan1226'" in workflow
     assert "github.event.client_payload.sha" in workflow
     assert "github.event.client_payload.test_run_id" in workflow
     assert "Validate Controller-accepted main test run" in workflow

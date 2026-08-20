@@ -34,7 +34,7 @@ The artifact is named:
 tradingagent-release-<40-char-git-sha>
 ```
 
-The production workflow runs only after an explicit `controller-accepted-deploy` repository dispatch. It validates that the supplied test-run ID is a successful `TradingAgent Tests` **push** run for the supplied current-`main` SHA, then downloads the artifact from that exact run, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
+The production workflow runs only after an explicit `controller-accepted-deploy` repository dispatch initiated by the Controller's GitHub identity. It validates that the supplied test-run ID is a successful `TradingAgent Tests` **push** run for the supplied current-`main` SHA, then downloads the artifact from that exact run, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
 
 ## Immutable server release model
 
@@ -154,7 +154,7 @@ Configure these **repository-level Actions variables**:
 
 A production deployment runs only when all of the following are true:
 
-1. the Finance Delivery Controller has accepted the immutable candidate head, merged it, and issued a `controller-accepted-deploy` request containing the SHA and exact main test-run ID;
+1. the Finance Delivery Controller has accepted the immutable candidate head, merged it, and issued a `controller-accepted-deploy` request from its GitHub identity containing the SHA and exact main test-run ID;
 2. `TradingAgent Tests` completed successfully for that test-run ID;
 3. the successful run was triggered by a `push` and tested branch was `main`;
 4. the test-run SHA, artifact name, and artifact `.source-sha` all equal the Controller-requested SHA;
