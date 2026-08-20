@@ -23,7 +23,16 @@
 >   被该仓 tombstone fail-closed 测试正确否决（全表扫描即跨 dataset 污染
 >   防线，不能 scoped）；已改为提高 `_MAX_INGEST_RUN_SCAN_ROWS` 100k→400k
 >   加地板防回退测试，该提交 CI 通过；automerge 把 main 合入分支后触发的
->   CI 需 workflow 审批，已批准重跑，通过后自动合并部署。
+>   CI 需 workflow 审批，已批准重跑。
+> - OI/premium 后续（8-20 闭环）：该修复 PR 已合并入 TradingDatas main
+>   （merge `57edab96`，head CI `success`），手动部署为服务器新 release
+>   `/opt/investment/releases/tradingdatas-crypto/57edab96…` 并原子切换
+>   `current` 符号链接（共享 venv 不动，旧 release 保留可回滚）；部署后
+>   以 root 手动触发两个采集 unit 现场验证：OI dump 10:54:31→10:59:41、
+>   premium dump 11:02:22→11:07:58，均 `Result=success`/`ExecMainStatus=0`，
+>   execute 模式全部 dataset 收到 receipt。部署时 `market_ingest_runs` 已
+>   涨至 146,158 行（结构性增长的直接证据），400k 预算留有余量。两个
+>   2 小时 timer 保持 enabled，自然轮按新 release 运行。
 > - scale500 停摆链：8-17 09:42 首根 bar 的 500 股 rt_min 单页查询在 20s 客户端
 >   预算内未完成（失败耗时 24s = 20s 超时 + 前置开销），触发
 >   `minute_tradingdatas_request_failed` → rollback30
