@@ -902,6 +902,26 @@ def initialize_scale500_session(
             timeout_seconds=timeout_seconds,
             allow_pending_recent_listings=rolling_eligible,
         )
+        if rolling_eligible:
+            published_count = result.get("symbol_count")
+            published_hash = result.get("universe_sha256")
+            if (
+                isinstance(published_count, bool)
+                or not isinstance(published_count, int)
+                or published_count <= 0
+                or published_count > expected_count
+                or not isinstance(published_hash, str)
+                or not _SHA256_PATTERN.fullmatch(published_hash)
+            ):
+                raise MinuteScale500RuntimeError(
+                    "minute_scale500_rolling_initializer_partition_invalid"
+                )
+            # Rolling initialization may isolate symbols whose daily
+            # reference is unavailable.  Bind the gate to the exact
+            # partition that was actually published, not the pre-query
+            # membership snapshot.
+            expected_count = published_count
+            effective_universe_sha256 = published_hash
         if (
             result.get("status") != "pass"
             or result.get("trading_date") != trading_date

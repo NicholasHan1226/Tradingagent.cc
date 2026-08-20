@@ -168,7 +168,7 @@ def test_scale500_initializer_can_open_rolling_partition(
         state_root = Path(str(kwargs["state_root"]))
         now = kwargs["now"]
         assert isinstance(now, datetime)
-        active = rows[1:]
+        active = rows[2:]
         effective_payload = json.dumps(
             active,
             ensure_ascii=False,
@@ -227,6 +227,13 @@ def test_scale500_initializer_can_open_rolling_partition(
                     "eligible_after": "2026-07-31",
                 }
             ],
+            "daily_data_excluded": [
+                {
+                    "symbol": rows[1]["symbol"],
+                    "reason": "previous_close_missing",
+                    "trade_date": "20260728",
+                }
+            ],
             "state_bundle_created": False,
             "capital_authority": False,
             "execution_authority": False,
@@ -245,7 +252,7 @@ def test_scale500_initializer_can_open_rolling_partition(
     )
 
     assert result["selected_mode"] == "rolling_eligible"
-    assert result["symbol_count"] == EXPECTED_UNIVERSE_COUNT - 1
+    assert result["symbol_count"] == EXPECTED_UNIVERSE_COUNT - 2
     assert result["pending_listings"][0]["symbol"] == "000001.SZ"
 
 
