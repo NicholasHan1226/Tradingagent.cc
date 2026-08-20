@@ -1,14 +1,16 @@
-"""Fail-closed scale-500 selector for the A-share delayed-paper runtime.
+"""Fail-closed scale-500/rolling selector for the A-share delayed-paper runtime.
 
-The selector owns only an isolated simulation state root. It verifies one
-frozen 500-symbol universe, delegates all market reads to the existing formal
-TradingDatas catalog/query clients, and normally requires the first two accepted
-bars to be the adjacent 09:35 and 09:40 session observations. An explicitly
-armed, isolated late start may accept only the runner's exact current completed
-bar; it remains partial-session and permanently ineligible for learning. The
-selector never reads or writes the rollback-30 state root. A failure selects
-the rollback configuration and returns a stable reason code for systemd's
-rollback unit.
+The selector owns only an isolated simulation state root. The default mode
+verifies one frozen 3193-symbol universe for a full-universe claim; the explicit
+``rolling_eligible`` mode derives the current active partition and keeps recent
+listings pending without blocking other symbols. Both modes delegate all market
+reads to the existing formal TradingDatas catalog/query clients and normally
+require the first two accepted bars to be the adjacent 09:35 and 09:40 session
+observations. An explicitly armed, isolated late start may accept only the
+runner's exact current completed bar; it remains partial-session and permanently
+ineligible for learning. The selector never reads or writes the rollback-30 state
+root. A failure selects the rollback configuration and returns a stable reason
+code for systemd's rollback unit.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from .minute_session_initializer import (
     _timeout_seconds_from_environment,
     build_scale500_reference_envelope,
     initialize_minute_session,
+    partition_rolling_universe,
 )
 from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 from shared.governance.evidence_readiness import load_evidence_readiness_contract
@@ -335,6 +338,31 @@ def _validated_universe(
     return rows, actual_sha256
 
 
+def _rolling_effective_universe(
+    source: Path,
+    *,
+    trade_date: str,
+) -> tuple[list[Mapping[str, Any]], str]:
+    """Derive the current rolling active set from the reviewed source snapshot."""
+
+    raw = _load_json(source, "minute_scale500_universe_invalid")
+    if not isinstance(raw, list):
+        raise MinuteScale500RuntimeError("minute_scale500_universe_invalid")
+    try:
+        target = datetime.strptime(trade_date, "%Y-%m-%d").date()
+        universe = load_minute_research_universe(source)
+        active, _ = partition_rolling_universe(
+            universe_raw=raw,
+            universe=universe,
+            trade_date=target,
+        )
+    except (TypeError, ValueError) as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_rolling_universe_invalid"
+        ) from exc
+    return active, hashlib.sha256(_canonical_json(active)).hexdigest()
+
+
 def _parse_bar_end_any(value: str) -> datetime:
     """Parse a bar end in either canonical space or ISO-8601 serialization."""
 
@@ -580,13 +608,15 @@ def _new_gate(
     trading_date: str,
     rollback_root: Path,
     universe_sha256: str,
+    expected_universe_count: int = EXPECTED_UNIVERSE_COUNT,
+    selected_mode: str = "scale500",
 ) -> dict[str, object]:
     return {
         "schema": GATE_SCHEMA,
         "trading_date": trading_date,
         "status": "pending_two_live_snapshots",
-        "selected_mode": "scale500",
-        "expected_universe_count": EXPECTED_UNIVERSE_COUNT,
+        "selected_mode": selected_mode,
+        "expected_universe_count": expected_universe_count,
         "universe_sha256": universe_sha256,
         "validated_bar_ends": [],
         "partial_session": False,
@@ -611,6 +641,8 @@ def _load_gate(
     trading_date: str,
     rollback_root: Path,
     universe_sha256: str,
+    expected_universe_count: int = EXPECTED_UNIVERSE_COUNT,
+    selected_mode: str = "scale500",
 ) -> dict[str, object]:
     raw = _load_json(path, "minute_scale500_gate_missing_or_invalid")
     if not isinstance(raw, Mapping):
@@ -626,7 +658,7 @@ def _load_gate(
         gate.get("schema") != GATE_SCHEMA
         or gate.get("trading_date") != trading_date
         or gate.get("universe_sha256") != universe_sha256
-        or gate.get("expected_universe_count") != EXPECTED_UNIVERSE_COUNT
+        or gate.get("expected_universe_count") != expected_universe_count
         or gate.get("rollback30_state_root") != str(rollback_root)
         or gate.get("capital_layer") != "simulated"
         or gate.get("account_type") != "simulated"
@@ -642,14 +674,18 @@ def _load_gate(
             "active",
             "fallback30_selected",
         }
-        or gate.get("selected_mode") not in {"scale500", "rollback30"}
+        or gate.get("selected_mode") not in {
+            "scale500",
+            "rolling_eligible",
+            "rollback30",
+        }
         or (
             gate.get("status") == "fallback30_selected"
             and gate.get("selected_mode") != "rollback30"
         )
         or (
             gate.get("status") != "fallback30_selected"
-            and gate.get("selected_mode") != "scale500"
+            and gate.get("selected_mode") != selected_mode
         )
         or not isinstance(validated, list)
         or len(validated) > 2
@@ -705,6 +741,8 @@ def _select_rollback(
     rollback_root: Path,
     universe_sha256: str,
     reason: str,
+    expected_universe_count: int = EXPECTED_UNIVERSE_COUNT,
+    selected_mode: str = "scale500",
 ) -> None:
     gate_path = _gate_path(scale_root, trading_date)
     try:
@@ -713,6 +751,8 @@ def _select_rollback(
             trading_date=trading_date,
             rollback_root=rollback_root,
             universe_sha256=universe_sha256,
+            expected_universe_count=expected_universe_count,
+            selected_mode=selected_mode,
         )
     except MinuteScale500RuntimeError:
         gate = _new_gate(
@@ -738,6 +778,7 @@ def _validate_published_session(
     require_no_state_bundle: bool,
     expected_bar_end: str | None = None,
     require_scale500_reference: bool = False,
+    expected_universe_count: int = EXPECTED_UNIVERSE_COUNT,
 ) -> None:
     day_root = scale_root / trading_date.replace("-", "")
     manifest_path = day_root / "minute-manifest.json"
@@ -763,8 +804,8 @@ def _validate_published_session(
         or manifest.get("dataset_id") != MINUTE_DATASET_ID
         or manifest.get("universe_sha256") != universe_sha256
         or not isinstance(profile, Mapping)
-        or profile.get("max_rows") != EXPECTED_UNIVERSE_COUNT
-        or profile.get("page_limit") != EXPECTED_UNIVERSE_COUNT
+        or profile.get("max_rows") != expected_universe_count
+        or profile.get("page_limit") != expected_universe_count
         or isinstance(profile.get("max_pages"), bool)
         or not isinstance(profile.get("max_pages"), int)
         or profile.get("max_pages", 0) <= 0
@@ -772,7 +813,7 @@ def _validate_published_session(
         raise MinuteScale500RuntimeError("minute_scale500_manifest_invalid")
     if (
         not isinstance(universe, list)
-        or len(universe) != EXPECTED_UNIVERSE_COUNT
+        or len(universe) != expected_universe_count
         or hashlib.sha256(_canonical_json(universe)).hexdigest() != universe_sha256
     ):
         raise MinuteScale500RuntimeError("minute_scale500_universe_digest_mismatch")
@@ -792,9 +833,9 @@ def _validate_published_session(
         row.get("symbol") for row in universe if isinstance(row, Mapping)
     }
     if (
-        len(expected_symbols) != EXPECTED_UNIVERSE_COUNT
+        len(expected_symbols) != expected_universe_count
         or not isinstance(references, list)
-        or len(references) != EXPECTED_UNIVERSE_COUNT
+        or len(references) != expected_universe_count
         or {row.get("symbol") for row in references if isinstance(row, Mapping)}
         != expected_symbols
     ):
@@ -811,26 +852,45 @@ def initialize_scale500_session(
     now: datetime,
     target_bar_end: str | None = None,
     scale500_cohort_receipts: tuple[Path | str, ...] | list[Path | str] | None = None,
+    rolling_eligible: bool = False,
     initializer: Initializer = initialize_minute_session,
     timeout_seconds: float = 20.0,
 ) -> dict[str, object]:
-    """Initialize only the isolated 500-symbol session and acceptance gate."""
+    """Initialize the exact or rolling-eligible isolated simulation session."""
 
     if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
         raise MinuteScale500RuntimeError("real_trading_must_remain_disabled")
     if now.tzinfo is None or now.utcoffset() is None:
         raise MinuteScale500RuntimeError("minute_scale500_now_must_be_aware")
+    if not isinstance(rolling_eligible, bool):
+        raise MinuteScale500RuntimeError("minute_scale500_rolling_mode_invalid")
+    if rolling_eligible and (
+        target_bar_end is not None or scale500_cohort_receipts is not None
+    ):
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_reference_requires_full_universe"
+        )
     scale, rollback, token, universe_path = _validate_paths(
         scale_state_root=scale_state_root,
         rollback30_state_root=rollback30_state_root,
         token_file=token_file,
         universe_source=universe_source,
     )
-    _, universe_sha256 = _validated_universe(
+    source_rows, source_universe_sha256 = _validated_universe(
         universe_path,
         expected_sha256=expected_universe_sha256,
     )
     trading_date = now.astimezone(SHANGHAI).date().isoformat()
+    mode = "rolling_eligible" if rolling_eligible else "scale500"
+    if rolling_eligible:
+        effective_rows, effective_universe_sha256 = _rolling_effective_universe(
+            universe_path,
+            trade_date=trading_date,
+        )
+        expected_count = len(effective_rows)
+    else:
+        effective_universe_sha256 = source_universe_sha256
+        expected_count = len(source_rows)
     try:
         result = initializer(
             state_root=scale,
@@ -840,17 +900,30 @@ def initialize_scale500_session(
             target_bar_end=target_bar_end,
             scale500_cohort_receipts=scale500_cohort_receipts,
             timeout_seconds=timeout_seconds,
+            allow_pending_recent_listings=rolling_eligible,
         )
         if (
             result.get("status") != "pass"
             or result.get("trading_date") != trading_date
-            or result.get("symbol_count") != EXPECTED_UNIVERSE_COUNT
-            or result.get("universe_sha256") != universe_sha256
+            or result.get("symbol_count") != expected_count
+            or result.get("universe_sha256") != effective_universe_sha256
             or result.get("authority_tier") != "non_production_fixture"
             or not isinstance(result.get("state_bundle_created"), bool)
             or result.get("capital_authority") is not False
             or result.get("execution_authority") is not False
             or result.get("real_trading_enabled") is not False
+            or (
+                rolling_eligible
+                and (
+                    result.get("rolling_eligible") is not True
+                    or result.get("source_universe_sha256")
+                    != source_universe_sha256
+                )
+            )
+            or (
+                not rolling_eligible
+                and result.get("rolling_eligible") is not False
+            )
         ):
             raise MinuteScale500RuntimeError(
                 "minute_scale500_initializer_receipt_invalid"
@@ -858,10 +931,13 @@ def initialize_scale500_session(
         _validate_published_session(
             scale_root=scale,
             trading_date=trading_date,
-            universe_sha256=universe_sha256,
+            universe_sha256=effective_universe_sha256,
             require_no_state_bundle=True,
             expected_bar_end=target_bar_end,
-            require_scale500_reference=target_bar_end is not None,
+            require_scale500_reference=(
+                target_bar_end is not None and not rolling_eligible
+            ),
+            expected_universe_count=expected_count,
         )
         gate_path = _gate_path(scale, trading_date)
         if gate_path.exists():
@@ -869,7 +945,9 @@ def initialize_scale500_session(
                 gate_path,
                 trading_date=trading_date,
                 rollback_root=rollback,
-                universe_sha256=universe_sha256,
+                universe_sha256=effective_universe_sha256,
+                expected_universe_count=expected_count,
+                selected_mode=mode,
             )
             if gate["status"] == "fallback30_selected":
                 raise MinuteScale500RuntimeError(
@@ -879,7 +957,9 @@ def initialize_scale500_session(
             gate = _new_gate(
                 trading_date=trading_date,
                 rollback_root=rollback,
-                universe_sha256=universe_sha256,
+                universe_sha256=effective_universe_sha256,
+                expected_universe_count=expected_count,
+                selected_mode=mode,
             )
             _atomic_write_json(gate_path, gate)
     except Exception as exc:
@@ -888,8 +968,10 @@ def initialize_scale500_session(
             scale_root=scale,
             trading_date=trading_date,
             rollback_root=rollback,
-            universe_sha256=universe_sha256,
+            universe_sha256=effective_universe_sha256,
             reason=reason,
+            expected_universe_count=expected_count,
+            selected_mode=mode,
         )
         raise MinuteScale500RuntimeError(reason) from exc
     return {
@@ -910,12 +992,13 @@ def _validate_runtime_receipt(
     *,
     expected_bar_end: str,
     allow_late_start: bool,
+    expected_row_count: int = EXPECTED_UNIVERSE_COUNT,
 ) -> bool:
     if result.get("status") != "pass":
         raise MinuteScale500RuntimeError("minute_scale500_runtime_not_pass")
     if result.get("bar_end") != expected_bar_end:
         raise MinuteScale500RuntimeError("minute_scale500_bar_end_mismatch")
-    if result.get("row_count") != EXPECTED_UNIVERSE_COUNT:
+    if result.get("row_count") != expected_row_count:
         raise MinuteScale500RuntimeError("minute_scale500_row_count_mismatch")
     if result.get("audit_rejections") != 0:
         raise MinuteScale500RuntimeError("minute_scale500_audit_rejections")
@@ -1120,9 +1203,10 @@ def run_scale500_once(
     target_bar_end: str | None = None,
     allow_late_start: bool = False,
     canary_receipt: Path | str | None = None,
+    rolling_eligible: bool = False,
     runner: Runner = run_current_delayed_minute_paper,
 ) -> dict[str, object]:
-    """Run one exact 500-symbol delayed-paper step or select rollback-30."""
+    """Run one exact or rolling-eligible delayed-paper step."""
 
     if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
         raise MinuteScale500RuntimeError("real_trading_must_remain_disabled")
@@ -1130,23 +1214,33 @@ def run_scale500_once(
         raise MinuteScale500RuntimeError("minute_scale500_now_must_be_aware")
     if not isinstance(allow_late_start, bool):
         raise MinuteScale500RuntimeError("minute_scale500_late_start_flag_invalid")
+    if not isinstance(rolling_eligible, bool):
+        raise MinuteScale500RuntimeError("minute_scale500_rolling_mode_invalid")
+    if rolling_eligible and allow_late_start:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_rolling_late_start_forbidden"
+        )
+    if rolling_eligible and target_bar_end is not None:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_reference_requires_full_universe"
+        )
     scale, rollback, token, universe_path = _validate_paths(
         scale_state_root=scale_state_root,
         rollback30_state_root=rollback30_state_root,
         token_file=token_file,
         universe_source=universe_source,
     )
-    universe_rows, universe_sha256 = _validated_universe(
+    universe_rows, source_universe_sha256 = _validated_universe(
         universe_path,
         expected_sha256=expected_universe_sha256,
     )
-    expected_symbols = frozenset(str(row["symbol"]) for row in universe_rows)
+    mode = "rolling_eligible" if rolling_eligible else "scale500"
     target = expected_available_bar_end(now)
     if target is None:
         return {
             "status": "noop",
             "reason": "outside_delayed_session_window",
-            "selected_mode": "scale500",
+            "selected_mode": mode,
             "capital_layer": "simulated",
             "account_type": "simulated",
             "execution_eligible": False,
@@ -1156,6 +1250,19 @@ def run_scale500_once(
         }
     trading_date = target.astimezone(SHANGHAI).date().isoformat()
     expected_target = target.strftime("%Y-%m-%d %H:%M:%S")
+    if rolling_eligible:
+        effective_rows, effective_universe_sha256 = _rolling_effective_universe(
+            universe_path,
+            trade_date=trading_date,
+        )
+        expected_count = len(effective_rows)
+        expected_symbols = frozenset(
+            str(row["symbol"]) for row in effective_rows
+        )
+    else:
+        effective_universe_sha256 = source_universe_sha256
+        expected_count = len(universe_rows)
+        expected_symbols = frozenset(str(row["symbol"]) for row in universe_rows)
     if target_bar_end is not None:
         try:
             supplied_target = _parse_bar_end_any(target_bar_end).strftime(
@@ -1173,7 +1280,9 @@ def run_scale500_once(
             gate_path,
             trading_date=trading_date,
             rollback_root=rollback,
-            universe_sha256=universe_sha256,
+            universe_sha256=effective_universe_sha256,
+            expected_universe_count=expected_count,
+            selected_mode=mode,
         )
         if gate["status"] == "fallback30_selected":
             return {
@@ -1199,10 +1308,13 @@ def run_scale500_once(
         _validate_published_session(
             scale_root=scale,
             trading_date=trading_date,
-            universe_sha256=universe_sha256,
+            universe_sha256=effective_universe_sha256,
             require_no_state_bundle=False,
-            expected_bar_end=target_bar_end,
-            require_scale500_reference=target_bar_end is not None,
+            expected_bar_end=(target_bar_end if not rolling_eligible else None),
+            require_scale500_reference=(
+                target_bar_end is not None and not rolling_eligible
+            ),
+            expected_universe_count=expected_count,
         )
         _, partial_minimum, _ = _shadow_policy()
         result = runner(
@@ -1211,11 +1323,17 @@ def run_scale500_once(
             now=now,
             allow_late_start=allow_late_start,
             pin_universe_filter=True,
-            partial_observation_minimum=partial_minimum,
+            partial_observation_minimum=(
+                None if rolling_eligible else partial_minimum
+            ),
         )
         if result.get("status") == "partial_observation_failed_closed":
             return _partial_cohort_failure(gate, result.get("reason_code"))
         if result.get("status") == "partial_observation":
+            if rolling_eligible:
+                raise MinuteScale500RuntimeError(
+                    "minute_scale500_rolling_observation_partial"
+                )
             try:
                 expected_bar_end = target.strftime("%Y-%m-%d %H:%M:%S")
                 accepted, observed_at, decision_time, evidence_rows = (
@@ -1283,6 +1401,7 @@ def run_scale500_once(
             result,
             expected_bar_end=expected_bar_end,
             allow_late_start=allow_late_start,
+            expected_row_count=expected_count,
         )
         validated = list(gate["validated_bar_ends"])
         if late_start and (gate["status"] != "pending_two_live_snapshots" or validated):
@@ -1328,14 +1447,16 @@ def run_scale500_once(
             scale_root=scale,
             trading_date=trading_date,
             rollback_root=rollback,
-            universe_sha256=universe_sha256,
+            universe_sha256=effective_universe_sha256,
             reason=reason,
+            expected_universe_count=expected_count,
+            selected_mode=mode,
         )
         raise MinuteScale500RuntimeError(reason) from exc
     return {
         **dict(result),
         "scale500_acceptance_status": gate["status"],
-        "selected_mode": "scale500",
+        "selected_mode": mode,
         "validated_bar_ends": list(gate["validated_bar_ends"]),
         "rollback30_state_root_preserved": True,
         "capital_layer": "simulated",
@@ -1394,6 +1515,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Permit one partial-session run from the exact current completed bar.",
     )
+    parser.add_argument(
+        "--rolling-eligible",
+        action="store_true",
+        help=(
+            "Run the current eligible partition; recent listings remain pending "
+            "and do not block the active partition."
+        ),
+    )
     parser.add_argument("--now", help="Explicit aware ISO timestamp for tests")
     args = parser.parse_args(argv)
     try:
@@ -1425,6 +1554,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_seconds=(
                     configured_timeout if configured_timeout is not None else 20.0
                 ),
+                rolling_eligible=args.rolling_eligible,
             )
         else:
             result = run_scale500_once(
@@ -1432,6 +1562,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_bar_end=args.target_bar_end,
                 allow_late_start=args.allow_late_start,
                 canary_receipt=args.canary_receipt,
+                rolling_eligible=args.rolling_eligible,
             )
     except Exception as exc:
         reason = _reason_code(exc)

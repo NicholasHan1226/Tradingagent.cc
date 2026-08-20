@@ -4,15 +4,16 @@ The initializer is intentionally small.  It reuses a previously reviewed
 universe or an explicitly supplied reviewed universe artifact, proves that the
 target day is open, reads the preceding session's closes through the fixed
 TradingDatas catalog/query API, and writes the three immutable inputs consumed
-by ``minute_auto_runner``.  It never creates capital, orders, fills, or a state
-bundle.
+by ``minute_auto_runner``.  Rolling mode derives an active partition and records
+recent listings as pending identities; it never creates capital, orders, fills,
+or a state bundle.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import os
@@ -30,6 +31,7 @@ from .minute_canary import (
 from .minute_paper_runner import load_minute_research_universe
 from .minute_data import SHANGHAI
 from .minute_auto_runner import session_bar_ends
+from .minute_research import MinuteResearchUniverse
 from shared.data.evidence_gate import (
     DataEvidenceGate,
     DatasetEvidencePolicy,
@@ -62,6 +64,10 @@ TRACKING_UNIVERSE_CONTRACT_ID = "tradingagent.trading_copilot_tracking_universe.
 SCALE500_COHORT_COUNT = 31
 SCALE500_COHORT_SIZE = 103
 SCALE500_REFERENCE_KEY = "scale500_reference"
+ALLOWED_OBSERVATION_EXCLUSIONS = frozenset(
+    {"risk_warning_excluded", "delisting_risk_excluded"}
+)
+PENDING_LISTING_REASON = "listed_less_than_30_days"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 TransportFactory = Callable[..., HTTPTransport]
 
@@ -452,6 +458,48 @@ def _scaled_minute_profile(
     return profile
 
 
+def partition_rolling_universe(
+    *,
+    universe_raw: Sequence[Mapping[str, Any]],
+    universe: MinuteResearchUniverse,
+    trade_date: date,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split a reviewed snapshot into active and pending identities.
+
+    A recent listing is a per-symbol pending state, not a reason to stop all
+    other symbols.  Risk-warning and delisting-risk rows remain observable in
+    the active research set, while every other policy failure stays fail-closed.
+    """
+
+    active: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    instruments = universe.instruments
+    for row in universe_raw:
+        symbol = row.get("symbol")
+        instrument = instruments.get(symbol)
+        if instrument is None:
+            raise MinuteSessionInitializerError("minute_session_universe_invalid")
+        reason = instrument.eligibility_reason(trade_date=trade_date)
+        if reason is None or reason in ALLOWED_OBSERVATION_EXCLUSIONS:
+            active.append(dict(row))
+            continue
+        if reason != PENDING_LISTING_REASON or instrument.list_date is None:
+            raise MinuteSessionInitializerError("minute_session_universe_ineligible")
+        pending.append(
+            {
+                "symbol": symbol,
+                "reason": reason,
+                "listed_on": instrument.list_date.isoformat(),
+                "eligible_after": (
+                    instrument.list_date + timedelta(days=30)
+                ).isoformat(),
+            }
+        )
+    if not active:
+        raise MinuteSessionInitializerError("minute_session_rolling_universe_empty")
+    return active, pending
+
+
 def _query_twice(
     *,
     client: SharedSignalsV1Client,
@@ -656,6 +704,7 @@ def initialize_minute_session(
     tracking_universe_output: Path | str | None = None,
     target_bar_end: str | None = None,
     scale500_cohort_receipts: Sequence[Path | str] | None = None,
+    allow_pending_recent_listings: bool = False,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -727,17 +776,40 @@ def initialize_minute_session(
     if not isinstance(universe_raw, list) or not universe_raw:
         raise MinuteSessionInitializerError("minute_session_universe_invalid")
     universe = load_minute_research_universe(universe_path)
-    allowed_observation_exclusions = {
-        "risk_warning_excluded",
-        "delisting_risk_excluded",
-    }
-    if any(
-        (reason := instrument.eligibility_reason(trade_date=target)) is not None
-        and reason not in allowed_observation_exclusions
-        for instrument in universe.instruments.values()
-    ):
-        raise MinuteSessionInitializerError("minute_session_universe_ineligible")
-    symbols = tuple(sorted(universe.instruments))
+    if not isinstance(allow_pending_recent_listings, bool):
+        raise MinuteSessionInitializerError(
+            "minute_session_rolling_listing_policy_invalid"
+        )
+    if allow_pending_recent_listings:
+        if target_bar_end is not None or scale500_cohort_receipts is not None:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_reference_requires_full_universe"
+            )
+        effective_raw, pending_listings = partition_rolling_universe(
+            universe_raw=universe_raw,
+            universe=universe,
+            trade_date=target,
+        )
+        effective_instruments = tuple(
+            universe.instruments[row["symbol"]] for row in effective_raw
+        )
+        effective_universe = MinuteResearchUniverse(
+            instruments=effective_instruments,
+            expanded=len(effective_instruments) > 500,
+        )
+    else:
+        if any(
+            (reason := instrument.eligibility_reason(trade_date=target)) is not None
+            and reason not in ALLOWED_OBSERVATION_EXCLUSIONS
+            for instrument in universe.instruments.values()
+        ):
+            raise MinuteSessionInitializerError("minute_session_universe_ineligible")
+        effective_raw = [dict(row) for row in universe_raw]
+        pending_listings = []
+        effective_universe = universe
+    symbols = tuple(sorted(effective_universe.instruments))
+    source_universe_sha256 = _sha256(universe_raw)
+    effective_universe_sha256 = _sha256(effective_raw)
 
     scale500_reference = None
     if target_bar_end is not None or scale500_cohort_receipts is not None:
@@ -973,7 +1045,10 @@ def initialize_minute_session(
         "timeout_seconds": timeout_seconds,
         "filters": {},
         "profile": bound_profile,
-        "universe_sha256": _sha256(universe_raw),
+        "universe_sha256": effective_universe_sha256,
+        "source_universe_sha256": source_universe_sha256,
+        "rolling_eligible": allow_pending_recent_listings,
+        "pending_listings": pending_listings,
     }
     if scale500_reference is not None:
         manifest[SCALE500_REFERENCE_KEY] = scale500_reference
@@ -982,14 +1057,14 @@ def initialize_minute_session(
         target=target,
         manifest=manifest,
         references=references,
-        universe=[dict(row) for row in universe_raw],
+        universe=effective_raw,
     )
     tracking_universe_count = None
     if tracking_universe_output is not None:
         tracking_universe_count = _publish_tracking_universe(
             output=Path(tracking_universe_output),
             generated_at=now,
-            universe=universe,
+            universe=effective_universe,
         )
     return {
         "status": "pass",
@@ -1006,7 +1081,11 @@ def initialize_minute_session(
         "profile_page_limit": bound_profile["page_limit"],
         "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
         "consumer_profile_sha256": profile.consumer_profile_sha256,
-        "universe_sha256": _sha256(universe_raw),
+        "universe_sha256": effective_universe_sha256,
+        "source_universe_sha256": source_universe_sha256,
+        "rolling_eligible": allow_pending_recent_listings,
+        "pending_listings": pending_listings,
+        "pending_count": len(pending_listings),
         "bootstrap": template_root is None,
         "reused": reused,
         "state_bundle_created": not reused,
@@ -1139,5 +1218,6 @@ __all__ = [
     "MinuteSessionInitializerError",
     "build_scale500_reference_envelope",
     "initialize_minute_session",
+    "partition_rolling_universe",
     "main",
 ]

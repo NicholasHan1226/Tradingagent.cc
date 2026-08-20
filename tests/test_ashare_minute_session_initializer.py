@@ -942,6 +942,46 @@ def test_explicit_universe_source_still_rejects_recent_listing(
         )
 
 
+def test_rolling_universe_quarantines_recent_listing_without_blocking_active_rows(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(2)
+    universe[0]["list_date"] = "2026-07-01"
+    source = tmp_path / "reviewed-universe-rolling.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        allow_pending_recent_listings=True,
+        transport_factory=_factory(FixtureTransport(daily_rows=daily)),
+    )
+    day_root = tmp_path / "20260729"
+    initialized = json.loads((day_root / "universe.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (day_root / "minute-manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "pass"
+    assert result["rolling_eligible"] is True
+    assert result["symbol_count"] == 1
+    assert result["pending_count"] == 1
+    assert result["pending_listings"] == [
+        {
+            "symbol": "000001.SZ",
+            "reason": "listed_less_than_30_days",
+            "listed_on": "2026-07-01",
+            "eligible_after": "2026-07-31",
+        }
+    ]
+    assert [row["symbol"] for row in initialized] == ["000002.SZ"]
+    assert manifest["rolling_eligible"] is True
+    assert manifest["source_universe_sha256"] != manifest["universe_sha256"]
+
+
 def test_cli_uses_reviewed_universe_source_from_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
