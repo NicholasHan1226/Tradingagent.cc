@@ -50,3 +50,20 @@ def test_minute_session_projects_the_verified_named_universe_for_copilot() -> No
 
     assert f"--tracking-universe-output {TRACKING_UNIVERSE_PATH}" in text
     assert "ReadWritePaths=/var/lib/tradingagent/trading-copilot" in text
+
+
+def test_scale500_units_use_rolling_membership_but_late_start_stays_separate() -> None:
+    session = (
+        ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-session.service"
+    ).read_text(encoding="utf-8")
+    paper = (
+        ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-paper.service"
+    ).read_text(encoding="utf-8")
+    late_start = (
+        ROOT
+        / "Ashare/systemd/tradingagent-ashare-minute-scale500-late-start.service"
+    ).read_text(encoding="utf-8")
+
+    assert "--rolling-eligible" in session
+    assert "--rolling-eligible" in paper
+    assert "--rolling-eligible" not in late_start

@@ -20,7 +20,10 @@ from Ashare.minute_scale500_runtime import (
     main,
     run_scale500_once,
 )
-from Ashare.minute_scale500_runtime import _validate_scale500_reference_fragment
+from Ashare.minute_scale500_runtime import (
+    _rolling_effective_universe,
+    _validate_scale500_reference_fragment,
+)
 from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 
 
@@ -129,6 +132,123 @@ def _paths(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     return scale_root, rollback_root, token_file, universe_source, digest
 
 
+def test_rolling_effective_universe_quarantines_only_recent_listing(
+    tmp_path: Path,
+) -> None:
+    universe_source = tmp_path / "universe.json"
+    _universe(universe_source)
+    rows = json.loads(universe_source.read_text(encoding="utf-8"))
+    rows[0]["list_date"] = "2026-07-01"
+    universe_source.chmod(0o600)
+    universe_source.write_text(json.dumps(rows), encoding="utf-8")
+    universe_source.chmod(0o440)
+
+    effective, effective_sha256 = _rolling_effective_universe(
+        universe_source,
+        trade_date="2026-07-29",
+    )
+
+    assert len(effective) == EXPECTED_UNIVERSE_COUNT - 1
+    assert "000001.SZ" not in {row["symbol"] for row in effective}
+    assert len(effective_sha256) == 64
+
+
+def test_scale500_initializer_can_open_rolling_partition(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, _ = _paths(tmp_path)
+    rows = json.loads(universe_source.read_text(encoding="utf-8"))
+    rows[0]["list_date"] = "2026-07-01"
+    universe_source.chmod(0o600)
+    universe_source.write_text(json.dumps(rows), encoding="utf-8")
+    universe_source.chmod(0o440)
+    source_digest = canonical_universe_sha256(universe_source)
+
+    def rolling_initializer(**kwargs: object) -> dict[str, object]:
+        state_root = Path(str(kwargs["state_root"]))
+        now = kwargs["now"]
+        assert isinstance(now, datetime)
+        active = rows[1:]
+        effective_payload = json.dumps(
+            active,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        effective_digest = hashlib.sha256(effective_payload).hexdigest()
+        day_root = state_root / now.strftime("%Y%m%d")
+        day_root.mkdir(parents=True)
+        (day_root / "universe.json").write_text(
+            json.dumps(active, ensure_ascii=False), encoding="utf-8"
+        )
+        (day_root / "minute-manifest.json").write_text(
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:18082",
+                    "dataset_id": "cn.dataset.rt_min",
+                    "universe_sha256": effective_digest,
+                    "profile": {
+                        "max_rows": len(active),
+                        "page_limit": len(active),
+                        "max_pages": 1,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (day_root / "reference-facts.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "symbol": row["symbol"],
+                        "trade_date": now.date().isoformat(),
+                        "previous_close_cny": 10.0,
+                        "suspended": False,
+                    }
+                    for row in active
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "pass",
+            "authority_tier": "non_production_fixture",
+            "trading_date": now.date().isoformat(),
+            "symbol_count": len(active),
+            "universe_sha256": effective_digest,
+            "source_universe_sha256": source_digest,
+            "rolling_eligible": True,
+            "pending_listings": [
+                {
+                    "symbol": "000001.SZ",
+                    "reason": "listed_less_than_30_days",
+                    "listed_on": "2026-07-01",
+                    "eligible_after": "2026-07-31",
+                }
+            ],
+            "state_bundle_created": False,
+            "capital_authority": False,
+            "execution_authority": False,
+            "real_trading_enabled": False,
+        }
+
+    result = initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=source_digest,
+        now=_at("2026-07-29T09:18:00"),
+        rolling_eligible=True,
+        initializer=rolling_initializer,
+    )
+
+    assert result["selected_mode"] == "rolling_eligible"
+    assert result["symbol_count"] == EXPECTED_UNIVERSE_COUNT - 1
+    assert result["pending_listings"][0]["symbol"] == "000001.SZ"
+
+
 def _initializer(
     *,
     state_root: Path,
@@ -149,6 +269,9 @@ def _initializer(
         "trading_date": now.date().isoformat(),
         "symbol_count": EXPECTED_UNIVERSE_COUNT,
         "universe_sha256": digest,
+        "source_universe_sha256": digest,
+        "rolling_eligible": False,
+        "pending_listings": [],
         "state_bundle_created": False,
         "capital_authority": False,
         "execution_authority": False,
