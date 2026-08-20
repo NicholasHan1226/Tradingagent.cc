@@ -40,32 +40,45 @@ def test_main_ci_publishes_the_exact_tested_release_artifact() -> None:
     assert "github.event_name == 'workflow_dispatch'" in workflow
 
 
-def test_automerge_dispatches_the_resulting_exact_main_sha() -> None:
+def test_automerge_is_limited_to_explicit_current_base_m0_docs_and_tests() -> None:
     workflow = _read(".github/workflows/automerge.yml")
 
-    assert "actions: write" in workflow
-    assert 'MERGE_JSON="$(gh api' in workflow
-    assert "MERGE_SHA=" in workflow
+    assert "Automerge Eligible M0 PRs" in workflow
+    assert "M0_AUTOMERGE_LABEL: automerge-m0" in workflow
+    assert "TRUSTED_PR_AUTHOR: NicholasHan1226" in workflow
+    assert "M0 automerge is limited to docs and tests." in workflow
+    assert "M0 candidate must be tested on the current main base." in workflow
+    assert 'MERGE_JSON="$(gh api' not in workflow
+    assert 'merge_json="$(gh api' in workflow
+    assert '"repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge"' in workflow
     assert "actions/workflows/test.yml/dispatches" in workflow
-    assert "inputs[expected_sha]=$MERGE_SHA" in workflow
-    assert "Dispatched exact-main validation" in workflow
+    assert "controller-accepted-deploy" in workflow
+    assert "deployment remains" in workflow
 
 
-def test_deploy_workflow_is_exact_sha_artifact_and_current_main_gated() -> None:
+def test_deploy_workflow_requires_controller_accepted_exact_main_test_run() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
 
-    assert "workflow_run:" in workflow
-    assert "- TradingAgent Tests" in workflow
-    assert "github.event.workflow_run.conclusion == 'success'" in workflow
-    assert "github.event.workflow_run.event == 'push'" in workflow
-    assert "github.event.workflow_run.event == 'workflow_dispatch'" in workflow
-    assert "github.event.workflow_run.head_branch == 'main'" in workflow
+    assert "repository_dispatch:" in workflow
+    assert "- controller-accepted-deploy" in workflow
+    assert "github.event.action == 'controller-accepted-deploy'" in workflow
+    assert "github.event.client_payload.sha" in workflow
+    assert "github.event.client_payload.test_run_id" in workflow
+    assert "Validate Controller-accepted main test run" in workflow
+    assert 'gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}"' in workflow
+    assert '"$(jq -r \'.name\' <<<"$run_json")" == "TradingAgent Tests"' in workflow
+    assert '"$(jq -r \'.conclusion\' <<<"$run_json")" == "success"' in workflow
+    assert '"$(jq -r \'.head_branch\' <<<"$run_json")" == "main"' in workflow
+    assert '"$(jq -r \'.event\' <<<"$run_json")" == "push"' in workflow
+    assert '"$(jq -r \'.head_sha\' <<<"$run_json")" == "$DEPLOY_SHA"' in workflow
+    assert "workflow_run:" not in workflow
+    assert "github.event.workflow_run" not in workflow
     assert "vars.DEPLOY_ENABLED == 'true'" in workflow
     assert "actions: read" in workflow
     assert "Discover tested release identity" in workflow
     assert "tradingagent-release-[0-9a-f]{40}" in workflow
     assert "actions/download-artifact@v5" in workflow
-    assert "run-id: ${{ github.event.workflow_run.id }}" in workflow
+    assert "run-id: ${{ env.DEPLOY_RUN_ID }}" in workflow
     assert "tar -xOf \"$archive\" ./.source-sha" in workflow
     assert "id: publish" in workflow
     assert workflow.count('gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main"') == 2

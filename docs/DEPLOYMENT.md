@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Production deployment is repository-driven, commit-pinned, and artifact-pinned. A merge to `main` does not directly mutate the server. The exact `main` commit must first complete the `TradingAgent Tests` workflow successfully. The deployment workflow then downloads the release artifact produced by that same successful workflow run.
+Production deployment is Controller-authorized, repository-driven, commit-pinned, and artifact-pinned. A merge to `main` does not directly mutate the server. The Finance Delivery Controller must first accept the immutable candidate head and perform the merge. The exact merged `main` commit must then complete the `TradingAgent Tests` workflow successfully. Only then may the Controller explicitly request deployment with that exact successful test-run ID; the deployment workflow downloads the artifact produced by that same run.
 
 The deployment workflow is intentionally disabled until the one-time server bootstrap is complete, the `production` GitHub Environment contains the required SSH secrets, and the repository variable `DEPLOY_ENABLED` is set to `true`.
 
@@ -34,7 +34,7 @@ The artifact is named:
 tradingagent-release-<40-char-git-sha>
 ```
 
-The production workflow runs only after the entire `TradingAgent Tests` workflow succeeds, so both the Python test job and the frontend job must be green. It downloads the artifact from `github.event.workflow_run.id`, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
+The production workflow runs only after an explicit `controller-accepted-deploy` repository dispatch. It validates that the supplied test-run ID is a successful `TradingAgent Tests` **push** run for the supplied current-`main` SHA, then downloads the artifact from that exact run, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
 
 ## Immutable server release model
 
@@ -154,18 +154,17 @@ Configure these **repository-level Actions variables**:
 
 A production deployment runs only when all of the following are true:
 
-1. `TradingAgent Tests` completed successfully;
-2. the successful run was triggered by a `push`;
-3. the tested branch was `main`;
-4. the repository variable `DEPLOY_ENABLED` is exactly `true`;
-5. the `production` Environment secrets are available;
-6. the tested release artifact for the exact workflow-run SHA exists;
-7. its SHA-256 checksum is valid;
-8. its `.source-sha` exactly equals the successful workflow-run head SHA;
-9. the tested SHA is still the current `main` HEAD immediately before upload;
-10. the tested SHA is still the current `main` HEAD immediately before privileged cutover;
-11. SSH host-key verification succeeds;
-12. the pre-installed root-owned release helper and fixed deployment spool exist on the server.
+1. the Finance Delivery Controller has accepted the immutable candidate head, merged it, and issued a `controller-accepted-deploy` request containing the SHA and exact main test-run ID;
+2. `TradingAgent Tests` completed successfully for that test-run ID;
+3. the successful run was triggered by a `push` and tested branch was `main`;
+4. the test-run SHA, artifact name, and artifact `.source-sha` all equal the Controller-requested SHA;
+5. the repository variable `DEPLOY_ENABLED` is exactly `true`;
+6. the `production` Environment secrets are available;
+7. the tested release artifact for that exact run exists and its SHA-256 checksum is valid;
+8. the tested SHA is still the current `main` HEAD immediately before upload;
+9. the tested SHA is still the current `main` HEAD immediately before privileged cutover;
+10. SSH host-key verification succeeds;
+11. the pre-installed root-owned release helper and fixed deployment spool exist on the server.
 
 ### Stale-main protection
 
@@ -234,6 +233,6 @@ Repository tests also lock the main deployment trust boundaries: workflow trigge
 
 ## Change control
 
-Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are infrastructure bootstrap changes. The existing automerge workflow excludes `.github/workflows/` changes, so this initial deployment workflow cannot self-bootstrap through the ordinary agent automerge path.
+Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are M1 infrastructure changes. They require a fresh Controller review of the immutable candidate head, a Controller merge, and exact-main test evidence.
 
-Future ordinary application PRs may continue through the normal CI/automerge path; production deployment remains separately gated by the exact successful current-`main` workflow run and `DEPLOY_ENABLED`.
+CI is candidate evidence, not production-deployment authority. The narrowly defined `automerge-m0` path may merge only a trusted, current-main-base PR that changes only `docs/**`, `tests/**`, or Markdown files; it then dispatches exact-main validation and cannot deploy. Everything outside that path—including all business, shared, workflow and deployment changes—remains Controller-merged M1. For each accepted M1 merge, the Controller independently records the merge commit and exact successful main test run before issuing the narrowly scoped deployment dispatch; afterward it reads back GitHub, server source, immutable effective release, and runtime separately. High-authority actions, including real trading, capital, accounts, secrets, and public exposure, remain outside this workflow.
