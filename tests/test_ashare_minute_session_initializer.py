@@ -869,12 +869,23 @@ def test_initializer_follows_bounded_daily_pagination_for_each_replay(
 
 def test_scaled_profile_uses_catalog_page_budget() -> None:
     profile = _scaled_minute_profile(
-        {"max_pages": 1, "max_rows": 30, "page_limit": 30},
+        {
+            "consumer_profile_sha256": "a" * 64,
+            "dataset_contract_fingerprint": "b" * 64,
+            "max_pages": 1,
+            "max_rows": 30,
+            "page_limit": 30,
+        },
         symbol_count=500,
         catalog_page_size=200,
     )
 
-    assert profile == {"max_pages": 3, "max_rows": 500, "page_limit": 200}
+    assert profile == {
+        "dataset_contract_fingerprint": "b" * 64,
+        "max_pages": 3,
+        "max_rows": 500,
+        "page_limit": 200,
+    }
 
 
 def test_explicit_universe_source_must_be_absolute(tmp_path: Path) -> None:

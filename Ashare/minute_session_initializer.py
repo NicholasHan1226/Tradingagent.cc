@@ -455,6 +455,10 @@ def _scaled_minute_profile(
     profile["page_limit"] = page_limit
     profile["max_rows"] = symbol_count
     profile["max_pages"] = (symbol_count + page_limit - 1) // page_limit
+    # The consumer profile digest covers the scaled pagination bounds.  Keep
+    # the dataset contract binding, but let the current catalog/profile build
+    # recompute the consumer digest for a rolling partition.
+    profile.pop("consumer_profile_sha256", None)
     return profile
 
 
