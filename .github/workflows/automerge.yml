@@ -1,4 +1,4 @@
-name: Automerge Trusted Agent PRs
+name: Automerge Eligible M0 PRs
 
 on:
   workflow_run:
@@ -10,18 +10,19 @@ on:
 permissions:
   actions: write
   contents: write
-  pull-requests: write
+  pull-requests: read
 
 env:
   TRUSTED_PR_AUTHOR: NicholasHan1226
+  M0_AUTOMERGE_LABEL: automerge-m0
 
 jobs:
-  merge:
+  merge_m0:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Merge verified trusted PR
+      - name: Merge an eligible M0 candidate only
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -34,82 +35,50 @@ jobs:
             echo "No pull request is associated with this successful workflow run."
             exit 0
           fi
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          base_ref="$(jq -r '.base.ref' <<<"$pr_json")"
+          base_sha="$(jq -r '.base.sha' <<<"$pr_json")"
+          head_repo="$(jq -r '.head.repo.full_name // empty' <<<"$pr_json")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          author="$(jq -r '.user.login' <<<"$pr_json")"
+          draft="$(jq -r '.draft' <<<"$pr_json")"
+          labels="$(jq -r '.labels[].name' <<<"$pr_json")"
 
-          PR_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          BASE_REF="$(jq -r '.base.ref' <<<"$PR_JSON")"
-          BASE_SHA="$(jq -r '.base.sha' <<<"$PR_JSON")"
-          HEAD_REPO="$(jq -r '.head.repo.full_name // empty' <<<"$PR_JSON")"
-          HEAD_SHA="$(jq -r '.head.sha' <<<"$PR_JSON")"
-          AUTHOR="$(jq -r '.user.login' <<<"$PR_JSON")"
-          DRAFT="$(jq -r '.draft' <<<"$PR_JSON")"
+          [[ "$base_ref" == "main" ]] || { echo "Skip: base is not main."; exit 0; }
+          [[ "$head_repo" == "$GITHUB_REPOSITORY" ]] || { echo "Skip: fork PRs cannot use M0 automerge."; exit 0; }
+          [[ "$author" == "$TRUSTED_PR_AUTHOR" ]] || { echo "Skip: PR author is not trusted."; exit 0; }
+          [[ "$draft" == "false" ]] || { echo "Skip: draft PR."; exit 0; }
+          [[ "$head_sha" == "$RUN_HEAD_SHA" ]] || { echo "Skip: tested SHA no longer matches PR head."; exit 0; }
+          grep -Fxq "$M0_AUTOMERGE_LABEL" <<<"$labels" || { echo "Skip: no explicit M0 automerge label."; exit 0; }
 
-          [[ "$BASE_REF" == "main" ]] || { echo "Skip: base is not main."; exit 0; }
-          [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" ]] || { echo "Skip: fork PRs never auto-merge."; exit 0; }
-          [[ "$AUTHOR" == "$TRUSTED_PR_AUTHOR" ]] || { echo "Skip: PR author is not trusted."; exit 0; }
-          [[ "$DRAFT" == "false" ]] || { echo "Skip: draft PR."; exit 0; }
-          [[ "$HEAD_SHA" == "$RUN_HEAD_SHA" ]] || { echo "Skip: tested SHA no longer matches PR head."; exit 0; }
-
-          CHANGED_FILES="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
-          if grep -Eq '^\.github/workflows/' <<<"$CHANGED_FILES"; then
-            echo "Skip: workflow-governance changes require a separate trusted controller merge."
+          changed_files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
+          [[ -n "$changed_files" ]]
+          if grep -Ev '^(docs/|tests/|.*\.md$)' <<<"$changed_files"; then
+            echo "Skip: M0 automerge is limited to docs and tests."
             exit 0
           fi
 
-          CURRENT_MAIN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          if [[ "$BASE_SHA" != "$CURRENT_MAIN_SHA" ]]; then
-            MAIN_CHANGED_FILES="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${CURRENT_MAIN_SHA}" --jq '.files[].filename')"
+          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$base_sha" == "$current_main_sha" ]] || {
+            echo "Skip: M0 candidate must be tested on the current main base."
+            exit 0
+          }
 
-            NEED_FRESH_BASE=false
-            OVERLAP="$(comm -12 \
-              <(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d' | sort -u) \
-              <(printf '%s\n' "$MAIN_CHANGED_FILES" | sed '/^$/d' | sort -u) || true)"
-            if [[ -n "$OVERLAP" ]]; then
-              NEED_FRESH_BASE=true
-              echo "PR overlaps files changed on main since its base:"
-              printf '%s\n' "$OVERLAP"
-            fi
-
-            CORE_RE='^(deploy/|shared/|requirements[^/]*$|pyproject\.toml$|front/package(-lock)?\.json$)'
-            GOVERNANCE_RE='^(AGENTS\.md$|CONTRIBUTING\.md$|\.github/|docs/EVOLUTION_PROGRAM\.md$|docs/operations\.md$)'
-
-            if grep -Eq "$CORE_RE" <<<"$CHANGED_FILES"; then
-              NEED_FRESH_BASE=true
-              echo "PR changes shared core/deployment authority; any main advance requires integration on a fresh base."
-            elif grep -Eq "$GOVERNANCE_RE" <<<"$CHANGED_FILES" && \
-                 grep -Eq "${CORE_RE}|${GOVERNANCE_RE}" <<<"$MAIN_CHANGED_FILES"; then
-              NEED_FRESH_BASE=true
-              echo "Governance PR and main both changed governance/core authority since the frozen base."
-            fi
-
-            if [[ "$NEED_FRESH_BASE" == "true" ]]; then
-              gh api \
-                --method PUT \
-                "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/update-branch" \
-                -f expected_head_sha="$HEAD_SHA"
-              echo "Branch update requested; CI must rerun on the refreshed head."
-              exit 0
-            fi
-
-            echo "Main advanced only through disjoint authority domains; preserve parallelism and merge the tested PR head."
-          fi
-
-          MERGE_JSON="$(gh api \
+          merge_json="$(gh api \
             --method PUT \
             "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge" \
             -f merge_method=squash \
-            -f sha="$HEAD_SHA")"
-          MERGED="$(jq -r '.merged // false' <<<"$MERGE_JSON")"
-          MERGE_SHA="$(jq -r '.sha // empty' <<<"$MERGE_JSON")"
-          [[ "$MERGED" == "true" ]]
-          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            -f sha="$head_sha")"
+          merge_sha="$(jq -r '.sha // empty' <<<"$merge_json")"
+          [[ "$(jq -r '.merged // false' <<<"$merge_json")" == "true" ]]
+          [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]
 
-          # A merge performed with GITHUB_TOKEN does not create a follow-up
-          # push workflow run. workflow_dispatch is an explicit GitHub-supported
-          # exception, so dispatch the exact new main SHA for post-merge tests,
-          # release packaging and (when enabled) deployment.
+          # A GITHUB_TOKEN merge does not emit a push workflow run. Exact-main
+          # validation is dispatched for the merge SHA, but deployment remains
+          # impossible unless the Controller later sends controller-accepted-deploy.
           gh api \
             --method POST \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/dispatches" \
             -f ref=main \
-            -f "inputs[expected_sha]=$MERGE_SHA"
-          echo "Dispatched exact-main validation for $MERGE_SHA"
+            -f "inputs[expected_sha]=$merge_sha"
+          echo "Merged eligible M0 PR #${PR_NUMBER}; dispatched exact-main validation for ${merge_sha}."

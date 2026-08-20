@@ -1,11 +1,9 @@
 name: Deploy TradingAgent Production
 
 on:
-  workflow_run:
-    workflows:
-      - TradingAgent Tests
+  repository_dispatch:
     types:
-      - completed
+      - controller-accepted-deploy
 
 permissions:
   contents: read
@@ -18,9 +16,8 @@ concurrency:
 jobs:
   deploy:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
-      github.event.workflow_run.head_branch == 'main' &&
+      github.event.action == 'controller-accepted-deploy' &&
+      github.event.sender.login == 'NicholasHan1226' &&
       vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -29,9 +26,25 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
-      DEPLOY_RUN_ID: ${{ github.event.workflow_run.id }}
+      DEPLOY_SHA: ${{ github.event.client_payload.sha }}
+      DEPLOY_RUN_ID: ${{ github.event.client_payload.test_run_id }}
 
     steps:
+      - name: Validate Controller-accepted main test run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_RUN_ID" =~ ^[0-9]+$ ]]
+
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}")"
+          [[ "$(jq -r '.name' <<<"$run_json")" == "TradingAgent Tests" ]]
+          [[ "$(jq -r '.conclusion' <<<"$run_json")" == "success" ]]
+          [[ "$(jq -r '.head_branch' <<<"$run_json")" == "main" ]]
+          [[ "$(jq -r '.event' <<<"$run_json")" == "push" ]]
+          [[ "$(jq -r '.head_sha' <<<"$run_json")" == "$DEPLOY_SHA" ]]
+
       - name: Discover tested release identity
         id: source
         env:
@@ -47,6 +60,7 @@ jobs:
           artifact_name="${artifact_names[0]}"
           deploy_sha="${artifact_name#tradingagent-release-}"
           [[ "$deploy_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$deploy_sha" == "$DEPLOY_SHA" ]]
           printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           printf 'deploy_sha=%s\n' "$deploy_sha" >> "$GITHUB_OUTPUT"
           printf 'DEPLOY_SHA=%s\n' "$deploy_sha" >> "$GITHUB_ENV"
@@ -71,7 +85,7 @@ jobs:
         with:
           name: ${{ steps.source.outputs.artifact_name }}
           path: ${{ runner.temp }}/release-artifact
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ env.DEPLOY_RUN_ID }}
           github-token: ${{ github.token }}
 
       - name: Verify tested release artifact
