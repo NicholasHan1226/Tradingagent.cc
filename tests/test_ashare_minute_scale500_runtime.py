@@ -910,7 +910,7 @@ def test_authentication_failure_projects_redacted_reason_and_preserves_rollback(
     rollback_service = (
         systemd_root / "tradingagent-ashare-minute-scale500-rollback.service"
     ).read_text(encoding="utf-8")
-    assert "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" in (
+    assert "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" not in (
         paper_service
     )
     assert (
@@ -1318,11 +1318,20 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
             in service
         )
         assert (
-            "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" in service
+            "OnFailure=tradingagent-ashare-minute-scale500-rollback.service"
+            not in service
         )
         assert "broker" not in service.lower()
 
-    assert "09:18:00" in session_timer
+    session_triggers = tuple(
+        line for line in session_timer.splitlines() if line.startswith("OnCalendar=")
+    )
+    assert session_triggers == (
+        "OnCalendar=Mon..Fri *-*-* 09:18:00",
+        "OnCalendar=Mon..Fri *-*-* 09:24:00",
+        "OnCalendar=Mon..Fri *-*-* 09:30:00",
+        "OnCalendar=Mon..Fri *-*-* 09:36:00",
+    )
     triggers = tuple(
         line for line in paper_timer.splitlines() if line.startswith("OnCalendar=")
     )

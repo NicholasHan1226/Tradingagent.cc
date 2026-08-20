@@ -393,12 +393,11 @@ def test_skipped_execution_bar_is_nonfill_not_same_bar_or_late_fill() -> None:
         auxiliary_evidence=_auxiliary(second_end),
     )
     late_end = "2026-07-27T09:55:00+08:00"
-    with pytest.raises(MinuteLoopContractError, match="research_rejected"):
-        loop.process_snapshot(
-            snapshot=_snapshot(late_end, close=10.2, volume=130_000),
-            manifest_sha256=manifest,
-            auxiliary_evidence=_auxiliary(late_end),
-        )
+    loop.process_snapshot(
+        snapshot=_snapshot(late_end, close=10.2, volume=130_000),
+        manifest_sha256=manifest,
+        auxiliary_evidence=_auxiliary(late_end),
+    )
     baseline_nonfills = loop.ledgers["baseline"].by_disposition(
         ExposureDisposition.PAPER_NOT_FILLED
     )

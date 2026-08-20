@@ -52,6 +52,15 @@ MINUTE_DATASET_ID = "cn.dataset.rt_min"
 GATE_SCHEMA = "tradingagent.ashare.scale500-acceptance.v1"
 PARTIAL_SHADOW_SCHEMA = "tradingagent.ashare.scale500-partial-shadow.v1"
 GATE_DIRECTORY = ".scale500-gates"
+_ROLLING_RETRYABLE_PREFIXES = (
+    "minute_metadata_",
+    "minute_evidence_",
+    "minute_snapshot_",
+    "minute_query_",
+    "minute_lineage_",
+    "minute_fanout_",
+    "minute_paper_",
+)
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REASON_PATTERN = re.compile(r"^[a-z0-9_.:-]+$")
 
@@ -565,6 +574,23 @@ def _gate_path(scale_root: Path, trading_date: str) -> Path:
     return scale_root / GATE_DIRECTORY / f"{trading_date.replace('-', '')}.json"
 
 
+def _quarantine_incompatible_gate(path: Path) -> Path:
+    """Preserve an old partition gate without blocking a fresh session init."""
+
+    candidate = path.with_name(f"{path.stem}.stale{path.suffix}")
+    suffix = 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem}.stale-{suffix}{path.suffix}")
+        suffix += 1
+    try:
+        os.replace(path, candidate)
+    except OSError as exc:
+        raise MinuteScale500RuntimeError(
+            "minute_scale500_stale_gate_quarantine_failed"
+        ) from exc
+    return candidate
+
+
 def _atomic_write_json(path: Path, value: Mapping[str, object]) -> None:
     encoded = (
         json.dumps(
@@ -734,6 +760,12 @@ def _reason_code(exc: BaseException) -> str:
     return f"minute_scale500_unclassified_{type(exc).__name__.lower()}"
 
 
+def _rolling_retryable_failure(reason: str) -> bool:
+    """Keep transient data/readiness failures retryable within the same day."""
+
+    return reason.startswith(_ROLLING_RETRYABLE_PREFIXES)
+
+
 def _select_rollback(
     *,
     scale_root: Path,
@@ -759,6 +791,8 @@ def _select_rollback(
             trading_date=trading_date,
             rollback_root=rollback_root,
             universe_sha256=universe_sha256,
+            expected_universe_count=expected_universe_count,
+            selected_mode=selected_mode,
         )
     gate.update(
         {
@@ -964,14 +998,29 @@ def initialize_scale500_session(
         )
         gate_path = _gate_path(scale, trading_date)
         if gate_path.exists():
-            gate = _load_gate(
-                gate_path,
-                trading_date=trading_date,
-                rollback_root=rollback,
-                universe_sha256=effective_universe_sha256,
-                expected_universe_count=expected_count,
-                selected_mode=mode,
-            )
+            try:
+                gate = _load_gate(
+                    gate_path,
+                    trading_date=trading_date,
+                    rollback_root=rollback,
+                    universe_sha256=effective_universe_sha256,
+                    expected_universe_count=expected_count,
+                    selected_mode=mode,
+                )
+            except MinuteScale500RuntimeError:
+                # Initialization has not created state-bundle yet.  A gate
+                # from an older source/effective partition is historical
+                # evidence, not a reason to block today's fresh partition.
+                if (scale / trading_date.replace("-", "") / "state-bundle.json").exists():
+                    raise
+                _quarantine_incompatible_gate(gate_path)
+                gate = _new_gate(
+                    trading_date=trading_date,
+                    rollback_root=rollback,
+                    universe_sha256=effective_universe_sha256,
+                    expected_universe_count=expected_count,
+                    selected_mode=mode,
+                )
             if gate["status"] == "fallback30_selected":
                 raise MinuteScale500RuntimeError(
                     "minute_scale500_fallback_already_selected"
@@ -987,15 +1036,6 @@ def initialize_scale500_session(
             _atomic_write_json(gate_path, gate)
     except Exception as exc:
         reason = _reason_code(exc)
-        _select_rollback(
-            scale_root=scale,
-            trading_date=trading_date,
-            rollback_root=rollback,
-            universe_sha256=effective_universe_sha256,
-            reason=reason,
-            expected_universe_count=expected_count,
-            selected_mode=mode,
-        )
         raise MinuteScale500RuntimeError(reason) from exc
     return {
         **dict(result),
@@ -1016,12 +1056,40 @@ def _validate_runtime_receipt(
     expected_bar_end: str,
     allow_late_start: bool,
     expected_row_count: int = EXPECTED_UNIVERSE_COUNT,
+    allow_partial: bool = False,
+    expected_symbols: frozenset[str] | None = None,
 ) -> bool:
     if result.get("status") != "pass":
         raise MinuteScale500RuntimeError("minute_scale500_runtime_not_pass")
     if result.get("bar_end") != expected_bar_end:
         raise MinuteScale500RuntimeError("minute_scale500_bar_end_mismatch")
-    if result.get("row_count") != expected_row_count:
+    row_count = result.get("row_count")
+    if isinstance(row_count, bool) or not isinstance(row_count, int):
+        raise MinuteScale500RuntimeError("minute_scale500_row_count_mismatch")
+    if allow_partial and result.get("coverage_status") == "partial":
+        accepted = _strict_symbols(
+            result.get("accepted_symbols"),
+            "minute_scale500_partial_observation_invalid",
+        )
+        missing = _strict_symbols(
+            result.get("missing_symbols"),
+            "minute_scale500_partial_observation_invalid",
+        )
+        if (
+            expected_symbols is None
+            or not accepted
+            or not set(accepted) <= expected_symbols
+            or set(accepted) & set(missing)
+            or set(accepted) | set(missing) != expected_symbols
+            or row_count != len(accepted)
+            or result.get("requested_count") != expected_row_count
+            or result.get("accepted_count") != len(accepted)
+            or result.get("missing_count") != len(missing)
+        ):
+            raise MinuteScale500RuntimeError(
+                "minute_scale500_partial_observation_invalid"
+            )
+    elif row_count != expected_row_count:
         raise MinuteScale500RuntimeError("minute_scale500_row_count_mismatch")
     if result.get("audit_rejections") != 0:
         raise MinuteScale500RuntimeError("minute_scale500_audit_rejections")
@@ -1425,6 +1493,8 @@ def run_scale500_once(
             expected_bar_end=expected_bar_end,
             allow_late_start=allow_late_start,
             expected_row_count=expected_count,
+            allow_partial=rolling_eligible,
+            expected_symbols=expected_symbols,
         )
         validated = list(gate["validated_bar_ends"])
         if late_start and (gate["status"] != "pending_two_live_snapshots" or validated):
@@ -1466,16 +1536,67 @@ def run_scale500_once(
             _atomic_write_json(gate_path, gate)
     except Exception as exc:
         reason = _reason_code(exc)
-        _select_rollback(
-            scale_root=scale,
-            trading_date=trading_date,
-            rollback_root=rollback,
-            universe_sha256=effective_universe_sha256,
-            reason=reason,
-            expected_universe_count=expected_count,
-            selected_mode=mode,
-        )
+        if not (rolling_eligible and _rolling_retryable_failure(reason)):
+            _select_rollback(
+                scale_root=scale,
+                trading_date=trading_date,
+                rollback_root=rollback,
+                universe_sha256=effective_universe_sha256,
+                reason=reason,
+                expected_universe_count=expected_count,
+                selected_mode=mode,
+            )
         raise MinuteScale500RuntimeError(reason) from exc
+    day_root = scale / trading_date.replace("-", "")
+    manifest_value = _load_json(
+        day_root / "minute-manifest.json", "minute_scale500_manifest_invalid"
+    )
+    pending_listings = (
+        manifest_value.get("pending_listings", [])
+        if isinstance(manifest_value, Mapping)
+        else []
+    )
+    daily_data_excluded = (
+        manifest_value.get("daily_data_excluded", [])
+        if isinstance(manifest_value, Mapping)
+        else []
+    )
+    accepted_symbols = result.get("accepted_symbols")
+    missing_symbols = result.get("missing_symbols")
+    coverage = {
+        "schema": "tradingagent.ashare.minute_coverage_receipt.v1",
+        "trading_date": trading_date,
+        "bar_end": expected_bar_end,
+        "selected_mode": mode,
+        "coverage_status": result.get("coverage_status", "complete"),
+        "source_count": len(universe_rows),
+        "active_count": expected_count,
+        "accepted_count": result.get("row_count"),
+        "pending_count": len(pending_listings)
+        if isinstance(pending_listings, list)
+        else 0,
+        "excluded_count": len(daily_data_excluded)
+        if isinstance(daily_data_excluded, list)
+        else 0,
+        "source_universe_sha256": source_universe_sha256,
+        "universe_sha256": effective_universe_sha256,
+        "accepted_symbols": accepted_symbols
+        if isinstance(accepted_symbols, list)
+        else None,
+        "missing_symbols": missing_symbols
+        if isinstance(missing_symbols, list)
+        else None,
+        "capital_layer": "simulated",
+        "account_type": "simulated",
+        "execution_authority": False,
+        "real_trading_enabled": False,
+    }
+    coverage_path = (
+        day_root
+        / "coverage-receipts"
+        / f"{target.strftime('%H%M%S')}.json"
+    )
+    _atomic_write_json(coverage_path, coverage)
     return {
         **dict(result),
         "scale500_acceptance_status": gate["status"],
@@ -1487,6 +1608,7 @@ def run_scale500_once(
         "execution_eligible": False,
         "training_eligible": False,
         "promotion_authorized": False,
+        "coverage_receipt": str(coverage_path),
         **_partial_session_projection(gate),
     }
 
