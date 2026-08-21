@@ -763,12 +763,17 @@ cohort，也不会打开 learning、promotion 或 execution。
 `GET /v1/catalog` 与 `POST /v1/query`。
 
 服务器停机或上游事故导致当日09:35首槽已错过时，不允许把事后数据回填成实时
-模拟。仅可人工运行一次 `Ashare.minute_auto_runner --allow-late-start`，从当时
-最新、已完成且证据合格的延迟K线建立当日状态。该回执必须包含
-`late_start=true`、实际跳过槽位数、`full_session_complete=false` 与
-`learning_eligible=false`；systemd service/timer不携带该开关。首个状态建立后，
-后续发生的日内缺口按同一分段恢复规则处理，不允许跨缺口结算 pending 或沿用旧滚动
-特征。该日可以积累工程和决策样本，但不能进入完整交易日、模型晋级或离线学习验收。
+模拟。对固定 3193 full-universe 路径，仍仅可人工运行一次
+`Ashare.minute_auto_runner --allow-late-start`，并从当时最新、已完成且证据合格的
+延迟K线建立当日状态；该路径必须有独立完整 500/500 canary。对
+`--rolling-eligible` 路径，如果当天 gate 仍为 pending、尚未创建 state bundle，且
+只是错过首槽或发生可重试事故，recurring paper timer 可以自动从当前完整 bar 建立
+新的 partial session，不需要把固定 3193 canary 错当成 rolling 3186 的门禁。两条路径
+都必须包含 `late_start=true`、实际跳过槽位数、`full_session_complete=false` 与
+`learning_eligible=false`，不回填、不补历史、不跨缺口结算 pending；后续完整分钟可
+继续 observation、反事实、盯市和对账积累，但该日不能进入完整交易日、模型晋级或离线
+学习验收。任何单股或当前 bar 的数据/身份/lineage 失败仍只隔离该股或该窗口，不能让
+其它已通过股票退出 rolling 模拟管道。
 
 #### 动态证券池：rolling-eligible 与 full-universe 声明分离
 

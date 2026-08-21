@@ -6,11 +6,12 @@ verifies one frozen 3193-symbol universe for a full-universe claim; the explicit
 listings pending without blocking other symbols. Both modes delegate all market
 reads to the existing formal TradingDatas catalog/query clients and normally
 require the first two accepted bars to be the adjacent 09:35 and 09:40 session
-observations. An explicitly armed, isolated late start may accept only the
-runner's exact current completed bar; it remains partial-session and permanently
-ineligible for learning. The selector never reads or writes the rollback-30 state
-root. A failure selects the rollback configuration and returns a stable reason
-code for systemd's rollback unit.
+observations. Rolling mode may additionally recover an unstarted day after a
+retryable incident by accepting only the current complete bar; it remains a
+partial session and permanently ineligible for learning. An explicitly armed,
+isolated late start remains a separate full-universe/manual path. The selector
+never reads or writes the rollback-30 state root. A failure selects the rollback
+configuration and returns a stable reason code for systemd's rollback unit.
 """
 
 from __future__ import annotations
@@ -61,6 +62,12 @@ _ROLLING_RETRYABLE_PREFIXES = (
     "minute_fanout_",
     "minute_paper_",
 )
+_ROLLING_RETRYABLE_EXACT = frozenset({
+    # A recovered rolling session may miss the opening slot before its first
+    # paper timer. It can restart from the next current complete bar without
+    # manufacturing historical observations.
+    "minute_auto_initial_bar_missing",
+})
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REASON_PATTERN = re.compile(r"^[a-z0-9_.:-]+$")
 
@@ -763,7 +770,7 @@ def _reason_code(exc: BaseException) -> str:
 def _rolling_retryable_failure(reason: str) -> bool:
     """Keep transient data/readiness failures retryable within the same day."""
 
-    return reason.startswith(_ROLLING_RETRYABLE_PREFIXES)
+    return reason.startswith(_ROLLING_RETRYABLE_PREFIXES) or reason in _ROLLING_RETRYABLE_EXACT
 
 
 def _select_rollback(
@@ -1436,6 +1443,17 @@ def run_scale500_once(
                 "promotion_authorized": False,
                 "real_trading_enabled": False,
             }
+        day_root = scale / trading_date.replace("-", "")
+        state_bundle = day_root / "state-bundle.json"
+        target_index = session_bar_ends(target.date()).index(target)
+        rolling_incident_recovery = (
+            rolling_eligible
+            and gate["status"] == "pending_two_live_snapshots"
+            and not gate["validated_bar_ends"]
+            and not state_bundle.exists()
+            and target_index > 0
+        )
+        effective_allow_late_start = allow_late_start or rolling_incident_recovery
         if allow_late_start:
             _validate_late_start_canary(
                 canary_receipt=canary_receipt,
@@ -1459,7 +1477,7 @@ def run_scale500_once(
             state_root=scale,
             token_file=token,
             now=now,
-            allow_late_start=allow_late_start,
+            allow_late_start=effective_allow_late_start,
             pin_universe_filter=True,
             partial_observation_minimum=(
                 None if rolling_eligible else partial_minimum
@@ -1538,7 +1556,7 @@ def run_scale500_once(
         late_start = _validate_runtime_receipt(
             result,
             expected_bar_end=expected_bar_end,
-            allow_late_start=allow_late_start,
+            allow_late_start=effective_allow_late_start,
             expected_row_count=expected_count,
             allow_partial=rolling_eligible,
             expected_symbols=expected_symbols,
@@ -1594,7 +1612,6 @@ def run_scale500_once(
                 selected_mode=mode,
             )
         raise MinuteScale500RuntimeError(reason) from exc
-    day_root = scale / trading_date.replace("-", "")
     manifest_value = _load_json(
         day_root / "minute-manifest.json", "minute_scale500_manifest_invalid"
     )
