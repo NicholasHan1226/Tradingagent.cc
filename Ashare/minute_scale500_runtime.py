@@ -879,6 +879,32 @@ def _validate_published_session(
         raise MinuteScale500RuntimeError("minute_scale500_reference_coverage_mismatch")
 
 
+def _published_rolling_partition(
+    *,
+    scale_root: Path,
+    trading_date: str,
+) -> tuple[str, frozenset[str]]:
+    """Bind rolling runtime identity to the session's published partition.
+
+    Initialization can remove symbols whose daily reference is unavailable.
+    Re-deriving the pre-query active partition here would resurrect those
+    symbols and make a valid gate look incompatible.
+    """
+
+    path = scale_root / trading_date.replace("-", "") / "universe.json"
+    raw = _load_json(path, "minute_scale500_session_inputs_missing")
+    if not isinstance(raw, list) or not raw:
+        raise MinuteScale500RuntimeError("minute_scale500_universe_invalid")
+    symbols: list[str] = []
+    for row in raw:
+        if not isinstance(row, Mapping) or not isinstance(row.get("symbol"), str):
+            raise MinuteScale500RuntimeError("minute_scale500_universe_invalid")
+        symbols.append(row["symbol"])
+    if len(symbols) != len(set(symbols)):
+        raise MinuteScale500RuntimeError("minute_scale500_universe_duplicate")
+    return hashlib.sha256(_canonical_json(raw)).hexdigest(), frozenset(symbols)
+
+
 def initialize_scale500_session(
     *,
     scale_state_root: Path | str,
@@ -1342,14 +1368,11 @@ def run_scale500_once(
     trading_date = target.astimezone(SHANGHAI).date().isoformat()
     expected_target = target.strftime("%Y-%m-%d %H:%M:%S")
     if rolling_eligible:
-        effective_rows, effective_universe_sha256 = _rolling_effective_universe(
-            universe_path,
-            trade_date=trading_date,
+        effective_universe_sha256, expected_symbols = _published_rolling_partition(
+            scale_root=scale,
+            trading_date=trading_date,
         )
-        expected_count = len(effective_rows)
-        expected_symbols = frozenset(
-            str(row["symbol"]) for row in effective_rows
-        )
+        expected_count = len(expected_symbols)
     else:
         effective_universe_sha256 = source_universe_sha256
         expected_count = len(universe_rows)
