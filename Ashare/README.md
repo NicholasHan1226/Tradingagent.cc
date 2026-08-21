@@ -580,11 +580,11 @@ has a row budget exactly equal to its requested symbol set. Returned
 duplicate, over-budget or non-terminating cursor chains, replay-changing,
 catalog-drifting, 413/429, timeout, stale or degraded evidence fails closed.
 Large delayed-paper minute fanout uses at most four concurrent bounded shard
-workers. A request-level failure quarantines only that shard and is exposed in
-`fanout_failures`/`missing_symbols`; successful shards retain their independent
-first/replay evidence. Pagination, contract, catalog, replay or metadata
-failures still fail closed for the whole snapshot. There is no provider
-fallback or direct database read.
+workers. A request-level HTTP/transport failure quarantines only that shard and
+is exposed in `fanout_failures`/`missing_symbols`; successful shards retain
+their independent first/replay evidence. Pagination, contract, catalog, replay
+or metadata failures still fail closed for the whole snapshot. There is no
+provider fallback or direct database read.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every actual bar must

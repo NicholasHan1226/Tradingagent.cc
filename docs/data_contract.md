@@ -934,7 +934,7 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 `accepted_symbols`/`missing_symbols`。`accepted_count` 可以小于 `active_count`，只表示
 本窗口已进入模拟闭环的股票数；缺失股票下一窗口重试，不能静默替换身份，也不能把
 coverage receipt 解释为 execution authority。
-大分片请求级失败还必须输出 `fanout_failures`，其中只允许包含 shard 序号、股票数、
+大分片 HTTP/transport 请求级失败还必须输出 `fanout_failures`，其中只允许包含 shard 序号、股票数、
 稳定 reason code、failure stage 和 bounded failure class；它只能解释对应
 `missing_symbols`，不能被用来伪造已接受股票的 receipt、lineage 或 same-observation
 证据。
