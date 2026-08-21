@@ -450,7 +450,10 @@ def _scaled_minute_profile(
         or catalog_page_size <= 0
     ):
         raise MinuteSessionInitializerError("minute_session_profile_scale_invalid")
-    page_limit = min(symbol_count, catalog_page_size, 500)
+    # The V1 filter contract caps ``in`` values at 100. Minute consumers
+    # therefore fan out larger reviewed universes into 100-symbol shards;
+    # keeping the manifest bound aligned prevents a 413 request body.
+    page_limit = min(symbol_count, catalog_page_size, 100)
     profile = dict(template_profile)
     profile["page_limit"] = page_limit
     profile["max_rows"] = symbol_count
@@ -658,14 +661,29 @@ def _publish_day(
         if not target_root.is_dir() or (target_root / "state-bundle.json").exists():
             raise MinuteSessionInitializerError("minute_session_target_already_started")
         for name, payload in payloads.items():
+            path = target_root / name
             try:
-                existing = (target_root / name).read_bytes()
+                existing = path.read_bytes()
             except OSError as exc:
                 raise MinuteSessionInitializerError(
                     "minute_session_existing_inputs_invalid"
                 ) from exc
             expected = (_canonical_json(payload) + "\n").encode("utf-8")
             if existing != expected:
+                if name == "minute-manifest.json" and _pagination_only_manifest_change(
+                    existing, payload
+                ):
+                    temporary = target_root / f".{name}.{os.getpid()}.upgrade"
+                    try:
+                        _atomic_write(temporary, payload)
+                        os.replace(temporary, path)
+                    except OSError as exc:
+                        raise MinuteSessionInitializerError(
+                            "minute_session_existing_inputs_upgrade_failed"
+                        ) from exc
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                    continue
                 raise MinuteSessionInitializerError(
                     "minute_session_existing_inputs_conflict"
                 )
@@ -691,6 +709,35 @@ def _publish_day(
     except OSError as exc:
         raise MinuteSessionInitializerError("minute_session_publish_failed") from exc
     return False
+
+
+def _pagination_only_manifest_change(
+    existing_bytes: bytes,
+    expected: Mapping[str, Any],
+) -> bool:
+    """Allow an unstarted day to adopt a corrected bounded query profile."""
+
+    try:
+        existing = json.loads(existing_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(existing, Mapping):
+        return False
+    if set(existing) != set(expected) or not isinstance(existing.get("profile"), Mapping):
+        return False
+    expected_profile = expected.get("profile")
+    if not isinstance(expected_profile, Mapping):
+        return False
+    allowed = frozenset({"max_pages", "max_rows", "page_limit", "consumer_profile_sha256"})
+    for key in expected:
+        if key != "profile" and existing.get(key) != expected.get(key):
+            return False
+    if set(existing["profile"]) != set(expected_profile):
+        return False
+    return all(
+        key in allowed or existing["profile"].get(key) == expected_profile.get(key)
+        for key in expected_profile
+    )
 
 
 def initialize_minute_session(

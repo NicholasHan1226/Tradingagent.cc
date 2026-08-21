@@ -67,6 +67,9 @@ _ROLLING_RETRYABLE_EXACT = frozenset({
     # paper timer. It can restart from the next current complete bar without
     # manufacturing historical observations.
     "minute_auto_initial_bar_missing",
+    # The authenticated query layer exposes transient/provider request
+    # failures without leaking HTTP details; rolling must retry the next bar.
+    "minute_tradingdatas_request_failed",
 })
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REASON_PATTERN = re.compile(r"^[a-z0-9_.:-]+$")
