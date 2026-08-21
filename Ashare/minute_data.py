@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import threading
+from time import sleep as _sleep
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
@@ -55,6 +56,10 @@ FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
 MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD = 100
 MAX_MINUTE_FANOUT_WORKERS = 4
+# TradingDatas can briefly return a retryable response while its provider
+# collector holds the SQLite authority lock. Keep this bounded so a stale
+# observation cannot be promoted by waiting indefinitely.
+MINUTE_QUERY_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0, 20.0)
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -136,6 +141,50 @@ def _marked_request_failure(error: BaseException, *, phase: str) -> MinuteDataCo
         failure_stage=stage,
         failure_class=_bounded_failure_class(error),
     )
+
+
+def _is_retryable_minute_query_error(error: BaseException) -> bool:
+    """Return whether one failed TD query may be retried safely.
+
+    Authentication, contract, pagination, and freshness failures remain
+    fail-closed. Only transport timeouts and the API's explicitly retryable
+    capacity/lock statuses are transient here.
+    """
+
+    if isinstance(error, (TimeoutError, OSError)):
+        return True
+    if isinstance(error, HTTPStatusError):
+        message = str(error)
+        return message.endswith("HTTP 429") or message.endswith("HTTP 503")
+    return False
+
+
+def _collect_minute_query_pages_with_retry(
+    *,
+    client: SharedSignalsV1Client,
+    request: QueryRequest,
+    identity_fields: tuple[str, ...],
+    max_pages: int,
+    max_rows: int,
+) -> PagedQueryRun:
+    """Read one query with bounded retry for transient TD API failures."""
+
+    delays = (0.0, *MINUTE_QUERY_RETRY_DELAYS_SECONDS)
+    for attempt, delay in enumerate(delays):
+        if delay:
+            _sleep(delay)
+        try:
+            return collect_query_pages(
+                client=client,
+                request=request,
+                identity_fields=identity_fields,
+                max_pages=max_pages,
+                max_rows=max_rows,
+            )
+        except (SharedSignalsV1Error, OSError) as exc:
+            if attempt == len(delays) - 1 or not _is_retryable_minute_query_error(exc):
+                raise
+    raise AssertionError("minute query retry loop exhausted without a result")
 
 
 def _delayed_paper_latency_limit() -> timedelta:
@@ -1598,14 +1647,14 @@ class TradingDatasMinuteMarketDataPort:
                 include_receipt_proofs=False,
             )
             try:
-                first = collect_query_pages(
+                first = _collect_minute_query_pages_with_retry(
                     client=shard_client,
                     request=request,
                     identity_fields=profile.identity_fields,
                     max_pages=shard_pages,
                     max_rows=len(symbols),
                 )
-                replay = collect_query_pages(
+                replay = _collect_minute_query_pages_with_retry(
                     client=shard_client,
                     request=request,
                     identity_fields=profile.identity_fields,
@@ -1804,14 +1853,14 @@ class TradingDatasMinuteMarketDataPort:
                 include_receipt_proofs=include_receipt_proofs,
             )
             try:
-                first = collect_query_pages(
+                first = _collect_minute_query_pages_with_retry(
                     client=self._client,
                     request=request,
                     identity_fields=profile.identity_fields,
                     max_pages=profile.max_pages,
                     max_rows=profile.max_rows,
                 )
-                replay = collect_query_pages(
+                replay = _collect_minute_query_pages_with_retry(
                     client=self._client,
                     request=request,
                     identity_fields=profile.identity_fields,
