@@ -1047,6 +1047,7 @@ def initialize_scale500_session(
                     expected_universe_count=expected_count,
                     selected_mode=mode,
                 )
+                _atomic_write_json(gate_path, gate)
             if gate["status"] == "fallback30_selected":
                 raise MinuteScale500RuntimeError(
                     "minute_scale500_fallback_already_selected"
