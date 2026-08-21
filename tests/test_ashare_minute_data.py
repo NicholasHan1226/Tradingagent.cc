@@ -272,6 +272,64 @@ def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> No
     )
 
 
+def test_minute_port_retains_successful_shards_when_one_request_fails() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class PartialShardTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            if requested and requested[0] == "000101.SZ":
+                return HTTPResponse(
+                    503,
+                    {"error": {"code": "service_unavailable"}},
+                )
+            rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"partial-shard-{len(self.calls)}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = PartialShardTransport(catalog_row=catalog_row)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    audit = MinuteEvidenceAuditLedger()
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=audit,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 100
+    assert snapshot.same_observation is True
+    assert snapshot.fanout_failures == (
+        {
+            "shard_index": 1,
+            "symbol_count": 1,
+            "reason_code": "minute_tradingdatas_request_failed",
+            "failure_stage": "query_request",
+            "failure_class": "HTTPStatusError",
+        },
+    )
+    assert audit.records() == ()
+
+
 @pytest.mark.parametrize(
     "catalog_identity,consumer_identity,reason",
     [

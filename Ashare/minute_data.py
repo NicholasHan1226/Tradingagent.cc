@@ -11,6 +11,7 @@ trading authority exists here.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import math
@@ -52,6 +53,7 @@ MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
 MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD = 100
+MAX_MINUTE_FANOUT_WORKERS = 4
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -890,6 +892,7 @@ class MinuteBarSnapshot:
     replay_semantic_sha256: str
     same_observation: bool
     validated_proof_summary: MinuteValidatedProofSummary | None = None
+    fanout_failures: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.profile, MinuteDatasetProfile):
@@ -940,6 +943,26 @@ class MinuteBarSnapshot:
             self.validated_proof_summary, MinuteValidatedProofSummary
         ):
             raise MinuteDataContractError("minute_snapshot_proof_summary_invalid")
+        if not isinstance(self.fanout_failures, tuple):
+            raise MinuteDataContractError("minute_snapshot_fanout_failures_invalid")
+        for failure in self.fanout_failures:
+            if not isinstance(failure, Mapping):
+                raise MinuteDataContractError(
+                    "minute_snapshot_fanout_failures_invalid"
+                )
+            if (
+                not isinstance(failure.get("shard_index"), int)
+                or isinstance(failure.get("shard_index"), bool)
+                or failure.get("shard_index") < 0
+                or not isinstance(failure.get("symbol_count"), int)
+                or isinstance(failure.get("symbol_count"), bool)
+                or failure.get("symbol_count") <= 0
+                or not isinstance(failure.get("reason_code"), str)
+                or not failure.get("reason_code")
+            ):
+                raise MinuteDataContractError(
+                    "minute_snapshot_fanout_failures_invalid"
+                )
 
     @property
     def sha256(self) -> str:
@@ -957,6 +980,7 @@ class MinuteBarSnapshot:
                 "pagination_trace_sha256": self.pagination_trace_sha256,
                 "semantic_sha256": self.first_semantic_sha256,
                 "same_observation": True,
+                "fanout_failures": list(self.fanout_failures),
             }
         )
 
@@ -1514,13 +1538,20 @@ class TradingDatasMinuteMarketDataPort:
         evidence_use: MinuteEvidenceUse,
         envelope_validator: Callable[[Any], object] | None,
     ) -> MinuteBarSnapshot:
-        """Read a large exact-slot universe as bounded replayed shards."""
+        """Read bounded shards in parallel and retain successful subsets."""
 
         if envelope_validator is not None:
             raise MinuteDataContractError("minute_fanout_receipt_proof_unsupported")
-        first_runs: list[PagedQueryRun] = []
-        replay_runs: list[PagedQueryRun] = []
-        for symbols in shards:
+
+        def query_shard(
+            index: int,
+            symbols: tuple[str, ...],
+        ) -> tuple[
+            int,
+            PagedQueryRun | None,
+            PagedQueryRun | None,
+            dict[str, object] | None,
+        ]:
             shard_filters = dict(filters)
             shard_filters[profile.symbol_field] = {"in": list(symbols)}
             page_limit = min(profile.page_limit, len(symbols))
@@ -1535,31 +1566,70 @@ class TradingDatasMinuteMarketDataPort:
                 include_receipt_proofs=False,
             )
             try:
-                first_runs.append(
-                    collect_query_pages(
-                        client=self._client,
-                        request=request,
-                        identity_fields=profile.identity_fields,
-                        max_pages=shard_pages,
-                        max_rows=len(symbols),
-                    )
+                first = collect_query_pages(
+                    client=self._client,
+                    request=request,
+                    identity_fields=profile.identity_fields,
+                    max_pages=shard_pages,
+                    max_rows=len(symbols),
                 )
-                replay_runs.append(
-                    collect_query_pages(
-                        client=self._client,
-                        request=request,
-                        identity_fields=profile.identity_fields,
-                        max_pages=shard_pages,
-                        max_rows=len(symbols),
-                    )
+                replay = collect_query_pages(
+                    client=self._client,
+                    request=request,
+                    identity_fields=profile.identity_fields,
+                    max_pages=shard_pages,
+                    max_rows=len(symbols),
                 )
+                return index, first, replay, None
             except PaginationContractError:
                 raise
             except SharedSignalsV1Error as exc:
-                raise _marked_request_failure(exc, phase="query") from exc
+                marked = _marked_request_failure(exc, phase="query")
+                return index, None, None, {
+                    "shard_index": index,
+                    "symbol_count": len(symbols),
+                    "reason_code": marked.reason_code,
+                    "failure_stage": marked.failure_stage,
+                    "failure_class": marked.failure_class,
+                }
+
+        results: dict[
+            int,
+            tuple[
+                PagedQueryRun | None,
+                PagedQueryRun | None,
+                dict[str, object] | None,
+            ],
+        ] = {}
+        with ThreadPoolExecutor(
+            max_workers=min(MAX_MINUTE_FANOUT_WORKERS, len(shards))
+        ) as executor:
+            futures = {
+                executor.submit(query_shard, index, symbols): index
+                for index, symbols in enumerate(shards)
+            }
+            for future in as_completed(futures):
+                index, first, replay, failure = future.result()
+                results[index] = (first, replay, failure)
+
+        first_runs: list[PagedQueryRun] = []
+        replay_runs: list[PagedQueryRun] = []
+        fanout_failures: list[Mapping[str, object]] = []
+        for index in range(len(shards)):
+            first, replay, failure = results[index]
+            if failure is not None:
+                fanout_failures.append(failure)
+                continue
+            if first is None or replay is None:
+                raise MinuteDataContractError("minute_fanout_replay_invalid")
+            first_runs.append(first)
+            replay_runs.append(replay)
 
         if len(first_runs) != len(replay_runs) or not first_runs:
-            raise MinuteDataContractError("minute_fanout_replay_invalid")
+            failure = fanout_failures[0] if fanout_failures else {}
+            raise MinuteDataContractError(
+                str(failure.get("reason_code", "minute_fanout_replay_invalid"))
+            )
         versions = {
             run.envelope.catalog_version
             for run in (*first_runs, *replay_runs)
@@ -1619,6 +1689,7 @@ class TradingDatasMinuteMarketDataPort:
             first_semantic_sha256=aggregate_semantic,
             replay_semantic_sha256=_sha256(replay_semantics),
             same_observation=True,
+            fanout_failures=tuple(fanout_failures),
         )
 
     def load_snapshot(

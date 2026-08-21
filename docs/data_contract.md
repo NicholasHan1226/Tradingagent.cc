@@ -934,6 +934,10 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 `accepted_symbols`/`missing_symbols`。`accepted_count` 可以小于 `active_count`，只表示
 本窗口已进入模拟闭环的股票数；缺失股票下一窗口重试，不能静默替换身份，也不能把
 coverage receipt 解释为 execution authority。
+大分片请求级失败还必须输出 `fanout_failures`，其中只允许包含 shard 序号、股票数、
+稳定 reason code、failure stage 和 bounded failure class；它只能解释对应
+`missing_symbols`，不能被用来伪造已接受股票的 receipt、lineage 或 same-observation
+证据。
 - `GET /api/trading-copilot/event-timeline?symbol=<A股代码>` 只读取 `tradingagent.trading_copilot_event_timeline.v1` 与对应 `tradingagent.trading_copilot_event_timeline_receipt.v1` 的 server-local regular files。receipt 必须绑定原始 timeline SHA-256、相同 symbol、相同 generated/valid-until 字段和当前有效期；它的去重来源回执集合必须与 timeline events 的 `{sourceReceiptId, sourceReceiptSha256}` 集合精确相等。缺失、过期、软链接、篡改或不一致一律返回不可用；它不访问 provider、不生成情绪、候选、资金、订单或训练事实。空事件和 blocked dataset 只表达 coverage debt，不构成行情/舆情健康或推荐结论。
 - 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。正式投影还必须附带 `tradingagent.trading_copilot_stock_projection_receipt.v1` 独立回执、定型证据强度、数据/证据/模型/人工行动四层就绪度、A股交易约束，以及逐事件来源和内容回执。普通 signal confidence 不等于证据强度。演示数据不得冒充实时；无正式定型分析时不得自动形成人工计划。
 - Quant Core 与 TradingCopilot 的能力归属以 `TradingCopilot/contracts/shared_capability_boundary.v1.json` 为机器合同：共享项只能作为 `evidence_only` 只读投影；Quant专属资本/订单/样本/晋级与Copilot专属申报账户/持仓/人工意图禁止双向写入或身份转换。正式预测、Kronos、OOS与校准由 learning/research plane 统一产生，前端计算不得成为正式预测证据。
