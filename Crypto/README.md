@@ -488,7 +488,8 @@ receipt 守恒与零重复 fill 验收，再按可回退流程切换 unit。
 G5 health 与十币种 health watch 只负责输出告警/记录和数据质量信息，不是模拟盘上线的
 硬门禁；只有配置、凭证、写库或状态完整性错误仍可阻断运行。
 G5 acceptance 的 48 小时/90% 覆盖门禁只衡量 runtime maturity 及后续
-promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛。
+promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛；历史
+288 根连续 closed-5m 只衡量 runtime maturity，不替代当前模拟盘上线门禁。
 
 为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的
 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽
