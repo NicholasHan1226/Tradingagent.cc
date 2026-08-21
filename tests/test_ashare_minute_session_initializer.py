@@ -1193,6 +1193,37 @@ def test_initializer_upgrades_pagination_profile_before_state_bundle(
     assert upgraded["profile"]["page_limit"] != 500
 
 
+def test_initializer_refreshes_evidence_catalog_version_with_pagination_upgrade(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        transport_factory=_factory(FixtureTransport()),
+    )
+    manifest_path = tmp_path / "20260729" / "minute-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["observed_catalog_version"] = "v1-old-evidence"
+    manifest["profile"]["max_pages"] = 1
+    manifest["profile"]["page_limit"] = 500
+    manifest["profile"]["consumer_profile_sha256"] = "d" * 64
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        transport_factory=_factory(FixtureTransport()),
+    )
+
+    upgraded = json.loads(manifest_path.read_text())
+    assert result["reused"] is True
+    assert upgraded["observed_catalog_version"] == CATALOG_VERSION
+    assert upgraded["profile"]["max_pages"] == result["profile_max_pages"]
+
+
 def test_closed_day_is_noop_without_target_directory(tmp_path: Path) -> None:
     _template(tmp_path)
 

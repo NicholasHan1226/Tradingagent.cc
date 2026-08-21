@@ -148,3 +148,9 @@ rolling partial-session 修复部署后的 11:22 自然 bar 验证又捕获了�
 每个 shard 独立完成 catalog/query、分页、identity 和 replay 双读，再合并为一个
 当前 bar snapshot；任意 shard 失败只阻断该 bar/该 shard，已通过的股票不会被静默
 替换。这样扩大股票覆盖时，规模增长转化为可审计的分片数量，而不是扩大单次请求体。
+
+同一轮开盘恢复还暴露了另一个相邻边界：TradingDatas 的 catalog 版本是证据型元数据，
+可能在交易日内变化；它会派生新的 consumer digest，但不等于 Universe、字段合同或
+数据集指纹变化。只要当天仍未生成 state bundle，初始化现在允许刷新 catalog 证据、
+consumer digest 和分页摘要，并继续复用未启动日目录；真正的 Universe、数据集合同或
+已启动 state 发生变化仍保持冲突并 fail closed。
