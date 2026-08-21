@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+import Ashare.minute_data as minute_data_module
 from Ashare.minute_data import (
     MinuteDataContractError,
     MinuteDatasetProfile,
@@ -993,7 +994,10 @@ def test_catalog_http_failure_has_catalog_request_phase_and_bounded_class() -> N
     assert caught.value.failure_class == "HTTPStatusError"
 
 
-def test_query_http_failure_has_query_request_phase_not_catalog_phase() -> None:
+def test_query_http_failure_has_query_request_phase_not_catalog_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(minute_data_module, "_sleep", lambda _seconds: None)
     good_client = _client(_Transport())
     profile = _profile(good_client)
     client = _client(_Transport(query_status=503))
@@ -1008,6 +1012,29 @@ def test_query_http_failure_has_query_request_phase_not_catalog_phase() -> None:
     assert caught.value.reason_code == "minute_tradingdatas_request_failed"
     assert caught.value.failure_stage == "query_request"
     assert caught.value.failure_class == "HTTPStatusError"
+
+
+def test_query_retries_transient_api_failure_but_preserves_replay_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(minute_data_module, "_sleep", lambda _seconds: None)
+
+    class TransientQueryTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failures_remaining = 2
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "POST" and self.failures_remaining:
+                self.failures_remaining -= 1
+                return HTTPResponse(503, {"error": "temporary lock contention"})
+            return super().__call__(**kwargs)
+
+    snapshot, audit = _load(TransientQueryTransport())
+
+    assert snapshot.row_count == 2
+    assert snapshot.same_observation is True
+    assert audit.records() == ()
 
 
 def test_profile_is_frozen_from_active_catalog_and_query_uses_only_fixed_routes() -> (
