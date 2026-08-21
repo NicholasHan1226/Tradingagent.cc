@@ -1096,6 +1096,20 @@ def load_minute_snapshot(
         base_url=config.base_url,
     )
     client = SharedSignalsV1Client(config.client_config(), transport=transport)
+
+    def shard_client_factory() -> SharedSignalsV1Client:
+        """Build one single-flight client for each bounded fanout worker."""
+
+        shard_transport = transport_factory(
+            config.transport_id,
+            token_file=token_file,
+            base_url=config.base_url,
+        )
+        return SharedSignalsV1Client(
+            config.client_config(),
+            transport=shard_transport,
+        )
+
     profile = config.build_profile(client)
     audit = MinuteEvidenceAuditLedger()
     selected_bar_end = (
@@ -1113,7 +1127,10 @@ def load_minute_snapshot(
             requested_slot=selected_bar_end.strftime("%Y-%m-%d %H:%M:%S"),
             decision_as_of=decision_time,
         )
-    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+    snapshot = TradingDatasMinuteMarketDataPort(
+        client,
+        shard_client_factory=shard_client_factory,
+    ).load_snapshot(
         profile=profile,
         filters=_exact_slot_filters(
             config,

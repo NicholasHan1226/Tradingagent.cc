@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import math
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
@@ -1523,10 +1524,18 @@ def _minute_symbol_shards(
 class TradingDatasMinuteMarketDataPort:
     """Injected-client adapter for the fixed TradingDatas V1 data plane."""
 
-    def __init__(self, client: SharedSignalsV1Client) -> None:
+    def __init__(
+        self,
+        client: SharedSignalsV1Client,
+        *,
+        shard_client_factory: Callable[[], SharedSignalsV1Client] | None = None,
+    ) -> None:
         if not isinstance(client, SharedSignalsV1Client):
             raise TypeError("client must be SharedSignalsV1Client")
+        if shard_client_factory is not None and not callable(shard_client_factory):
+            raise TypeError("shard_client_factory must be callable")
         self._client = client
+        self._shard_client_factory = shard_client_factory
 
     def _load_sharded_snapshot(
         self,
@@ -1545,6 +1554,13 @@ class TradingDatasMinuteMarketDataPort:
         if envelope_validator is not None:
             raise MinuteDataContractError("minute_fanout_receipt_proof_unsupported")
 
+        # The production bearer transport is deliberately single-flight per
+        # client. Keep the bounded fanout parallel, but give each executor
+        # worker its own client/transport instead of sharing one transport
+        # across threads. A client is cached on the worker so its observed
+        # catalog version remains bound for both the first read and replay.
+        worker_state = threading.local()
+
         def query_shard(
             index: int,
             symbols: tuple[str, ...],
@@ -1554,6 +1570,20 @@ class TradingDatasMinuteMarketDataPort:
             PagedQueryRun | None,
             dict[str, object] | None,
         ]:
+            shard_client = self._client
+            if self._shard_client_factory is not None:
+                shard_client = getattr(worker_state, "client", None)
+                if shard_client is None:
+                    shard_client = self._shard_client_factory()
+                    if not isinstance(shard_client, SharedSignalsV1Client):
+                        raise MinuteDataContractError(
+                            "minute_shard_client_factory_invalid"
+                        )
+                    try:
+                        shard_client.get_catalog()
+                    except SharedSignalsV1Error as exc:
+                        raise _marked_request_failure(exc, phase="catalog") from exc
+                    worker_state.client = shard_client
             shard_filters = dict(filters)
             shard_filters[profile.symbol_field] = {"in": list(symbols)}
             page_limit = min(profile.page_limit, len(symbols))
@@ -1569,14 +1599,14 @@ class TradingDatasMinuteMarketDataPort:
             )
             try:
                 first = collect_query_pages(
-                    client=self._client,
+                    client=shard_client,
                     request=request,
                     identity_fields=profile.identity_fields,
                     max_pages=shard_pages,
                     max_rows=len(symbols),
                 )
                 replay = collect_query_pages(
-                    client=self._client,
+                    client=shard_client,
                     request=request,
                     identity_fields=profile.identity_fields,
                     max_pages=shard_pages,
