@@ -445,7 +445,7 @@ checkpoint 头 append-only、可恢复地继续；有 backlog 时返回 `backlog
 completion→receipt→checkpoint 映射；已被较早 checkpoint 声明的 receipt/segment
 若缺失或变更，必须 fail closed，绝不重建。tracked G4 learning 与 daily scrub unit
 静态绑定当前 G4 epoch，并只能写入该 epoch 的 `evolution/`。两组 timer 默认
-disabled：先满足连续 24 小时核心门禁，再做 disabled full-scrub 与幂等重放，才可
+disabled：先满足连续 48 小时、覆盖率至少 90% 的核心门禁，再做 disabled full-scrub 与幂等重放，才可
 人工启用 incremental timer；daily scrub 继续作为独立人工门禁，本次仓库变更不会
 启用任何 learning timer。发布 preflight 必须先由受控安装步骤创建该空目录并读回
 `tradingagent:tradingagent`、0700、非 symlink；unit 与 worker 都不会借缺失目录
@@ -464,12 +464,15 @@ factor-research 的精确后续 observation 绑定；MFE/MAE 或替代退出规�
 改变资本事实。
 
 `tradingagent-crypto-round-trip-g4-acceptance.service/.timer` 是每日 09:05 的
-只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；只有
-最近连续 288 根 closed-5m completion（24 小时；早期停机缺口不阻断新的连续观测
-epoch）、核心 fresh、无 pending、Decision Ledger 计数一致且 capital balanced 才
-输出 `eligible`。即使 eligible，下一动作仍
-固定为 disabled full-scrub + 幂等 replay；只有两项通过后才允许发布流程启用
-incremental learning。该 unit 是日常报告和告警证据，不是交易调度器。
+只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；模拟盘
+上线门禁要求累计 48 小时（576 根 closed-5m 窗口）、窗口覆盖率至少 90%、无配置/
+凭证/写库/状态完整性错误、核心 fresh、无 pending、Decision Ledger 计数一致且
+capital balanced。已由 checksum-bound `data_gap` receipt 明确标记的窗口计入覆盖计算，
+但不生成 observation、decision、order 或 capital effect；因此数据缺口是可观察
+的 `data_incomplete`，而不是整窗 fail-closed。快照 API 8787 的
+`/api/trading-agent/snapshot` 可读性仍需部署后直接读回，不能由本地报告代替。即使
+eligible，下一动作仍固定为 disabled full-scrub
+并执行幂等 replay；该 unit 是日常报告和告警证据，不是交易调度器。
 
 ## G5 现役 detached learning/scrub 边界
 
@@ -482,8 +485,11 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 immutable release、enablement 与自然 readback 以 `STATUS.md`/`AUTODEV_STATE.json`
 同轮事实为准。发布侧仍须在新 release 上先完成 one-shot、同槽 replay、资本/持仓/订单/
 receipt 守恒与零重复 fill 验收，再按可回退流程切换 unit。
-G5 acceptance 的 288 根连续 closed-5m 只衡量 runtime maturity 及后续
-promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛。
+G5 health 与十币种 health watch 只负责输出告警/记录和数据质量信息，不是模拟盘上线的
+硬门禁；只有配置、凭证、写库或状态完整性错误仍可阻断运行。
+G5 acceptance 的 48 小时/90% 覆盖门禁只衡量 runtime maturity 及后续
+promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛；历史
+288 根连续 closed-5m 只衡量 runtime maturity，不替代当前模拟盘上线门禁。
 
 为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的
 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽
@@ -1233,7 +1239,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - TradingDatas 18083、catalog、四个 dataset、专用 token leaf 和 TA 核心自动轮
   已有独立 readback；本 learning 候选不修改或重新部署其中任何一项；
 - 候选回填的 `observed_at` 是采集时点，不是历史 PIT 或实时可用性证明；
-- 核心 runtime 已有 sim-only 自动轮证据，但尚未通过连续 24 小时稳定性门禁；
+- 核心 runtime 已有 sim-only 自动轮证据，但尚未通过连续 48 小时/90% 覆盖稳定性门禁；
 - outage epoch 已在服务器以独立 generation-2 root 恢复自动轮；旧 root 保持
   只读封存，两个 epoch 的资本、收益和样本禁止聚合；
 - learning worker/service/timer 在仓库中的 install-default 可以保持 disabled，production

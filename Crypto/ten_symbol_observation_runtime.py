@@ -20,6 +20,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import time
@@ -66,11 +67,13 @@ from Crypto.ten_symbol_observation_store import (
     CryptoTenSymbolObservationStoreError,
 )
 from shared.data.sharedsignals_v1 import (
+    ContractViolation,
     HTTPStatusError,
     HTTPTransport,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
     SharedSignalsV1Error,
+    TransportNotConfigured,
 )
 from shared.data.tradingdatas_transport import (
     RuntimeGateConfigurationError,
@@ -103,6 +106,14 @@ COLLECT_RETRY_DELAY_SECONDS = 20.0
 OUTAGE_GAP_CONTRACT = TEN_SYMBOL_DATA_GAP_CONTRACT
 HISTORICAL_WINDOW_UNRECOVERABLE_REASON = "crypto_observation_watermark_invalid"
 WARMUP_WINDOW_INCOMPLETE_REASON = "crypto_observation_query_shape_invalid"
+DATA_INCOMPLETE_REASONS = frozenset(
+    {
+        WARMUP_WINDOW_INCOMPLETE_REASON,
+        "crypto_observation_data_source_unavailable",
+        "crypto_observation_watermark_invalid",
+        "crypto_observation_data_through_early",
+    }
+)
 HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
     {
         HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
@@ -836,12 +847,29 @@ class _LazyObservationPort:
             return observation, rows_by_symbol, spread
         except CryptoMarketObservationError:
             raise
-        except CryptoTenSymbolProfileError as exc:
-            raise CryptoMarketObservationError(str(exc)) from exc
-        except RuntimeGateConfigurationError as exc:
-            raise CryptoMarketObservationError(str(exc)) from exc
+        except CryptoTenSymbolProfileError:
+            raise
+        except (
+            ContractViolation,
+            RuntimeGateConfigurationError,
+            TradingDatasAuthenticationError,
+            TransportNotConfigured,
+        ):
+            # Configuration, credentials, and response-contract failures are
+            # integrity failures.  They must remain fail-closed even though
+            # ordinary source unavailability is observable simulation data
+            # loss.
+            raise
+        except HTTPStatusError as exc:
+            if re.search(r"HTTP (401|403)$", str(exc)):
+                raise
+            raise CryptoMarketObservationError(
+                "crypto_observation_data_source_unavailable"
+            ) from exc
         except SharedSignalsV1Error as exc:
-            raise CryptoMarketObservationError(str(exc)) from exc
+            raise CryptoMarketObservationError(
+                "crypto_observation_data_source_unavailable"
+            ) from exc
         except (TypeError, ValueError) as exc:
             raise CryptoMarketObservationError(
                 "crypto_ten_symbol_transport_configuration_invalid"
@@ -1554,6 +1582,10 @@ def run_crypto_ten_symbol_observation_once(
     else:
         core_result = cycle_results[-1]["result"]
     last_status = str(core_result.get("status") or "failed_closed")
+    data_incomplete = bool(
+        last_status == "data_reject"
+        and core_result.get("reason_code") in DATA_INCOMPLETE_REASONS
+    )
     warmup_eligible = bool(
         not had_prior_evidence
         and len(cycle_results) == 1
@@ -1598,6 +1630,10 @@ def run_crypto_ten_symbol_observation_once(
         "budget_deferred": budget_deferred,
         "invocation_budget_seconds": float(budget_seconds),
         "warmup_eligible": warmup_eligible,
+        "data_incomplete": data_incomplete,
+        "data_incomplete_reason": (
+            core_result.get("reason_code") if data_incomplete else None
+        ),
         "market_data_transport": "loopback_tradingdatas_v1",
         "market_data_access_attempt_count": lazy.collect_calls,
         "collect_attempts": lazy.collect_attempts,
@@ -1625,6 +1661,8 @@ def crypto_ten_symbol_observation_exit_code(receipt: Mapping[str, Any]) -> int:
     if receipt.get("backlog_remaining") is True:
         return 2
     if receipt.get("status") in {"completed", "noop"}:
+        return 0
+    if receipt.get("data_incomplete") is True:
         return 0
     if (
         receipt.get("status") == "data_reject"
