@@ -154,3 +154,25 @@ rolling partial-session 修复部署后的 11:22 自然 bar 验证又捕获了�
 数据集指纹变化。只要当天仍未生成 state bundle，初始化现在允许刷新 catalog 证据、
 consumer digest 和分页摘要，并继续复用未启动日目录；真正的 Universe、数据集合同或
 已启动 state 发生变化仍保持冲突并 fail closed。
+
+## 2026-08-21 TATD 全链路复验：分片并发必须与 transport single-flight 分离
+
+在部署前按真实生产 release、token、TradingDatas endpoint 和 3186 只 rolling eligible
+股票做有效延迟窗口实跑时，直接复现了 `minute_tradingdatas_request_failed`。逐个打印
+分片异常后，32 个分片实际都是 TA client 在网络请求前抛出的
+`TradingDatasAuthenticationError: concurrent request was rejected`，不是 token 失效、
+catalog 不匹配或 TradingDatas 数据缺失。
+
+根因是 TradingDatas token 的服务端并发上限为 4，但 TA 的 `UrllibJSONV1Transport` 对
+每一个 client 又明确采用 single-flight；旧 fanout 虽然只有 4 个 worker，却让它们共享
+同一个 client/transport，因此 4 路分片把 TA 本地锁冲突放大成整批失败。HTTP 413 分片修
+复本身不足以覆盖这个边界。
+
+修正为：保留最多 4 路 bounded fanout，每个 worker 通过 factory 创建独立的
+`SharedSignalsV1Client` 和 transport，并在该 worker 上绑定 catalog 后完成 first-read
+与 replay；单股票和小批量路径继续使用原 client。这样没有放宽 single-flight，也没有
+提高服务端并发上限，只把客户端连接隔离到与已验证 token 配额一致的 worker 数。
+
+本轮新增并通过 single-flight fixture 回归；上线前还必须完成生产 exact-SHA readback、
+3186 只有效窗口实跑、partial coverage receipt 和 TA/TD consumer readback。即使这些都
+通过，也只证明模拟数据链路，不改变 `REAL_TRADING_ENABLED=false` 的真实交易边界。

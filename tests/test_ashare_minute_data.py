@@ -5,6 +5,8 @@ from dataclasses import replace
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
+import threading
+import time
 
 import pytest
 
@@ -24,6 +26,7 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Client,
     SharedSignalsV1Config,
 )
+from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 from shared.governance.evidence_readiness import dataset_contract_fingerprint
 
 
@@ -270,6 +273,90 @@ def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> No
         len(body["filters"]["ts_code"]["in"]) <= 100
         for body in transport.query_bodies
     )
+
+
+def test_minute_port_uses_single_flight_client_per_parallel_worker() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 100, "max_lookback_days": 30}
+    )
+
+    class SingleFlightTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self._active = threading.Lock()
+            self.concurrent_rejections = 0
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if not self._active.acquire(blocking=False):
+                self.concurrent_rejections += 1
+                raise TradingDatasAuthenticationError(
+                    "fixture transport rejects concurrent requests"
+                )
+            try:
+                time.sleep(0.01)
+                if kwargs["method"] == "GET":
+                    return super().__call__(**kwargs)
+                body = kwargs["json_body"]
+                assert body is not None
+                requested = tuple(body["filters"]["ts_code"]["in"])
+                rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+                self.query_count += 1
+                return HTTPResponse(
+                    200,
+                    _query_payload(
+                        request_id=f"shard-query-{self.query_count}",
+                        rows=rows,
+                        next_cursor=None,
+                    ),
+                )
+            finally:
+                self._active.release()
+
+    primary_transport = SingleFlightTransport()
+    primary_transport.catalog_row = catalog_row
+    client = _client(primary_transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    worker_transports: list[SingleFlightTransport] = []
+
+    def shard_client_factory() -> SharedSignalsV1Client:
+        transport = SingleFlightTransport()
+        transport.catalog_row = catalog_row
+        worker_transports.append(transport)
+        return _client(transport, max_limit=100)
+
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+
+    snapshot = TradingDatasMinuteMarketDataPort(
+        client,
+        shard_client_factory=shard_client_factory,
+    ).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 101
+    assert len(worker_transports) >= 1
+    assert sum(transport.query_count for transport in worker_transports) == 4
+    assert primary_transport.concurrent_rejections == 0
+    assert all(transport.concurrent_rejections == 0 for transport in worker_transports)
 
 
 def test_minute_port_retains_successful_shards_when_one_request_fails() -> None:
