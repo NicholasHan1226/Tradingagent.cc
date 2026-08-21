@@ -109,7 +109,8 @@ fingerprint，但让当前分页配置重新计算 consumer digest；本地 96 �
 使用生产 release、生产 universe source 和模拟明早 `2026-08-21 09:18` 时间点，
 在临时 state root 中完成了同款 rolling initializer 预演：active partition `3191`，
 日线参考可用 `3186`，逐股 `daily_data_excluded=5`，pending 新股 `2`，profile
-`page_limit=500/max_pages=7`，gate 为 `pending_two_live_snapshots`，状态为 `pass`。
+`page_limit=100/max_pages=32`，分钟消费按 100 只分片，gate 为
+`pending_two_live_snapshots`，状态为 `pass`。
 这证明缺失日线和分页上限不会再触发全局 fallback；明早仍需以真实 fresh receipt、
 paper 结果和 consumer readback 做最终运行验收。
 
@@ -135,3 +136,15 @@ paper 结果和 consumer readback 做最终运行验收。
 - 运维脚本不再硬编码旧 TA/TD release，改为读取当前 immutable release 或要求显式传入。
 
 这组变化只扩大模拟数据积累的局部连续性，不扩大资本、订单、训练晋级或真实交易权限。
+
+## 2026-08-21 上游实跑补充：大集合必须按 V1 in-filter 上限分片
+
+rolling partial-session 修复部署后的 11:22 自然 bar 验证又捕获了真实的 HTTP 413：
+3186 只股票被一次性放入 `ts_code in`，超过 TradingDatas V1 的
+`max_in_values=100`。TradingDatas 服务本身健康，直接复现为
+`query_request / HTTPStatusError / 413`，因此不能把它归类成行情无数据或继续盲目重试。
+
+修正为分钟 profile 使用 `page_limit=100`、`max_pages=ceil(active_count/100)`，
+每个 shard 独立完成 catalog/query、分页、identity 和 replay 双读，再合并为一个
+当前 bar snapshot；任意 shard 失败只阻断该 bar/该 shard，已通过的股票不会被静默
+替换。这样扩大股票覆盖时，规模增长转化为可审计的分片数量，而不是扩大单次请求体。

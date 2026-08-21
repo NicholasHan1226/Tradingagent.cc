@@ -555,9 +555,10 @@ they must be identical or the initializer fails closed.
 For a reviewed scale transition, the initializer accepts an explicit absolute
 `--universe-source` artifact. It derives `page_limit`, `max_rows` and
 `max_pages` from that universe and the current catalog page limit, then binds
-the canonical universe SHA into the published manifest. A 500-symbol artifact
-therefore uses a 500-row budget when the catalog permits it; it is not silently
-truncated to the preceding 30-symbol canary. The supplied artifact must still
+the canonical universe SHA into the published manifest. Minute `ts_code in`
+filters are capped at 100 values by the V1 contract, so larger artifacts use
+100-symbol shards and replayed shard aggregation; a 500-symbol artifact is not
+silently truncated to the preceding 30-symbol canary. The supplied artifact must still
 pass the main-board, listing-age and risk checks, have complete prior-close
 coverage, and match every exact minute snapshot before any simulated step can
 proceed. The same absolute path can be supplied to the scheduled initializer as
@@ -568,8 +569,11 @@ Prior-session daily references use the same bounded catalog contract instead
 of a fixed 10-symbol batch. The initializer derives each batch from the
 reviewed Universe size, the daily dataset's current `max_page_size`, and the
 500-row TA query ceiling. It separately enforces the provider-neutral V1
-`QueryDefaults.max_in_values=100` filter contract, so a 500-symbol Universe
-always uses five 100-symbol batches even when catalog `max_page_size=500`.
+`QueryDefaults.max_in_values=100` filter contract. Minute query profiles use
+`page_limit=100` and `max_pages=ceil(symbol_count/100)`; every shard is read
+twice and merged only after identity and same-observation checks. Daily
+references still use five 100-symbol batches for a 500-symbol Universe even
+when catalog `max_page_size=500`.
 Every batch is independently read twice, allows at most five cursor pages, and
 has a row budget exactly equal to its requested symbol set. Returned
 `(ts_code, trade_date)` identities must exactly match that set; missing, extra,

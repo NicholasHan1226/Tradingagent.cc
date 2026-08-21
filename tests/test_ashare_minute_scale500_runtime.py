@@ -275,7 +275,7 @@ def test_rolling_initializer_persists_gate_after_stale_gate_quarantine(
                 "partial_session": False,
                 "late_start": False,
                 "late_start_bar_end": None,
-                "failure_reason": "minute_scale500_gate_missing_or_invalid",
+                "failure_reason": "minute_tradingdatas_request_failed",
                 "rollback30_state_root": str(rollback_root),
                 "capital_layer": "simulated",
                 "account_type": "simulated",

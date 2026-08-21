@@ -51,6 +51,7 @@ FIVE_MINUTES = timedelta(minutes=5)
 MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
+MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD = 100
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -1464,6 +1465,35 @@ def snapshot_from_runs(
         raise
 
 
+def _minute_symbol_shards(
+    *,
+    filters: Mapping[str, Any],
+    symbol_field: str,
+) -> tuple[tuple[str, ...], ...] | None:
+    """Return bounded symbol shards for the V1 ``max_in_values`` contract."""
+
+    condition = filters.get(symbol_field)
+    if not isinstance(condition, Mapping) or "in" not in condition:
+        return None
+    raw_symbols = condition["in"]
+    if not isinstance(raw_symbols, (list, tuple)):
+        return None
+    symbols = tuple(raw_symbols)
+    if any(
+        not isinstance(symbol, str) or not symbol.strip() or symbol != symbol.strip()
+        for symbol in symbols
+    ):
+        raise MinuteDataContractError("minute_symbol_filter_invalid")
+    if len(symbols) <= MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD:
+        return None
+    if len(symbols) != len(set(symbols)):
+        raise MinuteDataContractError("minute_symbol_filter_duplicate")
+    return tuple(
+        symbols[index : index + MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD]
+        for index in range(0, len(symbols), MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD)
+    )
+
+
 class TradingDatasMinuteMarketDataPort:
     """Injected-client adapter for the fixed TradingDatas V1 data plane."""
 
@@ -1471,6 +1501,125 @@ class TradingDatasMinuteMarketDataPort:
         if not isinstance(client, SharedSignalsV1Client):
             raise TypeError("client must be SharedSignalsV1Client")
         self._client = client
+
+    def _load_sharded_snapshot(
+        self,
+        *,
+        profile: MinuteDatasetProfile,
+        filters: Mapping[str, Any],
+        shards: tuple[tuple[str, ...], ...],
+        decision_time: datetime,
+        trading_dates: frozenset[date],
+        reference_facts: Mapping[str, MinuteReferenceFact] | None,
+        evidence_use: MinuteEvidenceUse,
+        envelope_validator: Callable[[Any], object] | None,
+    ) -> MinuteBarSnapshot:
+        """Read a large exact-slot universe as bounded replayed shards."""
+
+        if envelope_validator is not None:
+            raise MinuteDataContractError("minute_fanout_receipt_proof_unsupported")
+        first_runs: list[PagedQueryRun] = []
+        replay_runs: list[PagedQueryRun] = []
+        for symbols in shards:
+            shard_filters = dict(filters)
+            shard_filters[profile.symbol_field] = {"in": list(symbols)}
+            page_limit = min(profile.page_limit, len(symbols))
+            shard_pages = max(1, (len(symbols) + page_limit - 1) // page_limit)
+            request = QueryRequest(
+                dataset_id=profile.dataset_id,
+                schema_major=profile.schema_major,
+                fields=profile.default_fields,
+                filters=shard_filters,
+                order=profile.default_order or None,
+                limit=page_limit,
+                include_receipt_proofs=False,
+            )
+            try:
+                first_runs.append(
+                    collect_query_pages(
+                        client=self._client,
+                        request=request,
+                        identity_fields=profile.identity_fields,
+                        max_pages=shard_pages,
+                        max_rows=len(symbols),
+                    )
+                )
+                replay_runs.append(
+                    collect_query_pages(
+                        client=self._client,
+                        request=request,
+                        identity_fields=profile.identity_fields,
+                        max_pages=shard_pages,
+                        max_rows=len(symbols),
+                    )
+                )
+            except PaginationContractError:
+                raise
+            except SharedSignalsV1Error as exc:
+                raise _marked_request_failure(exc, phase="query") from exc
+
+        if len(first_runs) != len(replay_runs) or not first_runs:
+            raise MinuteDataContractError("minute_fanout_replay_invalid")
+        versions = {
+            run.envelope.catalog_version
+            for run in (*first_runs, *replay_runs)
+        }
+        if len(versions) != 1:
+            raise MinuteDataContractError("minute_query_catalog_version_drift")
+
+        bars: list[MinuteBarEvidence] = []
+        first_semantics: list[str] = []
+        replay_semantics: list[str] = []
+        first_traces: list[str] = []
+        replay_traces: list[str] = []
+        page_count = 0
+        for first, replay in zip(first_runs, replay_runs, strict=True):
+            if (
+                first.semantic_sha256 != replay.semantic_sha256
+                or first.semantic_trace_sha256 != replay.semantic_trace_sha256
+            ):
+                raise MinuteDataContractError("minute_same_observation_mismatch")
+            first_bars = _map_run(
+                profile=profile,
+                run=first,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+            )
+            replay_bars = _map_run(
+                profile=profile,
+                run=replay,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+            )
+            if [bar.sha256 for bar in first_bars] != [bar.sha256 for bar in replay_bars]:
+                raise MinuteDataContractError("minute_same_observation_mismatch")
+            bars.extend(first_bars)
+            first_semantics.append(first.semantic_sha256)
+            replay_semantics.append(replay.semantic_sha256)
+            first_traces.append(first.pagination_trace_sha256)
+            replay_traces.append(replay.pagination_trace_sha256)
+            page_count += first.page_count
+
+        aggregate_semantic = _sha256(first_semantics)
+        return MinuteBarSnapshot(
+            profile=profile,
+            bars=tuple(sorted(bars, key=lambda bar: bar.identity)),
+            page_count=page_count,
+            row_count=len(bars),
+            pagination_trace_sha256=_sha256(
+                {
+                    "first": first_traces,
+                    "replay": replay_traces,
+                }
+            ),
+            first_semantic_sha256=aggregate_semantic,
+            replay_semantic_sha256=_sha256(replay_semantics),
+            same_observation=True,
+        )
 
     def load_snapshot(
         self,
@@ -1527,6 +1676,21 @@ class TradingDatasMinuteMarketDataPort:
                     raise MinuteDataContractError(
                         "minute_query_filter_not_catalog_authorized"
                     )
+            symbol_shards = _minute_symbol_shards(
+                filters=filters,
+                symbol_field=profile.symbol_field,
+            )
+            if symbol_shards is not None:
+                return self._load_sharded_snapshot(
+                    profile=profile,
+                    filters=filters,
+                    shards=symbol_shards,
+                    decision_time=decision_time,
+                    trading_dates=trading_dates,
+                    reference_facts=reference_facts,
+                    evidence_use=evidence_use,
+                    envelope_validator=envelope_validator,
+                )
             request = QueryRequest(
                 dataset_id=profile.dataset_id,
                 schema_major=profile.schema_major,
