@@ -176,3 +176,22 @@ catalog 不匹配或 TradingDatas 数据缺失。
 本轮新增并通过 single-flight fixture 回归；上线前还必须完成生产 exact-SHA readback、
 3186 只有效窗口实跑、partial coverage receipt 和 TA/TD consumer readback。即使这些都
 通过，也只证明模拟数据链路，不改变 `REAL_TRADING_ENABLED=false` 的真实交易边界。
+
+## 2026-08-21 部署后复验：TA 与 TD 采集调度是独立门
+
+修复合入主线并部署为 `d89190d94bd8fbe9c60ab50862c55716e6ffbfa7` 后，服务器
+`current`、`.deployed-sha`、TA/TD service、两个 TA timer、token `0600` 权限和
+`REAL_TRADING_ENABLED=false` 均读回一致。隔离 initializer 也再次通过：active partition
+`3191`、rolling eligible `3186`、日线排除 `5`、pending listing `2`。
+
+但在收盘后的模拟 `--now 15:07:25` 回放中，full fanout 没有生成成功 receipt。首次失败的
+429/503/timeout 经追踪不是 TA client single-flight（该错误已消失），而是 TradingDatas
+的 `tradingdatas-provider-native-collect.service` 正在占用同一个约 8.9GB
+`provider_native.sqlite` read model；采集器每 5 分钟启动一次，最近一次约运行 90 秒，
+读服务在这段时间按合同返回 503。采集器结束后，收盘回放又受到 TradingDatas 当前服务时钟
+与 fresh session receipt 约束，不能把过期 bar 伪装成开盘成功。
+
+因此 TATD 的开盘验收必须增加独立条件：记录采集器 active/inactive 时段，并在自然交易
+窗口内验证 TA paper timer 是否避开或正确重试 TD read-model 占用；收盘后的历史回放只能
+证明合同/权限/失败分类，不能替代 fresh receipt。当前已证明部署和初始化，尚未声称
+3186 只在生产自然窗口成功进入模拟管道；真实交易边界仍保持关闭。
