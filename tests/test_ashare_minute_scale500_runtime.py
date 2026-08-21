@@ -93,9 +93,9 @@ def _published_session(
                 "dataset_id": "cn.dataset.rt_min",
                 "universe_sha256": universe_sha256,
                 "profile": {
-                    "max_rows": EXPECTED_UNIVERSE_COUNT,
-                    "page_limit": EXPECTED_UNIVERSE_COUNT,
-                    "max_pages": EXPECTED_UNIVERSE_COUNT,
+                    "max_rows": len(universe),
+                    "page_limit": len(universe),
+                    "max_pages": len(universe),
                 },
             }
         ),
@@ -618,6 +618,62 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
     ]
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == before
     assert list(rollback_root.iterdir()) == [sentinel]
+
+
+def test_rolling_runtime_uses_published_partition_after_initializer_exclusion(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    source_rows = json.loads(universe_source.read_text(encoding="utf-8"))
+    published_source = tmp_path / "published-universe.json"
+    published_source.write_text(
+        json.dumps(source_rows[:-1], ensure_ascii=False), encoding="utf-8"
+    )
+    published_source.chmod(0o440)
+    published_digest = canonical_universe_sha256(published_source)
+    day_root = scale_root / "20260731"
+    for child in day_root.iterdir():
+        child.unlink()
+    day_root.rmdir()
+    _published_session(
+        state_root=scale_root,
+        trading_date="2026-07-31",
+        universe_source=published_source,
+        universe_sha256=published_digest,
+    )
+    gate_path = scale_root / ".scale500-gates" / "20260731.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    gate.update(
+        {
+            "selected_mode": "rolling_eligible",
+            "expected_universe_count": EXPECTED_UNIVERSE_COUNT - 1,
+            "universe_sha256": published_digest,
+        }
+    )
+    gate_path.write_text(json.dumps(gate), encoding="utf-8")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:42:00"),
+        rolling_eligible=True,
+        runner=lambda **_: {
+            **_receipt("2026-07-31 09:35:00"),
+            "row_count": EXPECTED_UNIVERSE_COUNT - 1,
+        },
+    )
+
+    assert result["status"] == "pass"
+    assert result["scale500_acceptance_status"] == "pending_two_live_snapshots"
+    assert result["selected_mode"] == "rolling_eligible"
+    persisted_gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert persisted_gate["status"] == "pending_two_live_snapshots"
+    assert persisted_gate["selected_mode"] == "rolling_eligible"
 
 
 def test_499_partial_is_persisted_shadow_without_runner_or_rollback30(
