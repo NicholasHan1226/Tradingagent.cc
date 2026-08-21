@@ -40,14 +40,15 @@ def test_main_ci_publishes_the_exact_tested_release_artifact() -> None:
     assert "github.event_name == 'workflow_dispatch'" in workflow
 
 
-def test_automerge_is_limited_to_explicit_current_base_m0_docs_and_tests() -> None:
+def test_automerge_is_limited_to_explicit_progressive_m0_docs_and_tests() -> None:
     workflow = _read(".github/workflows/automerge.yml")
 
     assert "Automerge Eligible M0 PRs" in workflow
     assert "M0_AUTOMERGE_LABEL: automerge-m0" in workflow
     assert "TRUSTED_PR_AUTHOR: NicholasHan1226" in workflow
     assert "M0 automerge is limited to docs and tests." in workflow
-    assert "M0 candidate must be tested on the current main base." in workflow
+    assert "M0 current-base freshness is not required; GitHub mergeability remains required." in workflow
+    assert '[[ "$base_sha" == "$current_main_sha" ]]' not in workflow
     assert 'MERGE_JSON="$(gh api' not in workflow
     assert 'merge_json="$(gh api' in workflow
     assert '"repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/merge"' in workflow
