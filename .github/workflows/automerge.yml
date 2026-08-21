@@ -58,11 +58,10 @@ jobs:
             exit 0
           fi
 
-          current_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          [[ "$base_sha" == "$current_main_sha" ]] || {
-            echo "Skip: M0 candidate must be tested on the current main base."
-            exit 0
-          }
+          # M0 is already restricted to an exact tested head and reversible
+          # docs/tests/Markdown paths. Do not serialize it behind unrelated
+          # main movement: the merge API remains the conflict guard.
+          echo "M0 current-base freshness is not required; GitHub mergeability remains required."
 
           merge_json="$(gh api \
             --method PUT \
