@@ -1657,6 +1657,7 @@ def run_scale500_once(
         "missing_symbols": missing_symbols
         if isinstance(missing_symbols, list)
         else None,
+        "fanout_failures": result.get("fanout_failures", []),
         "capital_layer": "simulated",
         "account_type": "simulated",
         "execution_authority": False,

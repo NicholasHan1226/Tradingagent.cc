@@ -579,8 +579,12 @@ has a row budget exactly equal to its requested symbol set. Returned
 `(ts_code, trade_date)` identities must exactly match that set; missing, extra,
 duplicate, over-budget or non-terminating cursor chains, replay-changing,
 catalog-drifting, 413/429, timeout, stale or degraded evidence fails closed.
-There is no automatic retry, concurrency, fallback, provider route or database
-read, so a transport failure cannot become a request storm or partial session.
+Large delayed-paper minute fanout uses at most four concurrent bounded shard
+workers. A request-level failure quarantines only that shard and is exposed in
+`fanout_failures`/`missing_symbols`; successful shards retain their independent
+first/replay evidence. Pagination, contract, catalog, replay or metadata
+failures still fail closed for the whole snapshot. There is no provider
+fallback or direct database read.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every actual bar must

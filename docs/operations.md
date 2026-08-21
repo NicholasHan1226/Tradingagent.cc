@@ -794,6 +794,10 @@ snapshot 派生当前 `rolling_eligible` partition：
   写入本窗口 `missing_symbols`/coverage receipt，并在下一窗口重新查询；不能因为
   一只股票缺行而让整批回滚。单只股票发生 bar gap 时只重置该股票的 rolling baseline，
   其它股票继续产生 feature/candidate；跨窗口状态仍禁止用缺失 bar 补齐；
+- 大于 100 只的分钟查询使用最多 4 路有界并行 shard；某个 shard 的 HTTP/transport
+  请求失败时只保留其它成功 shard，并在本窗口 coverage receipt 的 `fanout_failures`
+  与 `missing_symbols` 中记录。分页、合同、目录、replay、metadata 或全部 shard
+  失败仍按整条 snapshot fail closed，不能把 partial coverage 宣称为完整覆盖；
 - 覆盖率报告可以同时显示 `source_count`、`active_count`、`pending_count`、
   `excluded_count` 和 `coverage_ratio`，但 coverage 未达 100% 不得反向关闭已经
   逐股通过的模拟链。
