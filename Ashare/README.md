@@ -618,13 +618,19 @@ delayed-paper activation, but it is not an admission gate for the recurring
 observation timer.
 
 Normally, the first accepted scale observations must be the adjacent 09:35 and
-09:40 500/500 bars. A one-time, manual `run --allow-late-start` is the only
-exception: it can start only from the runner's exact current completed formal
-bar after an independently verified 500/500 production canary. The static
-late-start candidate requires its secret-free canary receipt and verifies the
-same trading date, exact bar, delayed-paper tier, 500 canonical identities,
-same-observation replay, receipt/lineage proof and frozen Universe digest
-before it invokes the runner. It never
+09:40 500/500 bars. For `--rolling-eligible`, if a retryable incident leaves the
+day gate pending with no state bundle after the opening slot, the recurring
+paper path may start a new partial session from the next current complete formal
+bar. It never backfills skipped bars, and records `late_start=true`,
+`full_session_complete=false` and `learning_eligible=false`; later bars continue
+observation only. This automatic recovery is intentionally narrower than a
+manual full-universe start. A one-time, manual `run --allow-late-start` remains
+the only exception for the fixed 3193 full-universe path: it can start only from
+the runner's exact current completed formal bar after an independently verified
+500/500 production canary. The static late-start candidate requires its
+secret-free canary receipt and verifies the same trading date, exact bar,
+delayed-paper tier, 500 canonical identities, same-observation replay,
+receipt/lineage proof and frozen Universe digest before it invokes the runner. It never
 queries or backfills earlier bars, cannot use mixed/failed observations, and is
 not accepted by `initialize` or either recurring systemd unit. The tracked
 static `tradingagent-ashare-minute-scale500-late-start.service` is the only

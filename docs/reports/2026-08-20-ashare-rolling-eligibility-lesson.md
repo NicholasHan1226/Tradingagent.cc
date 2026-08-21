@@ -34,6 +34,25 @@
 5. 每个窗口必须输出 source/active/pending/excluded 数量及具体 reason code，便于
    追踪上市、退市和数据状态变化。
 
+## 2026-08-21 开盘实跑补充：恢复不能再次要求早盘首槽
+
+开盘后连续实跑暴露了一个与全量门禁不同的时序缺陷：rolling gate 已在 10:58
+成功恢复为 `pending_two_live_snapshots`，但 11:02 的 paper timer 仍要求当天
+09:35 初始 bar，最终以 `minute_auto_initial_bar_missing` fail closed，并把已经
+恢复的 3186 只股票再次切回 fallback。这会让“事故发生后重试”变成“恢复后仍永远
+等不到首槽”。
+
+修正后的规则是：rolling 模式只要当天 gate 仍 pending、没有 state bundle、目标是
+当前已完成 bar，就可建立一个新的 partial session；它只消费当前 bar，不回填任何
+跳过的 bar，gate 明确记录 `late_start=true`、`partial_session=true`，并永久保持
+`full_session_complete=false`、`learning_eligible=false`。固定 3193 full-universe
+路径的人工 late-start 和独立 500/500 canary 规则不变。
+
+经验补充：开盘前的“timer active”只证明调度存在，不能证明晚恢复后的时序分支可用；
+必须在自然 bar 到达后验证 gate、实际 paper receipt 和覆盖回执。rolling 的恢复门禁
+应按“当前 bar 可验证 + 不补历史 + 不提升 authority”设计，而不是复用固定全量
+late-start 门禁。
+
 ## 相似问题审计
 
 - `Ashare/minute_research.py` 的 `eligibility_reason` 是逐股判断，保留；它不是全局

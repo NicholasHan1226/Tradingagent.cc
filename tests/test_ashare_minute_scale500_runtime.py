@@ -1107,6 +1107,55 @@ def test_first_accepted_round_must_be_opening_bar_not_late_start(
         )
 
 
+def test_rolling_incident_recovery_starts_partial_session_from_current_bar(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(tmp_path)
+
+    def rolling_initializer(**kwargs: object) -> dict[str, object]:
+        return {**_initializer(**kwargs), "rolling_eligible": True}
+
+    initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:18:00"),
+        rolling_eligible=True,
+        initializer=rolling_initializer,
+    )
+    runner_flags: list[bool] = []
+
+    def current_bar_runner(*, allow_late_start: bool, **_: object) -> dict[str, object]:
+        runner_flags.append(allow_late_start)
+        return _late_start_receipt("2026-07-31 10:10:00")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T10:17:00"),
+        rolling_eligible=True,
+        runner=current_bar_runner,
+    )
+
+    assert runner_flags == [True]
+    assert result["selected_mode"] == "rolling_eligible"
+    assert result["partial_session"] is True
+    assert result["late_start"] is True
+    assert result["full_session_complete"] is False
+    assert result["learning_eligible"] is False
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(encoding="utf-8")
+    )
+    assert gate["validated_bar_ends"] == ["2026-07-31 10:10:00"]
+    assert gate["partial_session"] is True
+    assert gate["late_start"] is True
+
+
 def test_late_start_requires_explicit_flag_and_never_accepts_a_prior_bar(
     tmp_path: Path,
 ) -> None:
