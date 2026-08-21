@@ -70,6 +70,10 @@ _ROLLING_RETRYABLE_EXACT = frozenset({
     # The authenticated query layer exposes transient/provider request
     # failures without leaking HTTP details; rolling must retry the next bar.
     "minute_tradingdatas_request_failed",
+    # A transport-level URL error can occur during a deploy/restart race
+    # before the authenticated client has normalized it; it is still a
+    # retryable read failure while the day's rolling session has no state.
+    "minute_scale500_unclassified_urlerror",
 })
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REASON_PATTERN = re.compile(r"^[a-z0-9_.:-]+$")

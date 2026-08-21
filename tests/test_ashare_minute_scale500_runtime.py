@@ -256,8 +256,13 @@ def test_scale500_initializer_can_open_rolling_partition(
     assert result["pending_listings"][0]["symbol"] == "000001.SZ"
 
 
+@pytest.mark.parametrize(
+    "failure_reason",
+    ["minute_tradingdatas_request_failed", "minute_scale500_unclassified_urlerror"],
+)
 def test_rolling_initializer_persists_gate_after_stale_gate_quarantine(
     tmp_path: Path,
+    failure_reason: str,
 ) -> None:
     scale_root, rollback_root, token_file, universe_source, digest = _paths(tmp_path)
     gate_dir = scale_root / ".scale500-gates"
@@ -275,7 +280,7 @@ def test_rolling_initializer_persists_gate_after_stale_gate_quarantine(
                 "partial_session": False,
                 "late_start": False,
                 "late_start_bar_end": None,
-                "failure_reason": "minute_tradingdatas_request_failed",
+                "failure_reason": failure_reason,
                 "rollback30_state_root": str(rollback_root),
                 "capital_layer": "simulated",
                 "account_type": "simulated",
