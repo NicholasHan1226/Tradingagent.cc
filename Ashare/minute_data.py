@@ -84,6 +84,7 @@ _FAILURE_CLASSES = frozenset(
         "SharedSignalsV1Error",
         "TradingDatasAuthenticationError",
         "TransportNotConfigured",
+        "OSError",
         "unknown",
     }
 )
@@ -97,6 +98,7 @@ def _bounded_failure_class(error: BaseException) -> str:
         CatalogContractError,
         RuntimeGateConfigurationError,
         TransportNotConfigured,
+        OSError,
         ContractViolation,
         SharedSignalsV1Error,
     )
@@ -1583,7 +1585,7 @@ class TradingDatasMinuteMarketDataPort:
                 return index, first, replay, None
             except PaginationContractError:
                 raise
-            except SharedSignalsV1Error as exc:
+            except (SharedSignalsV1Error, OSError) as exc:
                 marked = _marked_request_failure(exc, phase="query")
                 return index, None, None, {
                     "shard_index": index,
@@ -1846,7 +1848,7 @@ class TradingDatasMinuteMarketDataPort:
                 failure_stage="pagination",
                 failure_class="PaginationContractError",
             ) from exc
-        except SharedSignalsV1Error as exc:
+        except (SharedSignalsV1Error, OSError) as exc:
             reason = "minute_tradingdatas_request_failed"
             audit_ledger.append(
                 MinuteEvidenceAuditRecord(
