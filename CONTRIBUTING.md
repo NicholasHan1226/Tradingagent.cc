@@ -6,7 +6,7 @@ This repository uses an agent-first, machine-gated workflow. Routine human code 
 
 1. Start from the latest `main` and record the exact base SHA used for the task.
 2. Use one task per branch and pull request. Prefer `agent/<agent>/<task>`, `feat/<task>`, `fix/<task>`, `refactor/<task>`, or `chore/<task>`.
-3. Do not push routine code directly to `main`. Do not force-push or rewrite shared history.
+3. `main` is protected: use a pull request with the current-base `test` and `front` CI checks. Direct pushes, force-pushes, branch deletion, and unresolved review threads are blocked; routine human approval is not required.
 4. Run relevant deterministic local validation before opening or updating the pull request.
 5. Open a pull request to `main`. Human review is not required.
 6. Pull-request CI is the routine Git merge gate. A failing, missing, cancelled, or stale CI result must not auto-merge.
