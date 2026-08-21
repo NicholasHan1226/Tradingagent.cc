@@ -729,8 +729,17 @@ def _pagination_only_manifest_change(
     if not isinstance(expected_profile, Mapping):
         return False
     allowed = frozenset({"max_pages", "max_rows", "page_limit", "consumer_profile_sha256"})
+    # Catalog version is evidence-only metadata. It may legitimately move
+    # during the open session while the dataset contract and published
+    # universe remain unchanged; the current profile digest is derived from
+    # that observation and therefore must be refreshed with it.
+    allowed_top_level = frozenset({"observed_catalog_version"})
     for key in expected:
-        if key != "profile" and existing.get(key) != expected.get(key):
+        if (
+            key != "profile"
+            and key not in allowed_top_level
+            and existing.get(key) != expected.get(key)
+        ):
             return False
     if set(existing["profile"]) != set(expected_profile):
         return False
