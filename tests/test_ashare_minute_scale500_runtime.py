@@ -256,6 +256,83 @@ def test_scale500_initializer_can_open_rolling_partition(
     assert result["pending_listings"][0]["symbol"] == "000001.SZ"
 
 
+def test_rolling_initializer_persists_gate_after_stale_gate_quarantine(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(tmp_path)
+    gate_dir = scale_root / ".scale500-gates"
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "20260731.json").write_text(
+        json.dumps(
+            {
+                "schema": "tradingagent.ashare.scale500-acceptance.v1",
+                "trading_date": "2026-07-31",
+                "status": "pending_two_live_snapshots",
+                "selected_mode": "scale500",
+                "expected_universe_count": EXPECTED_UNIVERSE_COUNT,
+                "universe_sha256": digest,
+                "validated_bar_ends": [],
+                "partial_session": False,
+                "late_start": False,
+                "late_start_bar_end": None,
+                "failure_reason": None,
+                "rollback30_state_root": str(rollback_root),
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "capital_authority": False,
+                "execution_authority": False,
+                "execution_eligible": False,
+                "training_eligible": False,
+                "promotion_authorized": False,
+                "real_trading_enabled": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def rolling_initializer(**kwargs: object) -> dict[str, object]:
+        state_root = Path(str(kwargs["state_root"]))
+        now = kwargs["now"]
+        assert isinstance(now, datetime)
+        _published_session(
+            state_root=state_root,
+            trading_date=now.date().isoformat(),
+            universe_source=universe_source,
+            universe_sha256=digest,
+        )
+        return {
+            "status": "pass",
+            "authority_tier": "non_production_fixture",
+            "trading_date": now.date().isoformat(),
+            "symbol_count": EXPECTED_UNIVERSE_COUNT,
+            "universe_sha256": digest,
+            "source_universe_sha256": digest,
+            "rolling_eligible": True,
+            "pending_listings": [],
+            "state_bundle_created": False,
+            "capital_authority": False,
+            "execution_authority": False,
+            "real_trading_enabled": False,
+        }
+
+    result = initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:18:00"),
+        rolling_eligible=True,
+        initializer=rolling_initializer,
+    )
+
+    assert result["selected_mode"] == "rolling_eligible"
+    gate = json.loads((gate_dir / "20260731.json").read_text(encoding="utf-8"))
+    assert gate["selected_mode"] == "rolling_eligible"
+    assert gate["status"] == "pending_two_live_snapshots"
+    assert (gate_dir / "20260731.stale.json").exists()
+
+
 def _initializer(
     *,
     state_root: Path,
