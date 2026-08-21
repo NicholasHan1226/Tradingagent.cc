@@ -1049,9 +1049,32 @@ def initialize_scale500_session(
                 )
                 _atomic_write_json(gate_path, gate)
             if gate["status"] == "fallback30_selected":
-                raise MinuteScale500RuntimeError(
-                    "minute_scale500_fallback_already_selected"
+                day_state_bundle = (
+                    scale / trading_date.replace("-", "") / "state-bundle.json"
                 )
+                failure_reason = gate.get("failure_reason")
+                recoverable_fallback = (
+                    rolling_eligible
+                    and not day_state_bundle.exists()
+                    and isinstance(failure_reason, str)
+                    and (
+                        _rolling_retryable_failure(failure_reason)
+                        or failure_reason == "minute_scale500_gate_missing_or_invalid"
+                    )
+                )
+                if not recoverable_fallback:
+                    raise MinuteScale500RuntimeError(
+                        "minute_scale500_fallback_already_selected"
+                    )
+                _quarantine_incompatible_gate(gate_path)
+                gate = _new_gate(
+                    trading_date=trading_date,
+                    rollback_root=rollback,
+                    universe_sha256=effective_universe_sha256,
+                    expected_universe_count=expected_count,
+                    selected_mode=mode,
+                )
+                _atomic_write_json(gate_path, gate)
         else:
             gate = _new_gate(
                 trading_date=trading_date,
