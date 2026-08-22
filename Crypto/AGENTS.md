@@ -192,7 +192,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   不在该函数预算声明内，因此不能单靠静态时间计算宣称绝不会重叠；每次发布仍须
   用前一 core、ten-symbol reader、后一 core 三次自然读回证明共享
   token/API/SQLite surface 没有并发。积压返回
-  `backlog_pending`
+  `backlog_pending`，若本轮已有有序进展则保留明确的 lag/backlog JSON 证据并按
+  信息项成功退出，下一轮从最早缺口继续；若本轮 0 cycle 且预算耗尽则仍非零，
+  以显式暴露没有进展的运行时问题。不把有序数据滞后冒充状态完整性失败。
   非零退出且不跳槽；历史窗口对 current-read watermark 门禁确定不可恢复时，
   只允许在当前窗口全部门禁通过后追加显式 `data_gap`，不伪造 PIT。证据只能
   前向积累，历史回填不构成证据。fresh 采集成功后 runtime 先把该槽 10 币

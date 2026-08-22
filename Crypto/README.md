@@ -724,10 +724,11 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   不符）、HTTP 状态错误（含 401/403，永不重试）与预算耗尽信号一律立即
   失败。全部尝试失败仍走原 fail-closed 路径（pending 保留、不伪造
   data_reject）；receipt 的 `collect_attempts` 记录实际尝试次数。仍落后
-  当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
-  delayed-paper core 的刻意差异（core 在有进展时返回 0）：积累器没有资本
-  风险，timer 应把滞后显式暴露为失败直到追平。槽位仍严格按序补，绝不跳过
-  中间时槽。
+  当前槽时返回 `backlog_pending`；若本轮已经按序处理至少一个 cycle，则保留
+  backlog/lag JSON 证据并退出码为 0，这是数据可见性信息项，不是状态完整性
+  失败。若本轮 0 cycle 且预算耗尽，则退出非零，表示运行时没有进展。下一轮
+  仍从最早缺口继续，槽位严格按序补，绝不跳过中间时槽。合同、凭证、完整性和
+  不可恢复的数据失败仍返回非零。
 - pending marker 只是 crash 簿记（不是证据）：fresh cycle 取数前写入、事件
   落账后清除。槽已有事件的 pending 恢复不需要网络；pending 槽已成历史时
   清除 marker 并由 data_gap 合同显式覆盖该槽——这也与 core 的 pending 必须

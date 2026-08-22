@@ -810,7 +810,9 @@ def test_backlog_pending_keeps_order_and_never_skips_slots(
     assert backlog["status"] == "backlog_pending"
     assert backlog["backlog_remaining"] is True
     assert backlog["requested_window_consumed"] is False
-    assert crypto_ten_symbol_observation_exit_code(backlog) == 2
+    # Ordered lag is an observable data condition, not a state-integrity
+    # failure; the next invocation continues from the earliest missing slot.
+    assert crypto_ten_symbol_observation_exit_code(backlog) == 0
     assert [item["cycle_kind"] for item in backlog["cycle_results"]] == [
         "pending_recovery",
         "fresh_query",

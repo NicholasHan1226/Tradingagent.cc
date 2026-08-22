@@ -1648,18 +1648,28 @@ def run_crypto_ten_symbol_observation_once(
 
 
 def crypto_ten_symbol_observation_exit_code(receipt: Mapping[str, Any]) -> int:
-    """Map expected warm-up to success; backlog and rejects stay non-zero.
+    """Map data-only incompleteness to an informational success exit.
 
-    Unlike the delayed-paper core, a ``backlog_pending`` round is always a
-    non-zero exit even when it made ordered progress: this accumulator has no
-    capital at risk, so the timer should surface the lag until the chain is
-    caught up.  Slots are still never skipped.
+    A ``backlog_pending`` receipt with ordered progress remains visible in JSON
+    and the next timer invocation continues from the earliest missing slot. It
+    is not a process failure: this accumulator has no capital or state-authority
+    side effect, and returning 2 would turn an observable data lag into an
+    unnecessary launch/runtime blocker. A backlog with zero processed cycles is
+    different: it indicates the invocation made no progress (for example an
+    exhausted wall-clock budget) and remains non-zero. Contract, credential,
+    integrity, and unrecoverable data failures still return non-zero, and slots
+    are never skipped.
     """
 
     if not isinstance(receipt, Mapping):
         return 2
     if receipt.get("backlog_remaining") is True:
-        return 2
+        return (
+            0
+            if isinstance(receipt.get("processed_cycle_count"), int)
+            and receipt["processed_cycle_count"] > 0
+            else 2
+        )
     if receipt.get("status") in {"completed", "noop"}:
         return 0
     if receipt.get("data_incomplete") is True:
