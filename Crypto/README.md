@@ -605,6 +605,8 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 > `crypto-5m-ohlcv-13bar-forward-labels-v3` + 投影命名空间
 > `evolution/forty_symbol_factor_research/`，不写旧
 > `evolution/ten_symbol_factor_research/`。
+> 40 币运行时的事件 `event_id` 与 receipt `reason_code` 使用 forty namespace；
+> 10 币历史链继续保留 ten namespace，避免跨 universe 的身份混淆。
 
 `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
 `ten_symbol_observation_runtime.py` 组成一条独立、append-only、receipt 绑定的
