@@ -165,6 +165,8 @@ class CryptoTenSymbolObservationRuntimeConfig:
     spread_contract: str
     spreads_sidecar_contract: str
     requests_per_cycle: int
+    event_id_prefix: str
+    reason_code_prefix: str
 
 
 TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
@@ -178,6 +180,8 @@ TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     spread_contract=TEN_SYMBOL_SPREAD_CONTRACT,
     spreads_sidecar_contract=TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     requests_per_cycle=REQUESTS_PER_CYCLE,
+    event_id_prefix="crypto-ten",
+    reason_code_prefix="crypto_ten_symbol",
 )
 FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     runtime_contract="tradingagent.crypto.forty_symbol_observation_runtime.v1",
@@ -190,7 +194,24 @@ FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     spread_contract=FORTY_SYMBOL_SPREAD_CONTRACT,
     spreads_sidecar_contract=FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     requests_per_cycle=2 + 2 * len(OBSERVATION_SYMBOLS_V40),
+    event_id_prefix="crypto-forty",
+    reason_code_prefix="crypto_forty_symbol",
 )
+
+
+def _family_event_id(
+    config: CryptoTenSymbolObservationRuntimeConfig,
+    event_type: str,
+    material: Mapping[str, Any],
+) -> str:
+    return f"{config.event_id_prefix}-{event_type}-{_sha256(material)[:24]}"
+
+
+def _family_reason(
+    config: CryptoTenSymbolObservationRuntimeConfig,
+    suffix: str,
+) -> str:
+    return f"{config.reason_code_prefix}_{suffix}"
 
 
 def _resolved_output_root(
@@ -872,7 +893,7 @@ class _LazyObservationPort:
             ) from exc
         except (TypeError, ValueError) as exc:
             raise CryptoMarketObservationError(
-                "crypto_ten_symbol_transport_configuration_invalid"
+                _family_reason(config, "transport_configuration_invalid")
             ) from exc
 
 
@@ -915,7 +936,7 @@ def _observation_event(
     }
     return {
         "contract": config.store_contracts.event,
-        "event_id": f"crypto-ten-observation-{_sha256(id_material)[:24]}",
+        "event_id": _family_event_id(config, "observation", id_material),
         "event_type": "observation",
         "market": "crypto",
         "market_session": "24x7",
@@ -949,7 +970,7 @@ def _data_reject_event(
     }
     return {
         "contract": config.store_contracts.event,
-        "event_id": f"crypto-ten-data-reject-{_sha256(id_material)[:24]}",
+        "event_id": _family_event_id(config, "data-reject", id_material),
         "event_type": "data_reject",
         "market": "crypto",
         "market_session": "24x7",
@@ -996,7 +1017,7 @@ def _data_gap_event(
     return {
         "contract": config.store_contracts.event,
         "gap_contract": config.store_contracts.data_gap,
-        "event_id": f"crypto-ten-data-gap-{_sha256(id_material)[:24]}",
+        "event_id": _family_event_id(config, "data-gap", id_material),
         "event_type": "data_gap",
         "market": "crypto",
         "market_session": "24x7",
@@ -1232,7 +1253,7 @@ def _fresh_cycle(
     store.clear_pending(_iso_utc(window.window_end))
     return {
         "status": "completed",
-        "reason_code": "crypto_ten_symbol_observation_recorded",
+        "reason_code": _family_reason(config, "observation_recorded"),
         "event_id": stored["event_id"],
         "event_checksum": stored["checksum"],
         "window_end": _iso_utc(window.window_end),
@@ -1295,7 +1316,7 @@ def _attempt_outage_gap_recovery(
     )
     return {
         "status": "completed",
-        "reason_code": "crypto_ten_symbol_outage_gap_recovered",
+        "reason_code": _family_reason(config, "outage_gap_recovered"),
         "event_id": stored["event_id"],
         "event_checksum": stored["checksum"],
         "skipped_from": stored["skipped_from"],
@@ -1400,7 +1421,9 @@ def run_crypto_ten_symbol_observation_once(
                             "result": {
                                 "status": "recovered_pending",
                                 "reason_code": (
-                                    "crypto_ten_symbol_pending_already_recorded"
+                                    _family_reason(
+                                        config, "pending_already_recorded"
+                                    )
                                 ),
                                 "event_id": existing["event_id"],
                                 "event_checksum": existing["checksum"],
@@ -1569,13 +1592,15 @@ def run_crypto_ten_symbol_observation_once(
         core_result: Mapping[str, Any] = (
             {
                 "status": "budget_deferred",
-                "reason_code": "crypto_ten_symbol_invocation_budget_exhausted",
+                "reason_code": _family_reason(
+                    config, "invocation_budget_exhausted"
+                ),
                 **_non_authority_receipt_fields(),
             }
             if budget_deferred
             else {
                 "status": "noop",
-                "reason_code": "crypto_ten_symbol_slot_already_recorded",
+                "reason_code": _family_reason(config, "slot_already_recorded"),
                 **_non_authority_receipt_fields(),
             }
         )
