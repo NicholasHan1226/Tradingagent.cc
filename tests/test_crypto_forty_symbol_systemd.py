@@ -21,6 +21,7 @@ def test_forty_symbol_observation_service_is_simulation_only_and_isolated() -> N
     ) in text
     assert "StateDirectory=tradingagent/crypto-40-symbol-observation" in text
     assert "ReadWritePaths=/var/lib/tradingagent/crypto-40-symbol-observation" in text
+    assert "TimeoutStartSec=360" in text
     assert "ReadWritePaths=/var/lib/tradingagent/crypto-ten-symbol-observation" not in text
     assert "IPAddressDeny=any" in text
     assert "IPAddressAllow=localhost" in text
