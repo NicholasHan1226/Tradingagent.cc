@@ -1,0 +1,13 @@
+[Unit]
+Description=TradingAgent Crypto forty-symbol closed-5m observation accumulator timer
+
+[Timer]
+# Run after the frozen ten-symbol observer while keeping the 5-minute cadence.
+OnCalendar=*-*-* *:3/5:45
+AccuracySec=1s
+RandomizedDelaySec=3s
+Persistent=false
+Unit=tradingagent-crypto-forty-symbol-observation.service
+
+[Install]
+WantedBy=timers.target

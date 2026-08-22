@@ -157,10 +157,11 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `crypto-5m-ohlcv-factor-research-v2`。历史回填不具备 PIT 证明时只能用于
   工程/定义检查，不得进入晋级证据。
 - **Universe 版本化（10 → 40）。** 上述 10 币链是已落盘 append-only 历史，
-  只读封存、不回写；`OBSERVATION_SYMBOLS` 冻结为 10 币，不得原地扩。新 40 币
-  研究 universe 用 `OBSERVATION_SYMBOLS_V40` + 独立 `forty_symbol_*` 契约族 +
-  独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`（thin
-  runtime `forty_symbol_observation_runtime.py`，本轮不部署、不接 systemd/晋级）。
+  只读封存、不回写；`OBSERVATION_SYMBOLS` 冻结为 10 币，不得原地扩。新增覆盖
+  必须使用 `OBSERVATION_SYMBOLS_V40` + 独立 `forty_symbol_*` 契约族 + 独立
+  store root `/var/lib/tradingagent/crypto-40-symbol-observation`。40 币观察链
+  由 `forty_symbol_observation_runtime.py` 的独立 systemd 候选运行，仍固定
+  `authority=none`、无晋级和资本权限；40 币因子投影继续保持 detached，不接晋级。
   40 币因子投影用 feature set `crypto-5m-ohlcv-factor-research-v3`、consumer
   profile `crypto-5m-ohlcv-13bar-forward-labels-v3`、投影命名空间
   `evolution/forty_symbol_factor_research/`，不写旧 `evolution/ten_symbol_factor_research/`。
