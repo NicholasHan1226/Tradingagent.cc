@@ -18,7 +18,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: tradingagent-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # A manual exact-SHA verification must never cancel the push run whose artifact
+  # production deployment is allowed to consume. PRs and pushes still coalesce by
+  # PR/ref; workflow_dispatch runs are isolated by their validated source SHA.
+  group: >-
+    tradingagent-ci-${{ github.workflow }}-${{
+      github.event_name == 'workflow_dispatch' && inputs.expected_sha ||
+      github.event.pull_request.number || github.ref
+    }}
   cancel-in-progress: true
 
 env:
@@ -48,6 +55,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: |
