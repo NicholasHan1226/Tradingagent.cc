@@ -24,7 +24,7 @@
 - schema、路径、字段或事实源变化：更新 `data_contract.md`。
 - 能力层级或字段语义变化：更新 `system_state_matrix.md`；易变 source/release/runtime/receipt/consumer 事实只更新带 `observed_at` 的 `STATUS.md` 和对应机器记录。未完成复核时采用更严格状态。
 - 板块权限、三层 Universe、reason code 或零泄漏边界变化：更新 `universe_contract.md`、`data_contract.md` 和对应测试入口。
-- 样本、KPI、消融、成熟度或复核门槛变化：更新 `capital_growth_validation.md`。
+- 样本、KPI、消融、成熟度或机器证据门槛变化：更新 `capital_growth_validation.md`；非实盘晋降级不得重新引入逐候选人工审批。
 - 命令、环境、cron、发布、故障或回滚变化：更新 `operations.md`。
 - 当前测试、远端、生产、timer 或真实市场证据：写入机器状态/运行报告并按层级披露；材料变化时整体替换 `STATUS.md`，不得把它追加成事故流水。
 - 后续范围：只写入 `BACKLOG.md`；不得把 backlog 写成已实现或已授权。
