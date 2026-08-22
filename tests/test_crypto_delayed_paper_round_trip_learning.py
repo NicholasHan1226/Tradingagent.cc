@@ -131,6 +131,23 @@ def test_full_scrub_fails_closed_for_tampered_prior_projection(tmp_path: Path) -
         run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
 
 
+def test_incremental_current_revalidates_tampered_checkpoint_head(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+    receipt = next(
+        (tmp_path / "evolution" / "round_trip_learning" / "receipts").glob("*.json")
+    )
+    receipt.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_projection_invalid|round_trip_learning_projection_not_derived",
+    ):
+        run_crypto_delayed_paper_round_trip_learning_incremental(output_root=tmp_path)
+
+
 def test_existing_legacy_challenger_projection_remains_immutable_and_verifiable(
     tmp_path: Path,
 ) -> None:
@@ -1122,6 +1139,62 @@ def test_incremental_backlog_is_bounded_and_resume_matches_uninterrupted(
     )
     assert uninterrupted["status"] == "projected"
     assert _learning_files(interrupted_root) == _learning_files(uninterrupted_root)
+
+
+def test_incremental_revalidates_only_checkpoint_head_before_suffix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observations = [f"observation-{sequence:04d}" for sequence in range(1, 102)]
+    core_count = 100
+
+    def core_snapshot(_root: Path):
+        return (
+            object(),
+            {
+                "pending": None,
+                "completion_count": core_count,
+                "observation_count": core_count,
+            },
+            {"latest_observation_id": observations[core_count - 1]},
+        )
+
+    calls: list[str] = []
+
+    def tracked_projection(root: Path, _store, observation_id: str, **_kwargs):
+        calls.append(observation_id)
+        return _stub_projection(root, _store, observation_id)
+
+    monkeypatch.setattr(learning_module, "_core_snapshot", core_snapshot)
+    monkeypatch.setattr(
+        learning_module,
+        "_completion_inventory",
+        lambda *args, **kwargs: observations[:core_count],
+    )
+    monkeypatch.setattr(learning_module, "_verify_or_project", tracked_projection)
+    monkeypatch.setattr(learning_module, "monotonic", lambda: 0.0)
+    root = tmp_path / "large-history"
+    root.mkdir()
+    assert run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=root
+    )["status"] == "recovered"
+
+    calls.clear()
+    monkeypatch.setattr(
+        learning_module,
+        "_read_checkpoints",
+        lambda _evolution: pytest.fail(
+            "incremental must not rescan the full checkpoint chain"
+        ),
+    )
+    core_count = 101
+    result = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=root
+    )
+
+    assert result["status"] == "projected"
+    assert result["processed_count"] == 1
+    assert result["projected_completion_count"] == 101
+    assert calls == [observations[99], observations[100]]
 
 
 def test_incremental_backlog_preserves_pending_core_deferral(
