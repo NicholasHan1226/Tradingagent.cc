@@ -109,7 +109,7 @@ flowchart LR
     AC --> FP["只读投影"]
     FC --> FP
     CC --> FP
-    AL --> MR["Challenger artifacts\n人工晋级"]
+    AL --> MR["Challenger artifacts\nsim-only 证据晋级"]
     FL --> MR
     CL --> MR
     FP --> UI["front-readonly"]
@@ -250,7 +250,11 @@ elastic-net logistic 是可解释控制组；LightGBM 及 NumPy/SciPy 依赖仅�
 Kronos-mini、Chronos-Bolt-small，再决定是否需要 Kronos-small；TimesFM 2.5 和更大模型
 留在独立 research host/批处理层。权重下载、推理依赖和真实数据 benchmark 都是后续独立
 验收，不能因本表登记而自动安装或调度。任何复杂模型只有在同一冻结 OOS、成本、候选集与
-decision cluster 下稳定超过 M0/M1，才可提交人工晋级建议。
+decision cluster 下稳定超过 M0/M1，才可进入自动证据评审。模型 prediction receipt 自身
+仍无晋级 authority；只有绑定预声明 cohort/horizon、PIT、独立未来结果、费用/滑点、
+基线、覆盖/排除、确定性 replay、time-split/OOS 与不确定性检查的可信 registry receipt，
+才可触发确定性的 sim-only 晋级、降级或回滚。该过程不授予资本、风险、broker、订单或
+live authority，也不等待 Nicholas 逐候选审批。
 
 模型训练、批量回测、LLM和full scrub属于learning plane；分钟证据门禁、候选、模拟成交、
 资本提交和对账属于core plane。二者通过内容寻址的feature snapshot、model manifest、
