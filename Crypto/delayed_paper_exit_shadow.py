@@ -32,7 +32,9 @@ EXIT_SHADOW_CONTRACT = "tradingagent.crypto.delayed_paper_exit_shadow.v1"
 EXIT_SHADOW_POLICY_ID = "crypto-delayed-paper-exit-shadow-v1"
 TAKE_PROFIT_RETURN = Decimal("0.03")
 STOP_LOSS_RETURN = Decimal("-0.02")
-MOMENTUM_EXIT_RETURN = Decimal("-0.001")
+# Mirrors Crypto.round_trip_capital._exit_reason: with a negative 1h regime,
+# any strictly negative 15m decision return ends the round trip.
+MOMENTUM_EXIT_RETURN = Decimal("0")
 MAX_HOLD_SECONDS = 24 * 60 * 60
 EXIT_SLIPPAGE_BPS = Decimal("2")
 EXIT_FEE_RATE = Decimal("0.001")
@@ -194,7 +196,7 @@ def _trigger(
     if (
         decision.get("action") == "observe"
         and regime_return < 0
-        and decision_return <= MOMENTUM_EXIT_RETURN
+        and decision_return < MOMENTUM_EXIT_RETURN
     ):
         return "shadow_exit", "momentum_reversal_observed"
     return "hold", "exit_threshold_not_met"

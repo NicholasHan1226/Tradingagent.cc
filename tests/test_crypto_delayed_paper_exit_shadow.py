@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from Crypto.delayed_paper_epoch import (
 )
 from Crypto.delayed_paper_exit_shadow import (
     CryptoDelayedPaperExitShadowError,
+    _trigger,
     project_crypto_delayed_paper_exit_shadow,
 )
 from Crypto.delayed_paper_exit_shadow_worker import (
@@ -147,6 +149,41 @@ def _epoch(
     context = load_crypto_delayed_paper_epoch_manifest(manifest_path)
     prepare_crypto_delayed_paper_epoch(context)
     return manifest_path, output_root
+
+
+def test_momentum_reversal_threshold_matches_champion_exit() -> None:
+    weak = {
+        "action": "observe",
+        "regime_return": "-0.002",
+        "decision_return": "-0.0005",
+    }
+    assert _trigger(
+        raw_return=Decimal("0"),
+        holding_seconds=3600,
+        decision=weak,
+    ) == ("shadow_exit", "momentum_reversal_observed")
+
+    flat = {
+        "action": "observe",
+        "regime_return": "-0.002",
+        "decision_return": "0",
+    }
+    assert _trigger(
+        raw_return=Decimal("0"),
+        holding_seconds=3600,
+        decision=flat,
+    ) == ("hold", "exit_threshold_not_met")
+
+    regime_positive = {
+        "action": "observe",
+        "regime_return": "0.001",
+        "decision_return": "-0.0005",
+    }
+    assert _trigger(
+        raw_return=Decimal("0"),
+        holding_seconds=3600,
+        decision=regime_positive,
+    ) == ("hold", "exit_threshold_not_met")
 
 
 def test_exit_shadow_is_idempotent_and_never_mutates_capital(tmp_path: Path) -> None:
