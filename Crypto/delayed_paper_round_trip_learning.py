@@ -425,7 +425,9 @@ def _completion_inventory(
     return ids
 
 
-def _projection(source: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def _projection(
+    source: Mapping[str, Any], *, legacy_manual_gate: bool = False
+) -> dict[str, dict[str, Any]]:
     observation = source["observation"]
     completion = source["completion"]
     events = source["events"]
@@ -475,16 +477,25 @@ def _projection(source: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         **_non_authority_fields(),
     }
     kpi["kpi_sha256"] = _sha256(kpi)
+    if legacy_manual_gate:
+        suggestion = "collect_audited_simulation_outcomes_before_manual_review"
+        reason_codes = [
+            "insufficient_independent_outcomes",
+            "manual_review_required",
+        ]
+    else:
+        suggestion = "continue_simulation_outcome_accumulation"
+        reason_codes = [
+            "insufficient_independent_outcomes",
+            "deterministic_non_live_gate_pending",
+        ]
     challenger = {
         "contract": ROUND_TRIP_LEARNING_CONTRACT,
         "event_type": "challenger_suggestion",
         "observation_id": observation_id,
         "source_completion_sha256": completion_sha256,
-        "suggestion": "continue_simulation_outcome_accumulation",
-        "reason_codes": [
-            "insufficient_independent_outcomes",
-            "deterministic_non_live_gate_pending",
-        ],
+        "suggestion": suggestion,
+        "reason_codes": reason_codes,
         "eligible_for_champion_replacement": False,
         "proposed_parameter_changes": [],
         **_non_authority_fields(),
@@ -518,16 +529,32 @@ def _verify_or_project(
         store, observation_id, strict_ledger_membership=strict_ledger_membership
     )
     material = _projection(source)
+    legacy_material = _projection(source, legacy_manual_gate=True)
     paths = _paths(root, observation_id)
+    existing: dict[str, dict[str, Any]] = {}
     for name, path in paths.items():
         if path.exists() or path.is_symlink():
-            actual = _parse_canonical(
+            existing[name] = _parse_canonical(
                 path, reason="round_trip_learning_projection_invalid"
             )
-            if _canonical_json(actual) != _canonical_json(material[name]):
-                raise CryptoRoundTripLearningError(
-                    "round_trip_learning_projection_not_derived"
+    if existing:
+        variants = (material, legacy_material)
+        matched = next(
+            (
+                variant
+                for variant in variants
+                if all(
+                    _canonical_json(actual) == _canonical_json(variant[name])
+                    for name, actual in existing.items()
                 )
+            ),
+            None,
+        )
+        if matched is None:
+            raise CryptoRoundTripLearningError(
+                "round_trip_learning_projection_not_derived"
+            )
+        material = matched
     for name, path in paths.items():
         _write_immutable(path, material[name])
     return material["receipt"]
