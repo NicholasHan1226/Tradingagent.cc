@@ -16,6 +16,7 @@ from Crypto.delayed_paper_round_trip_report import (
     main,
     _continuity_segments,
     _manifest_path,
+    _latest_terminal_window_summary,
     _runtime_rejects_by_slot,
     _slot_summary,
     run_crypto_delayed_paper_round_trip_acceptance_once,
@@ -102,6 +103,25 @@ def test_latest_continuous_streak_ignores_old_epoch_gaps() -> None:
     assert summary["latest_continuous_first_market_slot"] == (
         WINDOW_END - timedelta(minutes=5)
     ).isoformat().replace("+00:00", "Z")
+
+
+def test_acceptance_window_ignores_gaps_outside_latest_window() -> None:
+    slots = [
+        WINDOW_END - timedelta(hours=48, minutes=5),
+        WINDOW_END - timedelta(minutes=10),
+        WINDOW_END - timedelta(minutes=5),
+        WINDOW_END,
+    ]
+
+    summary = _latest_terminal_window_summary(
+        slots,
+        [],
+        minimum_window_count=3,
+    )
+
+    assert summary["latest_window_available_span_count"] > 3
+    assert summary["latest_window_terminal_window_count"] == 3
+    assert summary["latest_window_coverage_ratio"] == 1.0
 
 
 def test_continuity_segments_expose_gaps_without_attributing_external_cause() -> None:

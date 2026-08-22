@@ -17,8 +17,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
 - 目标市场语义为 24/7、无交易所统一休市；这不表示所有可选任务都已安装。
 - 5min delayed-paper 核心与现有 G5 learning/scrub units 的服务器 enablement、immutable
   release 和 timer 状态必须分别从 `STATUS.md`/`AUTODEV_STATE.json` 同轮读回；仓库文件存在、
-  install-default 或 `[Install]` 不能替代当前运行证据。模拟盘上线要求连续 48 小时、覆盖率
-  至少 90% 且无完整性错误；策略样本质量仍只由后续运行证据证明。
+  install-default 或 `[Install]` 不能替代当前运行证据。模拟盘上线要求最近 48 小时窗口覆盖率
+  至少 90% 且无完整性错误；旧 epoch 历史缺口只作审计，不得拖住新的可观察模拟积累；策略样本质量
+  仍只由后续运行证据证明。
 - server-local paper、Binance Spot Testnet 和未来 Binance Spot Live 是三份不同合同、账户与凭据域；不能靠切换 base URL 或环境变量升级。当前 `REAL_TRADING_ENABLED=false`，Live adapter 未实现。
 
 ## 当前模块边界

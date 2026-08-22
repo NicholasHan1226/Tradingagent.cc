@@ -366,8 +366,60 @@ def _terminal_window_summary(
     }
 
 
+def _latest_terminal_window_summary(
+    completed_slots: list[datetime],
+    gap_slots: list[datetime],
+    *,
+    minimum_window_count: int,
+) -> dict[str, Any]:
+    """Evaluate the latest bounded runtime window, not the whole epoch history."""
+
+    terminal_slots = sorted(set(completed_slots).union(gap_slots))
+    if not terminal_slots:
+        return {
+            "latest_window_available_span_count": 0,
+            "latest_window_terminal_window_count": 0,
+            "latest_window_coverage_ratio": 0.0,
+            "latest_window_data_gap_window_count": 0,
+            "latest_window_first_market_slot": None,
+            "latest_window_latest_market_slot": None,
+        }
+    earliest = terminal_slots[0]
+    latest = terminal_slots[-1]
+    available_span_count = int(
+        (latest - earliest).total_seconds() // FIVE_MINUTES.total_seconds()
+    ) + 1
+    window_start = latest - FIVE_MINUTES * (minimum_window_count - 1)
+    expected_slots = {
+        window_start + FIVE_MINUTES * offset
+        for offset in range(minimum_window_count)
+    }
+    terminal_set = set(terminal_slots)
+    gap_set = set(gap_slots)
+    covered_slots = expected_slots.intersection(terminal_set)
+    return {
+        "latest_window_available_span_count": available_span_count,
+        "latest_window_terminal_window_count": len(covered_slots),
+        "latest_window_coverage_ratio": round(
+            len(covered_slots) / minimum_window_count, 6
+        ),
+        "latest_window_data_gap_window_count": len(
+            expected_slots.intersection(gap_set)
+        ),
+        "latest_window_first_market_slot": window_start.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "latest_window_latest_market_slot": latest.isoformat().replace(
+            "+00:00", "Z"
+        ),
+    }
+
+
 def build_crypto_delayed_paper_round_trip_report(
-    *, output_root: Path | str, now: datetime | None = None
+    *,
+    output_root: Path | str,
+    now: datetime | None = None,
+    minimum_window_count: int = FORTY_EIGHT_HOUR_WINDOWS,
 ) -> dict[str, Any]:
     """Return audit-bound G4 KPIs without mutating the epoch root."""
 
@@ -389,6 +441,11 @@ def build_crypto_delayed_paper_round_trip_report(
         raise CryptoRoundTripReportError("round_trip_report_source_invalid") from exc
     slot_summary = _slot_summary(slots)
     terminal_summary = _terminal_window_summary(slots, gap_slots)
+    latest_window_summary = _latest_terminal_window_summary(
+        slots,
+        gap_slots,
+        minimum_window_count=minimum_window_count,
+    )
     if slot_summary["completion_count"] != health["core"]["completion_count"]:
         raise CryptoRoundTripReportError("round_trip_report_completion_count_invalid")
     outcome = _outcomes(capital_events)
@@ -402,6 +459,7 @@ def build_crypto_delayed_paper_round_trip_report(
             "completion_freshness": health["freshness"],
             **slot_summary,
             **terminal_summary,
+            **latest_window_summary,
             "data_reject_count": health["failure_count"],
             "continuity_segments": _continuity_segments(
                 slots, runtime_rejects=runtime_rejects
@@ -445,14 +503,21 @@ def evaluate_crypto_delayed_paper_round_trip_acceptance(
     if minimum_completion_count <= 0:
         raise ValueError("round_trip_acceptance_minimum_invalid")
     report = build_crypto_delayed_paper_round_trip_report(
-        output_root=output_root, now=now
+        output_root=output_root,
+        now=now,
+        minimum_window_count=minimum_completion_count,
     )
     reliability = report["service_reliability"]
     capital = report["simulated_capital_only"]
     reasons: list[str] = []
-    if reliability["terminal_window_span_count"] < minimum_completion_count:
+    if (
+        reliability["latest_window_available_span_count"]
+        < minimum_completion_count
+    ):
         reasons.append("insufficient_48h_runtime")
-    if reliability["terminal_coverage_ratio"] < MINIMUM_COVERAGE_RATIO:
+    elif (
+        reliability["latest_window_coverage_ratio"] < MINIMUM_COVERAGE_RATIO
+    ):
         reasons.append("coverage_below_90_percent")
     if reliability["integrity_error_count"] != 0:
         reasons.append("integrity_errors_present")
@@ -552,7 +617,9 @@ def main(argv: list[str] | None = None) -> int:
             allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
-            sort_keys=True,
+            # Keep the top-level gate status before the large audit report so
+            # systemd journal truncation cannot hide the fail-obvious result.
+            sort_keys=False,
         )
     )
     return 0
