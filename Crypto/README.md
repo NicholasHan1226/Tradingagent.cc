@@ -251,7 +251,9 @@ service 同时静态钉住现役
 不自动换 generation、不回退旧 root。
 
 增量模式只读取核心当前 completion state、自己的 checkpoint 头，以及有界的新增
-completion 对应的 receipt/segments；每轮最多处理 8 条，并受现有 90 秒预算约束。
+completion 对应的 receipt/segments；每轮最多处理 8 条，并受 30 秒内部预算约束，
+在 45 秒 oneshot timeout 前保留明确的退出余量。增量路径只重验已验证 checkpoint 链的
+精确头部映射后追加 suffix；全部历史投影的逐条复核仍由 daily full scrub 独立承担。
 它按 append-only、可恢复顺序写入 projection receipt、checkpoint 和
 `worker_state.json`，返回 `projected`、`backlog_remaining` 或 `current` 及处理/剩余
 数量；首轮没有既有 baseline 时仍返回 `full_scrub_required`，不会绕过全量完整性边界。
@@ -440,8 +442,9 @@ checksum-bound decision event，再在 `g4/evolution/round_trip_learning/` 追�
 `production_eligible=false`、`manual_review_required=false`，并由确定性非实盘
 证据门禁决定后续；当前仍没有自动 Champion 替换或风险扩张。
 
-incremental worker 在现有 90 秒预算内每轮最多处理 8 条新增 completion，并从已有
-checkpoint 头 append-only、可恢复地继续；有 backlog 时返回 `backlog_remaining`，并
+incremental worker 在 30 秒内部预算内每轮最多处理 8 条新增 completion，并从已有
+checkpoint 头 append-only、可恢复地继续；它只重验 checkpoint 链的精确头部映射，
+全历史逐条完整性由 daily full scrub 负责。有 backlog 时返回 `backlog_remaining`，并
 报告已处理与剩余数量。没有既有 baseline 时仍返回 `full_scrub_required`，且必须先有
 一次成功 full scrub；full scrub 仍遍历所有
 completion→receipt→checkpoint 映射；已被较早 checkpoint 声明的 receipt/segment
