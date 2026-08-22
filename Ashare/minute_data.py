@@ -1079,11 +1079,33 @@ class MinuteEvidenceAuditRecord:
             raise MinuteDataContractError("minute_rejected_evidence_must_be_audit_only")
 
 
+@dataclass(frozen=True)
+class MinuteRowRejection:
+    """One row-level quality rejection retained without blocking valid rows."""
+
+    symbol: str
+    reason_code: str
+    dataset_id: str
+    catalog_version: str
+    rejected_payload_sha256: str
+
+    def __post_init__(self) -> None:
+        _text(self.symbol, "minute_row_rejection_symbol_invalid")
+        _text(self.reason_code, "minute_row_rejection_reason_invalid")
+        _text(self.dataset_id, "minute_row_rejection_dataset_invalid")
+        _text(self.catalog_version, "minute_row_rejection_catalog_invalid")
+        if len(self.rejected_payload_sha256) != 64 or any(
+            c not in _SHA256_HEX for c in self.rejected_payload_sha256
+        ):
+            raise MinuteDataContractError("minute_row_rejection_payload_hash_invalid")
+
+
 class MinuteEvidenceAuditLedger:
     """Idempotent process-local collector for rejected minute evidence."""
 
     def __init__(self) -> None:
         self._records: dict[str, MinuteEvidenceAuditRecord] = {}
+        self._row_rejections: dict[str, MinuteRowRejection] = {}
 
     def append(self, record: MinuteEvidenceAuditRecord) -> bool:
         if not isinstance(record, MinuteEvidenceAuditRecord):
@@ -1110,6 +1132,29 @@ class MinuteEvidenceAuditLedger:
     def records(self) -> tuple[MinuteEvidenceAuditRecord, ...]:
         return tuple(self._records.values())
 
+    def append_row_rejection(self, record: MinuteRowRejection) -> bool:
+        if not isinstance(record, MinuteRowRejection):
+            raise MinuteDataContractError("minute_row_rejection_invalid")
+        identity = _sha256(
+            {
+                "symbol": record.symbol,
+                "reason": record.reason_code,
+                "dataset_id": record.dataset_id,
+                "catalog_version": record.catalog_version,
+                "payload": record.rejected_payload_sha256,
+            }
+        )
+        previous = self._row_rejections.get(identity)
+        if previous is None:
+            self._row_rejections[identity] = record
+            return True
+        if previous == record:
+            return False
+        raise MinuteDataContractError("minute_row_rejection_identity_conflict")
+
+    def row_rejections(self) -> tuple[MinuteRowRejection, ...]:
+        return tuple(self._row_rejections.values())
+
 
 class MinuteMarketDataPort(Protocol):
     """Internal TA role port; no transport or provider is implied."""
@@ -1124,6 +1169,7 @@ class MinuteMarketDataPort(Protocol):
         audit_ledger: MinuteEvidenceAuditLedger,
         reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
         evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+        allow_symbol_rejections: bool = False,
     ) -> MinuteBarSnapshot: ...
 
 
@@ -1146,6 +1192,34 @@ def _provider_timestamp(
     return parsed, parsed + FIVE_MINUTES
 
 
+_ROW_LEVEL_REJECTION_CODES = frozenset(
+    {
+        "minute_row_symbol_missing",
+        "minute_symbol_not_mainboard_tradable",
+        "minute_row_timestamp_invalid",
+        "minute_trade_date_not_calendar_eligible",
+        "minute_row_frequency_mismatch",
+        "minute_reference_fact_missing",
+        "minute_reference_symbol_mismatch",
+        "minute_reference_trade_date_mismatch",
+        "minute_row_suspension_invalid",
+        "minute_suspended_instrument",
+        "minute_open_invalid",
+        "minute_high_invalid",
+        "minute_low_invalid",
+        "minute_close_invalid",
+        "minute_volume_invalid",
+        "minute_amount_invalid",
+        "minute_previous_close_invalid",
+        "minute_ohlc_relationship_invalid",
+        "minute_zero_volume_not_tradable",
+        "minute_bar_duration_invalid",
+        "minute_market_session_mismatch",
+        "minute_weekend_bar_forbidden",
+    }
+)
+
+
 def _map_run(
     *,
     profile: MinuteDatasetProfile,
@@ -1155,6 +1229,7 @@ def _map_run(
     reference_facts: Mapping[str, MinuteReferenceFact] | None,
     evidence_use: MinuteEvidenceUse,
     row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None,
+    row_indices: tuple[int, ...] | None = None,
 ) -> tuple[MinuteBarEvidence, ...]:
     run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
@@ -1247,7 +1322,19 @@ def _map_run(
             row_proof_metadata[0].get("finished_at"),
             "minute_exact_slot_receipt_proof_failed",
         )
-    for index, row in enumerate(envelope.data):
+    indices = (
+        tuple(range(len(envelope.data)))
+        if row_indices is None
+        else row_indices
+    )
+    if any(
+        isinstance(index, bool) or not isinstance(index, int) or index < 0
+        or index >= len(envelope.data)
+        for index in indices
+    ):
+        raise MinuteDataContractError("minute_row_indices_invalid")
+    for index in indices:
+        row = envelope.data[index]
         symbol = _text(
             row.get(profile.symbol_field), "minute_row_symbol_missing"
         ).upper()
@@ -1393,6 +1480,65 @@ def _map_run(
     return tuple(bars)
 
 
+def _map_run_with_symbol_rejections(
+    *,
+    profile: MinuteDatasetProfile,
+    run: PagedQueryRun,
+    decision_time: datetime,
+    trading_dates: frozenset[date],
+    reference_facts: Mapping[str, MinuteReferenceFact] | None,
+    evidence_use: MinuteEvidenceUse,
+    audit_ledger: MinuteEvidenceAuditLedger,
+    row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None,
+) -> tuple[MinuteBarEvidence, ...]:
+    """Map valid rows while quarantining only explicitly row-local failures."""
+
+    run.verify_integrity(identity_fields=profile.identity_fields)
+    rows = run.envelope.data
+    bars: list[MinuteBarEvidence] = []
+    for index, row in enumerate(rows):
+        try:
+            mapped = _map_run(
+                profile=profile,
+                run=run,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                row_proof_metadata=row_proof_metadata,
+                row_indices=(index,),
+            )
+        except MinuteDataContractError as exc:
+            if exc.reason_code not in _ROW_LEVEL_REJECTION_CODES:
+                raise
+            raw_symbol = row.get(profile.symbol_field)
+            symbol = (
+                raw_symbol.strip().upper()
+                if isinstance(raw_symbol, str) and raw_symbol.strip()
+                else "<invalid>"
+            )
+            audit_ledger.append_row_rejection(
+                MinuteRowRejection(
+                    symbol=symbol,
+                    reason_code=exc.reason_code,
+                    dataset_id=run.envelope.dataset_id,
+                    catalog_version=run.envelope.catalog_version,
+                    rejected_payload_sha256=_sha256(
+                        {
+                            "row": row,
+                            "row_index": index,
+                            "semantic_sha256": run.semantic_sha256,
+                        }
+                    ),
+                )
+            )
+            continue
+        bars.extend(mapped)
+    if not bars:
+        raise MinuteDataContractError("minute_query_returned_no_bars")
+    return tuple(bars)
+
+
 def snapshot_from_runs(
     *,
     profile: MinuteDatasetProfile,
@@ -1404,6 +1550,7 @@ def snapshot_from_runs(
     reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     envelope_validator: Callable[[Any], object] | None = None,
+    allow_symbol_rejections: bool = False,
 ) -> MinuteBarSnapshot:
     """Map two bounded reads and require identical same-observation semantics."""
 
@@ -1460,28 +1607,54 @@ def snapshot_from_runs(
                     "minute_exact_slot_receipt_proof_failed"
                 )
             row_proof_metadata = tuple(first_proofs)
-        bars = _map_run(
-            profile=profile,
-            run=first,
-            decision_time=decision_time,
-            trading_dates=trading_dates,
-            reference_facts=reference_facts,
-            evidence_use=evidence_use,
-            row_proof_metadata=row_proof_metadata,
-        )
-        replay_bars = _map_run(
-            profile=profile,
-            run=replay,
-            decision_time=decision_time,
-            trading_dates=trading_dates,
-            reference_facts=reference_facts,
-            evidence_use=evidence_use,
-            row_proof_metadata=(
-                tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
-                if envelope_validator is not None
-                else None
-            ),
-        )
+        if allow_symbol_rejections:
+            bars = _map_run_with_symbol_rejections(
+                profile=profile,
+                run=first,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                audit_ledger=audit_ledger,
+                row_proof_metadata=row_proof_metadata,
+            )
+            replay_bars = _map_run_with_symbol_rejections(
+                profile=profile,
+                run=replay,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                audit_ledger=audit_ledger,
+                row_proof_metadata=(
+                    tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
+                    if envelope_validator is not None
+                    else None
+                ),
+            )
+        else:
+            bars = _map_run(
+                profile=profile,
+                run=first,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                row_proof_metadata=row_proof_metadata,
+            )
+            replay_bars = _map_run(
+                profile=profile,
+                run=replay,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                row_proof_metadata=(
+                    tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
+                    if envelope_validator is not None
+                    else None
+                ),
+            )
         if [bar.sha256 for bar in bars] != [bar.sha256 for bar in replay_bars]:
             raise MinuteDataContractError("minute_same_observation_mismatch")
         proof_summary = None
@@ -1519,7 +1692,7 @@ def snapshot_from_runs(
             profile=profile,
             bars=bars,
             page_count=first.page_count,
-            row_count=first.row_count,
+            row_count=len(bars),
             pagination_trace_sha256=first.pagination_trace_sha256,
             first_semantic_sha256=first.semantic_sha256,
             replay_semantic_sha256=replay.semantic_sha256,
@@ -1597,6 +1770,8 @@ class TradingDatasMinuteMarketDataPort:
         reference_facts: Mapping[str, MinuteReferenceFact] | None,
         evidence_use: MinuteEvidenceUse,
         envelope_validator: Callable[[Any], object] | None,
+        audit_ledger: MinuteEvidenceAuditLedger,
+        allow_symbol_rejections: bool,
     ) -> MinuteBarSnapshot:
         """Read bounded shards in parallel and retain successful subsets."""
 
@@ -1730,22 +1905,50 @@ class TradingDatasMinuteMarketDataPort:
                 or first.semantic_trace_sha256 != replay.semantic_trace_sha256
             ):
                 raise MinuteDataContractError("minute_same_observation_mismatch")
-            first_bars = _map_run(
-                profile=profile,
-                run=first,
-                decision_time=decision_time,
-                trading_dates=trading_dates,
-                reference_facts=reference_facts,
-                evidence_use=evidence_use,
-            )
-            replay_bars = _map_run(
-                profile=profile,
-                run=replay,
-                decision_time=decision_time,
-                trading_dates=trading_dates,
-                reference_facts=reference_facts,
-                evidence_use=evidence_use,
-            )
+            try:
+                if allow_symbol_rejections:
+                    first_bars = _map_run_with_symbol_rejections(
+                        profile=profile,
+                        run=first,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                        audit_ledger=audit_ledger,
+                    )
+                    replay_bars = _map_run_with_symbol_rejections(
+                        profile=profile,
+                        run=replay,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                        audit_ledger=audit_ledger,
+                    )
+                else:
+                    first_bars = _map_run(
+                        profile=profile,
+                        run=first,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                    )
+                    replay_bars = _map_run(
+                        profile=profile,
+                        run=replay,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                    )
+            except MinuteDataContractError as exc:
+                if not (
+                    allow_symbol_rejections
+                    and exc.reason_code == "minute_query_returned_no_bars"
+                ):
+                    raise
+                continue
             if [bar.sha256 for bar in first_bars] != [bar.sha256 for bar in replay_bars]:
                 raise MinuteDataContractError("minute_same_observation_mismatch")
             bars.extend(first_bars)
@@ -1785,6 +1988,7 @@ class TradingDatasMinuteMarketDataPort:
         evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
         include_receipt_proofs: bool = False,
         envelope_validator: Callable[[Any], object] | None = None,
+        allow_symbol_rejections: bool = False,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
         runtime_catalog_version = "unobserved"
@@ -1842,6 +2046,8 @@ class TradingDatasMinuteMarketDataPort:
                     reference_facts=reference_facts,
                     evidence_use=evidence_use,
                     envelope_validator=envelope_validator,
+                    audit_ledger=audit_ledger,
+                    allow_symbol_rejections=allow_symbol_rejections,
                 )
             request = QueryRequest(
                 dataset_id=profile.dataset_id,
@@ -1881,6 +2087,7 @@ class TradingDatasMinuteMarketDataPort:
                 reference_facts=reference_facts,
                 evidence_use=evidence_use,
                 envelope_validator=envelope_validator,
+                allow_symbol_rejections=allow_symbol_rejections,
             )
         except MinuteDataContractError as exc:
             if len(audit_ledger.records()) == audit_count_before:
@@ -1964,6 +2171,7 @@ __all__ = [
     "MinuteDatasetProfile",
     "MinuteEvidenceAuditLedger",
     "MinuteEvidenceAuditRecord",
+    "MinuteRowRejection",
     "MinuteEvidenceUse",
     "MinuteMarketDataPort",
     "MinuteReferenceFact",

@@ -276,6 +276,76 @@ def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> No
     )
 
 
+def test_minute_port_quarantines_bad_row_inside_large_shard() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 100, "max_lookback_days": 30}
+    )
+
+    class ShardQualityTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self.query_count = 0
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            self.query_count += 1
+            rows = [
+                _row(
+                    symbol,
+                    "20260727 09:40:00",
+                    open_price=0.0 if symbol == "000001.SZ" else 10.0,
+                )
+                for symbol in requested
+            ]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"quality-shard-{self.query_count}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = ShardQualityTransport()
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+    audit = MinuteEvidenceAuditLedger()
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=audit,
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+        allow_symbol_rejections=True,
+    )
+
+    assert snapshot.row_count == 100
+    assert "000001.SZ" not in {bar.symbol for bar in snapshot.bars}
+    assert [item.symbol for item in audit.row_rejections()] == ["000001.SZ"]
+    assert audit.records() == ()
+
+
 def test_minute_port_uses_single_flight_client_per_parallel_worker() -> None:
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row(
@@ -792,6 +862,7 @@ def _load(
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     include_receipt_proofs: bool = False,
     envelope_validator: Any = None,
+    allow_symbol_rejections: bool = False,
     profile_overrides: dict[str, Any] | None = None,
     filter_time: str = "20260727 09:35:00",
     trading_date: date = date(2026, 7, 27),
@@ -811,8 +882,33 @@ def _load(
         evidence_use=evidence_use,
         include_receipt_proofs=include_receipt_proofs,
         envelope_validator=envelope_validator,
+        allow_symbol_rejections=allow_symbol_rejections,
     )
     return snapshot, audit
+
+
+def test_row_quality_rejection_is_quarantined_without_blocking_valid_rows() -> None:
+    good = _row("600000.SH", "20260727 09:40:00")
+    bad = _row("000001.SZ", "20260727 09:40:00", open_price=0.0)
+    trailing_good = _row("600001.SH", "20260727 09:40:00")
+
+    with pytest.raises(MinuteDataContractError, match="minute_open_invalid"):
+        _load(
+            _Transport(first_rows=[good, bad], second_rows=[trailing_good]),
+        )
+
+    snapshot, audit = _load(
+        _Transport(first_rows=[good, bad], second_rows=[trailing_good]),
+        allow_symbol_rejections=True,
+    )
+
+    assert {bar.symbol for bar in snapshot.bars} == {"600000.SH", "600001.SH"}
+    assert audit.records() == ()
+    assert len(audit.row_rejections()) == 1
+    rejection = audit.row_rejections()[0]
+    assert rejection.symbol == "000001.SZ"
+    assert rejection.reason_code == "minute_open_invalid"
+    assert len(rejection.rejected_payload_sha256) == 64
 
 
 def test_exact_proof_mapping_uses_selected_row_receipts_not_latest_runtime_metadata() -> None:

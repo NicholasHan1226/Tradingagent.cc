@@ -655,6 +655,7 @@ def run_minute_canary(
     reference_facts: Mapping[str, MinuteReferenceFact],
     bar_end: str | datetime | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    allow_symbol_rejections: bool = False,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> dict[str, Any]:
     profile, snapshot, audit = load_minute_snapshot(
@@ -665,6 +666,7 @@ def run_minute_canary(
         reference_facts=reference_facts,
         bar_end=bar_end,
         evidence_use=evidence_use,
+        allow_symbol_rejections=allow_symbol_rejections,
         transport_factory=transport_factory,
     )
     selected_bar_end = (
@@ -1084,6 +1086,7 @@ def load_minute_snapshot(
     reference_facts: Mapping[str, MinuteReferenceFact],
     bar_end: str | datetime | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    allow_symbol_rejections: bool = False,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> tuple[MinuteDatasetProfile, MinuteBarSnapshot, MinuteEvidenceAuditLedger]:
     """Load one exact-bar snapshot for observation or explicit delayed paper."""
@@ -1145,6 +1148,7 @@ def load_minute_snapshot(
         evidence_use=evidence_use,
         include_receipt_proofs=proof_validator is not None,
         envelope_validator=proof_validator,
+        allow_symbol_rejections=allow_symbol_rejections,
     )
     if selected_bar_end is not None:
         _validate_exact_selection(

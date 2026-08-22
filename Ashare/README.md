@@ -585,16 +585,25 @@ contract, pagination or freshness failures. Large delayed-paper minute fanout
 uses at most four concurrent bounded shard workers. A request-level
 HTTP/transport failure quarantines only that shard and is exposed in
 `fanout_failures`/`missing_symbols`; successful shards retain their independent
-first/replay evidence. Pagination, contract, catalog, replay or metadata
-failures still fail closed for the whole snapshot. There is no provider
-fallback or direct database read.
+first/replay evidence. In `rolling_eligible` mode, row-level quality failures
+are narrower still: only the offending symbol is absent for that bar and is
+retried on the next cadence. Pagination, contract, catalog, replay, metadata,
+identity and freshness failures still fail closed for the affected snapshot;
+they are never mislabeled as row-quality data. There is no provider fallback
+or direct database read.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
-a claim derived from an identityless suspension dataset. Every actual bar must
-still be completed and have positive volume, otherwise the minute Evidence
-Gate blocks the entire snapshot. A closed day is a safe no-op; degraded daily
-evidence, catalog drift, missing symbols, replay mismatch, conflicting existing
-inputs, or an already-started target session fails closed.
+a claim derived from an identityless suspension dataset. Every accepted bar
+must still be completed and have positive volume. In the normal strict path,
+any malformed row blocks the snapshot; in `rolling_eligible` delayed-paper
+mode, explicitly row-local quality failures are instead quarantined by symbol:
+valid rows continue into the simulation loop, while the receipt records the
+symbol, stable reason code and rejected-row hash in `row_rejections`. This is
+observation and data accumulation only; quarantined rows are never features,
+candidates, execution, training or promotion authority. A closed day is a safe
+no-op; degraded daily evidence, catalog drift, missing symbols, replay
+mismatch, conflicting existing inputs, or an already-started target session
+still fails closed at the affected snapshot/window boundary.
 
 ### Isolated scale-500 runtime candidate
 

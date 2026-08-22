@@ -14,6 +14,7 @@ from Ashare.minute_data import (
     MinuteDatasetProfile,
     MinuteEvidenceAuditLedger,
     MinuteEvidenceUse,
+    MinuteRowRejection,
     MinuteTimestampSemantics,
 )
 from Ashare.minute_loop import MinuteLoopContractError
@@ -447,4 +448,48 @@ def test_runner_persists_accepted_subset_without_blocking_the_universe(
     assert result["requested_count"] == 2
     assert result["accepted_count"] == 1
     assert result["missing_count"] == 1
+    assert state.exists()
+
+
+def test_runner_keeps_row_quality_rejection_audit_only(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, references, universe = _write_inputs(tmp_path)
+    snapshot = _snapshot("2026-07-28T10:20:00+08:00", 10.0)
+    partial_snapshot = replace(snapshot, bars=snapshot.bars[:1], row_count=1)
+    audit = MinuteEvidenceAuditLedger()
+    audit.append_row_rejection(
+        MinuteRowRejection(
+            symbol="000001.SZ",
+            reason_code="minute_open_invalid",
+            dataset_id="fixture.cn.dataset.rt_min",
+            catalog_version="fixture-rt-min-v1",
+            rejected_payload_sha256=_sha("a"),
+        )
+    )
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        return _profile(), partial_snapshot, audit
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot",
+        fake_load,
+    )
+    state = tmp_path / "state" / "bundle.json"
+
+    result = run_delayed_minute_paper_once(
+        manifest=manifest,
+        reference_facts_path=references,
+        universe_path=universe,
+        token_file=tmp_path / "token",
+        state_bundle=state,
+        decision_time=datetime.fromisoformat("2026-07-28T10:30:01+08:00"),
+        trading_date=date(2026, 7, 28),
+        bar_end="2026-07-28 10:20:00",
+    )
+
+    assert result["status"] == "pass"
+    assert result["audit_rejections"] == 0
+    assert result["row_rejection_count"] == 1
+    assert result["row_rejections"][0]["symbol"] == "000001.SZ"
     assert state.exists()
