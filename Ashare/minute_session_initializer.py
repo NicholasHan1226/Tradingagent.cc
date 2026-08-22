@@ -4,15 +4,16 @@ The initializer is intentionally small.  It reuses a previously reviewed
 universe or an explicitly supplied reviewed universe artifact, proves that the
 target day is open, reads the preceding session's closes through the fixed
 TradingDatas catalog/query API, and writes the three immutable inputs consumed
-by ``minute_auto_runner``.  It never creates capital, orders, fills, or a state
-bundle.
+by ``minute_auto_runner``.  Rolling mode derives an active partition and records
+recent listings as pending identities; it never creates capital, orders, fills,
+or a state bundle.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import os
@@ -30,6 +31,7 @@ from .minute_canary import (
 from .minute_paper_runner import load_minute_research_universe
 from .minute_data import SHANGHAI
 from .minute_auto_runner import session_bar_ends
+from .minute_research import MinuteResearchUniverse
 from shared.data.evidence_gate import (
     DataEvidenceGate,
     DatasetEvidencePolicy,
@@ -62,6 +64,10 @@ TRACKING_UNIVERSE_CONTRACT_ID = "tradingagent.trading_copilot_tracking_universe.
 SCALE500_COHORT_COUNT = 31
 SCALE500_COHORT_SIZE = 103
 SCALE500_REFERENCE_KEY = "scale500_reference"
+ALLOWED_OBSERVATION_EXCLUSIONS = frozenset(
+    {"risk_warning_excluded", "delisting_risk_excluded"}
+)
+PENDING_LISTING_REASON = "listed_less_than_30_days"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 TransportFactory = Callable[..., HTTPTransport]
 
@@ -444,12 +450,61 @@ def _scaled_minute_profile(
         or catalog_page_size <= 0
     ):
         raise MinuteSessionInitializerError("minute_session_profile_scale_invalid")
-    page_limit = min(symbol_count, catalog_page_size, 500)
+    # The V1 filter contract caps ``in`` values at 100. Minute consumers
+    # therefore fan out larger reviewed universes into 100-symbol shards;
+    # keeping the manifest bound aligned prevents a 413 request body.
+    page_limit = min(symbol_count, catalog_page_size, 100)
     profile = dict(template_profile)
     profile["page_limit"] = page_limit
     profile["max_rows"] = symbol_count
     profile["max_pages"] = (symbol_count + page_limit - 1) // page_limit
+    # The consumer profile digest covers the scaled pagination bounds.  Keep
+    # the dataset contract binding, but let the current catalog/profile build
+    # recompute the consumer digest for a rolling partition.
+    profile.pop("consumer_profile_sha256", None)
     return profile
+
+
+def partition_rolling_universe(
+    *,
+    universe_raw: Sequence[Mapping[str, Any]],
+    universe: MinuteResearchUniverse,
+    trade_date: date,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split a reviewed snapshot into active and pending identities.
+
+    A recent listing is a per-symbol pending state, not a reason to stop all
+    other symbols.  Risk-warning and delisting-risk rows remain observable in
+    the active research set, while every other policy failure stays fail-closed.
+    """
+
+    active: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    instruments = universe.instruments
+    for row in universe_raw:
+        symbol = row.get("symbol")
+        instrument = instruments.get(symbol)
+        if instrument is None:
+            raise MinuteSessionInitializerError("minute_session_universe_invalid")
+        reason = instrument.eligibility_reason(trade_date=trade_date)
+        if reason is None or reason in ALLOWED_OBSERVATION_EXCLUSIONS:
+            active.append(dict(row))
+            continue
+        if reason != PENDING_LISTING_REASON or instrument.list_date is None:
+            raise MinuteSessionInitializerError("minute_session_universe_ineligible")
+        pending.append(
+            {
+                "symbol": symbol,
+                "reason": reason,
+                "listed_on": instrument.list_date.isoformat(),
+                "eligible_after": (
+                    instrument.list_date + timedelta(days=30)
+                ).isoformat(),
+            }
+        )
+    if not active:
+        raise MinuteSessionInitializerError("minute_session_rolling_universe_empty")
+    return active, pending
 
 
 def _query_twice(
@@ -606,14 +661,29 @@ def _publish_day(
         if not target_root.is_dir() or (target_root / "state-bundle.json").exists():
             raise MinuteSessionInitializerError("minute_session_target_already_started")
         for name, payload in payloads.items():
+            path = target_root / name
             try:
-                existing = (target_root / name).read_bytes()
+                existing = path.read_bytes()
             except OSError as exc:
                 raise MinuteSessionInitializerError(
                     "minute_session_existing_inputs_invalid"
                 ) from exc
             expected = (_canonical_json(payload) + "\n").encode("utf-8")
             if existing != expected:
+                if name == "minute-manifest.json" and _pagination_only_manifest_change(
+                    existing, payload
+                ):
+                    temporary = target_root / f".{name}.{os.getpid()}.upgrade"
+                    try:
+                        _atomic_write(temporary, payload)
+                        os.replace(temporary, path)
+                    except OSError as exc:
+                        raise MinuteSessionInitializerError(
+                            "minute_session_existing_inputs_upgrade_failed"
+                        ) from exc
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                    continue
                 raise MinuteSessionInitializerError(
                     "minute_session_existing_inputs_conflict"
                 )
@@ -641,6 +711,44 @@ def _publish_day(
     return False
 
 
+def _pagination_only_manifest_change(
+    existing_bytes: bytes,
+    expected: Mapping[str, Any],
+) -> bool:
+    """Allow an unstarted day to adopt a corrected bounded query profile."""
+
+    try:
+        existing = json.loads(existing_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(existing, Mapping):
+        return False
+    if set(existing) != set(expected) or not isinstance(existing.get("profile"), Mapping):
+        return False
+    expected_profile = expected.get("profile")
+    if not isinstance(expected_profile, Mapping):
+        return False
+    allowed = frozenset({"max_pages", "max_rows", "page_limit", "consumer_profile_sha256"})
+    # Catalog version is evidence-only metadata. It may legitimately move
+    # during the open session while the dataset contract and published
+    # universe remain unchanged; the current profile digest is derived from
+    # that observation and therefore must be refreshed with it.
+    allowed_top_level = frozenset({"observed_catalog_version"})
+    for key in expected:
+        if (
+            key != "profile"
+            and key not in allowed_top_level
+            and existing.get(key) != expected.get(key)
+        ):
+            return False
+    if set(existing["profile"]) != set(expected_profile):
+        return False
+    return all(
+        key in allowed or existing["profile"].get(key) == expected_profile.get(key)
+        for key in expected_profile
+    )
+
+
 def initialize_minute_session(
     *,
     state_root: Path | str,
@@ -656,6 +764,7 @@ def initialize_minute_session(
     tracking_universe_output: Path | str | None = None,
     target_bar_end: str | None = None,
     scale500_cohort_receipts: Sequence[Path | str] | None = None,
+    allow_pending_recent_listings: bool = False,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -727,17 +836,41 @@ def initialize_minute_session(
     if not isinstance(universe_raw, list) or not universe_raw:
         raise MinuteSessionInitializerError("minute_session_universe_invalid")
     universe = load_minute_research_universe(universe_path)
-    allowed_observation_exclusions = {
-        "risk_warning_excluded",
-        "delisting_risk_excluded",
-    }
-    if any(
-        (reason := instrument.eligibility_reason(trade_date=target)) is not None
-        and reason not in allowed_observation_exclusions
-        for instrument in universe.instruments.values()
-    ):
-        raise MinuteSessionInitializerError("minute_session_universe_ineligible")
-    symbols = tuple(sorted(universe.instruments))
+    if not isinstance(allow_pending_recent_listings, bool):
+        raise MinuteSessionInitializerError(
+            "minute_session_rolling_listing_policy_invalid"
+        )
+    if allow_pending_recent_listings:
+        if target_bar_end is not None or scale500_cohort_receipts is not None:
+            raise MinuteSessionInitializerError(
+                "minute_session_scale500_reference_requires_full_universe"
+            )
+        effective_raw, pending_listings = partition_rolling_universe(
+            universe_raw=universe_raw,
+            universe=universe,
+            trade_date=target,
+        )
+        effective_instruments = tuple(
+            universe.instruments[row["symbol"]] for row in effective_raw
+        )
+        effective_universe = MinuteResearchUniverse(
+            instruments=effective_instruments,
+            expanded=len(effective_instruments) > 500,
+        )
+    else:
+        if any(
+            (reason := instrument.eligibility_reason(trade_date=target)) is not None
+            and reason not in ALLOWED_OBSERVATION_EXCLUSIONS
+            for instrument in universe.instruments.values()
+        ):
+            raise MinuteSessionInitializerError("minute_session_universe_ineligible")
+        effective_raw = [dict(row) for row in universe_raw]
+        pending_listings = []
+        effective_universe = universe
+    symbols = tuple(sorted(effective_universe.instruments))
+    active_partition_count = len(symbols)
+    source_universe_sha256 = _sha256(universe_raw)
+    effective_universe_sha256 = _sha256(effective_raw)
 
     scale500_reference = None
     if target_bar_end is not None or scale500_cohort_receipts is not None:
@@ -880,6 +1013,7 @@ def initialize_minute_session(
 
     by_symbol: dict[str, Mapping[str, Any]] = {}
     metadata_by_symbol: dict[str, dict[str, object]] = {}
+    daily_data_excluded: list[dict[str, str]] = []
     daily_batch_size = min(
         len(symbols),
         daily_contract[2],
@@ -919,15 +1053,86 @@ def initialize_minute_session(
             if symbol in batch_rows or symbol in by_symbol:
                 raise MinuteSessionInitializerError("minute_session_daily_duplicate")
             batch_rows[symbol] = row
-        if set(batch_rows) != set(symbol_batch):
-            raise MinuteSessionInitializerError(
-                "minute_session_daily_universe_incomplete"
+        missing_symbols = sorted(set(symbol_batch) - set(batch_rows))
+        if missing_symbols:
+            if not allow_pending_recent_listings:
+                raise MinuteSessionInitializerError(
+                    "minute_session_daily_universe_incomplete"
+                )
+            daily_data_excluded.extend(
+                {
+                    "symbol": symbol,
+                    "reason": "previous_close_missing",
+                    "trade_date": compact_pretrade,
+                }
+                for symbol in missing_symbols
             )
         for symbol, row in batch_rows.items():
             by_symbol[symbol] = row
             metadata_by_symbol[symbol] = batch_metadata
-    if set(by_symbol) != set(symbols):
+
+    missing_symbols = sorted(set(symbols) - set(by_symbol))
+    if missing_symbols and not allow_pending_recent_listings:
         raise MinuteSessionInitializerError("minute_session_daily_universe_incomplete")
+
+    invalid_symbols = [
+        symbol
+        for symbol, row in by_symbol.items()
+        if (
+            isinstance(row.get("close"), bool)
+            or not isinstance(row.get("close"), (int, float))
+            or row.get("close") <= 0
+        )
+    ]
+    if invalid_symbols and not allow_pending_recent_listings:
+        raise MinuteSessionInitializerError("minute_session_previous_close_invalid")
+    if allow_pending_recent_listings:
+        daily_data_excluded.extend(
+            {
+                "symbol": symbol,
+                "reason": "previous_close_invalid",
+                "trade_date": compact_pretrade,
+            }
+            for symbol in sorted(invalid_symbols)
+        )
+        excluded_symbols = set(missing_symbols) | set(invalid_symbols)
+        if excluded_symbols:
+            effective_raw = [
+                row for row in effective_raw if row.get("symbol") not in excluded_symbols
+            ]
+            effective_instruments = tuple(
+                universe.instruments[row["symbol"]] for row in effective_raw
+            )
+            effective_universe = MinuteResearchUniverse(
+                instruments=effective_instruments,
+                expanded=len(effective_instruments) > 500,
+            )
+            symbols = tuple(sorted(effective_universe.instruments))
+        if not symbols:
+            raise MinuteSessionInitializerError("minute_session_rolling_universe_empty")
+        effective_universe_sha256 = _sha256(effective_raw)
+
+        # The final symbol count can change after daily-reference exclusions.
+        # Rebuild the catalog-bound profile so its pagination and consumer
+        # digest describe the exact published partition.
+        scaled_profile = _scaled_minute_profile(
+            template_config.profile,
+            symbol_count=len(symbols),
+            catalog_page_size=minute_page_size,
+        )
+        current_manifest = MinuteCanaryConfig(
+            base_url=base_url,
+            expected_catalog_version=template_config.expected_catalog_version,
+            dataset_id=MINUTE_DATASET_ID,
+            access_policy_id=access_policy_id,
+            transport_id=transport_id,
+            timeout_seconds=timeout_seconds,
+            filters={},
+            profile=scaled_profile,
+        )
+        profile = current_manifest.build_profile(client, require_declared_bindings=False)
+        if profile.schema_major != minute_schema:
+            raise MinuteSessionInitializerError("minute_session_minute_schema_drift")
 
     references: list[dict[str, Any]] = []
     for symbol in symbols:
@@ -973,7 +1178,12 @@ def initialize_minute_session(
         "timeout_seconds": timeout_seconds,
         "filters": {},
         "profile": bound_profile,
-        "universe_sha256": _sha256(universe_raw),
+        "universe_sha256": effective_universe_sha256,
+        "source_universe_sha256": source_universe_sha256,
+        "rolling_eligible": allow_pending_recent_listings,
+        "pending_listings": pending_listings,
+        "active_partition_count": active_partition_count,
+        "daily_data_excluded": daily_data_excluded,
     }
     if scale500_reference is not None:
         manifest[SCALE500_REFERENCE_KEY] = scale500_reference
@@ -982,14 +1192,14 @@ def initialize_minute_session(
         target=target,
         manifest=manifest,
         references=references,
-        universe=[dict(row) for row in universe_raw],
+        universe=effective_raw,
     )
     tracking_universe_count = None
     if tracking_universe_output is not None:
         tracking_universe_count = _publish_tracking_universe(
             output=Path(tracking_universe_output),
             generated_at=now,
-            universe=universe,
+            universe=effective_universe,
         )
     return {
         "status": "pass",
@@ -1006,7 +1216,14 @@ def initialize_minute_session(
         "profile_page_limit": bound_profile["page_limit"],
         "dataset_contract_fingerprint": profile.dataset_contract_fingerprint,
         "consumer_profile_sha256": profile.consumer_profile_sha256,
-        "universe_sha256": _sha256(universe_raw),
+        "universe_sha256": effective_universe_sha256,
+        "source_universe_sha256": source_universe_sha256,
+        "rolling_eligible": allow_pending_recent_listings,
+        "pending_listings": pending_listings,
+        "pending_count": len(pending_listings),
+        "active_partition_count": active_partition_count,
+        "daily_data_excluded": daily_data_excluded,
+        "daily_data_excluded_count": len(daily_data_excluded),
         "bootstrap": template_root is None,
         "reused": reused,
         "state_bundle_created": not reused,
@@ -1022,6 +1239,21 @@ def initialize_minute_session(
         "execution_authority": False,
         "real_trading_enabled": False,
     }
+
+
+def _timeout_seconds_from_environment() -> float | None:
+    raw = os.environ.get("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise MinuteSessionInitializerError(
+            "minute_session_timeout_seconds_invalid"
+        ) from exc
+    if value <= 0:
+        raise MinuteSessionInitializerError("minute_session_timeout_seconds_invalid")
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1090,6 +1322,9 @@ def main(argv: list[str] | None = None) -> int:
             tracking_universe_output=configured_tracking_universe_output,
             target_bar_end=args.target_bar_end,
             scale500_cohort_receipts=args.scale500_cohort_receipts,
+            timeout_seconds=(
+                _timeout_seconds_from_environment() or 20.0
+            ),
         )
     except MinuteSessionInitializerError as exc:
         print(f"minute session initializer failed closed: {exc}", file=sys.stderr)
@@ -1121,5 +1356,6 @@ __all__ = [
     "MinuteSessionInitializerError",
     "build_scale500_reference_envelope",
     "initialize_minute_session",
+    "partition_rolling_universe",
     "main",
 ]

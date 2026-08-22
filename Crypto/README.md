@@ -251,7 +251,9 @@ service 同时静态钉住现役
 不自动换 generation、不回退旧 root。
 
 增量模式只读取核心当前 completion state、自己的 checkpoint 头，以及有界的新增
-completion 对应的 receipt/segments；每轮最多处理 8 条，并受现有 90 秒预算约束。
+completion 对应的 receipt/segments；每轮最多处理 8 条，并受 30 秒内部预算约束，
+在 45 秒 oneshot timeout 前保留明确的退出余量。增量路径只重验已验证 checkpoint 链的
+精确头部映射后追加 suffix；全部历史投影的逐条复核仍由 daily full scrub 独立承担。
 它按 append-only、可恢复顺序写入 projection receipt、checkpoint 和
 `worker_state.json`，返回 `projected`、`backlog_remaining` 或 `current` 及处理/剩余
 数量；首轮没有既有 baseline 时仍返回 `full_scrub_required`，不会绕过全量完整性边界。
@@ -262,8 +264,10 @@ completion 对应的 receipt/segments；每轮最多处理 8 条，并受现有 
 checkpoint checksum 链。没有 checkpoint 声明的缺失投影可从核心权威证据补齐；
 一旦 checkpoint 已声明成功，较早 receipt 缺失、旧 segment 篡改、completion
 绑定不一致或 checkpoint 断链都必须失败关闭，不能用较新的成功覆盖。
-Challenger 只追加建议且 `manual_review_required=true`，不得自动替换 Champion、
-扩大风险、修改资本/仓位/订单或进入 Testnet/Live，也不调用网络模型。
+Challenger 只追加建议；独立 outcome 不足时记录
+`deterministic_non_live_gate_pending` 并继续积累，不等待逐候选人工复核。该投影
+仍不得自动替换 Champion、扩大风险、修改资本/仓位/订单或进入 Testnet/Live，也不
+调用网络模型。
 
 tracked 候选包含：
 
@@ -435,17 +439,18 @@ checksum-bound decision event，再在 `g4/evolution/round_trip_learning/` 追�
 模拟样本、单 observation KPI、Challenger 建议、receipt 和 checkpoint。这些
 投影不是模型、预测、收益结论或交易 authority：所有输出固定
 `learning_authority=false`、`execution_authority=false`、
-`production_eligible=false`、`manual_review_required=true`，没有自动 Champion
-替换或风险扩张。
+`production_eligible=false`、`manual_review_required=false`，并由确定性非实盘
+证据门禁决定后续；当前仍没有自动 Champion 替换或风险扩张。
 
-incremental worker 在现有 90 秒预算内每轮最多处理 8 条新增 completion，并从已有
-checkpoint 头 append-only、可恢复地继续；有 backlog 时返回 `backlog_remaining`，并
+incremental worker 在 30 秒内部预算内每轮最多处理 8 条新增 completion，并从已有
+checkpoint 头 append-only、可恢复地继续；它只重验 checkpoint 链的精确头部映射，
+全历史逐条完整性由 daily full scrub 负责。有 backlog 时返回 `backlog_remaining`，并
 报告已处理与剩余数量。没有既有 baseline 时仍返回 `full_scrub_required`，且必须先有
 一次成功 full scrub；full scrub 仍遍历所有
 completion→receipt→checkpoint 映射；已被较早 checkpoint 声明的 receipt/segment
 若缺失或变更，必须 fail closed，绝不重建。tracked G4 learning 与 daily scrub unit
 静态绑定当前 G4 epoch，并只能写入该 epoch 的 `evolution/`。两组 timer 默认
-disabled：先满足连续 24 小时核心门禁，再做 disabled full-scrub 与幂等重放，才可
+disabled：先满足连续 48 小时、覆盖率至少 90% 的核心门禁，再做 disabled full-scrub 与幂等重放，才可
 人工启用 incremental timer；daily scrub 继续作为独立人工门禁，本次仓库变更不会
 启用任何 learning timer。发布 preflight 必须先由受控安装步骤创建该空目录并读回
 `tradingagent:tradingagent`、0700、非 symlink；unit 与 worker 都不会借缺失目录
@@ -464,12 +469,15 @@ factor-research 的精确后续 observation 绑定；MFE/MAE 或替代退出规�
 改变资本事实。
 
 `tradingagent-crypto-round-trip-g4-acceptance.service/.timer` 是每日 09:05 的
-只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；只有
-最近连续 288 根 closed-5m completion（24 小时；早期停机缺口不阻断新的连续观测
-epoch）、核心 fresh、无 pending、Decision Ledger 计数一致且 capital balanced 才
-输出 `eligible`。即使 eligible，下一动作仍
-固定为 disabled full-scrub + 幂等 replay；只有两项通过后才允许发布流程启用
-incremental learning。该 unit 是日常报告和告警证据，不是交易调度器。
+只读 gate 候选。它不写任何文件、不触发学习、不启用 timer，也不依赖 PnL；模拟盘
+上线门禁要求累计 48 小时（576 根 closed-5m 窗口）、窗口覆盖率至少 90%、无配置/
+凭证/写库/状态完整性错误、核心 fresh、无 pending、Decision Ledger 计数一致且
+capital balanced。已由 checksum-bound `data_gap` receipt 明确标记的窗口计入覆盖计算，
+但不生成 observation、decision、order 或 capital effect；因此数据缺口是可观察
+的 `data_incomplete`，而不是整窗 fail-closed。快照 API 8787 的
+`/api/trading-agent/snapshot` 可读性仍需部署后直接读回，不能由本地报告代替。即使
+eligible，下一动作仍固定为 disabled full-scrub
+并执行幂等 replay；该 unit 是日常报告和告警证据，不是交易调度器。
 
 ## G5 现役 detached learning/scrub 边界
 
@@ -482,8 +490,11 @@ receipt 创建的独立 successor root，不能把 G4 manifest、runtime profile
 immutable release、enablement 与自然 readback 以 `STATUS.md`/`AUTODEV_STATE.json`
 同轮事实为准。发布侧仍须在新 release 上先完成 one-shot、同槽 replay、资本/持仓/订单/
 receipt 守恒与零重复 fill 验收，再按可回退流程切换 unit。
-G5 acceptance 的 288 根连续 closed-5m 只衡量 runtime maturity 及后续
-promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛。
+G5 health 与十币种 health watch 只负责输出告警/记录和数据质量信息，不是模拟盘上线的
+硬门禁；只有配置、凭证、写库或状态完整性错误仍可阻断运行。
+G5 acceptance 的 48 小时/90% 覆盖门禁只衡量 runtime maturity 及后续
+promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛；历史
+288 根连续 closed-5m 只衡量 runtime maturity，不替代当前模拟盘上线门禁。
 
 为避免独立的 Crypto 采集与演练 runtime 在同一根新 K 线上竞争，G5 只消费前一根已收盘的
 5 分钟 K 线；观察截止时间仍是当前周期的固定 cutoff，不接受 cutoff 之后的 receipt，不放宽
@@ -592,7 +603,8 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 > `market_observation.OBSERVATION_SYMBOLS_V40` 冻结，使用独立
 > `forty_symbol_*` 契约族（profile/event/head/pending/data_gap/bars/spread/
 > spreads）与独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`
-> （本轮不部署，不接 systemd/晋级），thin runtime 见
+> 40 币观察链可通过独立的 thin runtime 和 systemd 候选启动，但不接
+> 晋级/资本；因子投影仍保持 detached，不接 systemd/晋级。thin runtime 见
 > `forty_symbol_observation_runtime.py`。40 币因子投影使用 feature set
 > `crypto-5m-ohlcv-factor-research-v3` + consumer profile
 > `crypto-5m-ohlcv-13bar-forward-labels-v3` + 投影命名空间
@@ -718,10 +730,11 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   不符）、HTTP 状态错误（含 401/403，永不重试）与预算耗尽信号一律立即
   失败。全部尝试失败仍走原 fail-closed 路径（pending 保留、不伪造
   data_reject）；receipt 的 `collect_attempts` 记录实际尝试次数。仍落后
-  当前槽时返回 `backlog_pending` 且**退出码非零**——这是与
-  delayed-paper core 的刻意差异（core 在有进展时返回 0）：积累器没有资本
-  风险，timer 应把滞后显式暴露为失败直到追平。槽位仍严格按序补，绝不跳过
-  中间时槽。
+  当前槽时返回 `backlog_pending`；若本轮已经按序处理至少一个 cycle，则保留
+  backlog/lag JSON 证据并退出码为 0，这是数据可见性信息项，不是状态完整性
+  失败。若本轮 0 cycle 且预算耗尽，则退出非零，表示运行时没有进展。下一轮
+  仍从最早缺口继续，槽位严格按序补，绝不跳过中间时槽。合同、凭证、完整性和
+  不可恢复的数据失败仍返回非零。
 - pending marker 只是 crash 簿记（不是证据）：fresh cycle 取数前写入、事件
   落账后清除。槽已有事件的 pending 恢复不需要网络；pending 槽已成历史时
   清除 marker 并由 data_gap 合同显式覆盖该槽——这也与 core 的 pending 必须
@@ -1233,7 +1246,7 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - TradingDatas 18083、catalog、四个 dataset、专用 token leaf 和 TA 核心自动轮
   已有独立 readback；本 learning 候选不修改或重新部署其中任何一项；
 - 候选回填的 `observed_at` 是采集时点，不是历史 PIT 或实时可用性证明；
-- 核心 runtime 已有 sim-only 自动轮证据，但尚未通过连续 24 小时稳定性门禁；
+- 核心 runtime 已有 sim-only 自动轮证据，但尚未通过连续 48 小时/90% 覆盖稳定性门禁；
 - outage epoch 已在服务器以独立 generation-2 root 恢复自动轮；旧 root 保持
   只读封存，两个 epoch 的资本、收益和样本禁止聚合；
 - learning worker/service/timer 在仓库中的 install-default 可以保持 disabled，production

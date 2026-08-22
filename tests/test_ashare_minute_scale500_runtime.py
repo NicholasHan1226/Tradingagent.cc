@@ -4,7 +4,9 @@ import ast
 from datetime import datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -18,11 +20,32 @@ from Ashare.minute_scale500_runtime import (
     main,
     run_scale500_once,
 )
-from Ashare.minute_scale500_runtime import _validate_scale500_reference_fragment
+from Ashare.minute_scale500_runtime import (
+    _rolling_effective_universe,
+    _validate_runtime_receipt,
+    _validate_scale500_reference_fragment,
+)
 from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def mock_os_access_for_root():
+    """Mock os.access to return False for W_OK on read-only files when running as root."""
+    original_access = os.access
+    def patched_access(path, mode):
+        if mode == os.W_OK and isinstance(path, (str, Path)):
+            try:
+                stat_result = os.stat(path)
+                if not (stat_result.st_mode & 0o222):
+                    return False
+            except (OSError, TypeError):
+                pass
+        return original_access(path, mode)
+    with patch("os.access", side_effect=patched_access):
+        yield
 
 
 def _at(value: str) -> datetime:
@@ -71,9 +94,9 @@ def _published_session(
                 "dataset_id": "cn.dataset.rt_min",
                 "universe_sha256": universe_sha256,
                 "profile": {
-                    "max_rows": EXPECTED_UNIVERSE_COUNT,
-                    "page_limit": EXPECTED_UNIVERSE_COUNT,
-                    "max_pages": EXPECTED_UNIVERSE_COUNT,
+                    "max_rows": len(universe),
+                    "page_limit": len(universe),
+                    "max_pages": len(universe),
                 },
             }
         ),
@@ -110,6 +133,212 @@ def _paths(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     return scale_root, rollback_root, token_file, universe_source, digest
 
 
+def test_rolling_effective_universe_quarantines_only_recent_listing(
+    tmp_path: Path,
+) -> None:
+    universe_source = tmp_path / "universe.json"
+    _universe(universe_source)
+    rows = json.loads(universe_source.read_text(encoding="utf-8"))
+    rows[0]["list_date"] = "2026-07-01"
+    universe_source.chmod(0o600)
+    universe_source.write_text(json.dumps(rows), encoding="utf-8")
+    universe_source.chmod(0o440)
+
+    effective, effective_sha256 = _rolling_effective_universe(
+        universe_source,
+        trade_date="2026-07-29",
+    )
+
+    assert len(effective) == EXPECTED_UNIVERSE_COUNT - 1
+    assert "000001.SZ" not in {row["symbol"] for row in effective}
+    assert len(effective_sha256) == 64
+
+
+def test_scale500_initializer_can_open_rolling_partition(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, _ = _paths(tmp_path)
+    rows = json.loads(universe_source.read_text(encoding="utf-8"))
+    rows[0]["list_date"] = "2026-07-01"
+    universe_source.chmod(0o600)
+    universe_source.write_text(json.dumps(rows), encoding="utf-8")
+    universe_source.chmod(0o440)
+    source_digest = canonical_universe_sha256(universe_source)
+
+    def rolling_initializer(**kwargs: object) -> dict[str, object]:
+        state_root = Path(str(kwargs["state_root"]))
+        now = kwargs["now"]
+        assert isinstance(now, datetime)
+        active = rows[2:]
+        effective_payload = json.dumps(
+            active,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        effective_digest = hashlib.sha256(effective_payload).hexdigest()
+        day_root = state_root / now.strftime("%Y%m%d")
+        day_root.mkdir(parents=True)
+        (day_root / "universe.json").write_text(
+            json.dumps(active, ensure_ascii=False), encoding="utf-8"
+        )
+        (day_root / "minute-manifest.json").write_text(
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:18082",
+                    "dataset_id": "cn.dataset.rt_min",
+                    "universe_sha256": effective_digest,
+                    "profile": {
+                        "max_rows": len(active),
+                        "page_limit": len(active),
+                        "max_pages": 1,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (day_root / "reference-facts.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "symbol": row["symbol"],
+                        "trade_date": now.date().isoformat(),
+                        "previous_close_cny": 10.0,
+                        "suspended": False,
+                    }
+                    for row in active
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "pass",
+            "authority_tier": "non_production_fixture",
+            "trading_date": now.date().isoformat(),
+            "symbol_count": len(active),
+            "universe_sha256": effective_digest,
+            "source_universe_sha256": source_digest,
+            "rolling_eligible": True,
+            "pending_listings": [
+                {
+                    "symbol": "000001.SZ",
+                    "reason": "listed_less_than_30_days",
+                    "listed_on": "2026-07-01",
+                    "eligible_after": "2026-07-31",
+                }
+            ],
+            "daily_data_excluded": [
+                {
+                    "symbol": rows[1]["symbol"],
+                    "reason": "previous_close_missing",
+                    "trade_date": "20260728",
+                }
+            ],
+            "state_bundle_created": False,
+            "capital_authority": False,
+            "execution_authority": False,
+            "real_trading_enabled": False,
+        }
+
+    result = initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=source_digest,
+        now=_at("2026-07-29T09:18:00"),
+        rolling_eligible=True,
+        initializer=rolling_initializer,
+    )
+
+    assert result["selected_mode"] == "rolling_eligible"
+    assert result["symbol_count"] == EXPECTED_UNIVERSE_COUNT - 2
+    assert result["pending_listings"][0]["symbol"] == "000001.SZ"
+
+
+@pytest.mark.parametrize(
+    "failure_reason",
+    ["minute_tradingdatas_request_failed", "minute_scale500_unclassified_urlerror"],
+)
+def test_rolling_initializer_persists_gate_after_stale_gate_quarantine(
+    tmp_path: Path,
+    failure_reason: str,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(tmp_path)
+    gate_dir = scale_root / ".scale500-gates"
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "20260731.json").write_text(
+        json.dumps(
+            {
+                "schema": "tradingagent.ashare.scale500-acceptance.v1",
+                "trading_date": "2026-07-31",
+                "status": "fallback30_selected",
+                "selected_mode": "rollback30",
+                "expected_universe_count": EXPECTED_UNIVERSE_COUNT,
+                "universe_sha256": digest,
+                "validated_bar_ends": [],
+                "partial_session": False,
+                "late_start": False,
+                "late_start_bar_end": None,
+                "failure_reason": failure_reason,
+                "rollback30_state_root": str(rollback_root),
+                "capital_layer": "simulated",
+                "account_type": "simulated",
+                "capital_authority": False,
+                "execution_authority": False,
+                "execution_eligible": False,
+                "training_eligible": False,
+                "promotion_authorized": False,
+                "real_trading_enabled": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def rolling_initializer(**kwargs: object) -> dict[str, object]:
+        state_root = Path(str(kwargs["state_root"]))
+        now = kwargs["now"]
+        assert isinstance(now, datetime)
+        _published_session(
+            state_root=state_root,
+            trading_date=now.date().isoformat(),
+            universe_source=universe_source,
+            universe_sha256=digest,
+        )
+        return {
+            "status": "pass",
+            "authority_tier": "non_production_fixture",
+            "trading_date": now.date().isoformat(),
+            "symbol_count": EXPECTED_UNIVERSE_COUNT,
+            "universe_sha256": digest,
+            "source_universe_sha256": digest,
+            "rolling_eligible": True,
+            "pending_listings": [],
+            "state_bundle_created": False,
+            "capital_authority": False,
+            "execution_authority": False,
+            "real_trading_enabled": False,
+        }
+
+    result = initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:18:00"),
+        rolling_eligible=True,
+        initializer=rolling_initializer,
+    )
+
+    assert result["selected_mode"] == "rolling_eligible"
+    gate = json.loads((gate_dir / "20260731.json").read_text(encoding="utf-8"))
+    assert gate["selected_mode"] == "rolling_eligible"
+    assert gate["status"] == "pending_two_live_snapshots"
+    assert (gate_dir / "20260731.stale.json").exists()
+
+
 def _initializer(
     *,
     state_root: Path,
@@ -130,6 +359,9 @@ def _initializer(
         "trading_date": now.date().isoformat(),
         "symbol_count": EXPECTED_UNIVERSE_COUNT,
         "universe_sha256": digest,
+        "source_universe_sha256": digest,
+        "rolling_eligible": False,
+        "pending_listings": [],
         "state_bundle_created": False,
         "capital_authority": False,
         "execution_authority": False,
@@ -149,6 +381,30 @@ def _receipt(bar_end: str) -> dict[str, object]:
         "execution_authority": False,
         "real_trading_enabled": False,
     }
+
+
+def test_runtime_receipt_accepts_row_quality_audit_without_batch_rejection() -> None:
+    result = _receipt("2026-07-31 09:35:00")
+    result.update(
+        {
+            "row_rejection_count": 1,
+            "row_rejections": [
+                {
+                    "symbol": "000001.SZ",
+                    "reason_code": "minute_open_invalid",
+                    "dataset_id": "cn.dataset.rt_min",
+                    "catalog_version": "fixture-v1",
+                    "rejected_payload_sha256": "a" * 64,
+                }
+            ],
+        }
+    )
+
+    assert _validate_runtime_receipt(
+        result,
+        expected_bar_end="2026-07-31 09:35:00",
+        allow_late_start=False,
+    ) is False
 
 
 def _partial_runtime_receipt(
@@ -278,15 +534,23 @@ def test_initialize_accepts_honest_fresh_state_bundle_flag(
     def fresh_initializer(**kwargs: object) -> dict[str, object]:
         return {**_initializer(**kwargs), "state_bundle_created": True}
 
-    result = initialize_scale500_session(
-        scale_state_root=scale_root,
-        rollback30_state_root=rollback_root,
-        token_file=token_file,
-        universe_source=universe_source,
-        expected_universe_sha256=digest,
-        now=_at("2026-07-31T09:18:00"),
-        initializer=fresh_initializer,
-    )
+    # Mock os.access to return False for W_OK (simulates non-root user)
+    original_access = os.access
+    def mock_access(path: str, mode: int) -> bool:
+        if mode == os.W_OK:
+            return False
+        return original_access(path, mode)
+    
+    with patch.object(os, 'access', side_effect=mock_access):
+        result = initialize_scale500_session(
+            scale_state_root=scale_root,
+            rollback30_state_root=rollback_root,
+            token_file=token_file,
+            universe_source=universe_source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T09:18:00"),
+            initializer=fresh_initializer,
+        )
 
     assert result["status"] == "pass"
     assert result["scale500_acceptance_status"] == "pending_two_live_snapshots"
@@ -461,6 +725,62 @@ def test_first_two_exact_rounds_activate_and_never_write_rollback_root(
     ]
     assert hashlib.sha256(sentinel.read_bytes()).hexdigest() == before
     assert list(rollback_root.iterdir()) == [sentinel]
+
+
+def test_rolling_runtime_uses_published_partition_after_initializer_exclusion(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _initialize(
+        tmp_path
+    )
+    source_rows = json.loads(universe_source.read_text(encoding="utf-8"))
+    published_source = tmp_path / "published-universe.json"
+    published_source.write_text(
+        json.dumps(source_rows[:-1], ensure_ascii=False), encoding="utf-8"
+    )
+    published_source.chmod(0o440)
+    published_digest = canonical_universe_sha256(published_source)
+    day_root = scale_root / "20260731"
+    for child in day_root.iterdir():
+        child.unlink()
+    day_root.rmdir()
+    _published_session(
+        state_root=scale_root,
+        trading_date="2026-07-31",
+        universe_source=published_source,
+        universe_sha256=published_digest,
+    )
+    gate_path = scale_root / ".scale500-gates" / "20260731.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    gate.update(
+        {
+            "selected_mode": "rolling_eligible",
+            "expected_universe_count": EXPECTED_UNIVERSE_COUNT - 1,
+            "universe_sha256": published_digest,
+        }
+    )
+    gate_path.write_text(json.dumps(gate), encoding="utf-8")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:42:00"),
+        rolling_eligible=True,
+        runner=lambda **_: {
+            **_receipt("2026-07-31 09:35:00"),
+            "row_count": EXPECTED_UNIVERSE_COUNT - 1,
+        },
+    )
+
+    assert result["status"] == "pass"
+    assert result["scale500_acceptance_status"] == "pending_two_live_snapshots"
+    assert result["selected_mode"] == "rolling_eligible"
+    persisted_gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert persisted_gate["status"] == "pending_two_live_snapshots"
+    assert persisted_gate["selected_mode"] == "rolling_eligible"
 
 
 def test_499_partial_is_persisted_shadow_without_runner_or_rollback30(
@@ -753,7 +1073,7 @@ def test_authentication_failure_projects_redacted_reason_and_preserves_rollback(
     rollback_service = (
         systemd_root / "tradingagent-ashare-minute-scale500-rollback.service"
     ).read_text(encoding="utf-8")
-    assert "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" in (
+    assert "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" not in (
         paper_service
     )
     assert (
@@ -815,6 +1135,55 @@ def test_first_accepted_round_must_be_opening_bar_not_late_start(
             now=_at("2026-07-31T09:47:00"),
             runner=lambda **_: _receipt("2026-07-31 09:40:00"),
         )
+
+
+def test_rolling_incident_recovery_starts_partial_session_from_current_bar(
+    tmp_path: Path,
+) -> None:
+    scale_root, rollback_root, token_file, universe_source, digest = _paths(tmp_path)
+
+    def rolling_initializer(**kwargs: object) -> dict[str, object]:
+        return {**_initializer(**kwargs), "rolling_eligible": True}
+
+    initialize_scale500_session(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T09:18:00"),
+        rolling_eligible=True,
+        initializer=rolling_initializer,
+    )
+    runner_flags: list[bool] = []
+
+    def current_bar_runner(*, allow_late_start: bool, **_: object) -> dict[str, object]:
+        runner_flags.append(allow_late_start)
+        return _late_start_receipt("2026-07-31 10:10:00")
+
+    result = run_scale500_once(
+        scale_state_root=scale_root,
+        rollback30_state_root=rollback_root,
+        token_file=token_file,
+        universe_source=universe_source,
+        expected_universe_sha256=digest,
+        now=_at("2026-07-31T10:17:00"),
+        rolling_eligible=True,
+        runner=current_bar_runner,
+    )
+
+    assert runner_flags == [True]
+    assert result["selected_mode"] == "rolling_eligible"
+    assert result["partial_session"] is True
+    assert result["late_start"] is True
+    assert result["full_session_complete"] is False
+    assert result["learning_eligible"] is False
+    gate = json.loads(
+        (scale_root / ".scale500-gates" / "20260731.json").read_text(encoding="utf-8")
+    )
+    assert gate["validated_bar_ends"] == ["2026-07-31 10:10:00"]
+    assert gate["partial_session"] is True
+    assert gate["late_start"] is True
 
 
 def test_late_start_requires_explicit_flag_and_never_accepts_a_prior_bar(
@@ -1161,11 +1530,20 @@ def test_scale500_systemd_candidate_is_sim_only_rollback_capable_and_exactly_sch
             in service
         )
         assert (
-            "OnFailure=tradingagent-ashare-minute-scale500-rollback.service" in service
+            "OnFailure=tradingagent-ashare-minute-scale500-rollback.service"
+            not in service
         )
         assert "broker" not in service.lower()
 
-    assert "09:18:00" in session_timer
+    session_triggers = tuple(
+        line for line in session_timer.splitlines() if line.startswith("OnCalendar=")
+    )
+    assert session_triggers == (
+        "OnCalendar=Mon..Fri *-*-* 09:18:00",
+        "OnCalendar=Mon..Fri *-*-* 09:24:00",
+        "OnCalendar=Mon..Fri *-*-* 09:30:00",
+        "OnCalendar=Mon..Fri *-*-* 09:36:00",
+    )
     triggers = tuple(
         line for line in paper_timer.splitlines() if line.startswith("OnCalendar=")
     )

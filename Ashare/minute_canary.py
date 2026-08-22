@@ -655,6 +655,7 @@ def run_minute_canary(
     reference_facts: Mapping[str, MinuteReferenceFact],
     bar_end: str | datetime | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    allow_symbol_rejections: bool = False,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> dict[str, Any]:
     profile, snapshot, audit = load_minute_snapshot(
@@ -665,6 +666,7 @@ def run_minute_canary(
         reference_facts=reference_facts,
         bar_end=bar_end,
         evidence_use=evidence_use,
+        allow_symbol_rejections=allow_symbol_rejections,
         transport_factory=transport_factory,
     )
     selected_bar_end = (
@@ -703,6 +705,16 @@ def run_minute_canary(
     source_lineage_value = (
         source_lineage_sha256[0] if len(source_lineage_sha256) == 1 else None
     )
+    row_rejections = [
+        {
+            "symbol": item.symbol,
+            "reason_code": item.reason_code,
+            "dataset_id": item.dataset_id,
+            "catalog_version": item.catalog_version,
+            "rejected_payload_sha256": item.rejected_payload_sha256,
+        }
+        for item in audit.row_rejections()
+    ]
     proof_summary = snapshot.validated_proof_summary
     if proof_summary is not None and selected_bar_end is not None:
         proof_receipt_ids = list(proof_summary.receipt_ids)
@@ -732,7 +744,9 @@ def run_minute_canary(
         "consumer_profile_sha256": profile.consumer_profile_sha256,
         "row_count": snapshot.row_count,
         "quality_status": (
-            "usable" if not missing_symbols else "usable_degraded"
+            "usable"
+            if not missing_symbols and not row_rejections
+            else "usable_degraded"
         ),
         "requested_count": len(requested_symbols),
         "accepted_count": len(accepted_symbols),
@@ -768,6 +782,8 @@ def run_minute_canary(
             for bar in snapshot.bars
         ],
         "audit_rejections": len(audit.records()),
+        "row_rejection_count": len(row_rejections),
+        "row_rejections": row_rejections,
     }
     if proof_summary is not None and len(receipt_ids) > 1:
         receipt["selected_receipt_count"] = len(receipt_ids)
@@ -1084,6 +1100,7 @@ def load_minute_snapshot(
     reference_facts: Mapping[str, MinuteReferenceFact],
     bar_end: str | datetime | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+    allow_symbol_rejections: bool = False,
     transport_factory: TransportFactory = build_runtime_transport,
 ) -> tuple[MinuteDatasetProfile, MinuteBarSnapshot, MinuteEvidenceAuditLedger]:
     """Load one exact-bar snapshot for observation or explicit delayed paper."""
@@ -1096,6 +1113,20 @@ def load_minute_snapshot(
         base_url=config.base_url,
     )
     client = SharedSignalsV1Client(config.client_config(), transport=transport)
+
+    def shard_client_factory() -> SharedSignalsV1Client:
+        """Build one single-flight client for each bounded fanout worker."""
+
+        shard_transport = transport_factory(
+            config.transport_id,
+            token_file=token_file,
+            base_url=config.base_url,
+        )
+        return SharedSignalsV1Client(
+            config.client_config(),
+            transport=shard_transport,
+        )
+
     profile = config.build_profile(client)
     audit = MinuteEvidenceAuditLedger()
     selected_bar_end = (
@@ -1113,7 +1144,10 @@ def load_minute_snapshot(
             requested_slot=selected_bar_end.strftime("%Y-%m-%d %H:%M:%S"),
             decision_as_of=decision_time,
         )
-    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+    snapshot = TradingDatasMinuteMarketDataPort(
+        client,
+        shard_client_factory=shard_client_factory,
+    ).load_snapshot(
         profile=profile,
         filters=_exact_slot_filters(
             config,
@@ -1128,6 +1162,7 @@ def load_minute_snapshot(
         evidence_use=evidence_use,
         include_receipt_proofs=proof_validator is not None,
         envelope_validator=proof_validator,
+        allow_symbol_rejections=allow_symbol_rejections,
     )
     if selected_bar_end is not None:
         _validate_exact_selection(

@@ -461,6 +461,8 @@ def test_incomplete_window_writes_one_idempotent_data_reject(
     )
 
     assert first["status"] == second["status"] == "data_reject"
+    assert first["data_incomplete"] is True
+    assert second["data_incomplete"] is True
     assert (
         first["core_result"]["reason_code"]
         == "crypto_observation_query_shape_invalid"
@@ -468,7 +470,7 @@ def test_incomplete_window_writes_one_idempotent_data_reject(
     assert first["warmup_eligible"] is True
     assert second["warmup_eligible"] is False
     assert crypto_ten_symbol_observation_exit_code(first) == 0
-    assert crypto_ten_symbol_observation_exit_code(second) == 2
+    assert crypto_ten_symbol_observation_exit_code(second) == 0
     store = CryptoTenSymbolObservationStore(output_root)
     assert len(store.data_reject_events()) == 1
     assert store.checkpoint()["latest_terminal_slot"] is None
@@ -485,16 +487,17 @@ def test_401_is_not_retried_and_has_no_fallback(
         calls.append(copy.deepcopy(kwargs))
         return HTTPResponse(401, {})
 
-    receipt = _run(
-        tmp_path,
-        token_file,
-        output_root,
-        now=WINDOW_END + timedelta(seconds=55),
-        transport_factory=_factory(rejected_transport),
-    )
-
-    assert receipt["status"] == "data_reject"
-    assert crypto_ten_symbol_observation_exit_code(receipt) == 2
+    with pytest.raises(
+        runtime_module.CryptoTenSymbolObservationRuntimeError,
+        match="runtime_cycle_failed",
+    ):
+        _run(
+            tmp_path,
+            token_file,
+            output_root,
+            now=WINDOW_END + timedelta(seconds=55),
+            transport_factory=_factory(rejected_transport),
+        )
     assert len(calls) == 1
     assert calls[0]["method"] == "GET"
     assert calls[0]["url"].endswith("/v1/catalog")
@@ -807,7 +810,9 @@ def test_backlog_pending_keeps_order_and_never_skips_slots(
     assert backlog["status"] == "backlog_pending"
     assert backlog["backlog_remaining"] is True
     assert backlog["requested_window_consumed"] is False
-    assert crypto_ten_symbol_observation_exit_code(backlog) == 2
+    # Ordered lag is an observable data condition, not a state-integrity
+    # failure; the next invocation continues from the earliest missing slot.
+    assert crypto_ten_symbol_observation_exit_code(backlog) == 0
     assert [item["cycle_kind"] for item in backlog["cycle_results"]] == [
         "pending_recovery",
         "fresh_query",
@@ -1048,16 +1053,18 @@ def test_semantic_failures_are_never_retried(
     second_root = tmp_path / "second"
     second_root.mkdir()
     token_file_2, output_root_2 = _runtime_paths(monkeypatch, second_root)
-    rejected = _run(
-        second_root,
-        token_file_2,
-        output_root_2,
-        now=WINDOW_END + timedelta(seconds=55),
-        transport_factory=_factory(rejected_transport),
-        retry_sleep=sleeps.append,
-    )
-    assert rejected["status"] == "data_reject"
-    assert rejected["collect_attempts"] == 1
+    with pytest.raises(
+        CryptoTenSymbolObservationRuntimeError,
+        match="runtime_cycle_failed",
+    ):
+        _run(
+            second_root,
+            token_file_2,
+            output_root_2,
+            now=WINDOW_END + timedelta(seconds=55),
+            transport_factory=_factory(rejected_transport),
+            retry_sleep=sleeps.append,
+        )
     assert sleeps == []
 
 

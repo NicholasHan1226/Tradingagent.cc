@@ -17,8 +17,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
 - 目标市场语义为 24/7、无交易所统一休市；这不表示所有可选任务都已安装。
 - 5min delayed-paper 核心与现有 G5 learning/scrub units 的服务器 enablement、immutable
   release 和 timer 状态必须分别从 `STATUS.md`/`AUTODEV_STATE.json` 同轮读回；仓库文件存在、
-  install-default 或 `[Install]` 不能替代当前运行证据。连续 24 小时稳定性和策略样本质量仍
-  只由后续运行证据证明。
+  install-default 或 `[Install]` 不能替代当前运行证据。模拟盘上线要求最近 48 小时窗口覆盖率
+  至少 90% 且无完整性错误；旧 epoch 历史缺口只作审计，不得拖住新的可观察模拟积累；策略样本质量
+  仍只由后续运行证据证明。
 - server-local paper、Binance Spot Testnet 和未来 Binance Spot Live 是三份不同合同、账户与凭据域；不能靠切换 base URL 或环境变量升级。当前 `REAL_TRADING_ENABLED=false`，Live adapter 未实现。
 
 ## 当前模块边界
@@ -156,10 +157,11 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   `crypto-5m-ohlcv-factor-research-v2`。历史回填不具备 PIT 证明时只能用于
   工程/定义检查，不得进入晋级证据。
 - **Universe 版本化（10 → 40）。** 上述 10 币链是已落盘 append-only 历史，
-  只读封存、不回写；`OBSERVATION_SYMBOLS` 冻结为 10 币，不得原地扩。新 40 币
-  研究 universe 用 `OBSERVATION_SYMBOLS_V40` + 独立 `forty_symbol_*` 契约族 +
-  独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`（thin
-  runtime `forty_symbol_observation_runtime.py`，本轮不部署、不接 systemd/晋级）。
+  只读封存、不回写；`OBSERVATION_SYMBOLS` 冻结为 10 币，不得原地扩。新增覆盖
+  必须使用 `OBSERVATION_SYMBOLS_V40` + 独立 `forty_symbol_*` 契约族 + 独立
+  store root `/var/lib/tradingagent/crypto-40-symbol-observation`。40 币观察链
+  由 `forty_symbol_observation_runtime.py` 的独立 systemd 候选运行，仍固定
+  `authority=none`、无晋级和资本权限；40 币因子投影继续保持 detached，不接晋级。
   40 币因子投影用 feature set `crypto-5m-ohlcv-factor-research-v3`、consumer
   profile `crypto-5m-ohlcv-13bar-forward-labels-v3`、投影命名空间
   `evolution/forty_symbol_factor_research/`，不写旧 `evolution/ten_symbol_factor_research/`。
@@ -191,7 +193,9 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   不在该函数预算声明内，因此不能单靠静态时间计算宣称绝不会重叠；每次发布仍须
   用前一 core、ten-symbol reader、后一 core 三次自然读回证明共享
   token/API/SQLite surface 没有并发。积压返回
-  `backlog_pending`
+  `backlog_pending`，若本轮已有有序进展则保留明确的 lag/backlog JSON 证据并按
+  信息项成功退出，下一轮从最早缺口继续；若本轮 0 cycle 且预算耗尽则仍非零，
+  以显式暴露没有进展的运行时问题。不把有序数据滞后冒充状态完整性失败。
   非零退出且不跳槽；历史窗口对 current-read watermark 门禁确定不可恢复时，
   只允许在当前窗口全部门禁通过后追加显式 `data_gap`，不伪造 PIT。证据只能
   前向积累，历史回填不构成证据。fresh 采集成功后 runtime 先把该槽 10 币

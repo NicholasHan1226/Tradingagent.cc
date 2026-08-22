@@ -99,6 +99,55 @@ def test_round_trip_gap_event_shape_and_eligibility() -> None:
     assert gap["event_id"]
 
 
+def test_fresh_data_gap_is_observable_progress_without_capital_write(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing current window advances the accumulator without accounting."""
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+
+    def fail_with_incomplete_window(**_kwargs: object) -> object:
+        raise runtime_module.CryptoRoundTripRuntimeFailure(
+            phase="market_data_query",
+            reason="runtime_market_data_query_failed",
+            detail="crypto_5m_window_incomplete",
+        )
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_once",
+        fail_with_incomplete_window,
+    )
+
+    receipt = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+
+    assert receipt["status"] == "data_incomplete"
+    assert receipt["data_incomplete"] is True
+    assert receipt["data_incomplete_count"] == 1
+    assert receipt["requested_window_consumed"] is True
+    assert receipt["backlog_remaining"] is False
+    assert runtime_module.round_trip_receipt_exit_code(receipt) == 0
+    assert receipt["cycle_results"][0]["cycle_kind"] == "fresh_data_incomplete"
+
+    store = CryptoDelayedPaperObservationStore(output)
+    gaps = store.data_gap_events()
+    assert len(gaps) == 1
+    assert gaps[0]["reason_code"] == "crypto_5m_window_incomplete"
+    assert gaps[0]["candidate_generated"] is False
+    assert gaps[0]["order_generated"] is False
+    assert gaps[0]["fill_generated"] is False
+    assert not (output / "capital").exists()
+
+
 def test_backlog_gap_batch_receipt_is_progress_not_failure() -> None:
     """A run that makes gap or recovery progress while behind exits 0."""
 
@@ -719,7 +768,9 @@ def test_round_trip_runtime_gaps_pit_unrecoverable_backlog_slot(
         ),
     )
 
-    assert recovered["status"] == "completed"
+    assert recovered["status"] == "data_incomplete"
+    assert recovered["data_incomplete"] is True
+    assert recovered["data_incomplete_count"] == 1
     assert recovered["backlog_gap_cycle_count"] == 1
     assert recovered["backlog_remaining"] is False
     assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [

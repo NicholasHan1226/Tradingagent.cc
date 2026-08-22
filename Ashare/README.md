@@ -517,8 +517,11 @@ The baseline sleeve is the only source for top-level candidate, simulated-fill
 and fee KPIs. Event, flow and dynamic sleeves are separately labelled as a
 non-comparable counterfactual aggregate, so four independent fixture books
 cannot be mistaken for one account's turnover, cost or PnL. New bundles retain
-one receipt per accepted bar; the report sums those audit rejections and marks
-legacy bundles whose earlier per-bar receipt history is unavailable.
+one receipt per accepted bar; the report sums batch-level audit rejections and
+separately exposes row-quality rejection counts and reason codes. Row-quality
+rejections are observations for repair and are not silently relabeled as
+batch failures. Legacy bundles whose earlier per-bar receipt history is
+unavailable remain explicitly marked.
 
 `minute_offline_learning.py` is a separate post-close, fixture-only projection.
 It appends verified day summaries only to an A-share-local learning journal,
@@ -555,9 +558,10 @@ they must be identical or the initializer fails closed.
 For a reviewed scale transition, the initializer accepts an explicit absolute
 `--universe-source` artifact. It derives `page_limit`, `max_rows` and
 `max_pages` from that universe and the current catalog page limit, then binds
-the canonical universe SHA into the published manifest. A 500-symbol artifact
-therefore uses a 500-row budget when the catalog permits it; it is not silently
-truncated to the preceding 30-symbol canary. The supplied artifact must still
+the canonical universe SHA into the published manifest. Minute `ts_code in`
+filters are capped at 100 values by the V1 contract, so larger artifacts use
+100-symbol shards and replayed shard aggregation; a 500-symbol artifact is not
+silently truncated to the preceding 30-symbol canary. The supplied artifact must still
 pass the main-board, listing-age and risk checks, have complete prior-close
 coverage, and match every exact minute snapshot before any simulated step can
 proceed. The same absolute path can be supplied to the scheduled initializer as
@@ -568,22 +572,43 @@ Prior-session daily references use the same bounded catalog contract instead
 of a fixed 10-symbol batch. The initializer derives each batch from the
 reviewed Universe size, the daily dataset's current `max_page_size`, and the
 500-row TA query ceiling. It separately enforces the provider-neutral V1
-`QueryDefaults.max_in_values=100` filter contract, so a 500-symbol Universe
-always uses five 100-symbol batches even when catalog `max_page_size=500`.
+`QueryDefaults.max_in_values=100` filter contract. Minute query profiles use
+`page_limit=100` and `max_pages=ceil(symbol_count/100)`; every shard is read
+twice and merged only after identity and same-observation checks. Daily
+references still use five 100-symbol batches for a 500-symbol Universe even
+when catalog `max_page_size=500`.
 Every batch is independently read twice, allows at most five cursor pages, and
 has a row budget exactly equal to its requested symbol set. Returned
 `(ts_code, trade_date)` identities must exactly match that set; missing, extra,
 duplicate, over-budget or non-terminating cursor chains, replay-changing,
-catalog-drifting, 413/429, timeout, stale or degraded evidence fails closed.
-There is no automatic retry, concurrency, fallback, provider route or database
-read, so a transport failure cannot become a request storm or partial session.
+catalog-drifting, 413, stale or degraded evidence fails closed. The TA API
+adapter may retry only transient 429/503, timeout and transport failures with
+the bounded 2/5/10/20-second schedule; it never retries authentication,
+contract, pagination or freshness failures. Large delayed-paper minute fanout
+uses at most four concurrent bounded shard workers. A request-level
+HTTP/transport failure quarantines only that shard and is exposed in
+`fanout_failures`/`missing_symbols`; successful shards retain their independent
+first/replay evidence. In `rolling_eligible` mode, row-level quality failures
+are narrower still: only the offending symbol is absent for that bar and is
+retried on the next cadence. Pagination, contract, catalog, replay, metadata,
+identity and freshness failures still fail closed for the affected snapshot;
+they are never mislabeled as row-quality data. There is no provider fallback
+or direct database read.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
-a claim derived from an identityless suspension dataset. Every actual bar must
-still be completed and have positive volume, otherwise the minute Evidence
-Gate blocks the entire snapshot. A closed day is a safe no-op; degraded daily
-evidence, catalog drift, missing symbols, replay mismatch, conflicting existing
-inputs, or an already-started target session fails closed.
+a claim derived from an identityless suspension dataset. Every accepted bar
+must still be completed and have positive volume. In the normal strict path,
+any malformed row blocks the snapshot; in `rolling_eligible` delayed-paper
+mode, explicitly row-local quality failures are instead quarantined by symbol:
+valid rows continue into the simulation loop, while the receipt records
+`row_rejection_count`, the symbol, stable reason code and rejected-row hash in
+`row_rejections`. Canary receipts expose the same fields when row isolation is
+explicitly enabled. This is observation and data accumulation only;
+quarantined rows are never features, candidates, execution, training or
+promotion authority. A closed day is a safe no-op; degraded daily evidence,
+catalog drift, missing symbols, replay mismatch, conflicting existing inputs,
+or an already-started target session still fails closed at the affected
+snapshot/window boundary.
 
 ### Isolated scale-500 runtime candidate
 
@@ -592,8 +617,10 @@ simulation-only 500-symbol transition. It requires an absolute, regular,
 single-link, non-writable frozen Universe artifact with exactly 500 unique
 reviewed symbols and an explicit canonical SHA256. The runtime candidate is
 fixed to `http://127.0.0.1:18082`, `cn.dataset.rt_min`, and the existing
-catalog/query clients; it has no provider, database, retry, concurrency, broker,
-or historical-minute fallback.
+catalog/query clients; it never reads a provider database directly and does not
+add a provider route, fallback, broker, or historical-minute fallback. Bounded
+API retry and bounded shard fanout belong to the injected data adapter; the
+runtime gate still validates the resulting receipt and coverage independently.
 
 The scale state root and rollback-30 state root must be disjoint. The selector
 can write only the scale root. The rollback root is mounted read-only and is
@@ -618,13 +645,19 @@ delayed-paper activation, but it is not an admission gate for the recurring
 observation timer.
 
 Normally, the first accepted scale observations must be the adjacent 09:35 and
-09:40 500/500 bars. A one-time, manual `run --allow-late-start` is the only
-exception: it can start only from the runner's exact current completed formal
-bar after an independently verified 500/500 production canary. The static
-late-start candidate requires its secret-free canary receipt and verifies the
-same trading date, exact bar, delayed-paper tier, 500 canonical identities,
-same-observation replay, receipt/lineage proof and frozen Universe digest
-before it invokes the runner. It never
+09:40 500/500 bars. For `--rolling-eligible`, if a retryable incident leaves the
+day gate pending with no state bundle after the opening slot, the recurring
+paper path may start a new partial session from the next current complete formal
+bar. It never backfills skipped bars, and records `late_start=true`,
+`full_session_complete=false` and `learning_eligible=false`; later bars continue
+observation only. This automatic recovery is intentionally narrower than a
+manual full-universe start. A one-time, manual `run --allow-late-start` remains
+the only exception for the fixed 3193 full-universe path: it can start only from
+the runner's exact current completed formal bar after an independently verified
+500/500 production canary. The static late-start candidate requires its
+secret-free canary receipt and verifies the same trading date, exact bar,
+delayed-paper tier, 500 canonical identities, same-observation replay,
+receipt/lineage proof and frozen Universe digest before it invokes the runner. It never
 queries or backfills earlier bars, cannot use mixed/failed observations, and is
 not accepted by `initialize` or either recurring systemd unit. The tracked
 static `tradingagent-ashare-minute-scale500-late-start.service` is the only
@@ -640,8 +673,9 @@ the normal-path timer continues the 48-slot session. Any missing, partial, mixed
 degraded, identity, lineage, fanout, continuity, authority, or persistence
 failure remains fail-closed for delayed-paper.
 
-The full 500/500 cohort remains mandatory before `delayed-paper` can run. A
-separate pure receipt builder may describe a 99%-or-higher partial cohort only
+The full 500/500 cohort remains mandatory before fixed `scale500`
+`delayed-paper` can run. In `rolling_eligible` mode, a separate pure receipt
+builder may describe a 99%-or-higher partial cohort only
 when the exact missing identity set is explicit and no replacement identity is
 present. That receipt is deterministic, zero-notional and shadow-only: it has
 no candidate, capital, execution, training or promotion authority and cannot
@@ -675,8 +709,11 @@ readback, `REAL_TRADING_ENABLED=false`, systemd verification, old-state byte
 fingerprints, and a tested rollback.
 
 The tracked systemd candidate runs at second 40 after each five-minute boundary
-during the two A-share sessions, after the independent TradingDatas collector.
-It remains a non-production fixture accumulator:
+during the two A-share sessions. The TradingDatas collector is an independent
+timer, not an ordering guarantee; its SQLite authority lock may overlap a TA
+request. The API adapter therefore uses the bounded transient retry above, and
+the natural-window readback must record collector overlap separately. It
+remains a non-production fixture accumulator:
 
 ```text
 deploy/systemd/tradingagent-ashare-minute-paper.service

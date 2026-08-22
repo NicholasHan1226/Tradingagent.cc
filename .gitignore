@@ -68,3 +68,4 @@ signals_archive/
 /shared/data/**/*.pyc
 /shared/data/*.bak_*
 /shared/data/*.bak.*
+/.codegraph/

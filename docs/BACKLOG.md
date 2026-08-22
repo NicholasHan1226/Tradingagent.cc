@@ -26,25 +26,32 @@ A股已经拥有 SampleJournal/KPI 科学证据、Challenger producer 和 simula
 4. 扩展不同交易日/决策 cluster/regime/费用环境覆盖，避免单一短窗口驱动晋级。
 5. evolution 失败不得使核心 observation/simulation 停止；学习链与市场 core 保持独立故障域。
 
-## P1 — Crypto C2 → C3：从只读评分升级为自动模拟演进
+## P1 — Crypto MVP-1 → MVP-2：先滚动积累真实模拟结果
 
-当前 Crypto rolling factor/strategy evaluation 已能积累真实 delayed-paper 证据，但 `Crypto/promotion.py` 仍是无 lifecycle authority 的只读 scorecard。
+当前不建设新的 C3 Registry/API、Champion 平台或模型服务。先复用已有
+delayed-paper、factor/strategy evaluation、模拟账本和费用事实，把完整 segment 变成
+可比较的 resolved outcomes。
 
-1. 冻结 Crypto-specific ValidationPlan 与 sample maturity 合同：独立时间跨度、symbol/regime 覆盖、completed round trips、cost/fill evidence。
-2. 统一 factor/strategy Challenger identity 与 append-only trial journal，保留负结果和重复搜索次数。
-3. 把 TradingDatas data proof、exchange filters、spread/slippage/fee 假设绑定到 evaluation artifact。
-4. 建立 Crypto 自有 simulation-only Champion Registry、promotion/demotion/retirement receipt 与 deterministic rollback。
-5. 只有科学证据达到 C3 条件时自动 simulation promotion；不要求人工复核，不扩大风险，不启用 Testnet/Live。
+1. 用一个真实 receipt-bound、PIT 安全且不跨 gap 的完整 segment 生成首个可复核
+   resolved outcome；声明 fee、spread/slippage、exchange filters 与排除范围。
+2. 对同一输入运行一个已有 factor/strategy 与简单 baseline，保存确定性 artifact、
+   replay 命令、费用后收益、回撤、换手、命中和 abstention。
+3. 输出 shadow-only 的 retain/downweight/disable/parameter 建议；不得写资本、订单、
+   Testnet/Live 或自动风险扩张。
+4. 逐条新增 outcome 进入 MVP-2 rolling evaluation，保留负结果、重复搜索次数和
+   symbol/regime/gap 覆盖，不等待全部 40 标的或最新连续 288 根。
+5. 只有滚动证据表明确实需要生命周期 authority 时，才重新评估 C3 registry、
+   promotion/demotion/rollback 的最小实现；它不是当前模拟和结果积累前置。
 
 ## P2 — 复盘层去除旧生命周期语义
 
 1. `shared/review/goals.yaml` 暂时只保留兼容的 review diagnostic thresholds；它不是生命周期 authority。
 2. 将 daily/weekly review 逐步改为 **market-specific descriptive scorecards**：
    - A股指向 SampleJournal/KPI evolution authority；
-   - Crypto 指向未来 C3 evolution authority；
+   - Crypto 指向当前 rolling evaluation artifact；
    - CNFutures 暂停期间只做 preserve/read-only diagnostics。
 3. 清除 `strategies_for_manual_review`、固定 `stage_1_sim` 等容易被误读为 promotion gate 的旧命名，但不为改名破坏现役复盘输出。
-4. `STATUS.md` 继续只作历史/摘要；长期决策进 ADR，运行事实进机器 artifact。
+4. `STATUS.md` 只作带时间戳的当前摘要；长期决策进 ADR，详细运行事实进机器 artifact 或日期报告。
 
 ## P2 — 科学评估提升
 

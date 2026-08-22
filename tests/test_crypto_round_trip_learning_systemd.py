@@ -90,7 +90,7 @@ def test_g5_learning_timers_are_installable_but_default_passive() -> None:
         assert "Persistent=true" not in timer
 
 
-def test_round_trip_learning_scrub_units_keep_the_existing_120_second_timeout() -> None:
+def test_round_trip_learning_scrub_units_keep_the_existing_900_second_timeout() -> None:
     for generation in (4, 5):
         scrub = _unit(
             f"tradingagent-crypto-round-trip-g{generation}-learning-scrub.service"
@@ -98,5 +98,10 @@ def test_round_trip_learning_scrub_units_keep_the_existing_120_second_timeout() 
         incremental = _unit(
             f"tradingagent-crypto-round-trip-g{generation}-learning.service"
         )
-        assert "TimeoutStartSec=120s" in scrub
+        assert "TimeoutStartSec=900s" in scrub
         assert "TimeoutStartSec=45s" in incremental
+
+
+def test_g5_acceptance_gate_timeout_covers_report_runtime_growth() -> None:
+    acceptance = _unit("tradingagent-crypto-round-trip-g5-acceptance.service")
+    assert "TimeoutStartSec=900s" in acceptance

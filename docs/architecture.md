@@ -29,7 +29,7 @@ flowchart LR
     RO --> TC["TradingCopilot\n人工决策辅助"]
     US["用户申报资金/持仓"] --> TC
     TC --> HI["human_intent_only\n计划/观察/不交易"]
-    SJ --> AM["day 5 / day 10 manual review"]
+    SJ --> AM["day 5 / day 10 machine evidence checkpoint"]
     FS --> FM["long-horizon futures maturity"]
 ```
 
@@ -109,7 +109,7 @@ flowchart LR
     AC --> FP["只读投影"]
     FC --> FP
     CC --> FP
-    AL --> MR["Challenger artifacts\n人工晋级"]
+    AL --> MR["Challenger artifacts\nsim-only 证据晋级"]
     FL --> MR
     CL --> MR
     FP --> UI["front-readonly"]
@@ -180,7 +180,7 @@ SharedSignalsV1Client（TradingDatas V1 兼容代码符号；fixture transport�
 
 这条图中 Opportunity/forecast/router 是与资本链隔离的shadow支路，最终只汇入审计/反事实，不接入 Champion、SmallCapitalFeasible、risk或OMS；其模块存在不表示预测有效或概率可发布。IntegrationReadinessProbe 与 research snapshot 的本候选只证明 fixture/mock 下的 provider-native、source-proof、bounded-pagination 和 current-observation 消费合同；它没有联网读取 formal endpoint、加载 TA token、部署或形成生产 readback，也不证明历史 PIT。完整 probe 是 research acceptance 门；轻量 runtime gate 仅是 catalog/auth/单次 dataset 启动 smoke，二者不能互相冒充。整条链同样不表示已有券商权限、真实持仓/可卖数量、生产 scheduler 或真实模拟样本。`CoverageReceipt` 以 taxonomy、PIT membership、板块/行业 expected-vs-observed、双创环境对象、来源 generation/receipt/lineage 和内容 hash 证明本次环境覆盖，并要求无默认实现的外部 `CoverageAuthorityVerifier` 在构造与消费两处复验 denominator；调用方不能自报 `full_market`。Phase 1.5 行业薄切片还要求独立 `IndustryScoreAuthorityVerifier` 绑定评分方法、有效期、score/coverage receipts 与内容 hash，才动态选出 1 个深研行业和 2 个观察行业。两类真实 verifier 均未接入，因此当前只具备 fixture 合同，不能产生当前可交易symbol或仓位影响。
 
-当前 `AccountTradable` 只是模拟scope历史类型名；SmallCapital快照的 `max_buyable_shares` 只是在`position_state_applied=false`下的cash+policy upper bound，不能直接成为订单量。Decision stage 强制注入独立账户verifier，proof逐项绑定capital generation、账户时点、完整持仓、mark、sellable数量、现金、gross、position receipt/hash与有效期；本地重算会检查这些输入与proof一致。canonical 候选另须提交内容寻址的 Champion score receipt，绑定当前人工选择 manifest、精确冻结 spec、symbol、PIT decision time、数值特征 namespace/快照及数据 receipt/vintage/lineage；调用方 raw rank、篡改 receipt、过期/非当前 Champion 或 fixture evidence 冒充 canonical authority 均 fail closed。fixture路径只证明输入与不可晋级proof/evidence一致；canonical-capital测试路径从同一simulated ledger head派生并复读账户状态，current generation/lineage轮换必须随snapshot传播。两条路径都不证明账户、持仓或可卖量来自真实broker。随后plan从唯一 A股 policy 重算100股整手、15%单票、90% gross、最多8仓、最低经济订单、无交易区、`cost_policy_id`、费用、现金和完整digest；未校准 rank 只决定候选排序，新仓目标金额采用与 rank 无关的固定最小经济 probe，并标注为 engineering simulation。估值价与保守预留价分开。卖出100股整数倍、一次性卖出不足100股余额和全部退出之外的数量被optimizer、day loop及模拟撮合三处拒绝，调用方不得自动取整或改写。Day loop还会独立复算佣金、过户费和卖出印花税，重新签名不能洗白错费用。
+当前 `AccountTradable` 只是模拟scope历史类型名；SmallCapital快照的 `max_buyable_shares` 只是在`position_state_applied=false`下的cash+policy upper bound，不能直接成为订单量。Decision stage 强制注入独立账户verifier，proof逐项绑定capital generation、账户时点、完整持仓、mark、sellable数量、现金、gross、position receipt/hash与有效期；本地重算会检查这些输入与proof一致。canonical 候选另须提交内容寻址的 Champion score receipt，绑定由预声明机器策略产生的 current-selection manifest、精确冻结 spec、symbol、PIT decision time、数值特征 namespace/快照及数据 receipt/vintage/lineage；调用方 raw rank、篡改 receipt、过期/非当前 Champion 或 fixture evidence 冒充 canonical authority 均 fail closed。fixture路径只证明输入与不可晋级proof/evidence一致；canonical-capital测试路径从同一simulated ledger head派生并复读账户状态，current generation/lineage轮换必须随snapshot传播。两条路径都不证明账户、持仓或可卖量来自真实broker。随后plan从唯一 A股 policy 重算100股整手、15%单票、90% gross、最多8仓、最低经济订单、无交易区、`cost_policy_id`、费用、现金和完整digest；未校准 rank 只决定候选排序，新仓目标金额采用与 rank 无关的固定最小经济 probe，并标注为 engineering simulation。估值价与保守预留价分开。卖出100股整数倍、一次性卖出不足100股余额和全部退出之外的数量被optimizer、day loop及模拟撮合三处拒绝，调用方不得自动取整或改写。Day loop还会独立复算佣金、过户费和卖出印花税，重新签名不能洗白错费用。
 
 Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark 与非空执行 snapshot 必须嵌入精确 `MarketEvidenceAuthority`。该对象把 dataset/catalog、source receipt ID/SHA、source lineage、calendar receipt、symbol/price/session、capital authority/generation、execution lineage 与完整时点链绑定；账户估值只接受运行日前一已验证交易会话的 15:00 close，调用方不能用一个较新的 `mark_observed_at` 洗白旧账户 evidence。模拟执行只接受当前 trade date 的受支持连续竞价 session，quote 的 `data_through` 到 effect time 最多 30 秒。当前唯一具体 authority/verifier 是不可继承且 `production_eligible=false` 的冻结 fixture 类型；其proof是本地内容完整性hash，不是外部签名、TradingDatas live receipt readback或交易所行情认证。
 
@@ -188,19 +188,20 @@ Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark �
 
 预约所有权同样是副作用前门。capital-backed risk wrapper拒绝任何已携带当前或legacy预约字段的输入；只有`open/increase`可生成预约证明，execution仍拒绝买单携带legacy别名，`reduce/exit`在risk与execution两层均禁止携带预约字段。买入零成交释放时会先以同一run/order/reference、reservation event、authority/generation、execution lineage、risk unit和lineage向canonical ledger重证预约身份，并把订单声明的cash/exposure与canonical完整剩余值逐项全等比较；卖单不会调用释放。首次release服从effect guard，精确event之后预约必须立即`terminal=true`且remaining cash/exposure/margin全零；同一reference重放只能恢复这个已存在的相同终态事实。释放后回执携带完整预约证明，对账按事件前缀重放精确release event ID、金额、原因与reference，并再次要求该事件当时已终态全额释放，非空字符串、部分release或后来另行补齐的最终状态都不能冒充本次释放事实。
 
-`RunContext` 把 `decision_as_of` 与 `trade_date` 按 `Asia/Shanghai` 绑定，并将它纳入 run identity。两套本地 composition 不得混称为一条已上线链：`compose_paper_runtime`/fixture CLI 仅接受精确的数据化 `FrozenFixtureStagePort` 和fixture账户/proof，可执行但非authority；`compose_capital_backed_paper_runtime` 使用public capital/risk/execution/reconcile ports，从canonical simulated ledger、人工选择Champion、六维论点风险authority与持久drift authority组合测试，但当前没有CLI、scheduler或真实paper样本。两者都不接受任意 callable 通过自报旗标冒充“离线”。Risk和网络关闭simulation的每笔资本/执行副作用都必须重读最新drift与Champion authority；论点风险链另行复核policy/proof/exposure-set identity、每笔精确notional delta、同股票组连续性和最终exposure map。收紧时把剩余open/increase强制改为未成交，同时保留权威reduce/exit和必要reservation清理。无新增订单但存在明确阻断时，paper day结束为`completed_with_blocks`。这不证明未来live broker已关闭TOCTOU；真实外部副作用前必须另做同等authority检查。RunBundle store只使用显式本地root，以逐事件不可变文件、fsync和原子publish支持恢复；业务receipt不封存主机绝对Journal路径，reported stage只封存相对publisher root的稳定定位，使同输入跨输出根保持相同bundle内容地址。CLI顶层仍返回本机绝对artifact路径供运维读取。fixture CLI只能写仓外隔离artifact且永不晋级。
+`RunContext` 把 `decision_as_of` 与 `trade_date` 按 `Asia/Shanghai` 绑定，并将它纳入 run identity。两套本地 composition 不得混称为一条已上线链：`compose_paper_runtime`/fixture CLI 仅接受精确的数据化 `FrozenFixtureStagePort` 和fixture账户/proof，可执行但非authority；`compose_capital_backed_paper_runtime` 使用public capital/risk/execution/reconcile ports，从canonical simulated ledger、机器证据选择的当前Champion、六维论点风险authority与持久drift authority组合测试，但当前没有CLI、scheduler或真实paper样本。两者都不接受任意 callable 通过自报旗标冒充“离线”。Risk和网络关闭simulation的每笔资本/执行副作用都必须重读最新drift与Champion authority；论点风险链另行复核policy/proof/exposure-set identity、每笔精确notional delta、同股票组连续性和最终exposure map。收紧时把剩余open/increase强制改为未成交，同时保留权威reduce/exit和必要reservation清理。无新增订单但存在明确阻断时，paper day结束为`completed_with_blocks`。这不证明未来live broker已关闭TOCTOU；真实外部副作用前必须另做同等authority检查。RunBundle store只使用显式本地root，以逐事件不可变文件、fsync和原子publish支持恢复；业务receipt不封存主机绝对Journal路径，reported stage只封存相对publisher root的稳定定位，使同输入跨输出根保持相同bundle内容地址。CLI顶层仍返回本机绝对artifact路径供运维读取。fixture CLI只能写仓外隔离artifact且永不晋级。
 
 ### 自动化与自我进化的权限分离
 
 ```text
-可自动：生成候选 -> 离线评估 -> 影子运行 -> 漂移监控
-          -> 隔离 / reduce-only / stop-new-risk / require-review
+可自动：生成候选 -> 离线评估 -> simulation / shadow / broker sandbox
+          -> 机器证据门禁下的 Challenger 晋级 / Champion 替换
+          -> 漂移监控 -> 隔离 / reduce-only / stop-new-risk
 
-人工门禁：Challenger 晋级 -> Champion 替换 -> 扩风险
-          -> 更改 scope -> 连接 live broker
+Nicholas 边界：扩大风险或资本 -> 更改账户/市场/scope
+              -> 连接 live broker -> 启用真实订单
 ```
 
-自我进化是“自动生成、验证和收紧”，不是生产模型在线改参数或自行获得更大资金权限。`ValidationPlan` 已将标签期限、特征回看、purge/embargo、事件簇隔离、decision-cluster去重、试验预算、PBO/DSR、OOS重用和冻结OOS receipt纳入不可变hash；A股还强制无默认calendar verifier，detached proof绑定dataset/receipt、完整会话、verified time和预测前`frozen_at`。`close/1d/3d/5d` target只从该proof派生。SampleJournal与两个A股label/sample ops入口都要求调用方显式传入计划；CLI只从`--validation-plan-path`加载预先生成、内容寻址且包含detached proof的artifact，拒绝symlink、非canonical payload和hash漂移，不在运行时调用verifier或铸造proof。它能阻断调用方自授会话与明显错误实验声明，但fixture proof和本地artifact自校验不替代受信artifact registry、生产calendar、exit price/total-return truth、purged walk-forward、PBO/DSR计算或冻结结果artifact。
+自我进化允许在不变的非实盘权限域内自动生成、验证、晋降级和收紧；它不是生产模型在线改参数，也不能自行获得更大风险、资本、账户或真实交易权限。第 5/10 个交易日只生成机器证据报告，不等待 Nicholas 逐候选审核。`ValidationPlan` 已将标签期限、特征回看、purge/embargo、事件簇隔离、decision-cluster去重、试验预算、PBO/DSR、OOS重用和冻结OOS receipt纳入不可变hash；A股还强制无默认calendar verifier，detached proof绑定dataset/receipt、完整会话、verified time和预测前`frozen_at`。`close/1d/3d/5d` target只从该proof派生。SampleJournal与两个A股label/sample ops入口都要求调用方显式传入计划；CLI只从`--validation-plan-path`加载预先生成、内容寻址且包含detached proof的artifact，拒绝symlink、非canonical payload和hash漂移，不在运行时调用verifier或铸造proof。它能阻断调用方自授会话与明显错误实验声明，但fixture proof和本地artifact自校验不替代受信artifact registry、生产calendar、exit price/total-return truth、purged walk-forward、PBO/DSR计算或冻结结果artifact。
 
 漂移数值产物不能自报 `lineage_verified`。`tradingagent.drift_metrics_artifact.v2` 必须另有 canonical detached verification receipt；本地 verifier 不接受调用方选择任意实现，而是固定 implementation trust root，重新读取并hash完整artifact/receipt，逐项复核 artifact/evidence SHA、Journal head、model manifest、标签/成本快照、窗口、horizon、regime、独立有效样本数和 source receipt 集合；任一不一致即 fail closed。该hash是本地完整性证明，不是数字签名，固定本地实现也不等于已接入外部独立重算服务。自动收紧receipt进入内容寻址store并形成持久latch，风险乘数和动作严重度都不能回退，健康重启不能自行清除或放宽。Decision Ledger 保存模拟成交、明确未成交、风险拒绝和观察决策，并绑定 run、input bundle、capital authority/generation、execution lineage 和 prediction cluster。该账本为 audit-only，不直接进入统计学习、概率校准或晋级样本。market-truth 标签只有在外部frozen authority与OOS registry都重新验证，并同时绑定决策前冻结计划、总回报定义、公司行动policy和覆盖完整horizon的adjustment truth后，才可供predictive validation使用；fixture/paper/shadow永不因时间成熟而成为发布证据。
 
@@ -220,7 +221,7 @@ Canonical-capital 的 mark/quote freshness 另有硬边界：非空持仓 mark �
 
 DeepSeek adapter只接受精确的冻结离线响应fixture或上述精确HTTP transport；普通callable拒绝。两条路径对`bulk_extraction`构造thinking disabled与`max_tokens=4096`目标，对`slow_research`构造thinking enabled、`reasoning_effort=high`与`max_tokens=8192`目标。A股v1 Prompt保持字节冻结，v2改为固定七字段与逐字artifact ID引用合同，不放宽validator、不修复Markdown、不重试。成功receipt只能在Gateway完成canonical observation字段集、原request/entity/prompt/refs和request/source/material摘要的完整重绑后随`analyze_with_provenance()`结果返回；Adapter不接受外部receipt回调。Bull/Bear provider模式把完整结果交给显式`LLMEvidenceProvenanceRecorder`：accepted/rejected互斥结果只写唯一对应结果Journal；第三条`LLMProviderInvocationJournal`必须与前两条同属由accepted绝对路径锚定的canonical family，以不含调用方request ID的逻辑内容键在网络前追加`in_flight`，并在跨进程锁内覆盖双结果Journal检查、provider调用与唯一终态提交。已完成终态的同ID同内容顺序或并发重放只返回已持久化观察；同一canonical family内的逻辑内容换ID、同ID异内容、双重结果、六个data/head端点别名或任一持久化失败均fail closed。provider调用后崩溃且没有可验证终态时保留`in_flight`并禁止自动补发。三类Journal路径在构造时冻结为绝对路径；端点还做Unicode NFC、大小写、真实路径与现存inode去重，并在持锁读写时验证regular file、单链接、当前euid、`0600`及打开FD与路径inode一致。readback只保留`local-integrity-only`、防御性不可变的descriptor校验视图，不会重建运行时typed receipt。真实HTTP schema/binding失败转为独立audit-only rejected receipt，不含provider正文或normalized evidence hash。动态Prompt、未验证source span、缺外部authority verifier、cutoff后receipt、未知动态对象和credential-shaped输出均fail closed。这些门不是所有语义/编码注入的完备证明；本地receipt/journal也不是外部防篡改authority。已发生的一次schema-rejected provider请求不验证production durable receipt authority、冻结评测、延迟/成本或收益增量。
 
-第一阶段继续使用冻结、可解释的 4–8 特征 rank-score Champion 和现金基线。每份score receipt同时绑定当前人工选择manifest、artifact SHA、model ID/version、完整`FrozenChampionSpec`，以及显式登记在 `tradingagent.numeric_pit_features.v1` namespace 的数值 PIT 特征快照。特征proof继续绑定dataset、source authority receipt、known time、实现SHA、归一化版本和source type；future、LLM、过早或调用方自证的特征均拒绝。决策stage与每个模拟副作用前重新验证current selection和feature proof，不再用字段名关键词黑名单推断来源安全。rank 未经概率/收益校准，因此只用于排序；新仓维持与rank无关的固定probe sizing。后续 Challenger 先从 elastic-net logistic、ridge/Huber/quantile regression 一类低复杂度模型起步；样本和 PIT 足够后才影子评估浅层、单调约束的 LightGBM/XGBoost/CatBoost/EBM/GAM，survival/hazard 用于事件时间。GNN、Transformer、TFT/TCN 和强化学习不进入第一阶段。
+第一阶段继续使用冻结、可解释的 4–8 特征 rank-score Champion 和现金基线。每份score receipt同时绑定由预声明晋降级策略产生的 current-selection manifest、artifact SHA、model ID/version、完整`FrozenChampionSpec`，以及显式登记在 `tradingagent.numeric_pit_features.v1` namespace 的数值 PIT 特征快照。该 manifest 必须可由确定性 evidence receipt 重放；它不要求 Nicholas 逐候选选择。特征proof继续绑定dataset、source authority receipt、known time、实现SHA、归一化版本和source type；future、LLM、过早或调用方自证的特征均拒绝。决策stage与每个模拟副作用前重新验证current selection和feature proof，不再用字段名关键词黑名单推断来源安全。rank 未经概率/收益校准，因此只用于排序；新仓维持与rank无关的固定probe sizing。后续 Challenger 先从 elastic-net logistic、ridge/Huber/quantile regression 一类低复杂度模型起步；样本和 PIT 足够后才影子评估浅层、单调约束的 LightGBM/XGBoost/CatBoost/EBM/GAM，survival/hazard 用于事件时间。GNN、Transformer、TFT/TCN 和强化学习不进入第一阶段。
 
 模型采用顺序固定为“强基线优先、复杂模型只做增量挑战”：
 
@@ -250,7 +251,11 @@ elastic-net logistic 是可解释控制组；LightGBM 及 NumPy/SciPy 依赖仅�
 Kronos-mini、Chronos-Bolt-small，再决定是否需要 Kronos-small；TimesFM 2.5 和更大模型
 留在独立 research host/批处理层。权重下载、推理依赖和真实数据 benchmark 都是后续独立
 验收，不能因本表登记而自动安装或调度。任何复杂模型只有在同一冻结 OOS、成本、候选集与
-decision cluster 下稳定超过 M0/M1，才可提交人工晋级建议。
+decision cluster 下稳定超过 M0/M1，才可进入自动证据评审。模型 prediction receipt 自身
+仍无晋级 authority；只有绑定预声明 cohort/horizon、PIT、独立未来结果、费用/滑点、
+基线、覆盖/排除、确定性 replay、time-split/OOS 与不确定性检查的可信 registry receipt，
+才可触发确定性的 sim-only 晋级、降级或回滚。该过程不授予资本、风险、broker、订单或
+live authority，也不等待 Nicholas 逐候选审批。
 
 模型训练、批量回测、LLM和full scrub属于learning plane；分钟证据门禁、候选、模拟成交、
 资本提交和对账属于core plane。二者通过内容寻址的feature snapshot、model manifest、

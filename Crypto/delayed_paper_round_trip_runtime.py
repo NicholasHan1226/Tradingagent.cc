@@ -368,6 +368,15 @@ def _deadline_bound_transport_factory(
 
 def round_trip_receipt_exit_code(receipt: Mapping[str, Any]) -> int:
     """Map a bounded backlog batch that advanced the ledger to success."""
+    # A data-incomplete window is an explicit, checksum-bound no-capital
+    # progress event.  It is observable and must not make the simulation
+    # timer look dead, while every integrity/configuration failure still uses
+    # the existing fail-closed mapping below.
+    if (
+        receipt.get("data_incomplete") is True
+        and int(receipt.get("data_incomplete_count") or 0) > 0
+    ):
+        return 0
     if (
         receipt.get("status") == "backlog_pending"
         and receipt.get("backlog_remaining") is True
@@ -404,6 +413,8 @@ def round_trip_runtime_journal_summary(receipt: Mapping[str, Any]) -> dict[str, 
         "processed_cycle_count": receipt.get("processed_cycle_count"),
         "backlog_recovery_cycle_count": receipt.get("backlog_recovery_cycle_count"),
         "backlog_gap_cycle_count": receipt.get("backlog_gap_cycle_count"),
+        "data_incomplete": receipt.get("data_incomplete"),
+        "data_incomplete_count": receipt.get("data_incomplete_count"),
         "backlog_remaining": receipt.get("backlog_remaining"),
         "requested_window_end": receipt.get("requested_window_end"),
         "requested_observation_cutoff": receipt.get("requested_observation_cutoff"),
@@ -623,12 +634,25 @@ def run_crypto_delayed_paper_round_trip_server_once(
             if time.monotonic() - invocation_started_at >= budget_seconds:
                 budget_deferred = True
                 break
-            if cycle_kind == "backlog_recovery" and _round_trip_gap_eligible(failure):
+            if (
+                cycle_kind in {"backlog_recovery", "fresh_query"}
+                and _round_trip_gap_eligible(failure)
+            ):
                 if gap_count >= ROUND_TRIP_MAX_GAPS_PER_INVOCATION:
                     break
+                target_market_slot = _round_trip_market_slot(target_request)
+                # With an empty accumulator there is no prior completed slot
+                # to cite.  Use the immediately preceding aligned slot as a
+                # deterministic boundary; the event's skipped/recovery slots
+                # remain the authoritative range and no capital state moves.
+                prior_market_slot = (
+                    latest_market_slot
+                    if latest_market_slot is not None
+                    else target_market_slot - timedelta(minutes=5)
+                )
                 store.append_event(
                     _round_trip_data_gap_event(
-                        prior_market_slot=latest_market_slot,
+                        prior_market_slot=prior_market_slot,
                         reason_code=str(failure),
                         recorded_at=now,
                     )
@@ -637,9 +661,14 @@ def run_crypto_delayed_paper_round_trip_server_once(
                 latest_market_slot = _round_trip_market_slot(target_request)
                 cycle_results.append(
                     {
-                        "cycle_kind": "backlog_gap",
+                        "cycle_kind": (
+                            "backlog_gap"
+                            if cycle_kind == "backlog_recovery"
+                            else "fresh_data_incomplete"
+                        ),
                         "target_window_end": _iso_utc(target_request.window_end),
                         "gap_reason": str(failure),
+                        "data_incomplete": True,
                     }
                 )
                 continue
@@ -691,6 +720,7 @@ def run_crypto_delayed_paper_round_trip_server_once(
     backlog_remaining = bool(
         latest_market_slot is not None and latest_market_slot < requested_market_slot
     )
+    data_incomplete = gap_count > 0
     recovery_mode = (
         "pending_recovery"
         if any(item["cycle_kind"] == "pending_recovery" for item in cycle_results)
@@ -710,7 +740,11 @@ def run_crypto_delayed_paper_round_trip_server_once(
     _run_failure_stage("post_write_anchor_validation", validate_post_write_anchor)
     return {
         "contract": ROUND_TRIP_RUNTIME_CONTRACT,
-        "status": "backlog_pending" if backlog_remaining else result.get("status"),
+        "status": (
+            "backlog_pending"
+            if backlog_remaining
+            else ("data_incomplete" if data_incomplete else result.get("status"))
+        ),
         "core_result": result,
         "requested_window_end": _iso_utc(request.window_end),
         "requested_observation_cutoff": _iso_utc(request.observation_cutoff),
@@ -724,6 +758,8 @@ def run_crypto_delayed_paper_round_trip_server_once(
         "backlog_gap_cycle_count": sum(
             item["cycle_kind"] == "backlog_gap" for item in cycle_results
         ),
+        "data_incomplete": data_incomplete,
+        "data_incomplete_count": gap_count,
         "backlog_remaining": backlog_remaining,
         "budget_deferred": budget_deferred,
         "recovery_mode": recovery_mode,

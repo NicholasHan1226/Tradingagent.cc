@@ -756,15 +756,15 @@ def test_initializer_promotes_explicit_reviewed_universe_to_500(
 
     assert result["status"] == "pass"
     assert result["symbol_count"] == 500
-    assert result["profile_max_pages"] == 1
+    assert result["profile_max_pages"] == 5
     assert result["profile_max_rows"] == 500
-    assert result["profile_page_limit"] == 500
+    assert result["profile_page_limit"] == 100
     day = tmp_path / "20260729"
     manifest = json.loads((day / "minute-manifest.json").read_text())
     published_universe = json.loads((day / "universe.json").read_text())
-    assert manifest["profile"]["max_pages"] == 1
+    assert manifest["profile"]["max_pages"] == 5
     assert manifest["profile"]["max_rows"] == 500
-    assert manifest["profile"]["page_limit"] == 500
+    assert manifest["profile"]["page_limit"] == 100
     assert manifest["universe_sha256"] == result["universe_sha256"]
     assert published_universe == universe
 
@@ -869,12 +869,23 @@ def test_initializer_follows_bounded_daily_pagination_for_each_replay(
 
 def test_scaled_profile_uses_catalog_page_budget() -> None:
     profile = _scaled_minute_profile(
-        {"max_pages": 1, "max_rows": 30, "page_limit": 30},
+        {
+            "consumer_profile_sha256": "a" * 64,
+            "dataset_contract_fingerprint": "b" * 64,
+            "max_pages": 1,
+            "max_rows": 30,
+            "page_limit": 30,
+        },
         symbol_count=500,
         catalog_page_size=200,
     )
 
-    assert profile == {"max_pages": 3, "max_rows": 500, "page_limit": 200}
+    assert profile == {
+        "dataset_contract_fingerprint": "b" * 64,
+        "max_pages": 5,
+        "max_rows": 500,
+        "page_limit": 100,
+    }
 
 
 def test_explicit_universe_source_must_be_absolute(tmp_path: Path) -> None:
@@ -940,6 +951,46 @@ def test_explicit_universe_source_still_rejects_recent_listing(
             universe_source=source,
             transport_factory=_factory(FixtureTransport()),
         )
+
+
+def test_rolling_universe_quarantines_recent_listing_without_blocking_active_rows(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(2)
+    universe[0]["list_date"] = "2026-07-01"
+    source = tmp_path / "reviewed-universe-rolling.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        universe_source=source,
+        allow_pending_recent_listings=True,
+        transport_factory=_factory(FixtureTransport(daily_rows=daily)),
+    )
+    day_root = tmp_path / "20260729"
+    initialized = json.loads((day_root / "universe.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (day_root / "minute-manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert result["status"] == "pass"
+    assert result["rolling_eligible"] is True
+    assert result["symbol_count"] == 1
+    assert result["pending_count"] == 1
+    assert result["pending_listings"] == [
+        {
+            "symbol": "000001.SZ",
+            "reason": "listed_less_than_30_days",
+            "listed_on": "2026-07-01",
+            "eligible_after": "2026-07-31",
+        }
+    ]
+    assert [row["symbol"] for row in initialized] == ["000002.SZ"]
+    assert manifest["rolling_eligible"] is True
+    assert manifest["source_universe_sha256"] != manifest["universe_sha256"]
 
 
 def test_cli_uses_reviewed_universe_source_from_environment(
@@ -1111,6 +1162,68 @@ def test_initializer_exact_replay_is_idempotent(tmp_path: Path) -> None:
     assert before == after
 
 
+def test_initializer_upgrades_pagination_profile_before_state_bundle(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        transport_factory=_factory(FixtureTransport()),
+    )
+    manifest_path = tmp_path / "20260729" / "minute-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["profile"]["max_pages"] = 1
+    manifest["profile"]["page_limit"] = 500
+    manifest["profile"]["consumer_profile_sha256"] = "d" * 64
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        transport_factory=_factory(FixtureTransport()),
+    )
+
+    upgraded = json.loads(manifest_path.read_text())
+    assert result["reused"] is True
+    assert upgraded["profile"]["max_pages"] == result["profile_max_pages"]
+    assert upgraded["profile"]["page_limit"] == result["profile_page_limit"]
+    assert upgraded["profile"]["page_limit"] != 500
+
+
+def test_initializer_refreshes_evidence_catalog_version_with_pagination_upgrade(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        transport_factory=_factory(FixtureTransport()),
+    )
+    manifest_path = tmp_path / "20260729" / "minute-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["observed_catalog_version"] = "v1-old-evidence"
+    manifest["profile"]["max_pages"] = 1
+    manifest["profile"]["page_limit"] = 500
+    manifest["profile"]["consumer_profile_sha256"] = "d" * 64
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        transport_factory=_factory(FixtureTransport()),
+    )
+
+    upgraded = json.loads(manifest_path.read_text())
+    assert result["reused"] is True
+    assert upgraded["observed_catalog_version"] == CATALOG_VERSION
+    assert upgraded["profile"]["max_pages"] == result["profile_max_pages"]
+
+
 def test_closed_day_is_noop_without_target_directory(tmp_path: Path) -> None:
     _template(tmp_path)
 
@@ -1176,6 +1289,45 @@ def test_incomplete_daily_universe_fails_closed(tmp_path: Path) -> None:
         )
 
     assert not (tmp_path / "20260729").exists()
+
+
+def test_rolling_incomplete_daily_universe_excludes_only_missing_symbols(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        allow_pending_recent_listings=True,
+        transport_factory=_factory(FixtureTransport(omit_symbol="600000.SH")),
+    )
+
+    assert result["status"] == "pass"
+    assert result["rolling_eligible"] is True
+    assert result["active_partition_count"] == 2
+    assert result["symbol_count"] == 1
+    assert result["daily_data_excluded"] == [
+        {
+            "symbol": "600000.SH",
+            "reason": "previous_close_missing",
+            "trade_date": "20260728",
+        }
+    ]
+    manifest = json.loads(
+        (tmp_path / "20260729" / "minute-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    references = json.loads(
+        (tmp_path / "20260729" / "reference-facts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["active_partition_count"] == 2
+    assert manifest["daily_data_excluded"] == result["daily_data_excluded"]
+    assert [row["symbol"] for row in references] == ["000001.SZ"]
 
 
 def test_duplicate_daily_identity_fails_closed_without_publishing(
@@ -1381,3 +1533,30 @@ def test_session_units_are_preopen_simulation_only_and_sandboxed() -> None:
     assert "OnCalendar=Mon..Fri *-*-* 09:18:00" in timer
     assert "Persistent=false" in timer
     assert "Unit=tradingagent-ashare-minute-session.service" in timer
+
+
+def test_timeout_seconds_from_environment_defaults_and_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from Ashare.minute_session_initializer import (
+        MinuteSessionInitializerError,
+        _timeout_seconds_from_environment,
+    )
+
+    monkeypatch.delenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", raising=False)
+    assert _timeout_seconds_from_environment() is None
+    monkeypatch.setenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "60")
+    assert _timeout_seconds_from_environment() == 60.0
+    monkeypatch.setenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "0")
+    with pytest.raises(MinuteSessionInitializerError):
+        _timeout_seconds_from_environment()
+    monkeypatch.setenv("ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS", "not-a-number")
+    with pytest.raises(MinuteSessionInitializerError):
+        _timeout_seconds_from_environment()
+
+
+def test_scale500_env_example_sets_wider_session_timeout() -> None:
+    example = (
+        REPO_ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500.env.example"
+    ).read_text(encoding="utf-8")
+    assert "ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS=60" in example

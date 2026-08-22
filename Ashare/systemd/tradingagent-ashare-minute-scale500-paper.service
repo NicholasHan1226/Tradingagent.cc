@@ -2,7 +2,6 @@
 Description=TradingAgent A-share scale-500 delayed five-minute paper accumulator
 Wants=network-online.target
 After=network-online.target tradingdatas-v1-internal.service
-OnFailure=tradingagent-ashare-minute-scale500-rollback.service
 ConditionPathExists=/etc/tradingagent/ashare-minute-scale500.env
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
 ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
@@ -15,7 +14,7 @@ WorkingDirectory=/opt/investment/releases/tradingagent/current
 EnvironmentFile=/etc/tradingagent/ashare-minute-scale500.env
 Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
-ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_scale500_runtime run --scale-state-root ${ASHARE_MINUTE_SCALE500_STATE_ROOT} --rollback30-state-root ${ASHARE_MINUTE_ROLLBACK30_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token --universe-source ${ASHARE_MINUTE_SCALE500_UNIVERSE_SOURCE} --expected-universe-sha256 ${ASHARE_MINUTE_SCALE500_UNIVERSE_SHA256}
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_scale500_runtime run --rolling-eligible --scale-state-root ${ASHARE_MINUTE_SCALE500_STATE_ROOT} --rollback30-state-root ${ASHARE_MINUTE_ROLLBACK30_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token --universe-source ${ASHARE_MINUTE_SCALE500_UNIVERSE_SOURCE} --expected-universe-sha256 ${ASHARE_MINUTE_SCALE500_UNIVERSE_SHA256}
 TimeoutStartSec=180s
 UMask=0077
 StateDirectory=tradingagent/ashare-minute-paper-scale500

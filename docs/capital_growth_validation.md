@@ -1,14 +1,14 @@
 # Capital-growth 验证口径
 
-> 本文定义 A股和 CNFutures 的样本、费用后结果、回撤、MG 消融与成熟度验收。它不构成收益承诺、投资建议或实盘授权。
+> 本文定义 A股和 CNFutures 的样本、费用后结果、回撤、MG 消融与成熟度验收。它不构成收益承诺、投资建议或实盘授权；模拟盘 Champion 在预声明机器证据通过后自动晋降级，不等待逐候选人工审批。
 
 ## 1. 先验边界
 
 - A股和 CNFutures 各自以独立 fresh-start 50,000 CNY simulated authority 运行；资金、PnL、DD、样本和成熟度不合并。
 - Crypto 的 10,000 USDT 本地 fixture opening candidate 由其市场 lane 独立验证，尚不构成 current/runtime capital authority，也不纳入本文国内资本 KPI；即使币种相同也不得跨 market/account 聚合，All Markets 只汇总非货币计数与健康状态。
 - 首 1–2 周只能证明工程/数据闭环和初步样本质量，不能证明长期正期望。
-- 第 5、10 个 A股交易日是人工 review checkpoint，不是自动实盘日期。
-- `promotion_evidence_ready`、短期盈利或胜率均不构成授权；自动 champion、自动风险扩张、自动 live transition 始终关闭。
+- 第 5、10 个 A股交易日只是自动证据报告 checkpoint，不是模拟晋级门禁或自动实盘日期。
+- `promotion_evidence_ready=true` 只在绑定预声明 cohort/horizon、PIT、独立未来结果、费用/滑点、基线、覆盖/排除、确定性 replay、time-split/OOS 与不确定性检查的可信 registry receipt 中授权 sim-only Champion 自动晋级；短期盈利、胜率或自述布尔值均不构成证据。自动风险扩张和自动 live transition 始终关闭。
 - CNFutures 长期模拟，无实盘时间表。
 - “月收益 20%”只能作为收益分布上尾的 stretch scenario，报告 `P(monthly_return>=20%)`、负月概率、尾部亏损与风险毁灭概率；不得作为第一阶段 PASS、最低交易频率或强迫交易条件。
 
@@ -67,7 +67,7 @@ LLM 输出不能直接作为 rank score、概率、仓位乘数、风险豁免�
 | M1 结构化基线 | A股PIT日频/标签可用；Crypto closed-bar链稳定 | LightGBM/DoubleEnsemble研究候选、Isotonic/Platt/MAPIE、DeepSeek证据侧车 | rolling OOS、Brier/Log Loss/ECE、IC/RankIC、覆盖率、费用后增量、LLM引用准确率 | 任何数据泄漏、校准恶化、增量不稳定即保持shadow |
 | M2 时序挑战 | Crypto连续7天工程稳定；A股至少20个交易日模拟并有可用历史PIT | Kronos-small + Chronos-Bolt或TimesFM一个控制组；HMM/GARCH regime | 多期限quantile loss/coverage、状态分层、模型分歧、延迟/成本、删除最佳时期后的结果 | 不允许只凭单次回测替换Champion |
 | M3 组合优化 | 至少60–120个交易日shadow/模拟且信号费用后仍有增量 | 多周期凸优化、no-trade band、现金比较 | turnover/cost/capacity/整数约束可执行性及回撤改善 | 优化器不得改变市场专属硬规则 |
-| M4 人工晋级 | Challenger在冻结OOS与实时shadow均通过 | 人工选择新Champion generation | immutable manifest、回滚、灰度sim-only readback | 自动promotion、自动扩风险和live transition永久关闭 |
+| M4 sim-only 自动晋级 | Challenger在预声明冻结OOS与实时shadow均通过 | 确定性 policy 自动选择新 Champion generation | evidence-bound immutable manifest、回滚、灰度sim-only readback | 自动扩风险、资金权限扩大和live transition永久关闭 |
 
 当前 `shadow_baselines` 与 `shadow_lightgbm` 只关闭 M0/M1 的工程合同缺口：固定特征顺序、
 训练截止与标签可见时间、严格样本外向量、内容寻址 artifact/prediction receipt、未校准输出
@@ -86,8 +86,10 @@ IC、校准、费用后增量和模型晋级仍必须等待本节要求的冻结
 - 稳定：年份、regime、市场、期限、特征/模型消融与数据漂移；
 - 运营：延迟、失败率、重放、模型服务不可用时core是否仍守恒。
 
-达到统计门槛只生成`promotion_evidence_ready=true`的候选回执；最终仍需人工批准新的
-Champion manifest。模型服务器没有资本、broker、订单或账本写权限。
+达到统计门槛后仍须由独立重算生成`promotion_evidence_ready=true`的可信候选回执；确定性
+policy 可据此自动发布新的 sim-only Champion manifest，并在证据失效、漂移或回退条件触发
+时自动降级/回滚。单样本、短期盈利或自述 ready 只能证明管线，不能触发晋级。模型服务器
+没有资本、broker、订单或账本写权限，晋级也不得扩大风险、资金或 live authority。
 
 ## 2. V1 样本与决策账本验收
 
@@ -123,7 +125,7 @@ Champion manifest。模型服务器没有资本、broker、订单或账本写权
 
 - 真实 TradingDatas price/volume/source/timestamp，成交时段，普通A股与流动性，T+1、涨跌停、方向正确的整手/零股卖出规则、cash/positions、幂等全部通过。
 - risk/order绑定同一`tradingagent.small_account_plan_receipt.v1`；无默认`AccountAuthorityVerifier`已逐项复核模拟capital generation、完整账户内容、position receipt/hash、cash/gross、mark、sellable数量和有效期，订单的symbol/side/quantity/reservation price/fee逐项相等。fixture proof不可晋级，也不证明真实账户。
-- optimizer与day loop还必须共同证明六维论点风险：显式人工policy、逐成员detached proof和完整候选/持仓/open-or-increase-pending exposure set在决策时有效；每笔notional delta、同股票group连续性、pre/post/final exposure map与plan hash可独立复算。缺成员、重复成员、过期proof、运行时自签、替换policy后重签、pending漏记或跨决策清零都必须拒绝；超cap不得锁死经过验证的reduce/exit。fixture authority不可晋级，也不证明生产风险上限合理。
+- optimizer与day loop还必须共同证明六维论点风险：显式版本化policy、逐成员detached proof和完整候选/持仓/open-or-increase-pending exposure set在决策时有效；每笔notional delta、同股票group连续性、pre/post/final exposure map与plan hash可独立复算。缺成员、重复成员、过期proof、运行时自签、替换policy后重签、pending漏记或跨决策清零都必须拒绝；超cap不得锁死经过验证的reduce/exit。fixture authority不可晋级，也不证明生产风险上限合理。
 - plan必须绑定`cost_policy_id`，day loop按canonical佣金、过户费和卖出印花税独立复算；篡改费用后重新签名仍须拒绝。
 - 买入只允许100股整数倍；卖出只允许100股整数倍、完整零股余额或全部退出，并受T+1可卖量约束。非法数量不得自动取整或改写。
 - 单票累计“当前持仓市值 + pending reservations + 新订单”不超过 7,500 CNY；组合 gross 不超过 45,000 CNY；容量最多 8 且可支持至少 7 个不同股票。
@@ -194,8 +196,9 @@ completed round trip 缺 gross 或 net 数值时计入 invalid evidence，不得
 
 当前 `minimum_economic_order_cny=2,000` 与 `no_trade_band_cny=1,000` 是 Phase 1
 首版保守、版本化的工程假设，不是统计最优值。真实模拟成交积累后，必须按账户实际最低佣金、
-印花税/过户费、滑点、未成交损失、信号半衰期和整数股误差做冻结OOS敏感性分析；只能由新 policy
-版本和人工复核调整，不能为提高交易频率或回测收益在线调参。
+印花税/过户费、滑点、未成交损失、信号半衰期和整数股误差做冻结OOS敏感性分析；新 policy
+版本只能作为 sim-only challenger，在相同基线、OOS、不确定性和回退门禁下自动晋降级，不能为
+提高交易频率或回测收益在线调参，也不能自动扩大风险或 live authority。
 
 A股资金计划每天保存：
 
@@ -224,15 +227,15 @@ Calibration 必须输出独立 cluster 的 Brier、log loss、base-rate Brier/sk
 
 缺少 paired samples 或样本外证据时，结论只能是“未验证”，不能据此扩风险。
 
-## 8. A股 day-5/day-10 review
+## 8. A股 day-5/day-10 自动证据报告
 
 | 交易日阶段 | maturity stage | 要求 |
 |---|---|---|
 | 1–4 | collecting | 每日 prediction、标签状态、具体 no-trade reason、execution chain |
-| 5 | day-5 review due | 人工复核数据/链路/成本/风控/故障；继续 sim |
-| 6–9 | continued simulation | 修复缺口并扩大市场状态覆盖；不自动晋级 |
-| 10 | day-10 review due | 第二次人工复核；仍需 Nicholas 单独授权 |
-| 11+ | post-day-10 evidence | 持续积累样本外证据；没有自动 live |
+| 5 | day-5 evidence report | 自动重算数据/链路/成本/风控/故障与覆盖；缺口局部阻断，继续 sim |
+| 6–9 | continued simulation | 修复缺口并扩大市场状态覆盖；只有可信 promotion receipt 可触发 sim-only 晋降级 |
+| 10 | day-10 evidence report | 第二次自动重算、time-split/OOS 与不确定性报告；不等待 Nicholas 逐候选审批 |
+| 11+ | rolling evidence | 持续积累样本外证据并按确定性 policy 自动晋降级；没有自动扩风险或 live |
 
 当前 evidence-readiness 实现至少检查：当前 authority/lineage、20 个 execution-eligible samples、预先指定主 horizon 的 20 个 unique decision clusters、至少 5 个独立交易日、`N_eff >= 10`、10 个 completed round trips、chain consistency ≥0.85、data integrity ≥0.90、完整 actual-cost/PIT/fill-revalidation/dedup/calibration evidence、至少一个费用后正 expectancy 风格，以及账户逐日 MTM 最大回撤不超过 5%。style×horizon label cells 只展示，不计作独立 N。
 
@@ -264,7 +267,7 @@ A股只有同时满足以下条件并经 Nicholas 明确确认，才可另行设
 
 - `closed_loop_engineering_passed`：只表示工程闭环通过。
 - `evidence_collection_in_progress`：有样本但成熟度不足。
-- `promotion_evidence_ready`：最低证据检查通过，仍非授权。
+- `promotion_evidence_ready`：可信 registry receipt 通过完整预声明证据检查时，只授权确定性 sim-only 晋降级；不授权扩风险、资本、broker 或 live。
 - `not_authorized`：没有 Nicholas 明确 live/pilot 授权。
 - `insufficient_evidence`：说明具体缺口，不能简写为“策略失败”或“样本不足所以零 observation”。
 

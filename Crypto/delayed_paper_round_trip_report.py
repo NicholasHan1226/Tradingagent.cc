@@ -42,6 +42,8 @@ ROUND_TRIP_REPORT_CONTRACT = "tradingagent.crypto.round_trip_report.v1"
 ROUND_TRIP_ACCEPTANCE_CONTRACT = "tradingagent.crypto.round_trip_acceptance.v1"
 FIVE_MINUTES = timedelta(minutes=5)
 TWENTY_FOUR_HOUR_COMPLETIONS = 288
+FORTY_EIGHT_HOUR_WINDOWS = 48 * 60 // 5
+MINIMUM_COVERAGE_RATIO = 0.90
 
 
 class CryptoRoundTripReportError(RuntimeError):
@@ -310,8 +312,114 @@ def _runtime_rejects_by_slot(
     }
 
 
+def _data_gap_slots(
+    store: CryptoDelayedPaperObservationStore,
+) -> list[datetime]:
+    """Expand checksum-bound data-gap receipts into skipped 5-minute slots."""
+
+    slots: set[datetime] = set()
+    try:
+        events = store.data_gap_events()
+        for event in events:
+            skipped_from = _market_slot(event.get("skipped_from"))
+            skipped_to = _market_slot(event.get("skipped_to"))
+            if skipped_to < skipped_from:
+                raise CryptoRoundTripReportError("round_trip_report_gap_invalid")
+            span = (skipped_to - skipped_from).total_seconds()
+            if span % FIVE_MINUTES.total_seconds() != 0:
+                raise CryptoRoundTripReportError("round_trip_report_gap_invalid")
+            for offset in range(int(span // FIVE_MINUTES.total_seconds()) + 1):
+                slots.add(skipped_from + FIVE_MINUTES * offset)
+    except CryptoRoundTripReportError:
+        raise
+    except (CryptoDelayedPaperLedgerError, OSError, TypeError, ValueError) as exc:
+        raise CryptoRoundTripReportError("round_trip_report_gap_invalid") from exc
+    return sorted(slots)
+
+
+def _terminal_window_summary(
+    completed_slots: list[datetime], gap_slots: list[datetime]
+) -> dict[str, Any]:
+    """Summarize completed or explicitly skipped windows for simulation coverage."""
+
+    terminal_slots = sorted(set(completed_slots).union(gap_slots))
+    if not terminal_slots:
+        return {
+            "terminal_window_count": 0,
+            "terminal_window_span_count": 0,
+            "terminal_coverage_ratio": 0.0,
+            "data_gap_window_count": 0,
+            "integrity_error_count": 0,
+        }
+    span_count = int(
+        (terminal_slots[-1] - terminal_slots[0]).total_seconds()
+        // FIVE_MINUTES.total_seconds()
+    ) + 1
+    return {
+        "terminal_window_count": len(terminal_slots),
+        "terminal_window_span_count": span_count,
+        "terminal_coverage_ratio": round(len(terminal_slots) / span_count, 6),
+        "data_gap_window_count": len(gap_slots),
+        # A successful checksum-bound report read is direct evidence that no
+        # configuration, ledger, or state-integrity error occurred in this snapshot.
+        "integrity_error_count": 0,
+    }
+
+
+def _latest_terminal_window_summary(
+    completed_slots: list[datetime],
+    gap_slots: list[datetime],
+    *,
+    minimum_window_count: int,
+) -> dict[str, Any]:
+    """Evaluate the latest bounded runtime window, not the whole epoch history."""
+
+    terminal_slots = sorted(set(completed_slots).union(gap_slots))
+    if not terminal_slots:
+        return {
+            "latest_window_available_span_count": 0,
+            "latest_window_terminal_window_count": 0,
+            "latest_window_coverage_ratio": 0.0,
+            "latest_window_data_gap_window_count": 0,
+            "latest_window_first_market_slot": None,
+            "latest_window_latest_market_slot": None,
+        }
+    earliest = terminal_slots[0]
+    latest = terminal_slots[-1]
+    available_span_count = int(
+        (latest - earliest).total_seconds() // FIVE_MINUTES.total_seconds()
+    ) + 1
+    window_start = latest - FIVE_MINUTES * (minimum_window_count - 1)
+    expected_slots = {
+        window_start + FIVE_MINUTES * offset
+        for offset in range(minimum_window_count)
+    }
+    terminal_set = set(terminal_slots)
+    gap_set = set(gap_slots)
+    covered_slots = expected_slots.intersection(terminal_set)
+    return {
+        "latest_window_available_span_count": available_span_count,
+        "latest_window_terminal_window_count": len(covered_slots),
+        "latest_window_coverage_ratio": round(
+            len(covered_slots) / minimum_window_count, 6
+        ),
+        "latest_window_data_gap_window_count": len(
+            expected_slots.intersection(gap_set)
+        ),
+        "latest_window_first_market_slot": window_start.isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "latest_window_latest_market_slot": latest.isoformat().replace(
+            "+00:00", "Z"
+        ),
+    }
+
+
 def build_crypto_delayed_paper_round_trip_report(
-    *, output_root: Path | str, now: datetime | None = None
+    *,
+    output_root: Path | str,
+    now: datetime | None = None,
+    minimum_window_count: int = FORTY_EIGHT_HOUR_WINDOWS,
 ) -> dict[str, Any]:
     """Return audit-bound G4 KPIs without mutating the epoch root."""
 
@@ -322,6 +430,7 @@ def build_crypto_delayed_paper_round_trip_report(
         health = build_crypto_delayed_paper_round_trip_health(output_root=root, now=now)
         store = CryptoDelayedPaperObservationStore(root)
         slots = _completed_slots(store)
+        gap_slots = _data_gap_slots(store)
         runtime_rejects = _runtime_rejects_by_slot(store)
         capital_events = RoundTripCapitalLedger(
             root / "round_trip_capital"
@@ -331,6 +440,12 @@ def build_crypto_delayed_paper_round_trip_report(
     except (CryptoRoundTripHealthError, CryptoRoundTripError) as exc:
         raise CryptoRoundTripReportError("round_trip_report_source_invalid") from exc
     slot_summary = _slot_summary(slots)
+    terminal_summary = _terminal_window_summary(slots, gap_slots)
+    latest_window_summary = _latest_terminal_window_summary(
+        slots,
+        gap_slots,
+        minimum_window_count=minimum_window_count,
+    )
     if slot_summary["completion_count"] != health["core"]["completion_count"]:
         raise CryptoRoundTripReportError("round_trip_report_completion_count_invalid")
     outcome = _outcomes(capital_events)
@@ -343,6 +458,9 @@ def build_crypto_delayed_paper_round_trip_report(
             "pending": health["core"]["pending"],
             "completion_freshness": health["freshness"],
             **slot_summary,
+            **terminal_summary,
+            **latest_window_summary,
+            "data_reject_count": health["failure_count"],
             "continuity_segments": _continuity_segments(
                 slots, runtime_rejects=runtime_rejects
             ),
@@ -378,24 +496,31 @@ def evaluate_crypto_delayed_paper_round_trip_acceptance(
     *,
     output_root: Path | str,
     now: datetime | None = None,
-    minimum_completion_count: int = TWENTY_FOUR_HOUR_COMPLETIONS,
+    minimum_completion_count: int = FORTY_EIGHT_HOUR_WINDOWS,
 ) -> dict[str, Any]:
     """Evaluate fixed readiness gates; never enables a timer or writes state."""
 
     if minimum_completion_count <= 0:
         raise ValueError("round_trip_acceptance_minimum_invalid")
     report = build_crypto_delayed_paper_round_trip_report(
-        output_root=output_root, now=now
+        output_root=output_root,
+        now=now,
+        minimum_window_count=minimum_completion_count,
     )
     reliability = report["service_reliability"]
     capital = report["simulated_capital_only"]
     reasons: list[str] = []
-    if reliability["completion_count"] < minimum_completion_count:
-        reasons.append("insufficient_completed_5m_windows")
-    if reliability["latest_continuous_completion_count"] < minimum_completion_count:
-        reasons.append("insufficient_latest_continuous_5m_windows")
-    if reliability["latest_continuous_covered_minutes"] < minimum_completion_count * 5:
-        reasons.append("insufficient_latest_continuous_covered_minutes")
+    if (
+        reliability["latest_window_available_span_count"]
+        < minimum_completion_count
+    ):
+        reasons.append("insufficient_48h_runtime")
+    elif (
+        reliability["latest_window_coverage_ratio"] < MINIMUM_COVERAGE_RATIO
+    ):
+        reasons.append("coverage_below_90_percent")
+    if reliability["integrity_error_count"] != 0:
+        reasons.append("integrity_errors_present")
     if reliability["core_status"] != "healthy":
         reasons.append("core_health_not_healthy")
     if reliability["pending"] is not False:
@@ -406,7 +531,8 @@ def evaluate_crypto_delayed_paper_round_trip_acceptance(
         "contract": ROUND_TRIP_ACCEPTANCE_CONTRACT,
         "status": "eligible" if not reasons else "not_ready",
         "gate_reason_codes": reasons,
-        "minimum_completion_count": minimum_completion_count,
+        "minimum_runtime_window_count": minimum_completion_count,
+        "minimum_coverage_ratio": MINIMUM_COVERAGE_RATIO,
         "learning_timer_enable_authorized": False,
         "next_action": (
             "run_disabled_full_scrub_then_idempotent_replay"
@@ -491,7 +617,9 @@ def main(argv: list[str] | None = None) -> int:
             allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
-            sort_keys=True,
+            # Keep the top-level gate status before the large audit report so
+            # systemd journal truncation cannot hide the fail-obvious result.
+            sort_keys=False,
         )
     )
     return 0
@@ -503,6 +631,8 @@ if __name__ == "__main__":
 
 __all__ = [
     "CryptoRoundTripReportError",
+    "FORTY_EIGHT_HOUR_WINDOWS",
+    "MINIMUM_COVERAGE_RATIO",
     "ROUND_TRIP_ACCEPTANCE_CONTRACT",
     "ROUND_TRIP_REPORT_CONTRACT",
     "TWENTY_FOUR_HOUR_COMPLETIONS",

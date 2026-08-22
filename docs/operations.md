@@ -250,6 +250,18 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 `127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
 
+同一现役发布助手还负责收口五个 G5 round-trip unit 的 release 绑定。切换前五个
+one-shot unit 必须全部已停止：正常状态为 `inactive`；上一轮失败遗留的 `failed` 仅在
+`MainPID=0` 且 `ControlPID=0` 时允许切换，并保留失败事实，不执行 `reset-failed` 或手工
+启动。助手保存现有有效 `TimeoutStartUSec`，只备份并移除
+白名单内的旧 release drop-in，再为每个 unit 原子写入唯一的
+`99-tradingagent-release.conf`。该文件只绑定本次不可变 `WorkingDirectory`、
+`PYTHONPATH`、只读 release 路径和原有效 timeout；`daemon-reload` 后逐 unit 读回，旧
+drop-in、路径漂移或运行中竞态均使整次发布失败。失败路径同时恢复前一 `current`、原
+drop-in 集合和前端健康；不得手工删除其它 drop-in，也不得把 unit inactive 或配置读回
+冒充自然 receipt、消费者或模拟结果。首次交付此行为时须从已验收的精确 release 重新
+安装 root-owned `/usr/local/sbin/tradingagent-release`，之后才允许用普通发布路径验证。
+
 不可变 staging 不能把 Git tree 中的 executable bit 统一抹成 `0444`。目录权限归一后，
 普通文件可设为只读，但每个 Git mode `100755`（或经已验旧 immutable release 精确同路径
 确认的可执行文件）必须保留 owner execute；切换前同时断言 release tree 无 group/other
@@ -763,12 +775,61 @@ cohort，也不会打开 learning、promotion 或 execution。
 `GET /v1/catalog` 与 `POST /v1/query`。
 
 服务器停机或上游事故导致当日09:35首槽已错过时，不允许把事后数据回填成实时
-模拟。仅可人工运行一次 `Ashare.minute_auto_runner --allow-late-start`，从当时
-最新、已完成且证据合格的延迟K线建立当日状态。该回执必须包含
-`late_start=true`、实际跳过槽位数、`full_session_complete=false` 与
-`learning_eligible=false`；systemd service/timer不携带该开关。首个状态建立后，
-后续发生的日内缺口按同一分段恢复规则处理，不允许跨缺口结算 pending 或沿用旧滚动
-特征。该日可以积累工程和决策样本，但不能进入完整交易日、模型晋级或离线学习验收。
+模拟。对固定 3193 full-universe 路径，仍仅可人工运行一次
+`Ashare.minute_auto_runner --allow-late-start`，并从当时最新、已完成且证据合格的
+延迟K线建立当日状态；该路径必须有独立完整 500/500 canary。对
+`--rolling-eligible` 路径，如果当天 gate 仍为 pending、尚未创建 state bundle，且
+只是错过首槽或发生可重试事故，recurring paper timer 可以自动从当前完整 bar 建立
+新的 partial session，不需要把固定 3193 canary 错当成 rolling 3186 的门禁。两条路径
+都必须包含 `late_start=true`、实际跳过槽位数、`full_session_complete=false` 与
+`learning_eligible=false`，不回填、不补历史、不跨缺口结算 pending；后续完整分钟可
+继续 observation、反事实、盯市和对账积累，但该日不能进入完整交易日、模型晋级或离线
+学习验收。任何单股或当前 bar 的数据/身份/lineage 失败仍只隔离该股或该窗口，不能让
+其它已通过股票退出 rolling 模拟管道。
+
+#### 动态证券池：rolling-eligible 与 full-universe 声明分离
+
+Scale500 的固定 3193 身份集合只适用于明确的 full-universe 覆盖声明和历史 cohort
+审计，不再作为模拟交易启动的总门禁。生产/候选运行使用同一份 reviewed source
+snapshot 派生当前 `rolling_eligible` partition：
+
+- 已满足当前主板、上市年龄、风险和数据条件的股票先进入模拟；运行结果的
+  `universe_sha256` 绑定本窗口实际 active 集合，并另存 `source_universe_sha256`；
+- 新股进入 `pending_listings`，记录 `symbol`、`listed_on`、`eligible_after` 和
+  `listed_less_than_30_days`，到达资格日后在下一个自然窗口加入；
+- 实际退市、停牌、风险警示、缺日线、缺分钟行或 receipt/lineage 不完整的股票只
+  在该股票或该 shard 上 fail closed，不能拖住其它股票，也不能由其它股票替换；
+- 当前 active 集合内部仍要求 exact row count、same observation、时间窗、分页、
+  receipt、lineage 和消费者 readback。`usable_degraded` 只能作为明确范围的观察
+  证据，不能冒充 active 模拟集合完整；
+- rolling paper runner 对当前窗口实际返回的合法股票逐股消费：缺少分钟行的股票只
+  写入本窗口 `missing_symbols`/coverage receipt，并在下一窗口重新查询；不能因为
+  一只股票缺行而让整批回滚。单只股票发生 bar gap 时只重置该股票的 rolling baseline，
+  其它股票继续产生 feature/candidate；跨窗口状态仍禁止用缺失 bar 补齐；
+- 大于 100 只的分钟查询使用最多 4 路有界并行 shard；某个 shard 的 HTTP/transport
+  请求失败时只保留其它成功 shard，并在本窗口 coverage receipt 的 `fanout_failures`
+  与 `missing_symbols` 中记录。分页、合同、目录、replay、metadata 或全部 shard
+  失败仍按整条 snapshot fail closed，不能把 partial coverage 宣称为完整覆盖；
+- 覆盖率报告可以同时显示 `source_count`、`active_count`、`pending_count`、
+  `excluded_count` 和 `coverage_ratio`，但 coverage 未达 100% 不得反向关闭已经
+  逐股通过的模拟链。
+
+每个通过的 delayed-paper 窗口在当日目录写入
+`coverage-receipts/<HHMMSS>.json`，schema 为
+`tradingagent.ashare.minute_coverage_receipt.v1`，绑定 source/effective universe
+hash、source/active/accepted/pending/excluded 数量及 accepted/missing symbol 集合。
+该 receipt 是覆盖和消费读回证据，不是资金、订单或 live authority。
+
+Scale500 session timer 在 09:18、09:24、09:30、09:36 设置开盘前重试窗口，09:42
+开始消费第一根已完成的 09:35 bar。单次 data/readiness 失败不得通过 `OnFailure`
+关闭后续 timer；只有明确的权限、真实交易开关、状态损坏等不可恢复错误才允许人工
+执行 rollback service。初始化发现旧分区 gate 与当前 effective hash/count 不一致时，
+会先保留为 `.stale*.json` 历史证据，再创建当前分区的 pending gate。
+
+启动该模式的候选命令是在现有隔离服务参数上增加
+`Ashare.minute_scale500_runtime initialize/run --rolling-eligible`。该开关保持
+`REAL_TRADING_ENABLED=false`，不创建真实订单、资本 authority 或 live authority；
+生产切换仍需分别验证当前 release、systemd、receipt/API 和 TA consumer readback。
 
 安装候选：
 

@@ -5,9 +5,12 @@ from dataclasses import replace
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
+import threading
+import time
 
 import pytest
 
+import Ashare.minute_data as minute_data_module
 from Ashare.minute_data import (
     MinuteDataContractError,
     MinuteDatasetProfile,
@@ -24,6 +27,7 @@ from shared.data.sharedsignals_v1 import (
     SharedSignalsV1Client,
     SharedSignalsV1Config,
 )
+from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
 from shared.governance.evidence_readiness import dataset_contract_fingerprint
 
 
@@ -202,6 +206,336 @@ def test_minute_port_proof_opt_in_is_forwarded_and_validator_blocks() -> None:
     query_calls = [call for call in transport.calls if call["method"] == "POST"]
     assert query_calls
     assert all(call["json_body"]["include_receipt_proofs"] is True for call in query_calls)
+
+
+def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class ShardTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self.query_bodies: list[dict[str, Any]] = []
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            self.query_bodies.append(copy.deepcopy(body))
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"shard-query-{len(self.query_bodies)}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = ShardTransport()
+    client = _client(transport, max_limit=100)
+    profile = _profile(
+        client,
+        max_pages=2,
+        max_rows=101,
+        page_limit=100,
+    )
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 101
+    assert snapshot.page_count == 2
+    assert len(transport.query_bodies) == 4
+    assert all(
+        len(body["filters"]["ts_code"]["in"]) <= 100
+        for body in transport.query_bodies
+    )
+
+
+def test_minute_port_quarantines_bad_row_inside_large_shard() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 100, "max_lookback_days": 30}
+    )
+
+    class ShardQualityTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self.query_count = 0
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            self.query_count += 1
+            rows = [
+                _row(
+                    symbol,
+                    "20260727 09:40:00",
+                    open_price=0.0 if symbol == "000001.SZ" else 10.0,
+                )
+                for symbol in requested
+            ]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"quality-shard-{self.query_count}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = ShardQualityTransport()
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+    audit = MinuteEvidenceAuditLedger()
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=audit,
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+        allow_symbol_rejections=True,
+    )
+
+    assert snapshot.row_count == 100
+    assert "000001.SZ" not in {bar.symbol for bar in snapshot.bars}
+    assert [item.symbol for item in audit.row_rejections()] == ["000001.SZ"]
+    assert audit.records() == ()
+
+
+def test_minute_port_uses_single_flight_client_per_parallel_worker() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 100, "max_lookback_days": 30}
+    )
+
+    class SingleFlightTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self._active = threading.Lock()
+            self.concurrent_rejections = 0
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if not self._active.acquire(blocking=False):
+                self.concurrent_rejections += 1
+                raise TradingDatasAuthenticationError(
+                    "fixture transport rejects concurrent requests"
+                )
+            try:
+                time.sleep(0.01)
+                if kwargs["method"] == "GET":
+                    return super().__call__(**kwargs)
+                body = kwargs["json_body"]
+                assert body is not None
+                requested = tuple(body["filters"]["ts_code"]["in"])
+                rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+                self.query_count += 1
+                return HTTPResponse(
+                    200,
+                    _query_payload(
+                        request_id=f"shard-query-{self.query_count}",
+                        rows=rows,
+                        next_cursor=None,
+                    ),
+                )
+            finally:
+                self._active.release()
+
+    primary_transport = SingleFlightTransport()
+    primary_transport.catalog_row = catalog_row
+    client = _client(primary_transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    worker_transports: list[SingleFlightTransport] = []
+
+    def shard_client_factory() -> SharedSignalsV1Client:
+        transport = SingleFlightTransport()
+        transport.catalog_row = catalog_row
+        worker_transports.append(transport)
+        return _client(transport, max_limit=100)
+
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+
+    snapshot = TradingDatasMinuteMarketDataPort(
+        client,
+        shard_client_factory=shard_client_factory,
+    ).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 101
+    assert len(worker_transports) >= 1
+    assert sum(transport.query_count for transport in worker_transports) == 4
+    assert primary_transport.concurrent_rejections == 0
+    assert all(transport.concurrent_rejections == 0 for transport in worker_transports)
+
+
+def test_minute_port_retains_successful_shards_when_one_request_fails() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class PartialShardTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            if requested and requested[0] == "000101.SZ":
+                return HTTPResponse(
+                    503,
+                    {"error": {"code": "service_unavailable"}},
+                )
+            rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"partial-shard-{len(self.calls)}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = PartialShardTransport(catalog_row=catalog_row)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    audit = MinuteEvidenceAuditLedger()
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=audit,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 100
+    assert snapshot.same_observation is True
+    assert snapshot.fanout_failures == (
+        {
+            "shard_index": 1,
+            "symbol_count": 1,
+            "reason_code": "minute_tradingdatas_request_failed",
+            "failure_stage": "query_request",
+            "failure_class": "HTTPStatusError",
+        },
+    )
+    assert audit.records() == ()
+
+
+def test_minute_port_isolates_raw_transport_error_to_one_shard() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class RawTransportError(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            if requested and requested[0] == "000101.SZ":
+                raise OSError("connection reset by peer")
+            rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"raw-error-shard-{len(self.calls)}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    client = _client(RawTransportError(catalog_row=catalog_row), max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 100
+    assert snapshot.fanout_failures == (
+        {
+            "shard_index": 1,
+            "symbol_count": 1,
+            "reason_code": "minute_tradingdatas_request_failed",
+            "failure_stage": "transport",
+            "failure_class": "OSError",
+        },
+    )
 
 
 @pytest.mark.parametrize(
@@ -528,6 +862,7 @@ def _load(
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     include_receipt_proofs: bool = False,
     envelope_validator: Any = None,
+    allow_symbol_rejections: bool = False,
     profile_overrides: dict[str, Any] | None = None,
     filter_time: str = "20260727 09:35:00",
     trading_date: date = date(2026, 7, 27),
@@ -547,8 +882,50 @@ def _load(
         evidence_use=evidence_use,
         include_receipt_proofs=include_receipt_proofs,
         envelope_validator=envelope_validator,
+        allow_symbol_rejections=allow_symbol_rejections,
     )
     return snapshot, audit
+
+
+def test_row_quality_rejection_is_quarantined_without_blocking_valid_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    integrity_calls = 0
+    original_verify_integrity = minute_data_module.PagedQueryRun.verify_integrity
+
+    def counted_verify_integrity(*args: Any, **kwargs: Any) -> None:
+        nonlocal integrity_calls
+        integrity_calls += 1
+        original_verify_integrity(*args, **kwargs)
+
+    monkeypatch.setattr(
+        minute_data_module.PagedQueryRun,
+        "verify_integrity",
+        counted_verify_integrity,
+    )
+    good = _row("600000.SH", "20260727 09:40:00")
+    bad = _row("000001.SZ", "20260727 09:40:00", open_price=0.0)
+    trailing_good = _row("600001.SH", "20260727 09:40:00")
+
+    with pytest.raises(MinuteDataContractError, match="minute_open_invalid"):
+        _load(
+            _Transport(first_rows=[good, bad], second_rows=[trailing_good]),
+        )
+
+    integrity_calls = 0
+    snapshot, audit = _load(
+        _Transport(first_rows=[good, bad], second_rows=[trailing_good]),
+        allow_symbol_rejections=True,
+    )
+
+    assert {bar.symbol for bar in snapshot.bars} == {"600000.SH", "600001.SH"}
+    assert audit.records() == ()
+    assert len(audit.row_rejections()) == 1
+    rejection = audit.row_rejections()[0]
+    assert rejection.symbol == "000001.SZ"
+    assert rejection.reason_code == "minute_open_invalid"
+    assert len(rejection.rejected_payload_sha256) == 64
+    assert integrity_calls == 2
 
 
 def test_exact_proof_mapping_uses_selected_row_receipts_not_latest_runtime_metadata() -> None:
@@ -730,7 +1107,10 @@ def test_catalog_http_failure_has_catalog_request_phase_and_bounded_class() -> N
     assert caught.value.failure_class == "HTTPStatusError"
 
 
-def test_query_http_failure_has_query_request_phase_not_catalog_phase() -> None:
+def test_query_http_failure_has_query_request_phase_not_catalog_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(minute_data_module, "_sleep", lambda _seconds: None)
     good_client = _client(_Transport())
     profile = _profile(good_client)
     client = _client(_Transport(query_status=503))
@@ -745,6 +1125,29 @@ def test_query_http_failure_has_query_request_phase_not_catalog_phase() -> None:
     assert caught.value.reason_code == "minute_tradingdatas_request_failed"
     assert caught.value.failure_stage == "query_request"
     assert caught.value.failure_class == "HTTPStatusError"
+
+
+def test_query_retries_transient_api_failure_but_preserves_replay_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(minute_data_module, "_sleep", lambda _seconds: None)
+
+    class TransientQueryTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failures_remaining = 2
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "POST" and self.failures_remaining:
+                self.failures_remaining -= 1
+                return HTTPResponse(503, {"error": "temporary lock contention"})
+            return super().__call__(**kwargs)
+
+    snapshot, audit = _load(TransientQueryTransport())
+
+    assert snapshot.row_count == 2
+    assert snapshot.same_observation is True
+    assert audit.records() == ()
 
 
 def test_profile_is_frozen_from_active_catalog_and_query_uses_only_fixed_routes() -> (

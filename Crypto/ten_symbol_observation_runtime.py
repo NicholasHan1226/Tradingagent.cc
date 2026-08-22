@@ -20,6 +20,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import time
@@ -66,11 +67,13 @@ from Crypto.ten_symbol_observation_store import (
     CryptoTenSymbolObservationStoreError,
 )
 from shared.data.sharedsignals_v1 import (
+    ContractViolation,
     HTTPStatusError,
     HTTPTransport,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
     SharedSignalsV1Error,
+    TransportNotConfigured,
 )
 from shared.data.tradingdatas_transport import (
     RuntimeGateConfigurationError,
@@ -103,6 +106,14 @@ COLLECT_RETRY_DELAY_SECONDS = 20.0
 OUTAGE_GAP_CONTRACT = TEN_SYMBOL_DATA_GAP_CONTRACT
 HISTORICAL_WINDOW_UNRECOVERABLE_REASON = "crypto_observation_watermark_invalid"
 WARMUP_WINDOW_INCOMPLETE_REASON = "crypto_observation_query_shape_invalid"
+DATA_INCOMPLETE_REASONS = frozenset(
+    {
+        WARMUP_WINDOW_INCOMPLETE_REASON,
+        "crypto_observation_data_source_unavailable",
+        "crypto_observation_watermark_invalid",
+        "crypto_observation_data_through_early",
+    }
+)
 HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
     {
         HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
@@ -142,7 +153,7 @@ _MANIFEST_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class CryptoTenSymbolObservationRuntimeConfig:
-    """Versioned runtime family: universe, contracts, root, and query budget."""
+    """Versioned runtime family: identity, query budget, and settle clock."""
 
     runtime_contract: str
     manifest_contract: str
@@ -154,6 +165,9 @@ class CryptoTenSymbolObservationRuntimeConfig:
     spread_contract: str
     spreads_sidecar_contract: str
     requests_per_cycle: int
+    event_id_prefix: str
+    reason_code_prefix: str
+    slot_settle_delay_seconds: int
 
 
 TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
@@ -167,6 +181,9 @@ TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     spread_contract=TEN_SYMBOL_SPREAD_CONTRACT,
     spreads_sidecar_contract=TEN_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     requests_per_cycle=REQUESTS_PER_CYCLE,
+    event_id_prefix="crypto-ten",
+    reason_code_prefix="crypto_ten_symbol",
+    slot_settle_delay_seconds=SLOT_CUTOFF_DELAY_SECONDS,
 )
 FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     runtime_contract="tradingagent.crypto.forty_symbol_observation_runtime.v1",
@@ -179,7 +196,29 @@ FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     spread_contract=FORTY_SYMBOL_SPREAD_CONTRACT,
     spreads_sidecar_contract=FORTY_SYMBOL_SPREADS_SIDECAR_CONTRACT,
     requests_per_cycle=2 + 2 * len(OBSERVATION_SYMBOLS_V40),
+    event_id_prefix="crypto-forty",
+    reason_code_prefix="crypto_forty_symbol",
+    # The isolated forty-symbol collector can finish after the core +55s
+    # receipt boundary.  Its reader runs at close +3m45s, so bind the PIT
+    # cutoff to that fixed, replayable availability boundary instead of
+    # rejecting an honest receipt merely because collection took over 55s.
+    slot_settle_delay_seconds=225,
 )
+
+
+def _family_event_id(
+    config: CryptoTenSymbolObservationRuntimeConfig,
+    event_type: str,
+    material: Mapping[str, Any],
+) -> str:
+    return f"{config.event_id_prefix}-{event_type}-{_sha256(material)[:24]}"
+
+
+def _family_reason(
+    config: CryptoTenSymbolObservationRuntimeConfig,
+    suffix: str,
+) -> str:
+    return f"{config.reason_code_prefix}_{suffix}"
 
 
 def _resolved_output_root(
@@ -539,11 +578,20 @@ def _utc_now(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def crypto_ten_symbol_observation_window(now: datetime) -> CryptoObservationWindow:
-    """Derive the fixed slot: bar close floored to 5m plus a 55s cutoff."""
+def crypto_ten_symbol_observation_window(
+    now: datetime,
+    *,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+) -> CryptoObservationWindow:
+    """Derive the latest family-specific, receipt-safe deterministic slot."""
 
     observed = _utc_now(now)
-    eligible = observed - timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS)
+    settle_delay = config.slot_settle_delay_seconds
+    if settle_delay < 0 or settle_delay >= 5 * 60:
+        raise CryptoTenSymbolObservationRuntimeError(
+            "runtime_slot_settle_delay_invalid"
+        )
+    eligible = observed - timedelta(seconds=settle_delay)
     window_end = eligible.replace(
         minute=eligible.minute - eligible.minute % 5,
         second=0,
@@ -551,8 +599,7 @@ def crypto_ten_symbol_observation_window(now: datetime) -> CryptoObservationWind
     )
     return CryptoObservationWindow(
         window_end=window_end,
-        observation_cutoff=window_end
-        + timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS),
+        observation_cutoff=window_end + timedelta(seconds=settle_delay),
     )
 
 
@@ -560,7 +607,11 @@ def _iso_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _window_for_end(window_end: datetime) -> CryptoObservationWindow:
+def _window_for_end(
+    window_end: datetime,
+    *,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+) -> CryptoObservationWindow:
     normalized = _utc_now(window_end)
     if (
         normalized.second != 0
@@ -571,7 +622,7 @@ def _window_for_end(window_end: datetime) -> CryptoObservationWindow:
     return CryptoObservationWindow(
         window_end=normalized,
         observation_cutoff=normalized
-        + timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS),
+        + timedelta(seconds=config.slot_settle_delay_seconds),
     )
 
 
@@ -836,15 +887,32 @@ class _LazyObservationPort:
             return observation, rows_by_symbol, spread
         except CryptoMarketObservationError:
             raise
-        except CryptoTenSymbolProfileError as exc:
-            raise CryptoMarketObservationError(str(exc)) from exc
-        except RuntimeGateConfigurationError as exc:
-            raise CryptoMarketObservationError(str(exc)) from exc
+        except CryptoTenSymbolProfileError:
+            raise
+        except (
+            ContractViolation,
+            RuntimeGateConfigurationError,
+            TradingDatasAuthenticationError,
+            TransportNotConfigured,
+        ):
+            # Configuration, credentials, and response-contract failures are
+            # integrity failures.  They must remain fail-closed even though
+            # ordinary source unavailability is observable simulation data
+            # loss.
+            raise
+        except HTTPStatusError as exc:
+            if re.search(r"HTTP (401|403)$", str(exc)):
+                raise
+            raise CryptoMarketObservationError(
+                "crypto_observation_data_source_unavailable"
+            ) from exc
         except SharedSignalsV1Error as exc:
-            raise CryptoMarketObservationError(str(exc)) from exc
+            raise CryptoMarketObservationError(
+                "crypto_observation_data_source_unavailable"
+            ) from exc
         except (TypeError, ValueError) as exc:
             raise CryptoMarketObservationError(
-                "crypto_ten_symbol_transport_configuration_invalid"
+                _family_reason(config, "transport_configuration_invalid")
             ) from exc
 
 
@@ -887,7 +955,7 @@ def _observation_event(
     }
     return {
         "contract": config.store_contracts.event,
-        "event_id": f"crypto-ten-observation-{_sha256(id_material)[:24]}",
+        "event_id": _family_event_id(config, "observation", id_material),
         "event_type": "observation",
         "market": "crypto",
         "market_session": "24x7",
@@ -921,7 +989,7 @@ def _data_reject_event(
     }
     return {
         "contract": config.store_contracts.event,
-        "event_id": f"crypto-ten-data-reject-{_sha256(id_material)[:24]}",
+        "event_id": _family_event_id(config, "data-reject", id_material),
         "event_type": "data_reject",
         "market": "crypto",
         "market_session": "24x7",
@@ -968,7 +1036,7 @@ def _data_gap_event(
     return {
         "contract": config.store_contracts.event,
         "gap_contract": config.store_contracts.data_gap,
-        "event_id": f"crypto-ten-data-gap-{_sha256(id_material)[:24]}",
+        "event_id": _family_event_id(config, "data-gap", id_material),
         "event_type": "data_gap",
         "market": "crypto",
         "market_session": "24x7",
@@ -1165,7 +1233,7 @@ def _fresh_cycle(
 ) -> dict[str, Any]:
     """Query one slot and record exactly one terminal or reject event."""
 
-    window = _window_for_end(target_window_end)
+    window = _window_for_end(target_window_end, config=config)
     store.set_pending(
         {
             "window_end": _iso_utc(window.window_end),
@@ -1204,7 +1272,7 @@ def _fresh_cycle(
     store.clear_pending(_iso_utc(window.window_end))
     return {
         "status": "completed",
-        "reason_code": "crypto_ten_symbol_observation_recorded",
+        "reason_code": _family_reason(config, "observation_recorded"),
         "event_id": stored["event_id"],
         "event_checksum": stored["checksum"],
         "window_end": _iso_utc(window.window_end),
@@ -1267,7 +1335,7 @@ def _attempt_outage_gap_recovery(
     )
     return {
         "status": "completed",
-        "reason_code": "crypto_ten_symbol_outage_gap_recovered",
+        "reason_code": _family_reason(config, "outage_gap_recovered"),
         "event_id": stored["event_id"],
         "event_checksum": stored["checksum"],
         "skipped_from": stored["skipped_from"],
@@ -1324,7 +1392,7 @@ def run_crypto_ten_symbol_observation_once(
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_output_root_invalid"
         )
-    current_window = crypto_ten_symbol_observation_window(now)
+    current_window = crypto_ten_symbol_observation_window(now, config=config)
     store = CryptoTenSymbolObservationStore(root, contracts=config.store_contracts)
     lazy = _LazyObservationPort(
         manifest=manifest,
@@ -1372,7 +1440,9 @@ def run_crypto_ten_symbol_observation_once(
                             "result": {
                                 "status": "recovered_pending",
                                 "reason_code": (
-                                    "crypto_ten_symbol_pending_already_recorded"
+                                    _family_reason(
+                                        config, "pending_already_recorded"
+                                    )
                                 ),
                                 "event_id": existing["event_id"],
                                 "event_checksum": existing["checksum"],
@@ -1452,7 +1522,7 @@ def run_crypto_ten_symbol_observation_once(
                     if latest_terminal is None
                     else latest_terminal + timedelta(minutes=5)
                 )
-                target_window = _window_for_end(target_window_end)
+                target_window = _window_for_end(target_window_end, config=config)
                 try:
                     result = _fresh_cycle(
                         store=store,
@@ -1541,19 +1611,25 @@ def run_crypto_ten_symbol_observation_once(
         core_result: Mapping[str, Any] = (
             {
                 "status": "budget_deferred",
-                "reason_code": "crypto_ten_symbol_invocation_budget_exhausted",
+                "reason_code": _family_reason(
+                    config, "invocation_budget_exhausted"
+                ),
                 **_non_authority_receipt_fields(),
             }
             if budget_deferred
             else {
                 "status": "noop",
-                "reason_code": "crypto_ten_symbol_slot_already_recorded",
+                "reason_code": _family_reason(config, "slot_already_recorded"),
                 **_non_authority_receipt_fields(),
             }
         )
     else:
         core_result = cycle_results[-1]["result"]
     last_status = str(core_result.get("status") or "failed_closed")
+    data_incomplete = bool(
+        last_status == "data_reject"
+        and core_result.get("reason_code") in DATA_INCOMPLETE_REASONS
+    )
     warmup_eligible = bool(
         not had_prior_evidence
         and len(cycle_results) == 1
@@ -1567,7 +1643,7 @@ def run_crypto_ten_symbol_observation_once(
     else:
         status = last_status
     return {
-        "contract": CRYPTO_TEN_SYMBOL_RUNTIME_CONTRACT,
+        "contract": config.runtime_contract,
         "status": status,
         "market": "crypto",
         "market_session": "24x7",
@@ -1598,6 +1674,10 @@ def run_crypto_ten_symbol_observation_once(
         "budget_deferred": budget_deferred,
         "invocation_budget_seconds": float(budget_seconds),
         "warmup_eligible": warmup_eligible,
+        "data_incomplete": data_incomplete,
+        "data_incomplete_reason": (
+            core_result.get("reason_code") if data_incomplete else None
+        ),
         "market_data_transport": "loopback_tradingdatas_v1",
         "market_data_access_attempt_count": lazy.collect_calls,
         "collect_attempts": lazy.collect_attempts,
@@ -1612,19 +1692,31 @@ def run_crypto_ten_symbol_observation_once(
 
 
 def crypto_ten_symbol_observation_exit_code(receipt: Mapping[str, Any]) -> int:
-    """Map expected warm-up to success; backlog and rejects stay non-zero.
+    """Map data-only incompleteness to an informational success exit.
 
-    Unlike the delayed-paper core, a ``backlog_pending`` round is always a
-    non-zero exit even when it made ordered progress: this accumulator has no
-    capital at risk, so the timer should surface the lag until the chain is
-    caught up.  Slots are still never skipped.
+    A ``backlog_pending`` receipt with ordered progress remains visible in JSON
+    and the next timer invocation continues from the earliest missing slot. It
+    is not a process failure: this accumulator has no capital or state-authority
+    side effect, and returning 2 would turn an observable data lag into an
+    unnecessary launch/runtime blocker. A backlog with zero processed cycles is
+    different: it indicates the invocation made no progress (for example an
+    exhausted wall-clock budget) and remains non-zero. Contract, credential,
+    integrity, and unrecoverable data failures still return non-zero, and slots
+    are never skipped.
     """
 
     if not isinstance(receipt, Mapping):
         return 2
     if receipt.get("backlog_remaining") is True:
-        return 2
+        return (
+            0
+            if isinstance(receipt.get("processed_cycle_count"), int)
+            and receipt["processed_cycle_count"] > 0
+            else 2
+        )
     if receipt.get("status") in {"completed", "noop"}:
+        return 0
+    if receipt.get("data_incomplete") is True:
         return 0
     if (
         receipt.get("status") == "data_reject"

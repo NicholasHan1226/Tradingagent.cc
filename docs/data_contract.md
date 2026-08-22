@@ -39,15 +39,20 @@
 与运行成熟度门禁，但预注册 feature/label profile 所需的局部连续窗口可形成独立
 历史学习候选，禁止跨 gap。Crypto 288 个连续 5 分钟槽仍是自动运行成熟度门禁，
 不是每个 append-only 离线样本的全局前置；每个学习样本仍必须单独证明连续窗口和
-完整标签，gap 必须切断 segment，Challenger 仍只建议且人工晋级。
+完整标签，gap 必须切断 segment。Challenger 的 prediction receipt 仍只建议且无晋级
+authority；仅可信、证据绑定的 registry receipt 可驱动确定性的 sim-only 晋级、降级或
+回滚，资本、风险、broker、订单与 live authority 始终独立关闭。
 
 分钟 freshness 也按用途分层：execution-equivalent 继续固定最多 30 秒；
 delayed observation 最多允许一个 bar cadence 加 30 秒 jitter，且禁止同 bar
 成交；historical PIT 不按当前墙钟判 stale，但必须由 immutable receipt、as-of、
 首次可见与 revision/vintage 证据证明当时可知。放宽观察延迟绝不放宽真实执行。
 
-A股 500 股完整 cohort 仍是 delayed-paper 新风险的硬门禁。`>=99%` 的预注册
-cohort 只允许零名义 shadow，必须输出精确 missing identity set，禁止静默补票、
+A股 500 股完整 cohort 只约束 `exact500`/完整 cohort delayed-paper 能力，不是所有 A 股
+模拟的全局门禁。身份、时间、key、lineage 与 PIT 安全的命名 symbol/shard 子集可独立进入
+simulation/delayed-paper，并必须声明精确覆盖、排除、费用/滑点且不得继承 `exact500`
+claim。对 `exact500` 能力本身，`>=99%` 的预注册 cohort 仍只允许零名义 shadow，必须输出
+精确 missing identity set，禁止静默补票、
 替换或生成模拟订单。routine query 使用 receipt-bound 单次终端遍历；仅 onboarding、
 逐 dataset 合同漂移、事故恢复和每日 full scrub 执行完整 same-observation 双遍历。
 
@@ -579,7 +584,7 @@ capital-backed risk wrapper 的输入必须是尚未携带任何当前或legacy�
 - position receipt ID/SHA、完整account content SHA、detached verification receipt、verifier identity/version/有效期、当前持仓/mark和每只股票T+1 `sellable_quantity`；
 - 买入100股整数倍及卖出零股/全退例外、15%单票上限、90% gross上限、current/target gross、starting/ending cash；
 - 当前 `cost_policy_id`，以及每项plan decision的symbol、side、quantity、reservation price、fee、cash before/after和reason；
-- 每个新仓候选的不可变 score evidence：canonical 路径必须是绑定当前人工选择 Champion manifest、artifact SHA、model ID/version、精确冻结 spec、symbol、PIT decision time，以及经独立port复核的数值PIT特征快照/数据receipt/vintage/lineage/known time/实现SHA/归一化版本/source type、computed rank 和 receipt hash 的 `ChampionScoreReceipt`；fixture 路径只能使用明确 `offline_engineering_fixture_rank`、不可晋级的独立 evidence 类型；
+- 每个新仓候选的不可变 score evidence：canonical 路径必须是绑定由预声明机器晋降级策略产生、可由 evidence receipt 确定性重放的 current Champion manifest、artifact SHA、model ID/version、精确冻结 spec、symbol、PIT decision time，以及经独立port复核的数值PIT特征快照/数据receipt/vintage/lineage/known time/实现SHA/归一化版本/source type、computed rank 和 receipt hash 的 `ChampionScoreReceipt`；该路径不要求 Nicholas 逐候选选择；fixture 路径只能使用明确 `offline_engineering_fixture_rank`、不可晋级的独立 evidence 类型；
 - canonical plan digest与生成时点。
 
 Optimizer必须调用无默认实现的`AccountAuthorityVerifier`；proof逐项绑定authority/generation/source、account as-of、现金/gross、positions/sellable/mark、position receipt/hash、完整account content hash与有效期。future、expired、篡改或不匹配均fail closed；offline fixture proof固定不可晋级。调用方不能直接注入 raw `rank_score`。canonical decision 必须重新调用`ChampionSelectionVerifier`和`NumericPITFeatureSnapshotVerifier`，并复算完整score receipt；过期/非当前Champion、future/LLM/过早feature proof、调用方自证或fixture evidence冒充canonical authority均fail closed。未校准 rank 只用于候选排序，禁止通过 `single_name_max * rank` 或其它映射控制目标金额。Phase 1 新仓统一使用与 rank 无关、受最低经济金额、整手、费用、现金、15%单票、90% gross和最多8仓约束的固定 probe sizing，并明确标注为 engineering simulation。fixture路径只证明输入/proof内容绑定；canonical-capital测试路径从同一simulated ledger head派生并复读账户，current generation/lineage只能来自该snapshot而不能比较历史常量。Day loop再独立重算计划数值和hash，不相信stage自报。费用按canonical佣金、过户费和卖出印花税逐项复算，重新签名不能洗白错费用。Risk及每个approved order必须匹配plan SHA、position receipt、symbol/side/quantity/reservation price/fee并顺序重算现金。买入须为100股整数倍；卖出仅允许100股整数倍、一次性卖出当前不足100股余额，或全部退出，且不得超过可卖数量。optimizer、day loop与sim engine任一处不满足都在模拟成交前fail closed。两条本地路径都不证明真实账户、生产Champion/feature registry或broker状态。
@@ -695,8 +700,12 @@ service or timer.
   `calibrated_probability=null`、`expected_return_bps=null`、
   `probability_model_state=not_calibrated`、`promotion_eligible=false`、
   `execution_authority=false`。
-- `MinuteUniverseInstrument` 的交易成员仅限沪深主板普通股、上市至少30日、
-  非风险警示/退市风险，并只路由首批三个研究主题。双创/科创/行业/宽基聚合必须
+- `MinuteUniverseInstrument` 的当前交易成员仅限沪深主板普通股、上市至少30日、
+  非风险警示/退市风险，并只路由首批三个研究主题。reviewed source snapshot 可以
+  同时保留尚未达到 30 日的候选身份，但它们必须在滚动 partition 中进入
+  `pending`，不能阻塞其它合格成员，也不能进入 feature/candidate/order。实际退市、
+  停牌、风险警示、缺主数据和缺行情都要逐股保存 reason code；不能以固定全量数量
+  作为模拟启动门禁，也不能静默替换身份。双创/科创/行业/宽基聚合必须
   `context_only=true`，不能成为 feature symbol、candidate 或 order。
 - `MinutePendingFixtureOrder` 只可在完成 bar `t` 后生成，并仅由精确 `t+1`
   完成bar结算；缺失或跳过该bar形成 nonfill，不允许迟到补成交。数据失败取消未结
@@ -739,7 +748,7 @@ RunContext:
 
 evidence/universe/preopen 在早期阻断新增风险时，loop 不得把无候选交给 optimizer 后异常退出。它要生成可审计 `hold`，继续处理已验证持仓的 reduce/exit、reconcile、Decision Ledger、label maturity 与 report，并以 `completed_with_blocks` 结束。position authority 无效时只能严格 hold，不能借“继续闭环”生成任何方向订单。
 
-`compose_paper_runtime`和fixture CLI只允许精确`FrozenFixtureStagePort`及不可晋级fixture账户/proof，禁止任意callable或网络/broker port以自报属性通过。`compose_capital_backed_paper_runtime`是另一条test-only composition：它只通过public stage contracts连接canonical simulated ledger、人工选择Champion、逐副作用drift/Champion复核、capital outbox、模拟成交与reconcile；当前没有CLI、scheduler或live sample。FileRunBundleStore只使用调用方显式给定的本地root，每个compare-and-swap先写同目录临时文件、完整写入并fsync、原子公布为递增的内容寻址事件，再fsync目录。reader校验完整事件链；中断的temp不是有效事件。无默认生产目录，不读旧runtime fallback。
+`compose_paper_runtime`和fixture CLI只允许精确`FrozenFixtureStagePort`及不可晋级fixture账户/proof，禁止任意callable或网络/broker port以自报属性通过。`compose_capital_backed_paper_runtime`是另一条test-only composition：它只通过public stage contracts连接canonical simulated ledger、机器证据选择的当前Champion、逐副作用drift/Champion复核、capital outbox、模拟成交与reconcile；当前没有CLI、scheduler或live sample。FileRunBundleStore只使用调用方显式给定的本地root，每个compare-and-swap先写同目录临时文件、完整写入并fsync、原子公布为递增的内容寻址事件，再fsync目录。reader校验完整事件链；中断的temp不是有效事件。无默认生产目录，不读旧runtime fallback。
 
 ## Decision Exposure Ledger（audit-only）
 
@@ -922,6 +931,18 @@ A股 stage 由交易日序号决定，第 5/10 日只标记 review due。期货 
 - Quant Core 前端只读；不得创建/修改 signal、capital、sample、email、callback 或 execution state。
 - TradingCopilot 是唯一前端写例外：`PUT /api/trading-copilot/state` 只接受 `tradingagent.trading_copilot_state.v1`，保存 `source=user_declared` 的资金、可用现金、持仓、关注股与 `authority=human_intent_only` 决策。每次读取返回 `ETag`，写入必须使用 `If-Match`；服务端串行化写入并校验 state hash、previous hash、sequence 与 event hash 的 append-only 链。浏览器草稿只能标为未同步状态，不得静默覆盖新版本。人工决策的计划理由/触发/失效/风险上限与事后实际动作/复盘分离，二者都不得写入量化 capital/execution/sample/decision namespace。
 - `GET /api/trading-copilot/tracking-universe` 只读取 `tradingagent.trading_copilot_tracking_universe.v1`（见 `TradingCopilot/contracts/tracking_universe.schema.json`）的 server-local regular file。它只有 `generatedAt` 与去重的 A股 `symbol/name` 映射，用于把当前会话跟踪池带入研究终端；不携带账户、行情、预测、推荐或任何执行 authority。文件缺失、格式不符、超量或软链接时必须失败关闭，前端显示等待状态而不能使用演示清单填充。
+
+`tradingagent.ashare.minute_coverage_receipt.v1` 是 delayed-paper 当前窗口的覆盖投影，
+不是全量交易资格声明。它必须绑定 `trading_date`、`bar_end`、`selected_mode`、
+`source_universe_sha256`、`universe_sha256`，并输出 `source_count`、`active_count`、
+`accepted_count`、`pending_count`、`excluded_count`、`coverage_status` 以及可验证的
+`accepted_symbols`/`missing_symbols`。`accepted_count` 可以小于 `active_count`，只表示
+本窗口已进入模拟闭环的股票数；缺失股票下一窗口重试，不能静默替换身份，也不能把
+coverage receipt 解释为 execution authority。
+大分片 HTTP/transport 请求级失败还必须输出 `fanout_failures`，其中只允许包含 shard 序号、股票数、
+稳定 reason code、failure stage 和 bounded failure class；它只能解释对应
+`missing_symbols`，不能被用来伪造已接受股票的 receipt、lineage 或 same-observation
+证据。
 - `GET /api/trading-copilot/event-timeline?symbol=<A股代码>` 只读取 `tradingagent.trading_copilot_event_timeline.v1` 与对应 `tradingagent.trading_copilot_event_timeline_receipt.v1` 的 server-local regular files。receipt 必须绑定原始 timeline SHA-256、相同 symbol、相同 generated/valid-until 字段和当前有效期；它的去重来源回执集合必须与 timeline events 的 `{sourceReceiptId, sourceReceiptSha256}` 集合精确相等。缺失、过期、软链接、篡改或不一致一律返回不可用；它不访问 provider、不生成情绪、候选、资金、订单或训练事实。空事件和 blocked dataset 只表达 coverage debt，不构成行情/舆情健康或推荐结论。
 - 个股分析必须声明 `tradingagent_observation | demo_fixture | analysis_unavailable`。正式投影还必须附带 `tradingagent.trading_copilot_stock_projection_receipt.v1` 独立回执、定型证据强度、数据/证据/模型/人工行动四层就绪度、A股交易约束，以及逐事件来源和内容回执。普通 signal confidence 不等于证据强度。演示数据不得冒充实时；无正式定型分析时不得自动形成人工计划。
 - Quant Core 与 TradingCopilot 的能力归属以 `TradingCopilot/contracts/shared_capability_boundary.v1.json` 为机器合同：共享项只能作为 `evidence_only` 只读投影；Quant专属资本/订单/样本/晋级与Copilot专属申报账户/持仓/人工意图禁止双向写入或身份转换。正式预测、Kronos、OOS与校准由 learning/research plane 统一产生，前端计算不得成为正式预测证据。

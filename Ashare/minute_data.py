@@ -11,9 +11,12 @@ trading authority exists here.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import math
+import threading
+from time import sleep as _sleep
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
@@ -51,6 +54,12 @@ FIVE_MINUTES = timedelta(minutes=5)
 MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
+MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD = 100
+MAX_MINUTE_FANOUT_WORKERS = 4
+# TradingDatas can briefly return a retryable response while its provider
+# collector holds the SQLite authority lock. Keep this bounded so a stale
+# observation cannot be promoted by waiting indefinitely.
+MINUTE_QUERY_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0, 20.0)
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -81,6 +90,7 @@ _FAILURE_CLASSES = frozenset(
         "SharedSignalsV1Error",
         "TradingDatasAuthenticationError",
         "TransportNotConfigured",
+        "OSError",
         "unknown",
     }
 )
@@ -94,6 +104,7 @@ def _bounded_failure_class(error: BaseException) -> str:
         CatalogContractError,
         RuntimeGateConfigurationError,
         TransportNotConfigured,
+        OSError,
         ContractViolation,
         SharedSignalsV1Error,
     )
@@ -130,6 +141,50 @@ def _marked_request_failure(error: BaseException, *, phase: str) -> MinuteDataCo
         failure_stage=stage,
         failure_class=_bounded_failure_class(error),
     )
+
+
+def _is_retryable_minute_query_error(error: BaseException) -> bool:
+    """Return whether one failed TD query may be retried safely.
+
+    Authentication, contract, pagination, and freshness failures remain
+    fail-closed. Only transport timeouts and the API's explicitly retryable
+    capacity/lock statuses are transient here.
+    """
+
+    if isinstance(error, (TimeoutError, OSError)):
+        return True
+    if isinstance(error, HTTPStatusError):
+        message = str(error)
+        return message.endswith("HTTP 429") or message.endswith("HTTP 503")
+    return False
+
+
+def _collect_minute_query_pages_with_retry(
+    *,
+    client: SharedSignalsV1Client,
+    request: QueryRequest,
+    identity_fields: tuple[str, ...],
+    max_pages: int,
+    max_rows: int,
+) -> PagedQueryRun:
+    """Read one query with bounded retry for transient TD API failures."""
+
+    delays = (0.0, *MINUTE_QUERY_RETRY_DELAYS_SECONDS)
+    for attempt, delay in enumerate(delays):
+        if delay:
+            _sleep(delay)
+        try:
+            return collect_query_pages(
+                client=client,
+                request=request,
+                identity_fields=identity_fields,
+                max_pages=max_pages,
+                max_rows=max_rows,
+            )
+        except (SharedSignalsV1Error, OSError) as exc:
+            if attempt == len(delays) - 1 or not _is_retryable_minute_query_error(exc):
+                raise
+    raise AssertionError("minute query retry loop exhausted without a result")
 
 
 def _delayed_paper_latency_limit() -> timedelta:
@@ -889,6 +944,7 @@ class MinuteBarSnapshot:
     replay_semantic_sha256: str
     same_observation: bool
     validated_proof_summary: MinuteValidatedProofSummary | None = None
+    fanout_failures: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.profile, MinuteDatasetProfile):
@@ -939,6 +995,26 @@ class MinuteBarSnapshot:
             self.validated_proof_summary, MinuteValidatedProofSummary
         ):
             raise MinuteDataContractError("minute_snapshot_proof_summary_invalid")
+        if not isinstance(self.fanout_failures, tuple):
+            raise MinuteDataContractError("minute_snapshot_fanout_failures_invalid")
+        for failure in self.fanout_failures:
+            if not isinstance(failure, Mapping):
+                raise MinuteDataContractError(
+                    "minute_snapshot_fanout_failures_invalid"
+                )
+            if (
+                not isinstance(failure.get("shard_index"), int)
+                or isinstance(failure.get("shard_index"), bool)
+                or failure.get("shard_index") < 0
+                or not isinstance(failure.get("symbol_count"), int)
+                or isinstance(failure.get("symbol_count"), bool)
+                or failure.get("symbol_count") <= 0
+                or not isinstance(failure.get("reason_code"), str)
+                or not failure.get("reason_code")
+            ):
+                raise MinuteDataContractError(
+                    "minute_snapshot_fanout_failures_invalid"
+                )
 
     @property
     def sha256(self) -> str:
@@ -956,6 +1032,7 @@ class MinuteBarSnapshot:
                 "pagination_trace_sha256": self.pagination_trace_sha256,
                 "semantic_sha256": self.first_semantic_sha256,
                 "same_observation": True,
+                "fanout_failures": list(self.fanout_failures),
             }
         )
 
@@ -1002,11 +1079,33 @@ class MinuteEvidenceAuditRecord:
             raise MinuteDataContractError("minute_rejected_evidence_must_be_audit_only")
 
 
+@dataclass(frozen=True)
+class MinuteRowRejection:
+    """One row-level quality rejection retained without blocking valid rows."""
+
+    symbol: str
+    reason_code: str
+    dataset_id: str
+    catalog_version: str
+    rejected_payload_sha256: str
+
+    def __post_init__(self) -> None:
+        _text(self.symbol, "minute_row_rejection_symbol_invalid")
+        _text(self.reason_code, "minute_row_rejection_reason_invalid")
+        _text(self.dataset_id, "minute_row_rejection_dataset_invalid")
+        _text(self.catalog_version, "minute_row_rejection_catalog_invalid")
+        if len(self.rejected_payload_sha256) != 64 or any(
+            c not in _SHA256_HEX for c in self.rejected_payload_sha256
+        ):
+            raise MinuteDataContractError("minute_row_rejection_payload_hash_invalid")
+
+
 class MinuteEvidenceAuditLedger:
     """Idempotent process-local collector for rejected minute evidence."""
 
     def __init__(self) -> None:
         self._records: dict[str, MinuteEvidenceAuditRecord] = {}
+        self._row_rejections: dict[str, MinuteRowRejection] = {}
 
     def append(self, record: MinuteEvidenceAuditRecord) -> bool:
         if not isinstance(record, MinuteEvidenceAuditRecord):
@@ -1033,6 +1132,29 @@ class MinuteEvidenceAuditLedger:
     def records(self) -> tuple[MinuteEvidenceAuditRecord, ...]:
         return tuple(self._records.values())
 
+    def append_row_rejection(self, record: MinuteRowRejection) -> bool:
+        if not isinstance(record, MinuteRowRejection):
+            raise MinuteDataContractError("minute_row_rejection_invalid")
+        identity = _sha256(
+            {
+                "symbol": record.symbol,
+                "reason": record.reason_code,
+                "dataset_id": record.dataset_id,
+                "catalog_version": record.catalog_version,
+                "payload": record.rejected_payload_sha256,
+            }
+        )
+        previous = self._row_rejections.get(identity)
+        if previous is None:
+            self._row_rejections[identity] = record
+            return True
+        if previous == record:
+            return False
+        raise MinuteDataContractError("minute_row_rejection_identity_conflict")
+
+    def row_rejections(self) -> tuple[MinuteRowRejection, ...]:
+        return tuple(self._row_rejections.values())
+
 
 class MinuteMarketDataPort(Protocol):
     """Internal TA role port; no transport or provider is implied."""
@@ -1047,6 +1169,7 @@ class MinuteMarketDataPort(Protocol):
         audit_ledger: MinuteEvidenceAuditLedger,
         reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
         evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
+        allow_symbol_rejections: bool = False,
     ) -> MinuteBarSnapshot: ...
 
 
@@ -1069,6 +1192,34 @@ def _provider_timestamp(
     return parsed, parsed + FIVE_MINUTES
 
 
+_ROW_LEVEL_REJECTION_CODES = frozenset(
+    {
+        "minute_row_symbol_missing",
+        "minute_symbol_not_mainboard_tradable",
+        "minute_row_timestamp_invalid",
+        "minute_trade_date_not_calendar_eligible",
+        "minute_row_frequency_mismatch",
+        "minute_reference_fact_missing",
+        "minute_reference_symbol_mismatch",
+        "minute_reference_trade_date_mismatch",
+        "minute_row_suspension_invalid",
+        "minute_suspended_instrument",
+        "minute_open_invalid",
+        "minute_high_invalid",
+        "minute_low_invalid",
+        "minute_close_invalid",
+        "minute_volume_invalid",
+        "minute_amount_invalid",
+        "minute_previous_close_invalid",
+        "minute_ohlc_relationship_invalid",
+        "minute_zero_volume_not_tradable",
+        "minute_bar_duration_invalid",
+        "minute_market_session_mismatch",
+        "minute_weekend_bar_forbidden",
+    }
+)
+
+
 def _map_run(
     *,
     profile: MinuteDatasetProfile,
@@ -1078,8 +1229,14 @@ def _map_run(
     reference_facts: Mapping[str, MinuteReferenceFact] | None,
     evidence_use: MinuteEvidenceUse,
     row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None,
+    row_indices: tuple[int, ...] | None = None,
+    verify_integrity: bool = True,
 ) -> tuple[MinuteBarEvidence, ...]:
-    run.verify_integrity(identity_fields=profile.identity_fields)
+    # Row-level quarantine validates the whole run once before mapping each
+    # row.  Repeating this envelope-wide hash/identity check for every row
+    # turns a bounded shard into quadratic work at scale.
+    if verify_integrity:
+        run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
     metadata = envelope.metadata
     proof_bound = row_proof_metadata is not None
@@ -1170,7 +1327,19 @@ def _map_run(
             row_proof_metadata[0].get("finished_at"),
             "minute_exact_slot_receipt_proof_failed",
         )
-    for index, row in enumerate(envelope.data):
+    indices = (
+        tuple(range(len(envelope.data)))
+        if row_indices is None
+        else row_indices
+    )
+    if any(
+        isinstance(index, bool) or not isinstance(index, int) or index < 0
+        or index >= len(envelope.data)
+        for index in indices
+    ):
+        raise MinuteDataContractError("minute_row_indices_invalid")
+    for index in indices:
+        row = envelope.data[index]
         symbol = _text(
             row.get(profile.symbol_field), "minute_row_symbol_missing"
         ).upper()
@@ -1316,6 +1485,66 @@ def _map_run(
     return tuple(bars)
 
 
+def _map_run_with_symbol_rejections(
+    *,
+    profile: MinuteDatasetProfile,
+    run: PagedQueryRun,
+    decision_time: datetime,
+    trading_dates: frozenset[date],
+    reference_facts: Mapping[str, MinuteReferenceFact] | None,
+    evidence_use: MinuteEvidenceUse,
+    audit_ledger: MinuteEvidenceAuditLedger,
+    row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None,
+) -> tuple[MinuteBarEvidence, ...]:
+    """Map valid rows while quarantining only explicitly row-local failures."""
+
+    run.verify_integrity(identity_fields=profile.identity_fields)
+    rows = run.envelope.data
+    bars: list[MinuteBarEvidence] = []
+    for index, row in enumerate(rows):
+        try:
+            mapped = _map_run(
+                profile=profile,
+                run=run,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                row_proof_metadata=row_proof_metadata,
+                row_indices=(index,),
+                verify_integrity=False,
+            )
+        except MinuteDataContractError as exc:
+            if exc.reason_code not in _ROW_LEVEL_REJECTION_CODES:
+                raise
+            raw_symbol = row.get(profile.symbol_field)
+            symbol = (
+                raw_symbol.strip().upper()
+                if isinstance(raw_symbol, str) and raw_symbol.strip()
+                else "<invalid>"
+            )
+            audit_ledger.append_row_rejection(
+                MinuteRowRejection(
+                    symbol=symbol,
+                    reason_code=exc.reason_code,
+                    dataset_id=run.envelope.dataset_id,
+                    catalog_version=run.envelope.catalog_version,
+                    rejected_payload_sha256=_sha256(
+                        {
+                            "row": row,
+                            "row_index": index,
+                            "semantic_sha256": run.semantic_sha256,
+                        }
+                    ),
+                )
+            )
+            continue
+        bars.extend(mapped)
+    if not bars:
+        raise MinuteDataContractError("minute_query_returned_no_bars")
+    return tuple(bars)
+
+
 def snapshot_from_runs(
     *,
     profile: MinuteDatasetProfile,
@@ -1327,6 +1556,7 @@ def snapshot_from_runs(
     reference_facts: Mapping[str, MinuteReferenceFact] | None = None,
     evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
     envelope_validator: Callable[[Any], object] | None = None,
+    allow_symbol_rejections: bool = False,
 ) -> MinuteBarSnapshot:
     """Map two bounded reads and require identical same-observation semantics."""
 
@@ -1383,28 +1613,54 @@ def snapshot_from_runs(
                     "minute_exact_slot_receipt_proof_failed"
                 )
             row_proof_metadata = tuple(first_proofs)
-        bars = _map_run(
-            profile=profile,
-            run=first,
-            decision_time=decision_time,
-            trading_dates=trading_dates,
-            reference_facts=reference_facts,
-            evidence_use=evidence_use,
-            row_proof_metadata=row_proof_metadata,
-        )
-        replay_bars = _map_run(
-            profile=profile,
-            run=replay,
-            decision_time=decision_time,
-            trading_dates=trading_dates,
-            reference_facts=reference_facts,
-            evidence_use=evidence_use,
-            row_proof_metadata=(
-                tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
-                if envelope_validator is not None
-                else None
-            ),
-        )
+        if allow_symbol_rejections:
+            bars = _map_run_with_symbol_rejections(
+                profile=profile,
+                run=first,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                audit_ledger=audit_ledger,
+                row_proof_metadata=row_proof_metadata,
+            )
+            replay_bars = _map_run_with_symbol_rejections(
+                profile=profile,
+                run=replay,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                audit_ledger=audit_ledger,
+                row_proof_metadata=(
+                    tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
+                    if envelope_validator is not None
+                    else None
+                ),
+            )
+        else:
+            bars = _map_run(
+                profile=profile,
+                run=first,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                row_proof_metadata=row_proof_metadata,
+            )
+            replay_bars = _map_run(
+                profile=profile,
+                run=replay,
+                decision_time=decision_time,
+                trading_dates=trading_dates,
+                reference_facts=reference_facts,
+                evidence_use=evidence_use,
+                row_proof_metadata=(
+                    tuple(getattr(replay_proof_envelope, "row_receipt_proofs"))
+                    if envelope_validator is not None
+                    else None
+                ),
+            )
         if [bar.sha256 for bar in bars] != [bar.sha256 for bar in replay_bars]:
             raise MinuteDataContractError("minute_same_observation_mismatch")
         proof_summary = None
@@ -1442,7 +1698,7 @@ def snapshot_from_runs(
             profile=profile,
             bars=bars,
             page_count=first.page_count,
-            row_count=first.row_count,
+            row_count=len(bars),
             pagination_trace_sha256=first.pagination_trace_sha256,
             first_semantic_sha256=first.semantic_sha256,
             replay_semantic_sha256=replay.semantic_sha256,
@@ -1464,13 +1720,267 @@ def snapshot_from_runs(
         raise
 
 
+def _minute_symbol_shards(
+    *,
+    filters: Mapping[str, Any],
+    symbol_field: str,
+) -> tuple[tuple[str, ...], ...] | None:
+    """Return bounded symbol shards for the V1 ``max_in_values`` contract."""
+
+    condition = filters.get(symbol_field)
+    if not isinstance(condition, Mapping) or "in" not in condition:
+        return None
+    raw_symbols = condition["in"]
+    if not isinstance(raw_symbols, (list, tuple)):
+        return None
+    symbols = tuple(raw_symbols)
+    if any(
+        not isinstance(symbol, str) or not symbol.strip() or symbol != symbol.strip()
+        for symbol in symbols
+    ):
+        raise MinuteDataContractError("minute_symbol_filter_invalid")
+    if len(symbols) <= MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD:
+        return None
+    if len(symbols) != len(set(symbols)):
+        raise MinuteDataContractError("minute_symbol_filter_duplicate")
+    return tuple(
+        symbols[index : index + MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD]
+        for index in range(0, len(symbols), MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD)
+    )
+
+
 class TradingDatasMinuteMarketDataPort:
     """Injected-client adapter for the fixed TradingDatas V1 data plane."""
 
-    def __init__(self, client: SharedSignalsV1Client) -> None:
+    def __init__(
+        self,
+        client: SharedSignalsV1Client,
+        *,
+        shard_client_factory: Callable[[], SharedSignalsV1Client] | None = None,
+    ) -> None:
         if not isinstance(client, SharedSignalsV1Client):
             raise TypeError("client must be SharedSignalsV1Client")
+        if shard_client_factory is not None and not callable(shard_client_factory):
+            raise TypeError("shard_client_factory must be callable")
         self._client = client
+        self._shard_client_factory = shard_client_factory
+
+    def _load_sharded_snapshot(
+        self,
+        *,
+        profile: MinuteDatasetProfile,
+        filters: Mapping[str, Any],
+        shards: tuple[tuple[str, ...], ...],
+        decision_time: datetime,
+        trading_dates: frozenset[date],
+        reference_facts: Mapping[str, MinuteReferenceFact] | None,
+        evidence_use: MinuteEvidenceUse,
+        envelope_validator: Callable[[Any], object] | None,
+        audit_ledger: MinuteEvidenceAuditLedger,
+        allow_symbol_rejections: bool,
+    ) -> MinuteBarSnapshot:
+        """Read bounded shards in parallel and retain successful subsets."""
+
+        if envelope_validator is not None:
+            raise MinuteDataContractError("minute_fanout_receipt_proof_unsupported")
+
+        # The production bearer transport is deliberately single-flight per
+        # client. Keep the bounded fanout parallel, but give each executor
+        # worker its own client/transport instead of sharing one transport
+        # across threads. A client is cached on the worker so its observed
+        # catalog version remains bound for both the first read and replay.
+        worker_state = threading.local()
+
+        def query_shard(
+            index: int,
+            symbols: tuple[str, ...],
+        ) -> tuple[
+            int,
+            PagedQueryRun | None,
+            PagedQueryRun | None,
+            dict[str, object] | None,
+        ]:
+            shard_client = self._client
+            if self._shard_client_factory is not None:
+                shard_client = getattr(worker_state, "client", None)
+                if shard_client is None:
+                    shard_client = self._shard_client_factory()
+                    if not isinstance(shard_client, SharedSignalsV1Client):
+                        raise MinuteDataContractError(
+                            "minute_shard_client_factory_invalid"
+                        )
+                    try:
+                        shard_client.get_catalog()
+                    except SharedSignalsV1Error as exc:
+                        raise _marked_request_failure(exc, phase="catalog") from exc
+                    worker_state.client = shard_client
+            shard_filters = dict(filters)
+            shard_filters[profile.symbol_field] = {"in": list(symbols)}
+            page_limit = min(profile.page_limit, len(symbols))
+            shard_pages = max(1, (len(symbols) + page_limit - 1) // page_limit)
+            request = QueryRequest(
+                dataset_id=profile.dataset_id,
+                schema_major=profile.schema_major,
+                fields=profile.default_fields,
+                filters=shard_filters,
+                order=profile.default_order or None,
+                limit=page_limit,
+                include_receipt_proofs=False,
+            )
+            try:
+                first = _collect_minute_query_pages_with_retry(
+                    client=shard_client,
+                    request=request,
+                    identity_fields=profile.identity_fields,
+                    max_pages=shard_pages,
+                    max_rows=len(symbols),
+                )
+                replay = _collect_minute_query_pages_with_retry(
+                    client=shard_client,
+                    request=request,
+                    identity_fields=profile.identity_fields,
+                    max_pages=shard_pages,
+                    max_rows=len(symbols),
+                )
+                return index, first, replay, None
+            except PaginationContractError:
+                raise
+            except (SharedSignalsV1Error, OSError) as exc:
+                marked = _marked_request_failure(exc, phase="query")
+                return index, None, None, {
+                    "shard_index": index,
+                    "symbol_count": len(symbols),
+                    "reason_code": marked.reason_code,
+                    "failure_stage": marked.failure_stage,
+                    "failure_class": marked.failure_class,
+                }
+
+        results: dict[
+            int,
+            tuple[
+                PagedQueryRun | None,
+                PagedQueryRun | None,
+                dict[str, object] | None,
+            ],
+        ] = {}
+        with ThreadPoolExecutor(
+            max_workers=min(MAX_MINUTE_FANOUT_WORKERS, len(shards))
+        ) as executor:
+            futures = {
+                executor.submit(query_shard, index, symbols): index
+                for index, symbols in enumerate(shards)
+            }
+            for future in as_completed(futures):
+                index, first, replay, failure = future.result()
+                results[index] = (first, replay, failure)
+
+        first_runs: list[PagedQueryRun] = []
+        replay_runs: list[PagedQueryRun] = []
+        fanout_failures: list[Mapping[str, object]] = []
+        for index in range(len(shards)):
+            first, replay, failure = results[index]
+            if failure is not None:
+                fanout_failures.append(failure)
+                continue
+            if first is None or replay is None:
+                raise MinuteDataContractError("minute_fanout_replay_invalid")
+            first_runs.append(first)
+            replay_runs.append(replay)
+
+        if len(first_runs) != len(replay_runs) or not first_runs:
+            failure = fanout_failures[0] if fanout_failures else {}
+            raise MinuteDataContractError(
+                str(failure.get("reason_code", "minute_fanout_replay_invalid"))
+            )
+        versions = {
+            run.envelope.catalog_version
+            for run in (*first_runs, *replay_runs)
+        }
+        if len(versions) != 1:
+            raise MinuteDataContractError("minute_query_catalog_version_drift")
+
+        bars: list[MinuteBarEvidence] = []
+        first_semantics: list[str] = []
+        replay_semantics: list[str] = []
+        first_traces: list[str] = []
+        replay_traces: list[str] = []
+        page_count = 0
+        for first, replay in zip(first_runs, replay_runs, strict=True):
+            if (
+                first.semantic_sha256 != replay.semantic_sha256
+                or first.semantic_trace_sha256 != replay.semantic_trace_sha256
+            ):
+                raise MinuteDataContractError("minute_same_observation_mismatch")
+            try:
+                if allow_symbol_rejections:
+                    first_bars = _map_run_with_symbol_rejections(
+                        profile=profile,
+                        run=first,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                        audit_ledger=audit_ledger,
+                    )
+                    replay_bars = _map_run_with_symbol_rejections(
+                        profile=profile,
+                        run=replay,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                        audit_ledger=audit_ledger,
+                    )
+                else:
+                    first_bars = _map_run(
+                        profile=profile,
+                        run=first,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                    )
+                    replay_bars = _map_run(
+                        profile=profile,
+                        run=replay,
+                        decision_time=decision_time,
+                        trading_dates=trading_dates,
+                        reference_facts=reference_facts,
+                        evidence_use=evidence_use,
+                    )
+            except MinuteDataContractError as exc:
+                if not (
+                    allow_symbol_rejections
+                    and exc.reason_code == "minute_query_returned_no_bars"
+                ):
+                    raise
+                continue
+            if [bar.sha256 for bar in first_bars] != [bar.sha256 for bar in replay_bars]:
+                raise MinuteDataContractError("minute_same_observation_mismatch")
+            bars.extend(first_bars)
+            first_semantics.append(first.semantic_sha256)
+            replay_semantics.append(replay.semantic_sha256)
+            first_traces.append(first.pagination_trace_sha256)
+            replay_traces.append(replay.pagination_trace_sha256)
+            page_count += first.page_count
+
+        aggregate_semantic = _sha256(first_semantics)
+        return MinuteBarSnapshot(
+            profile=profile,
+            bars=tuple(sorted(bars, key=lambda bar: bar.identity)),
+            page_count=page_count,
+            row_count=len(bars),
+            pagination_trace_sha256=_sha256(
+                {
+                    "first": first_traces,
+                    "replay": replay_traces,
+                }
+            ),
+            first_semantic_sha256=aggregate_semantic,
+            replay_semantic_sha256=_sha256(replay_semantics),
+            same_observation=True,
+            fanout_failures=tuple(fanout_failures),
+        )
 
     def load_snapshot(
         self,
@@ -1484,6 +1994,7 @@ class TradingDatasMinuteMarketDataPort:
         evidence_use: MinuteEvidenceUse = MinuteEvidenceUse.LOW_LATENCY_EXECUTION,
         include_receipt_proofs: bool = False,
         envelope_validator: Callable[[Any], object] | None = None,
+        allow_symbol_rejections: bool = False,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
         runtime_catalog_version = "unobserved"
@@ -1527,6 +2038,23 @@ class TradingDatasMinuteMarketDataPort:
                     raise MinuteDataContractError(
                         "minute_query_filter_not_catalog_authorized"
                     )
+            symbol_shards = _minute_symbol_shards(
+                filters=filters,
+                symbol_field=profile.symbol_field,
+            )
+            if symbol_shards is not None:
+                return self._load_sharded_snapshot(
+                    profile=profile,
+                    filters=filters,
+                    shards=symbol_shards,
+                    decision_time=decision_time,
+                    trading_dates=trading_dates,
+                    reference_facts=reference_facts,
+                    evidence_use=evidence_use,
+                    envelope_validator=envelope_validator,
+                    audit_ledger=audit_ledger,
+                    allow_symbol_rejections=allow_symbol_rejections,
+                )
             request = QueryRequest(
                 dataset_id=profile.dataset_id,
                 schema_major=profile.schema_major,
@@ -1537,14 +2065,14 @@ class TradingDatasMinuteMarketDataPort:
                 include_receipt_proofs=include_receipt_proofs,
             )
             try:
-                first = collect_query_pages(
+                first = _collect_minute_query_pages_with_retry(
                     client=self._client,
                     request=request,
                     identity_fields=profile.identity_fields,
                     max_pages=profile.max_pages,
                     max_rows=profile.max_rows,
                 )
-                replay = collect_query_pages(
+                replay = _collect_minute_query_pages_with_retry(
                     client=self._client,
                     request=request,
                     identity_fields=profile.identity_fields,
@@ -1565,6 +2093,7 @@ class TradingDatasMinuteMarketDataPort:
                 reference_facts=reference_facts,
                 evidence_use=evidence_use,
                 envelope_validator=envelope_validator,
+                allow_symbol_rejections=allow_symbol_rejections,
             )
         except MinuteDataContractError as exc:
             if len(audit_ledger.records()) == audit_count_before:
@@ -1611,7 +2140,7 @@ class TradingDatasMinuteMarketDataPort:
                 failure_stage="pagination",
                 failure_class="PaginationContractError",
             ) from exc
-        except SharedSignalsV1Error as exc:
+        except (SharedSignalsV1Error, OSError) as exc:
             reason = "minute_tradingdatas_request_failed"
             audit_ledger.append(
                 MinuteEvidenceAuditRecord(
@@ -1648,6 +2177,7 @@ __all__ = [
     "MinuteDatasetProfile",
     "MinuteEvidenceAuditLedger",
     "MinuteEvidenceAuditRecord",
+    "MinuteRowRejection",
     "MinuteEvidenceUse",
     "MinuteMarketDataPort",
     "MinuteReferenceFact",

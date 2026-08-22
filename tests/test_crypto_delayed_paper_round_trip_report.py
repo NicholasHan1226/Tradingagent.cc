@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import Crypto.delayed_paper_round_trip_report as report_module
+import Crypto.delayed_paper_round_trip_runtime as runtime_module
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.delayed_paper_round_trip_report import (
     CryptoRoundTripReportError,
@@ -15,6 +16,7 @@ from Crypto.delayed_paper_round_trip_report import (
     main,
     _continuity_segments,
     _manifest_path,
+    _latest_terminal_window_summary,
     _runtime_rejects_by_slot,
     _slot_summary,
     run_crypto_delayed_paper_round_trip_acceptance_once,
@@ -80,7 +82,7 @@ def test_acceptance_is_not_ready_before_24_hour_evidence(tmp_path: Path) -> None
     )
 
     assert result["status"] == "not_ready"
-    assert "insufficient_completed_5m_windows" in result["gate_reason_codes"]
+    assert "insufficient_48h_runtime" in result["gate_reason_codes"]
     assert result["learning_timer_enable_authorized"] is False
     assert result["next_action"] == "continue_core_accumulation"
 
@@ -101,6 +103,25 @@ def test_latest_continuous_streak_ignores_old_epoch_gaps() -> None:
     assert summary["latest_continuous_first_market_slot"] == (
         WINDOW_END - timedelta(minutes=5)
     ).isoformat().replace("+00:00", "Z")
+
+
+def test_acceptance_window_ignores_gaps_outside_latest_window() -> None:
+    slots = [
+        WINDOW_END - timedelta(hours=48, minutes=5),
+        WINDOW_END - timedelta(minutes=10),
+        WINDOW_END - timedelta(minutes=5),
+        WINDOW_END,
+    ]
+
+    summary = _latest_terminal_window_summary(
+        slots,
+        [],
+        minimum_window_count=3,
+    )
+
+    assert summary["latest_window_available_span_count"] > 3
+    assert summary["latest_window_terminal_window_count"] == 3
+    assert summary["latest_window_coverage_ratio"] == 1.0
 
 
 def test_continuity_segments_expose_gaps_without_attributing_external_cause() -> None:
@@ -201,6 +222,34 @@ def test_acceptance_can_be_eligible_without_using_pnl_as_a_gate(tmp_path: Path) 
     assert result["status"] == "eligible"
     assert result["learning_timer_enable_authorized"] is False
     assert result["next_action"] == "run_disabled_full_scrub_then_idempotent_replay"
+
+
+def test_acceptance_counts_explicit_data_gaps_as_observed_coverage(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    store = runtime_module.CryptoDelayedPaperObservationStore(tmp_path)
+    store.append_event(
+        runtime_module._round_trip_data_gap_event(
+            prior_market_slot=WINDOW_END - timedelta(minutes=5),
+            reason_code="crypto_5m_observation_after_cutoff",
+            recorded_at=WINDOW_END + timedelta(minutes=10),
+        )
+    )
+
+    result = evaluate_crypto_delayed_paper_round_trip_acceptance(
+        output_root=tmp_path,
+        now=WINDOW_END + timedelta(minutes=5),
+        minimum_completion_count=2,
+    )
+
+    assert result["status"] == "eligible"
+    reliability = result["report"]["service_reliability"]
+    assert reliability["terminal_window_span_count"] == 2
+    assert reliability["terminal_window_count"] == 2
+    assert reliability["terminal_coverage_ratio"] == 1.0
+    assert reliability["data_gap_window_count"] == 1
+    assert reliability["integrity_error_count"] == 0
 
 
 def test_report_fails_closed_on_capital_event_tamper(tmp_path: Path) -> None:

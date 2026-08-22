@@ -139,7 +139,12 @@ Priority exits for A3:
 
 **Overall target:** a 24/7 multi-asset spot simulation system with trustworthy TradingDatas market data, exchange-rule-aware execution, continuous delayed-paper samples, factor/strategy OOS evaluation, and the same evidence-driven automatic Challenger/Champion lifecycle as A-share—without giving the research/learning process capital or live authority.
 
-Current assessment: **C2 rolling evaluation.** Ten-symbol observation and delayed-paper/factor research are running, while the current promotion scorecard remains read-only because the C3 scientific registry/receipt authority has not yet been implemented. The blocker is machine evidence/implementation, not human approval.
+Planning position: **C2 rolling evaluation precedes any new C3 infrastructure.**
+Complete gap-bounded segments first produce receipt-bound resolved outcomes,
+declared-cost baseline comparisons, deterministic artifacts, and shadow-only
+recommendations. Missing C3 registry/receipt authority is not a blocker for this
+work and must not trigger a platform build before rolling evidence demonstrates
+the need.
 
 Phases:
 
@@ -150,12 +155,14 @@ Phases:
 - **C4 Multi-asset/regime portfolio evolution:** allocation across symbols/strategies is costed, risk-bounded, capacity-aware and independently replayable; perpetual-market data may be research context but cannot silently change spot execution authority.
 - **C5 Live-readiness dossier:** optional future authenticated account/testnet/live-adapter readiness package; no automatic key/account creation or live transition.
 
-Priority exits for C2→C3:
-1. unify factor/strategy trial identity and preserve every tested candidate;
-2. freeze a Crypto-specific validation plan and sample-maturity contract;
-3. bind exchange filters, spread/slippage and fees to each evaluation artifact;
-4. define minimum independent time/regime coverage rather than only trade count;
-5. implement simulation-only registry receipts, promotion, demotion and deterministic rollback.
+Priority evidence before any C3 implementation:
+1. produce one real receipt-bound resolved outcome from a complete gap-safe segment;
+2. compare one existing factor/strategy with a simple baseline after declared costs;
+3. retain deterministic artifacts, exclusions, negative results and abstentions;
+4. add outcomes one by one across time/symbol/regime coverage without waiting for
+   all 40 symbols or a latest continuous 288-bar segment;
+5. reopen the smallest simulation lifecycle implementation only after rolling
+   evidence identifies a concrete promotion/demotion/rollback consumer need.
 
 ### 5.3 CNFutures
 

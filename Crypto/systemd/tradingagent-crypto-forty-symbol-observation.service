@@ -1,0 +1,40 @@
+[Unit]
+Description=TradingAgent Crypto forty-symbol closed-5m observation accumulator
+Wants=network-online.target
+After=network-online.target
+AssertPathExists=/etc/tradingagent/crypto-forty-symbol-observation.runtime.json
+AssertPathExists=/run/secrets/tradingagent/tradingdatas-crypto-read.token
+AssertPathExists=/opt/investment/releases/tradingagent/current/Crypto/forty_symbol_observation_runtime.py
+
+[Service]
+Type=oneshot
+User=tradingagent
+Group=tradingagent
+WorkingDirectory=/opt/investment/releases/tradingagent/current
+Environment=REAL_TRADING_ENABLED=false
+Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.forty_symbol_observation_runtime --runtime-manifest /etc/tradingagent/crypto-forty-symbol-observation.runtime.json --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
+TimeoutStartSec=360
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StateDirectory=tradingagent/crypto-40-symbol-observation
+StateDirectoryMode=0700
+ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/etc/tradingagent/crypto-forty-symbol-observation.runtime.json
+ReadOnlyPaths=/run/secrets/tradingagent/tradingdatas-crypto-read.token
+ReadWritePaths=/var/lib/tradingagent/crypto-40-symbol-observation
+StandardOutput=journal
+StandardError=journal

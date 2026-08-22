@@ -43,9 +43,10 @@ ROUND_TRIP_LEARNING_SCRUB_CONTRACT = "tradingagent.crypto.round_trip_learning_sc
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
 ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS = 90.0
-ROUND_TRIP_LEARNING_INCREMENTAL_MAX_SECONDS = (
-    ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS
-)
+# The production incremental oneshot has a 45 second systemd start timeout.
+# Keep a deliberate margin so inventory/head validation can return a durable
+# deferral instead of being terminated before the suffix cursor advances.
+ROUND_TRIP_LEARNING_INCREMENTAL_MAX_SECONDS = 30.0
 ROUND_TRIP_LEARNING_INCREMENTAL_MAX_RECORDS = 8
 
 
@@ -98,7 +99,7 @@ def _result(*, status: str, **fields: Any) -> dict[str, Any]:
         "contract": ROUND_TRIP_LEARNING_CONTRACT,
         "status": status,
         "learning_mode": "detached_offline_worker",
-        "manual_review_required": True,
+        "manual_review_required": False,
         "automatic_champion_replacement": False,
         **fields,
         **_non_authority_fields(),
@@ -425,7 +426,9 @@ def _completion_inventory(
     return ids
 
 
-def _projection(source: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def _projection(
+    source: Mapping[str, Any], *, legacy_manual_gate: bool = False
+) -> dict[str, dict[str, Any]]:
     observation = source["observation"]
     completion = source["completion"]
     events = source["events"]
@@ -475,13 +478,25 @@ def _projection(source: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         **_non_authority_fields(),
     }
     kpi["kpi_sha256"] = _sha256(kpi)
+    if legacy_manual_gate:
+        suggestion = "collect_audited_simulation_outcomes_before_manual_review"
+        reason_codes = [
+            "insufficient_independent_outcomes",
+            "manual_review_required",
+        ]
+    else:
+        suggestion = "continue_simulation_outcome_accumulation"
+        reason_codes = [
+            "insufficient_independent_outcomes",
+            "deterministic_non_live_gate_pending",
+        ]
     challenger = {
         "contract": ROUND_TRIP_LEARNING_CONTRACT,
         "event_type": "challenger_suggestion",
         "observation_id": observation_id,
         "source_completion_sha256": completion_sha256,
-        "suggestion": "collect_audited_simulation_outcomes_before_manual_review",
-        "reason_codes": ["insufficient_independent_outcomes", "manual_review_required"],
+        "suggestion": suggestion,
+        "reason_codes": reason_codes,
         "eligible_for_champion_replacement": False,
         "proposed_parameter_changes": [],
         **_non_authority_fields(),
@@ -515,19 +530,64 @@ def _verify_or_project(
         store, observation_id, strict_ledger_membership=strict_ledger_membership
     )
     material = _projection(source)
+    legacy_material = _projection(source, legacy_manual_gate=True)
     paths = _paths(root, observation_id)
+    existing: dict[str, dict[str, Any]] = {}
     for name, path in paths.items():
         if path.exists() or path.is_symlink():
-            actual = _parse_canonical(
+            existing[name] = _parse_canonical(
                 path, reason="round_trip_learning_projection_invalid"
             )
-            if _canonical_json(actual) != _canonical_json(material[name]):
-                raise CryptoRoundTripLearningError(
-                    "round_trip_learning_projection_not_derived"
+    if existing:
+        variants = (material, legacy_material)
+        matched = next(
+            (
+                variant
+                for variant in variants
+                if all(
+                    _canonical_json(actual) == _canonical_json(variant[name])
+                    for name, actual in existing.items()
                 )
+            ),
+            None,
+        )
+        if matched is None:
+            raise CryptoRoundTripLearningError(
+                "round_trip_learning_projection_not_derived"
+            )
+        material = matched
     for name, path in paths.items():
         _write_immutable(path, material[name])
     return material["receipt"]
+
+
+def _verify_projected_head(
+    root: Path,
+    store: CryptoDelayedPaperObservationStore,
+    *,
+    observation_id: str,
+    checkpoint: Mapping[str, Any],
+) -> None:
+    if any(
+        not path.is_file() or path.is_symlink()
+        for path in _paths(root, observation_id).values()
+    ):
+        raise CryptoRoundTripLearningError(
+            "round_trip_learning_claimed_projection_missing"
+        )
+    receipt = _verify_or_project(
+        root, store, observation_id, strict_ledger_membership=True
+    )
+    if (
+        checkpoint.get("observation_id") != observation_id
+        or checkpoint.get("source_completion_sha256")
+        != receipt["source_completion_sha256"]
+        or checkpoint.get("projection_receipt_sha256")
+        != receipt["projection_receipt_sha256"]
+    ):
+        raise CryptoRoundTripLearningError(
+            "round_trip_learning_checkpoint_source_mismatch"
+        )
 
 
 def _checkpoint_payload(
@@ -618,10 +678,12 @@ def _verify_state(
     return row
 
 
-def _read_incremental_state(evolution: Path) -> dict[str, Any] | None:
+def _read_incremental_state(
+    evolution: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     path = evolution / "worker_state.json"
     if not path.exists() and not path.is_symlink():
-        return None
+        return None, None
     row = _parse_canonical(path, reason="round_trip_learning_state_invalid")
     material = dict(row)
     claimed = material.pop("worker_state_sha256", None)
@@ -635,6 +697,7 @@ def _read_incremental_state(evolution: Path) -> dict[str, Any] | None:
         or any(row.get(key) != value for key, value in _non_authority_fields().items())
     ):
         raise CryptoRoundTripLearningError("round_trip_learning_state_invalid")
+    checkpoint = None
     if projected:
         checkpoint = _parse_canonical(
             evolution / "checkpoints" / f"{projected:012d}.json",
@@ -643,18 +706,23 @@ def _read_incremental_state(evolution: Path) -> dict[str, Any] | None:
         material = dict(checkpoint)
         claimed_checkpoint = material.pop("checkpoint_sha256", None)
         if (
-            checkpoint.get("sequence") != projected
+            checkpoint.get("contract") != ROUND_TRIP_LEARNING_CHECKPOINT_CONTRACT
+            or checkpoint.get("sequence") != projected
             or claimed_checkpoint != _sha256(material)
             or row.get("checkpoint_head_sha256") != claimed_checkpoint
             or row.get("latest_observation_id") != checkpoint.get("observation_id")
+            or any(
+                checkpoint.get(key) != value
+                for key, value in _non_authority_fields().items()
+            )
         ):
-            raise CryptoRoundTripLearningError("round_trip_learning_state_invalid")
+            raise CryptoRoundTripLearningError("round_trip_learning_checkpoint_invalid")
     elif (
         row.get("checkpoint_head_sha256") is not None
         or row.get("latest_observation_id") is not None
     ):
         raise CryptoRoundTripLearningError("round_trip_learning_state_invalid")
-    return row
+    return row, checkpoint
 
 
 def run_crypto_delayed_paper_round_trip_learning_incremental(
@@ -682,11 +750,8 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
         raise CryptoRoundTripLearningError("round_trip_learning_core_invalid")
     evolution = _ensure_evolution_root(root)
     with _learning_lock(evolution):
-        checkpoints = _read_checkpoints(evolution)
-        state = _read_incremental_state(evolution)
+        state, latest = _read_incremental_state(evolution)
         projected = int(state["projected_completion_count"]) if state else 0
-        if len(checkpoints) != projected:
-            raise CryptoRoundTripLearningError("round_trip_learning_state_invalid")
         if projected > completion_count:
             raise CryptoRoundTripLearningError("round_trip_learning_core_regressed")
         if completion_count == 0:
@@ -701,7 +766,13 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
                 raise CryptoRoundTripLearningError(
                     "round_trip_learning_core_checkpoint_mismatch"
                 )
-            latest = checkpoints[-1] if checkpoints else None
+            if latest is not None:
+                _verify_projected_head(
+                    root,
+                    store,
+                    observation_id=latest_observation_id,
+                    checkpoint=latest,
+                )
             return _result(
                 status="current",
                 **{
@@ -739,46 +810,21 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
             )
         if completed[-1] != latest_observation_id:
             raise CryptoRoundTripLearningError("round_trip_learning_core_inventory_invalid")
-        for sequence, observation_id in enumerate(completed[:projected], start=1):
-            if monotonic() >= deadline:
-                return _result(
-                    status="deferred_time_budget",
-                    **{
-                        **common,
-                        "remaining_backlog_count": len(completed) - projected,
-                        "projected_completion_count": projected,
-                        "latest_projected_observation_id": checkpoints[-1].get(
-                            "observation_id"
-                        ),
-                        "checkpoint_head_sha256": checkpoints[-1].get(
-                            "checkpoint_sha256"
-                        ),
-                    },
-                )
-            if any(
-                not path.is_file() or path.is_symlink()
-                for path in _paths(root, observation_id).values()
-            ):
-                raise CryptoRoundTripLearningError(
-                    "round_trip_learning_claimed_projection_missing"
-                )
-            receipt = _verify_or_project(
-                root, store, observation_id, strict_ledger_membership=True
+        # Incremental work trusts the already-validated checkpoint chain and
+        # revalidates only its exact head before appending a bounded suffix.
+        # Replaying every historical projection here made the worker O(history)
+        # and prevented the suffix cursor from ever advancing.  The separately
+        # scheduled full scrub remains the all-history integrity boundary.
+        if projected:
+            observation_id = completed[projected - 1]
+            _verify_projected_head(
+                root,
+                store,
+                observation_id=observation_id,
+                checkpoint=latest,
             )
-            row = checkpoints[sequence - 1]
-            if (
-                row.get("observation_id") != observation_id
-                or row.get("source_completion_sha256")
-                != receipt["source_completion_sha256"]
-                or row.get("projection_receipt_sha256")
-                != receipt["projection_receipt_sha256"]
-            ):
-                raise CryptoRoundTripLearningError(
-                    "round_trip_learning_checkpoint_source_mismatch"
-                )
         remaining = len(completed) - projected
         processed = 0
-        latest = checkpoints[-1] if checkpoints else None
         for sequence in range(projected + 1, len(completed) + 1):
             if processed >= ROUND_TRIP_LEARNING_INCREMENTAL_MAX_RECORDS:
                 break
@@ -797,7 +843,6 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
                 receipt=receipt,
             )
             _write_immutable(evolution / "checkpoints" / f"{sequence:012d}.json", row)
-            checkpoints.append(row)
             latest = row
             processed += 1
             _write_state(
@@ -808,7 +853,7 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
                     scrubbed_count=sequence,
                 ),
             )
-        projected = len(checkpoints)
+        projected += processed
         remaining = len(completed) - projected
         if processed == 0 and remaining:
             return _result(

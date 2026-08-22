@@ -432,9 +432,11 @@ class MinuteRollingFeatureEngine:
             if prior_current is not None:
                 expected = _expected_successor(prior_current.bar_end)
                 if expected != bar.bar_end:
-                    raise MinuteResearchContractError(
-                        "minute_feature_nonconsecutive_bar"
-                    )
+                    # A missing bar is a symbol-local data gap.  Drop only that
+                    # symbol's rolling baseline; other accepted symbols keep
+                    # producing features in the same snapshot.
+                    self._previous.pop(bar.symbol, None)
+                    self._current.pop(bar.symbol, None)
         features: list[MinuteFeatureVector] = []
         for bar in sorted(snapshot.bars, key=lambda item: item.symbol):
             prior_current = self._current.get(bar.symbol)

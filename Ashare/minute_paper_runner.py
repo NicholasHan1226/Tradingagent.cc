@@ -242,6 +242,7 @@ def run_delayed_minute_paper_once(
         trading_date=trading_date,
         reference_facts=reference_facts,
         evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+        allow_symbol_rejections=partial_observation_minimum is None,
     )
     if partial_observation_minimum is not None and (
         isinstance(partial_observation_minimum, bool)
@@ -253,7 +254,7 @@ def run_delayed_minute_paper_once(
             "minute_paper_partial_observation_policy_invalid"
         )
     observed_symbols = {bar.symbol for bar in snapshot.bars}
-    if partial_observation_minimum is not None and audit.records():
+    if audit.records():
         return {
             "status": "partial_observation_failed_closed",
             "reason_code": "minute_paper_partial_audit_rejections",
@@ -265,14 +266,47 @@ def run_delayed_minute_paper_once(
             "promotion_authorized": False,
             "real_trading_enabled": False,
         }
-    if observed_symbols != universe_symbols:
-        if partial_observation_minimum is None:
-            raise MinutePaperRunnerError("minute_paper_snapshot_universe_incomplete")
+    row_rejections = audit.row_rejections()
+    row_rejection_payload = [
+        {
+            "symbol": item.symbol,
+            "reason_code": item.reason_code,
+            "dataset_id": item.dataset_id,
+            "catalog_version": item.catalog_version,
+            "rejected_payload_sha256": item.rejected_payload_sha256,
+        }
+        for item in row_rejections
+    ]
+    # Keep the existing field reserved for batch-level audit failures.  Row
+    # quality quarantine is reported separately so runtime gates do not turn a
+    # valid partial snapshot back into a whole-line failure.
+    audit_rejection_count = len(audit.records())
+    partial_observation = observed_symbols != universe_symbols
+    if not observed_symbols <= universe_symbols:
+        missing_symbols = sorted(universe_symbols - observed_symbols)
+        return {
+            "status": "partial_observation_failed_closed",
+            "reason_code": "minute_paper_partial_identity_replacement",
+            "bar_end": bar_end,
+            "requested_count": len(universe_symbols),
+            "accepted_count": len(observed_symbols),
+            "missing_count": len(missing_symbols),
+            "accepted_symbols": sorted(observed_symbols),
+            "missing_symbols": missing_symbols,
+            "capital_authority": False,
+            "execution_authority": False,
+            "execution_eligible": False,
+            "training_eligible": False,
+            "promotion_authorized": False,
+            "real_trading_enabled": False,
+        }
+    if partial_observation:
         missing_symbols = sorted(universe_symbols - observed_symbols)
         unsafe_reason = None
-        if not observed_symbols <= universe_symbols:
-            unsafe_reason = "minute_paper_partial_identity_replacement"
-        elif len(observed_symbols) < partial_observation_minimum:
+        if (
+            partial_observation_minimum is not None
+            and len(observed_symbols) < partial_observation_minimum
+        ):
             unsafe_reason = "minute_paper_partial_coverage_insufficient"
         if unsafe_reason is not None:
             return {
@@ -291,41 +325,51 @@ def run_delayed_minute_paper_once(
                 "promotion_authorized": False,
                 "real_trading_enabled": False,
             }
-        evidence_rows = [
-            {
-                "symbol": bar.symbol,
-                "bar_end": bar.bar_end.isoformat(),
-                "receipt_id": bar.receipt_id,
-                "data_through": bar.data_through.isoformat(),
-                "observed_at": bar.observed_at.isoformat(),
-                "source_lineage_sha256": bar.source_lineage_sha256,
-                "envelope_proof_sha256": bar.envelope_proof_sha256,
-                "source_row_sha256": bar.source_row_sha256,
+        if partial_observation_minimum is not None:
+            evidence_rows = [
+                {
+                    "symbol": bar.symbol,
+                    "bar_end": bar.bar_end.isoformat(),
+                    "receipt_id": bar.receipt_id,
+                    "data_through": bar.data_through.isoformat(),
+                    "observed_at": bar.observed_at.isoformat(),
+                    "source_lineage_sha256": bar.source_lineage_sha256,
+                    "envelope_proof_sha256": bar.envelope_proof_sha256,
+                    "source_row_sha256": bar.source_row_sha256,
+                }
+                for bar in sorted(snapshot.bars, key=lambda item: item.symbol)
+            ]
+            return {
+                "status": "partial_observation",
+                "bar_end": bar_end,
+                "decision_time": decision_time.isoformat(),
+                "observed_at": max(
+                    bar.observed_at for bar in snapshot.bars
+                ).isoformat(),
+                "requested_count": len(universe_symbols),
+                "accepted_count": len(observed_symbols),
+                "missing_count": len(missing_symbols),
+                "accepted_symbols": sorted(observed_symbols),
+                "missing_symbols": missing_symbols,
+                "same_observation": snapshot.same_observation,
+                "fanout_failures": [dict(item) for item in snapshot.fanout_failures],
+                "lineage_complete": True,
+                "proof_complete": True,
+                "audit_rejections": audit_rejection_count,
+                "row_rejection_count": len(row_rejections),
+                "row_rejections": row_rejection_payload,
+                "per_row_evidence": evidence_rows,
+                "capital_authority": False,
+                "execution_authority": False,
+                "execution_eligible": False,
+                "training_eligible": False,
+                "promotion_authorized": False,
+                "real_trading_enabled": False,
             }
-            for bar in sorted(snapshot.bars, key=lambda item: item.symbol)
-        ]
-        return {
-            "status": "partial_observation",
-            "bar_end": bar_end,
-            "decision_time": decision_time.isoformat(),
-            "observed_at": max(bar.observed_at for bar in snapshot.bars).isoformat(),
-            "requested_count": len(universe_symbols),
-            "accepted_count": len(observed_symbols),
-            "missing_count": len(missing_symbols),
-            "accepted_symbols": sorted(observed_symbols),
-            "missing_symbols": missing_symbols,
-            "same_observation": snapshot.same_observation,
-            "lineage_complete": True,
-            "proof_complete": True,
-            "audit_rejections": 0,
-            "per_row_evidence": evidence_rows,
-            "capital_authority": False,
-            "execution_authority": False,
-            "execution_eligible": False,
-            "training_eligible": False,
-            "promotion_authorized": False,
-            "real_trading_enabled": False,
-        }
+        # Rolling mode intentionally continues below with the accepted subset.
+        # The closed loop can process a snapshot smaller than its reviewed
+        # universe; missing symbols remain absent for this bar and are retried
+        # on the next timer window.
     state_path = Path(state_bundle)
     recovery = _validated_gap_recovery(gap_recovery)
     loop, receipt_history = _load_loop_bundle(state_path, universe=universe)
@@ -345,6 +389,7 @@ def run_delayed_minute_paper_once(
     attribution = loop.attribution_snapshot(marks=marks)
     receipt = {
         "status": "pass",
+        "coverage_status": "partial" if partial_observation else "complete",
         "authority_tier": "non_production_fixture",
         "capital_authority": False,
         "execution_authority": False,
@@ -360,7 +405,15 @@ def run_delayed_minute_paper_once(
         "bar_end": bar_end,
         "snapshot_sha256": snapshot.sha256,
         "row_count": snapshot.row_count,
-        "audit_rejections": len(audit.records()),
+        "requested_count": len(universe_symbols),
+        "accepted_count": len(observed_symbols),
+        "missing_count": len(universe_symbols - observed_symbols),
+        "accepted_symbols": sorted(observed_symbols),
+        "missing_symbols": sorted(universe_symbols - observed_symbols),
+        "fanout_failures": [dict(item) for item in snapshot.fanout_failures],
+        "audit_rejections": audit_rejection_count,
+        "row_rejection_count": len(row_rejections),
+        "row_rejections": row_rejection_payload,
         "decision_time": step.decision_time.isoformat(),
         "feature_count": step.feature_count,
         "candidate_count": step.candidate_count,
