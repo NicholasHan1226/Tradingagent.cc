@@ -1599,7 +1599,7 @@ def run_crypto_ten_symbol_observation_once(
     else:
         status = last_status
     return {
-        "contract": CRYPTO_TEN_SYMBOL_RUNTIME_CONTRACT,
+        "contract": config.runtime_contract,
         "status": status,
         "market": "crypto",
         "market_session": "24x7",
