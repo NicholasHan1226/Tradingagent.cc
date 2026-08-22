@@ -1157,6 +1157,30 @@ def _validate_runtime_receipt(
         raise MinuteScale500RuntimeError("minute_scale500_row_count_mismatch")
     if result.get("audit_rejections") != 0:
         raise MinuteScale500RuntimeError("minute_scale500_audit_rejections")
+    row_rejection_count = result.get("row_rejection_count", 0)
+    row_rejections = result.get("row_rejections", [])
+    if (
+        isinstance(row_rejection_count, bool)
+        or not isinstance(row_rejection_count, int)
+        or row_rejection_count < 0
+        or not isinstance(row_rejections, list)
+        or row_rejection_count != len(row_rejections)
+        or any(
+            not isinstance(item, Mapping)
+            or not isinstance(item.get("symbol"), str)
+            or not item.get("symbol")
+            or not isinstance(item.get("reason_code"), str)
+            or not _REASON_PATTERN.fullmatch(item["reason_code"])
+            or not isinstance(item.get("dataset_id"), str)
+            or not item.get("dataset_id")
+            or not isinstance(item.get("catalog_version"), str)
+            or not item.get("catalog_version")
+            or not isinstance(item.get("rejected_payload_sha256"), str)
+            or not _SHA256_PATTERN.fullmatch(item["rejected_payload_sha256"])
+            for item in row_rejections
+        )
+    ):
+        raise MinuteScale500RuntimeError("minute_scale500_row_rejections_invalid")
     if (
         result.get("authority_tier") != "non_production_fixture"
         or result.get("capital_authority") is not False
@@ -1658,6 +1682,8 @@ def run_scale500_once(
         if isinstance(missing_symbols, list)
         else None,
         "fanout_failures": result.get("fanout_failures", []),
+        "row_rejection_count": result.get("row_rejection_count", 0),
+        "row_rejections": result.get("row_rejections", []),
         "capital_layer": "simulated",
         "account_type": "simulated",
         "execution_authority": False,

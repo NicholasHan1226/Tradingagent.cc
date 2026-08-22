@@ -242,6 +242,7 @@ def run_delayed_minute_paper_once(
         trading_date=trading_date,
         reference_facts=reference_facts,
         evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+        allow_symbol_rejections=partial_observation_minimum is None,
     )
     if partial_observation_minimum is not None and (
         isinstance(partial_observation_minimum, bool)
@@ -265,6 +266,21 @@ def run_delayed_minute_paper_once(
             "promotion_authorized": False,
             "real_trading_enabled": False,
         }
+    row_rejections = audit.row_rejections()
+    row_rejection_payload = [
+        {
+            "symbol": item.symbol,
+            "reason_code": item.reason_code,
+            "dataset_id": item.dataset_id,
+            "catalog_version": item.catalog_version,
+            "rejected_payload_sha256": item.rejected_payload_sha256,
+        }
+        for item in row_rejections
+    ]
+    # Keep the existing field reserved for batch-level audit failures.  Row
+    # quality quarantine is reported separately so runtime gates do not turn a
+    # valid partial snapshot back into a whole-line failure.
+    audit_rejection_count = len(audit.records())
     partial_observation = observed_symbols != universe_symbols
     if not observed_symbols <= universe_symbols:
         missing_symbols = sorted(universe_symbols - observed_symbols)
@@ -339,7 +355,9 @@ def run_delayed_minute_paper_once(
                 "fanout_failures": [dict(item) for item in snapshot.fanout_failures],
                 "lineage_complete": True,
                 "proof_complete": True,
-                "audit_rejections": 0,
+                "audit_rejections": audit_rejection_count,
+                "row_rejection_count": len(row_rejections),
+                "row_rejections": row_rejection_payload,
                 "per_row_evidence": evidence_rows,
                 "capital_authority": False,
                 "execution_authority": False,
@@ -393,7 +411,9 @@ def run_delayed_minute_paper_once(
         "accepted_symbols": sorted(observed_symbols),
         "missing_symbols": sorted(universe_symbols - observed_symbols),
         "fanout_failures": [dict(item) for item in snapshot.fanout_failures],
-        "audit_rejections": len(audit.records()),
+        "audit_rejections": audit_rejection_count,
+        "row_rejection_count": len(row_rejections),
+        "row_rejections": row_rejection_payload,
         "decision_time": step.decision_time.isoformat(),
         "feature_count": step.feature_count,
         "candidate_count": step.candidate_count,

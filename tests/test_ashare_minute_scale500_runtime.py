@@ -22,6 +22,7 @@ from Ashare.minute_scale500_runtime import (
 )
 from Ashare.minute_scale500_runtime import (
     _rolling_effective_universe,
+    _validate_runtime_receipt,
     _validate_scale500_reference_fragment,
 )
 from shared.data.tradingdatas_transport import TradingDatasAuthenticationError
@@ -380,6 +381,30 @@ def _receipt(bar_end: str) -> dict[str, object]:
         "execution_authority": False,
         "real_trading_enabled": False,
     }
+
+
+def test_runtime_receipt_accepts_row_quality_audit_without_batch_rejection() -> None:
+    result = _receipt("2026-07-31 09:35:00")
+    result.update(
+        {
+            "row_rejection_count": 1,
+            "row_rejections": [
+                {
+                    "symbol": "000001.SZ",
+                    "reason_code": "minute_open_invalid",
+                    "dataset_id": "cn.dataset.rt_min",
+                    "catalog_version": "fixture-v1",
+                    "rejected_payload_sha256": "a" * 64,
+                }
+            ],
+        }
+    )
+
+    assert _validate_runtime_receipt(
+        result,
+        expected_bar_end="2026-07-31 09:35:00",
+        allow_late_start=False,
+    ) is False
 
 
 def _partial_runtime_receipt(
