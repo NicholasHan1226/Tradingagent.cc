@@ -1,4 +1,9 @@
-# Crypto C3 实现计划
+# Crypto C3 实现计划（退役快照）
+
+> **Retired 2026-08-22.** 本文件保留早期问题拆解与负结果，不再是活动任务、
+> 模拟准入门禁或架构前置。当前执行队列只看 `BACKLOG.md`；成熟路径只看
+> `EVOLUTION_PROGRAM.md`。不得先建设 Registry API、服务或平台来阻塞已有完整
+> segment 的 delayed-paper、费用后基线和 resolved-outcome 积累。
 
 ## 目标
 

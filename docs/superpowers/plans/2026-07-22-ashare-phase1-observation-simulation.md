@@ -1,6 +1,10 @@
 # A股 Phase 1 真实观测与自动模拟闭环实施计划
 
-> **For Codex:** 使用 `superpowers:executing-plans` 逐项执行；每项先写失败测试，再做最小实现。候选、main、GitHub、服务器文件、运行时、真实数据和真实交易权限分别验收。
+> **Historical implementation record (2026-08-22):** 本计划中的已完成项、旧任务
+> 顺序和固定批量只保留为历史语境，不是 current 能力、活动 backlog 或模拟准入门禁。
+> 当前入口为 `../../BACKLOG.md`、`../../STATUS.md` 和本轮运行读回；安全子集不等待
+> exact500、全市场或全部下游证据。候选、main、GitHub、服务器文件、运行时、真实
+> 数据和真实交易权限仍分别验收。
 
 **目标：** 在 MarketGraph 物理 `mg_off`、`REAL_TRADING_ENABLED=false` 的前提下，先让 TradingAgent 通过 TradingDatas 正式 `GET /v1/catalog` 与 `POST /v1/query` 自动积累 A 股主板 current-observation 数据，再把通过可信时钟、交易日历、市场证据、Champion、风险和资本门禁的数据接入 50,000 CNY canonical paper-sim 日闭环。
 

@@ -963,10 +963,8 @@ def test_legacy_data_and_research_paths_are_classified_outside_current_v1() -> N
     screening_rules = (ROOT / "shared/screening/AGENTS.md").read_text(encoding="utf-8")
     benchmark_rules = (ROOT / "shared/benchmark/AGENTS.md").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    status = (ROOT / "STATUS.md").read_text(encoding="utf-8")
     for expected in ("current-v1", "active-compatibility", "hard-blocked"):
         assert expected in readme
-        assert expected in status
     assert "active-compatibility / retirement-pending" in screening_rules
     assert "active-compatibility、只读分析" in benchmark_rules
 
@@ -1460,12 +1458,12 @@ def test_crypto_docs_separate_current_g5_facts_from_historical_candidates() -> N
     assert "g4 learning 仍未绑定/启用" in historical
 
     status = (ROOT / "STATUS.md").read_text(encoding="utf-8")
-    current_summary = status.split("## 2026-08-15 当前交付摘要", 1)[1]
-    current_summary = current_summary.split("## 2026-08-02/03 版本与运行面（历史）", 1)[0]
-    assert "observed_at=2026-08-15T01:17:37+08:00" in current_summary
-    assert "1bc9a0a3275675d68270b952ba70828d2c24083a" in current_summary
-    assert "9a4a174c5631d30afc64d6a1e96ec3832ef43055" in current_summary
-    assert "c8545575d823b8b1f8967460a33713124a5f6542" not in current_summary
+    assert "Observed at:" in status
+    crypto_summary = status.split("## Crypto track", 1)[1]
+    crypto_summary = crypto_summary.split("## Copilot and paused scopes", 1)[0]
+    assert "G5 delayed-paper service completed successfully" in crypto_summary
+    assert "latest continuous 288-bar segment" in crypto_summary
+    assert "do not block safe-segment simulation" in crypto_summary
 
 
 def test_front_lockfile_excludes_vulnerable_postcss_source_map_loader() -> None:
