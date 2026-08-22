@@ -617,7 +617,9 @@ def main(argv: list[str] | None = None) -> int:
             allow_nan=False,
             ensure_ascii=True,
             separators=(",", ":"),
-            sort_keys=True,
+            # Keep the top-level gate status before the large audit report so
+            # systemd journal truncation cannot hide the fail-obvious result.
+            sort_keys=False,
         )
     )
     return 0
