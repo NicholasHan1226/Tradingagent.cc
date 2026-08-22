@@ -181,7 +181,7 @@ restore_g5_release_dropins() {
 
 reconcile_g5_release_dropins() {
   local release_dir="$1"
-  local index unit unit_dir canonical tmp timeout state working environment dropins legacy
+  local index unit unit_dir unit_dir_mode canonical tmp timeout state working environment dropins legacy
 
   g5_dropins_changed=1
   for index in "${!g5_units[@]}"; do
@@ -191,6 +191,9 @@ reconcile_g5_release_dropins() {
     [[ -d "$unit_dir" && ! -L "$unit_dir" ]] || fail "G5 drop-in directory is missing or unsafe: $unit_dir"
     [[ "$(stat -c '%U:%G' -- "$unit_dir")" == root:root ]] \
       || fail "G5 drop-in directory is not root:root: $unit_dir"
+    unit_dir_mode="$(stat -c '%a' -- "$unit_dir")"
+    (( (8#$unit_dir_mode & 0022) == 0 )) \
+      || fail "G5 drop-in directory is group/other writable: $unit_dir"
     tmp="$(mktemp "$unit_dir/.${g5_dropin_name}.XXXXXX")"
     printf '[Service]\nWorkingDirectory=%s\nEnvironment=PYTHONPATH=%s\nReadOnlyPaths=%s\nTimeoutStartSec=%s\n' \
       "$release_dir" "$release_dir" "$release_dir" "$timeout" > "$tmp"
