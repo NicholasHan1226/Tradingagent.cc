@@ -38,6 +38,9 @@ def test_main_ci_publishes_the_exact_tested_release_artifact() -> None:
     assert "name: tradingagent-release-${{ env.SOURCE_SHA }}" in workflow
     assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in workflow
     assert "github.event_name == 'workflow_dispatch'" in workflow
+    assert "workflow_dispatch' && inputs.expected_sha" in workflow
+    assert "cache: pip" in workflow
+    assert "cache-dependency-path: requirements.txt" in workflow
 
 
 def test_automerge_is_limited_to_explicit_progressive_m0_docs_and_tests() -> None:

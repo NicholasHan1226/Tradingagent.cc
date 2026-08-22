@@ -28,6 +28,12 @@ The packaging step creates a release archive containing:
 
 PR runs validate that the release can actually be packaged. Only a successful `push` run on `main` uploads the artifact for production use.
 
+CI coalesces superseded PR and branch runs, but a manual `workflow_dispatch`
+verification is isolated by its required exact SHA. It therefore cannot cancel
+the current-`main` push run that produces the only deployable artifact. Python
+dependency caching may shorten setup time; a cache miss still installs the same
+declared `requirements.txt` dependencies and does not relax any test.
+
 The artifact is named:
 
 ```text
