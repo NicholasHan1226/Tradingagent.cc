@@ -262,8 +262,10 @@ completion 对应的 receipt/segments；每轮最多处理 8 条，并受现有 
 checkpoint checksum 链。没有 checkpoint 声明的缺失投影可从核心权威证据补齐；
 一旦 checkpoint 已声明成功，较早 receipt 缺失、旧 segment 篡改、completion
 绑定不一致或 checkpoint 断链都必须失败关闭，不能用较新的成功覆盖。
-Challenger 只追加建议且 `manual_review_required=true`，不得自动替换 Champion、
-扩大风险、修改资本/仓位/订单或进入 Testnet/Live，也不调用网络模型。
+Challenger 只追加建议；独立 outcome 不足时记录
+`deterministic_non_live_gate_pending` 并继续积累，不等待逐候选人工复核。该投影
+仍不得自动替换 Champion、扩大风险、修改资本/仓位/订单或进入 Testnet/Live，也不
+调用网络模型。
 
 tracked 候选包含：
 
@@ -435,8 +437,8 @@ checksum-bound decision event，再在 `g4/evolution/round_trip_learning/` 追�
 模拟样本、单 observation KPI、Challenger 建议、receipt 和 checkpoint。这些
 投影不是模型、预测、收益结论或交易 authority：所有输出固定
 `learning_authority=false`、`execution_authority=false`、
-`production_eligible=false`、`manual_review_required=true`，没有自动 Champion
-替换或风险扩张。
+`production_eligible=false`、`manual_review_required=false`，并由确定性非实盘
+证据门禁决定后续；当前仍没有自动 Champion 替换或风险扩张。
 
 incremental worker 在现有 90 秒预算内每轮最多处理 8 条新增 completion，并从已有
 checkpoint 头 append-only、可恢复地继续；有 backlog 时返回 `backlog_remaining`，并
