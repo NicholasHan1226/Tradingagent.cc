@@ -70,6 +70,16 @@ def test_full_scrub_projects_g4_learning_without_mutating_core(tmp_path: Path) -
     assert len(list((learning / "challengers").glob("*.json"))) == 1
     assert len(list((learning / "receipts").glob("*.json"))) == 1
     assert len(list((learning / "checkpoints").glob("*.json"))) == 1
+    challenger_path = next((learning / "challengers").glob("*.json"))
+    challenger = json.loads(challenger_path.read_text(encoding="utf-8"))
+    assert challenger["suggestion"] == "continue_simulation_outcome_accumulation"
+    assert challenger["reason_codes"] == [
+        "insufficient_independent_outcomes",
+        "deterministic_non_live_gate_pending",
+    ]
+    assert "manual_review_required" not in challenger["reason_codes"]
+    assert result["manual_review_required"] is False
+    assert result["automatic_champion_replacement"] is False
 
 
 def test_incremental_requires_full_scrub_then_is_idempotent(tmp_path: Path) -> None:
