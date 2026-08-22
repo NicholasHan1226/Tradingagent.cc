@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-22T18:32:09+08:00
+Observed at: 2026-08-23T05:40:00+08:00
 
 This file is a replaceable current summary. It separates source, release, runtime,
 market evidence, and authority. Historical chronology remains in Git history and
@@ -11,14 +11,12 @@ dated `docs/reports/`; it is never a substitute for a fresh readback.
 | Layer | Current observation | Claim boundary |
 |---|---|---|
 | 本地主线 | Kimi/user A-share lane, intentionally not acting as canonical main | resolve with `git rev-parse HEAD origin/main`; preserve and do not reset or repurpose |
-| GitHub 主线 | current-main CI and automated deployment workflow passed at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
+| GitHub 主线 | branch CI passed and exact-main validation ran green for the latest research/docs merges at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
 | Ordinary server source | `1d58efe`, behind GitHub and containing untracked operational files | not synchronized; do not clean or fast-forward over unknown files |
-| Effective release | immutable release `9768907e741913541034f76357088d95febde057` | deployed code layer |
+| Effective release | immutable release `9768907e741913541034f76357088d95febde057` | deployed code layer; no new release build was taken in this observation batch |
 | Runtime authority | all observed A-share/Crypto receipts reported real trading, execution, capital, production promotion, and automatic risk expansion disabled | simulation/read-only only |
 
-The source observation used release `9768907` before this documentation candidate;
-the merge commit created by the documentation change is intentionally not predicted
-inside a tracked status file. An effective immutable release can be valid while the ordinary source checkout is
+An effective immutable release can be valid while the ordinary source checkout is
 dirty or behind. These are separate layers; neither state is described as “all
 three ends synchronized.”
 
@@ -47,20 +45,51 @@ block the safe subset.
 
 ## Crypto track
 
-- the isolated 40-symbol observer completed once under the effective release;
-  each symbol contributed a bounded real-receipt bar segment;
-- spread sampling accepted 28 symbols and rejected 12 with the capability-local
-  `crypto_spread_watermark_invalid` reason, so bars remain usable while the spread
-  feature is degraded for the rejected symbols;
-- the same cycle's append-only store used the forty-symbol event contract, but the
-  public runtime receipt/event identity still inherited ten-symbol names. This is
-  an auditability defect, not a reason to erase the valid bars. It requires a
-  current-main forward fix and a new natural readback;
+Data plane (verified this batch against the production read-model store,
+read-only):
+
+- the six crypto collection timers were resumed and subsequently observed
+  collecting with success receipts and zero lock contention;
+- spot 5m bars are complete for all 40 datasets (the known 2,560-bar hole was
+  closed by backfill); premium-index daily dumps are complete for all 40
+  symbols over the 198-day acceptance horizon;
+- open interest: the 198-day official daily-dump backfill is accepted; 422
+  partially-ingested days (1–287 surviving slots) were repaired through the
+  idempotent append-only re-collection path with zero failures. `2026-08-12`
+  is a permanent provider-side hole across all 40 symbols — Binance's own
+  daily zips for that day contain 285/288 rows, which the complete-grid store
+  contract correctly rejects. A residual single-slot ARBUSDT seam at
+  `2026-07-04/05` is a grid-phase boundary artifact of the provider's
+  unfrozen phase convention, not missing data;
+- pre-existing duplicate-timestamp rows (same bucket under different payload
+  versions) remain in some OI datasets; read-only research consumers dedupe
+  deterministically per slot. No rows were rewritten or erased.
+
+Research plane (sealed `research_only` / `not_promotion_evidence` /
+historical-backfill-without-PIT; archived under `Crypto/reports/`):
+
+- the momentum entry event study on current main measured the frozen champion
+  entry over ~204 days × 40 symbols (~109k non-overlapping samples in the
+  largest cell): every threshold × horizon cell is net-negative with
+  |t(net)| ≥ 3.9 under round-trip taker costs, and per-trip net loss equals
+  the ~0.24% cost line. Shadow-only conclusion: no parameter change is
+  justified; frequency/threshold tuning cannot rescue this signal family;
+- the 2026-08-18 funding/basis carry research modules and reports landed on
+  current main as archived assets.
+
+Runtime plane:
+
+- the delayed-exit shadow reversal threshold now matches the champion exit
+  rule on current main;
+- the forty-symbol public receipt/event identity defect (ten-symbol inherited
+  names) remains open and still requires a forward fix plus a fresh natural
+  readback;
 - the G5 delayed-paper service completed successfully with
-  `data_incomplete=false`; service completion alone does not prove a new resolved
-  label, fee-after baseline comparison, or shadow recommendation;
-- the 40-symbol timer remains disabled. No provider call or runtime activation is
-  inferred from source presence.
+  `data_incomplete=false` in its latest applicable readback; this batch did
+  not re-observe it, and service completion alone does not prove a new
+  resolved label, fee-after baseline comparison, or shadow recommendation;
+- the 40-symbol timer remains disabled. No provider call or runtime activation
+  is inferred from source presence.
 
 Crypto may use any complete gap-bounded segment for deterministic delayed-paper or
 factor/strategy evaluation. Labels never cross a gap. Full 40-symbol coverage and
@@ -91,9 +120,13 @@ coverage counts, and generated projections are not called learning.
    natural event without changing timer or authority.
 2. On the next A-share market window, prove the first safe-subset simulation
    decision/outcome without waiting for exact500 or every rolling symbol.
-3. For both markets, bind the next resolved outcome to fees/slippage, baseline,
+3. Crypto research next lever is execution-cost reduction (maker-exit /
+   post-only-entry counterfactual pre-study) or a different signal family — not
+   further threshold/horizon scanning of the current entry signal, which the
+   2026-08-23 event study exhausted under taker costs.
+4. For both markets, bind the next resolved outcome to fees/slippage, baseline,
    factor/strategy version, deterministic replay, exclusions, and a shadow-only
    recommendation.
-4. Replace this file after the next material readback. Do not append incident logs
+5. Replace this file after the next material readback. Do not append incident logs
    or copy these SHAs, counts, timer states, or maturity claims into durable
    architecture and policy documents.
