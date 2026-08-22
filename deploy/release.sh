@@ -11,6 +11,23 @@ request_file="$spool/request"
 front_unit=tradingagent-front-api.service
 health_url=http://127.0.0.1:8787/healthz
 installed_path=/usr/local/sbin/tradingagent-release
+g5_units=(
+  tradingagent-crypto-round-trip-g5-acceptance.service
+  tradingagent-crypto-round-trip-g5-delayed-paper.service
+  tradingagent-crypto-round-trip-g5-health.service
+  tradingagent-crypto-round-trip-g5-learning.service
+  tradingagent-crypto-round-trip-g5-learning-scrub.service
+)
+g5_legacy_dropins=(
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-acceptance.service.d/20-g5-release.conf
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-delayed-paper.service.d/20-g5-release.conf
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-delayed-paper.service.d/release.conf
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-health.service.d/20-g5-release.conf
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-health.service.d/release.conf
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning.service.d/20-immutable-release.conf
+  /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning-scrub.service.d/20-immutable-release.conf
+)
+g5_dropin_name=99-tradingagent-release.conf
 
 fail() {
   printf 'tradingagent-release: %s\n' "$*" >&2
@@ -50,6 +67,165 @@ validate_immutable_release() {
   runuser -u tradingagent -- test -x "$root/front"
   runuser -u tradingagent -- test -r "$root/front/dist-server/server/tradingAgentSnapshotHttp.js"
   runuser -u tradingagent -- test -r "$root/tools/audit_ashare_worker_runtime.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_runtime.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_report.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_health.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_learning_worker.py"
+}
+
+validate_managed_g5_dropin() {
+  local path="$1"
+
+  [[ -f "$path" && ! -L "$path" ]] || fail "managed G5 drop-in is not a regular file: $path"
+  [[ "$(stat -c '%U:%G' -- "$path")" == root:root ]] \
+    || fail "managed G5 drop-in is not root:root: $path"
+  [[ "$(stat -c '%h' -- "$path")" == 1 ]] || fail "managed G5 drop-in has multiple hard links: $path"
+  local mode
+  mode="$(stat -c '%a' -- "$path")"
+  (( (8#$mode & 0022) == 0 )) || fail "managed G5 drop-in is group/other writable: $path"
+
+  python3 - "$path" "$release_root" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+release_root = sys.argv[2]
+section = None
+release_binding = False
+allowed = {
+    "Unit": {"AssertPathExists"},
+    "Service": {"WorkingDirectory", "Environment", "ReadOnlyPaths", "TimeoutStartSec"},
+}
+for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    line = raw.strip()
+    if not line or line.startswith(("#", ";")):
+        continue
+    if line.startswith("[") and line.endswith("]"):
+        section = line[1:-1]
+        if section not in allowed:
+            raise SystemExit(f"unsupported section at {path}:{number}: {section}")
+        continue
+    if section is None or "=" not in line:
+        raise SystemExit(f"invalid directive at {path}:{number}")
+    key, value = line.split("=", 1)
+    if key not in allowed[section]:
+        raise SystemExit(f"unsupported directive at {path}:{number}: {key}")
+    if key == "Environment" and value and not value.startswith("PYTHONPATH="):
+        raise SystemExit(f"unsupported environment at {path}:{number}")
+    if key == "TimeoutStartSec" and not re.fullmatch(
+        r"(?:[0-9]+(?:us|ms|s|min|h|d|w|month|y)?|infinity)", value
+    ):
+        raise SystemExit(f"invalid timeout at {path}:{number}")
+    if release_root in value:
+        release_binding = True
+if not release_binding:
+    raise SystemExit(f"managed G5 drop-in has no release binding: {path}")
+PY
+}
+
+prepare_g5_release_reconciliation() {
+  local unit state timeout path rel canonical
+
+  g5_dropin_backup_dir="$(mktemp -d /var/tmp/tradingagent-g5-dropins.XXXXXX)"
+  g5_dropin_manifest="$g5_dropin_backup_dir/manifest"
+  : > "$g5_dropin_manifest"
+  g5_timeouts=()
+
+  for unit in "${g5_units[@]}"; do
+    systemctl cat "$unit" >/dev/null
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    [[ "$state" == inactive ]] || fail "G5 unit must be inactive at release cutover: $unit state=$state"
+    timeout="$(systemctl show -p TimeoutStartUSec --value "$unit")"
+    [[ "$timeout" =~ ^([0-9]+(us|ms|s|min|h|d|w|month|y)|infinity)$ ]] \
+      || fail "G5 unit has an unsupported start timeout: $unit timeout=$timeout"
+    g5_timeouts+=("$timeout")
+  done
+
+  for path in "${g5_legacy_dropins[@]}"; do
+    if [[ -e "$path" || -L "$path" ]]; then
+      validate_managed_g5_dropin "$path"
+      rel="${path#/}"
+      install -D -o root -g root -m 0644 "$path" "$g5_dropin_backup_dir/$rel"
+      printf '%s\n' "$path" >> "$g5_dropin_manifest"
+    fi
+  done
+  for unit in "${g5_units[@]}"; do
+    canonical="/etc/systemd/system/$unit.d/$g5_dropin_name"
+    if [[ -e "$canonical" || -L "$canonical" ]]; then
+      validate_managed_g5_dropin "$canonical"
+      rel="${canonical#/}"
+      install -D -o root -g root -m 0644 "$canonical" "$g5_dropin_backup_dir/$rel"
+      printf '%s\n' "$canonical" >> "$g5_dropin_manifest"
+    fi
+  done
+}
+
+restore_g5_release_dropins() {
+  local unit path rel
+
+  [[ -n "${g5_dropin_backup_dir:-}" && -d "$g5_dropin_backup_dir" ]] || return 0
+  for unit in "${g5_units[@]}"; do
+    rm -f -- "/etc/systemd/system/$unit.d/$g5_dropin_name"
+  done
+  for path in "${g5_legacy_dropins[@]}"; do
+    rm -f -- "$path"
+  done
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    rel="${path#/}"
+    install -D -o root -g root -m 0644 "$g5_dropin_backup_dir/$rel" "$path"
+  done < "$g5_dropin_manifest"
+  systemctl daemon-reload
+}
+
+reconcile_g5_release_dropins() {
+  local release_dir="$1"
+  local index unit unit_dir canonical tmp timeout state working environment dropins legacy
+
+  g5_dropins_changed=1
+  for index in "${!g5_units[@]}"; do
+    unit="${g5_units[$index]}"
+    timeout="${g5_timeouts[$index]}"
+    unit_dir="/etc/systemd/system/$unit.d"
+    [[ -d "$unit_dir" && ! -L "$unit_dir" ]] || fail "G5 drop-in directory is missing or unsafe: $unit_dir"
+    [[ "$(stat -c '%U:%G' -- "$unit_dir")" == root:root ]] \
+      || fail "G5 drop-in directory is not root:root: $unit_dir"
+    tmp="$(mktemp "$unit_dir/.${g5_dropin_name}.XXXXXX")"
+    printf '[Service]\nWorkingDirectory=%s\nEnvironment=PYTHONPATH=%s\nReadOnlyPaths=%s\nTimeoutStartSec=%s\n' \
+      "$release_dir" "$release_dir" "$release_dir" "$timeout" > "$tmp"
+    chown root:root "$tmp"
+    chmod 0644 "$tmp"
+    canonical="$unit_dir/$g5_dropin_name"
+    mv -f -- "$tmp" "$canonical"
+  done
+  for legacy in "${g5_legacy_dropins[@]}"; do
+    rm -f -- "$legacy"
+  done
+  systemctl daemon-reload
+
+  for unit in "${g5_units[@]}"; do
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    [[ "$state" == inactive ]] || fail "G5 unit became active during release cutover: $unit state=$state"
+    working="$(systemctl show -p WorkingDirectory --value "$unit")"
+    [[ "$working" == "$release_dir" ]] || fail "G5 unit WorkingDirectory did not reconcile: $unit"
+    environment="$(systemctl show -p Environment --value "$unit")"
+    case " $environment " in
+      *" PYTHONPATH=$release_dir "*) ;;
+      *) fail "G5 unit PYTHONPATH did not reconcile: $unit" ;;
+    esac
+    dropins="$(systemctl show -p DropInPaths --value "$unit")"
+    canonical="/etc/systemd/system/$unit.d/$g5_dropin_name"
+    case " $dropins " in
+      *" $canonical "*) ;;
+      *) fail "G5 canonical release drop-in is not effective: $unit" ;;
+    esac
+    for legacy in "${g5_legacy_dropins[@]}"; do
+      case " $dropins " in
+        *" $legacy "*) fail "legacy G5 release drop-in remains effective: $legacy" ;;
+      esac
+    done
+  done
 }
 
 [[ "$EUID" -eq 0 ]] || fail 'must run as root through the scoped sudo gate'
@@ -93,6 +269,10 @@ link_tmp=''
 previous_release=''
 front_state_before=''
 front_enabled_before=''
+g5_dropin_backup_dir=''
+g5_dropin_manifest=''
+g5_dropins_changed=0
+g5_timeouts=()
 switched=0
 committed=0
 
@@ -107,6 +287,10 @@ rollback_release() {
 
     if [[ "$(readlink -f -- "$current_link" 2>/dev/null)" != "$previous_release" ]]; then
       printf 'SEVERE: current symlink did not restore to previous immutable release\n' >&2
+    fi
+
+    if [[ "$g5_dropins_changed" -eq 1 ]]; then
+      restore_g5_release_dropins
     fi
 
     if [[ "$front_state_before" == active ]]; then
@@ -126,6 +310,7 @@ cleanup() {
   fi
   [[ -n "$link_tmp" ]] && rm -f -- "$link_tmp"
   [[ -n "$staging_dir" && -d "$staging_dir" ]] && rm -rf -- "$staging_dir"
+  [[ -n "$g5_dropin_backup_dir" && -d "$g5_dropin_backup_dir" ]] && rm -rf -- "$g5_dropin_backup_dir"
   rm -f -- "$root_archive"
   exit "$rc"
 }
@@ -218,6 +403,7 @@ else
 fi
 
 validate_immutable_release "$release_dir"
+prepare_g5_release_reconciliation
 
 link_tmp="$release_root/.current-${sha}-$$"
 ln -s -- "$release_dir" "$link_tmp"
@@ -228,6 +414,8 @@ switched=1
 [[ "$(readlink -f -- "$current_link")" == "$(readlink -f -- "$release_dir")" ]] \
   || fail 'current does not resolve to the requested release'
 [[ "$(cat "$release_dir/.deployed-sha")" == "$sha" ]] || fail 'deployed SHA verification failed'
+
+reconcile_g5_release_dropins "$release_dir"
 
 if [[ "$front_state_before" == active ]]; then
   systemctl restart "$front_unit"
