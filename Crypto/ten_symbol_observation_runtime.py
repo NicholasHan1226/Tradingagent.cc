@@ -153,7 +153,7 @@ _MANIFEST_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class CryptoTenSymbolObservationRuntimeConfig:
-    """Versioned runtime family: universe, contracts, root, and query budget."""
+    """Versioned runtime family: identity, query budget, and settle clock."""
 
     runtime_contract: str
     manifest_contract: str
@@ -167,6 +167,7 @@ class CryptoTenSymbolObservationRuntimeConfig:
     requests_per_cycle: int
     event_id_prefix: str
     reason_code_prefix: str
+    slot_settle_delay_seconds: int
 
 
 TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
@@ -182,6 +183,7 @@ TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     requests_per_cycle=REQUESTS_PER_CYCLE,
     event_id_prefix="crypto-ten",
     reason_code_prefix="crypto_ten_symbol",
+    slot_settle_delay_seconds=SLOT_CUTOFF_DELAY_SECONDS,
 )
 FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     runtime_contract="tradingagent.crypto.forty_symbol_observation_runtime.v1",
@@ -196,6 +198,11 @@ FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     requests_per_cycle=2 + 2 * len(OBSERVATION_SYMBOLS_V40),
     event_id_prefix="crypto-forty",
     reason_code_prefix="crypto_forty_symbol",
+    # The isolated forty-symbol collector can finish after the core +55s
+    # receipt boundary.  Its reader runs at close +3m45s, so bind the PIT
+    # cutoff to that fixed, replayable availability boundary instead of
+    # rejecting an honest receipt merely because collection took over 55s.
+    slot_settle_delay_seconds=225,
 )
 
 
@@ -571,11 +578,20 @@ def _utc_now(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def crypto_ten_symbol_observation_window(now: datetime) -> CryptoObservationWindow:
-    """Derive the fixed slot: bar close floored to 5m plus a 55s cutoff."""
+def crypto_ten_symbol_observation_window(
+    now: datetime,
+    *,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+) -> CryptoObservationWindow:
+    """Derive the latest family-specific, receipt-safe deterministic slot."""
 
     observed = _utc_now(now)
-    eligible = observed - timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS)
+    settle_delay = config.slot_settle_delay_seconds
+    if settle_delay < 0 or settle_delay >= 5 * 60:
+        raise CryptoTenSymbolObservationRuntimeError(
+            "runtime_slot_settle_delay_invalid"
+        )
+    eligible = observed - timedelta(seconds=settle_delay)
     window_end = eligible.replace(
         minute=eligible.minute - eligible.minute % 5,
         second=0,
@@ -583,8 +599,7 @@ def crypto_ten_symbol_observation_window(now: datetime) -> CryptoObservationWind
     )
     return CryptoObservationWindow(
         window_end=window_end,
-        observation_cutoff=window_end
-        + timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS),
+        observation_cutoff=window_end + timedelta(seconds=settle_delay),
     )
 
 
@@ -592,7 +607,11 @@ def _iso_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _window_for_end(window_end: datetime) -> CryptoObservationWindow:
+def _window_for_end(
+    window_end: datetime,
+    *,
+    config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+) -> CryptoObservationWindow:
     normalized = _utc_now(window_end)
     if (
         normalized.second != 0
@@ -603,7 +622,7 @@ def _window_for_end(window_end: datetime) -> CryptoObservationWindow:
     return CryptoObservationWindow(
         window_end=normalized,
         observation_cutoff=normalized
-        + timedelta(seconds=SLOT_CUTOFF_DELAY_SECONDS),
+        + timedelta(seconds=config.slot_settle_delay_seconds),
     )
 
 
@@ -1214,7 +1233,7 @@ def _fresh_cycle(
 ) -> dict[str, Any]:
     """Query one slot and record exactly one terminal or reject event."""
 
-    window = _window_for_end(target_window_end)
+    window = _window_for_end(target_window_end, config=config)
     store.set_pending(
         {
             "window_end": _iso_utc(window.window_end),
@@ -1373,7 +1392,7 @@ def run_crypto_ten_symbol_observation_once(
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_output_root_invalid"
         )
-    current_window = crypto_ten_symbol_observation_window(now)
+    current_window = crypto_ten_symbol_observation_window(now, config=config)
     store = CryptoTenSymbolObservationStore(root, contracts=config.store_contracts)
     lazy = _LazyObservationPort(
         manifest=manifest,
@@ -1503,7 +1522,7 @@ def run_crypto_ten_symbol_observation_once(
                     if latest_terminal is None
                     else latest_terminal + timedelta(minutes=5)
                 )
-                target_window = _window_for_end(target_window_end)
+                target_window = _window_for_end(target_window_end, config=config)
                 try:
                     result = _fresh_cycle(
                         store=store,
