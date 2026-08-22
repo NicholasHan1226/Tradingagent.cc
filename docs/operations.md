@@ -250,6 +250,16 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 `127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
 
+同一现役发布助手还负责收口五个 G5 round-trip unit 的 release 绑定。切换前五个
+one-shot unit 必须全部 `inactive`；助手保存现有有效 `TimeoutStartUSec`，只备份并移除
+白名单内的旧 release drop-in，再为每个 unit 原子写入唯一的
+`99-tradingagent-release.conf`。该文件只绑定本次不可变 `WorkingDirectory`、
+`PYTHONPATH`、只读 release 路径和原有效 timeout；`daemon-reload` 后逐 unit 读回，旧
+drop-in、路径漂移或运行中竞态均使整次发布失败。失败路径同时恢复前一 `current`、原
+drop-in 集合和前端健康；不得手工删除其它 drop-in，也不得把 unit inactive 或配置读回
+冒充自然 receipt、消费者或模拟结果。首次交付此行为时须从已验收的精确 release 重新
+安装 root-owned `/usr/local/sbin/tradingagent-release`，之后才允许用普通发布路径验证。
+
 不可变 staging 不能把 Git tree 中的 executable bit 统一抹成 `0444`。目录权限归一后，
 普通文件可设为只读，但每个 Git mode `100755`（或经已验旧 immutable release 精确同路径
 确认的可执行文件）必须保留 owner execute；切换前同时断言 release tree 无 group/other

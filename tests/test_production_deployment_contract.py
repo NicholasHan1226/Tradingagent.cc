@@ -114,6 +114,33 @@ def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
     assert "front API process is not running from the requested immutable release" in helper
 
 
+def test_root_release_helper_reconciles_g5_release_dropins_atomically() -> None:
+    helper = _read("deploy/release.sh")
+
+    for unit in (
+        "tradingagent-crypto-round-trip-g5-acceptance.service",
+        "tradingagent-crypto-round-trip-g5-delayed-paper.service",
+        "tradingagent-crypto-round-trip-g5-health.service",
+        "tradingagent-crypto-round-trip-g5-learning.service",
+        "tradingagent-crypto-round-trip-g5-learning-scrub.service",
+    ):
+        assert unit in helper
+    assert "g5_dropin_name=99-tradingagent-release.conf" in helper
+    assert "prepare_g5_release_reconciliation" in helper
+    assert "reconcile_g5_release_dropins \"$release_dir\"" in helper
+    assert "G5 unit must be inactive at release cutover" in helper
+    assert "validate_managed_g5_dropin" in helper
+    assert "unsupported directive" in helper
+    assert "systemctl daemon-reload" in helper
+    assert "G5 unit WorkingDirectory did not reconcile" in helper
+    assert "G5 unit PYTHONPATH did not reconcile" in helper
+    assert "legacy G5 release drop-in remains effective" in helper
+    assert "restore_g5_release_dropins" in helper
+    assert helper.index("restore_g5_release_dropins") < helper.index(
+        'systemctl restart "$front_unit"'
+    )
+
+
 def test_server_bootstrap_grants_only_the_fixed_release_helper() -> None:
     bootstrap = _read("deploy/bootstrap-production-server.sh")
 
