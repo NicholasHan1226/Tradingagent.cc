@@ -131,6 +131,143 @@ def test_full_scrub_fails_closed_for_tampered_prior_projection(tmp_path: Path) -
         run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
 
 
+def test_existing_legacy_challenger_projection_remains_immutable_and_verifiable(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    store, _, core_state = learning_module._core_snapshot(tmp_path)
+    observation_id = core_state["latest_observation_id"]
+    source = learning_module._source_record(
+        store, observation_id, strict_ledger_membership=True
+    )
+    legacy = learning_module._projection(source, legacy_manual_gate=True)
+    learning_module._ensure_evolution_root(tmp_path)
+    paths = learning_module._paths(tmp_path, observation_id)
+    for name, path in paths.items():
+        learning_module._write_immutable(path, legacy[name])
+    before = {name: path.read_bytes() for name, path in paths.items()}
+
+    receipt = learning_module._verify_or_project(
+        tmp_path,
+        store,
+        observation_id,
+        strict_ledger_membership=True,
+    )
+
+    assert receipt == legacy["receipt"]
+    assert {name: path.read_bytes() for name, path in paths.items()} == before
+    assert (
+        legacy["challenger"]["suggestion"]
+        == "collect_audited_simulation_outcomes_before_manual_review"
+    )
+
+
+def test_incremental_replays_a_legacy_checkpoint_without_rewriting_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _completed_round_trip(tmp_path)
+    current_projection = learning_module._projection
+
+    def legacy_projection(source, **_kwargs):
+        return current_projection(source, legacy_manual_gate=True)
+
+    monkeypatch.setattr(learning_module, "_projection", legacy_projection)
+    recovered = run_crypto_delayed_paper_round_trip_learning_full_scrub(
+        output_root=tmp_path
+    )
+    assert recovered["status"] == "recovered"
+    learning = tmp_path / "evolution" / "round_trip_learning"
+    before = {
+        path.relative_to(learning).as_posix(): path.read_bytes()
+        for path in sorted(learning.rglob("*"))
+        if path.is_file()
+    }
+    monkeypatch.setattr(learning_module, "_projection", current_projection)
+
+    replay = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+
+    assert replay["status"] == "current"
+    assert {
+        path.relative_to(learning).as_posix(): path.read_bytes()
+        for path in sorted(learning.rglob("*"))
+        if path.is_file()
+    } == before
+
+
+def test_new_projection_uses_deterministic_non_human_gate_semantics(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    store, _, core_state = learning_module._core_snapshot(tmp_path)
+    observation_id = core_state["latest_observation_id"]
+    learning_module._ensure_evolution_root(tmp_path)
+
+    receipt = learning_module._verify_or_project(
+        tmp_path,
+        store,
+        observation_id,
+        strict_ledger_membership=True,
+    )
+
+    challenger = json.loads(
+        learning_module._paths(tmp_path, observation_id)["challenger"].read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["challenger_sha256"] == challenger["challenger_sha256"]
+    assert challenger["suggestion"] == "continue_simulation_outcome_accumulation"
+    assert challenger["reason_codes"] == [
+        "insufficient_independent_outcomes",
+        "deterministic_non_live_gate_pending",
+    ]
+
+
+def test_unknown_self_consistent_challenger_variant_still_fails_closed(
+    tmp_path: Path,
+) -> None:
+    _completed_round_trip(tmp_path)
+    store, _, core_state = learning_module._core_snapshot(tmp_path)
+    observation_id = core_state["latest_observation_id"]
+    source = learning_module._source_record(
+        store, observation_id, strict_ledger_membership=True
+    )
+    material = learning_module._projection(source, legacy_manual_gate=True)
+    material["challenger"]["suggestion"] = "unknown_semantic_variant"
+    material["challenger"]["challenger_sha256"] = learning_module._sha256(
+        {
+            key: value
+            for key, value in material["challenger"].items()
+            if key != "challenger_sha256"
+        }
+    )
+    material["receipt"]["challenger_sha256"] = material["challenger"][
+        "challenger_sha256"
+    ]
+    material["receipt"]["projection_receipt_sha256"] = learning_module._sha256(
+        {
+            key: value
+            for key, value in material["receipt"].items()
+            if key != "projection_receipt_sha256"
+        }
+    )
+    learning_module._ensure_evolution_root(tmp_path)
+    for name, path in learning_module._paths(tmp_path, observation_id).items():
+        learning_module._write_immutable(path, material[name])
+
+    with pytest.raises(
+        CryptoRoundTripLearningError,
+        match="round_trip_learning_projection_not_derived",
+    ):
+        learning_module._verify_or_project(
+            tmp_path,
+            store,
+            observation_id,
+            strict_ledger_membership=True,
+        )
+
+
 def test_full_scrub_fails_closed_for_missing_checkpoint_claimed_receipt(
     tmp_path: Path,
 ) -> None:
