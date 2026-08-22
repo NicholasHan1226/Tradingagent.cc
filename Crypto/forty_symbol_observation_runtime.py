@@ -4,9 +4,10 @@ This is the versioned forty-symbol sibling of
 ``ten_symbol_observation_runtime``.  It reuses the exact same parameterized
 runtime core but pins the forty-symbol universe, contracts and a distinct
 store root, so the frozen ten-symbol chain stays read-only under its own root.
-This family is not deployed or installed this round; it exists so the
-forty-symbol observation path can be exercised against fixtures and then
-activated once TradingDatas serves the forty-symbol datasets.
+The forty-symbol lane has its own bounded invocation budget because its
+independent 40-symbol bar and spread legs need more requests than the frozen
+ten-symbol cadence. It remains simulation-only and has no promotion or
+capital authority.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ FORTY_SYMBOL_OUTPUT_ROOT = FORTY_SYMBOL_RUNTIME_CONFIG.output_root
 FORTY_SYMBOL_RUNTIME_CONTRACT = FORTY_SYMBOL_RUNTIME_CONFIG.runtime_contract
 FORTY_SYMBOL_MANIFEST_CONTRACT = FORTY_SYMBOL_RUNTIME_CONFIG.manifest_contract
 FORTY_SYMBOL_TOKEN_FILE = RUNTIME_TOKEN_FILE
+FORTY_SYMBOL_INVOCATION_BUDGET_SECONDS = 300.0
 
 
 def load_crypto_forty_symbol_observation_runtime_manifest(
@@ -80,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             token_file=args.token_file,
             output_root=FORTY_SYMBOL_OUTPUT_ROOT,
             now=datetime.now(tz=timezone.utc),
+            invocation_budget_seconds=FORTY_SYMBOL_INVOCATION_BUDGET_SECONDS,
         )
         exit_code = crypto_ten_symbol_observation_exit_code(receipt)
     except Exception:
@@ -112,6 +115,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "FORTY_SYMBOL_MANIFEST_CONTRACT",
+    "FORTY_SYMBOL_INVOCATION_BUDGET_SECONDS",
     "FORTY_SYMBOL_OUTPUT_ROOT",
     "FORTY_SYMBOL_RUNTIME_CONTRACT",
     "FORTY_SYMBOL_TOKEN_FILE",

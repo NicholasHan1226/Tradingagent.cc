@@ -16,7 +16,7 @@ Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Crypto.forty_symbol_observation_runtime --runtime-manifest /etc/tradingagent/crypto-forty-symbol-observation.runtime.json --token-file /run/secrets/tradingagent/tradingdatas-crypto-read.token
-TimeoutStartSec=180
+TimeoutStartSec=360
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
