@@ -39,15 +39,20 @@
 与运行成熟度门禁，但预注册 feature/label profile 所需的局部连续窗口可形成独立
 历史学习候选，禁止跨 gap。Crypto 288 个连续 5 分钟槽仍是自动运行成熟度门禁，
 不是每个 append-only 离线样本的全局前置；每个学习样本仍必须单独证明连续窗口和
-完整标签，gap 必须切断 segment，Challenger 仍只建议且人工晋级。
+完整标签，gap 必须切断 segment。Challenger 的 prediction receipt 仍只建议且无晋级
+authority；仅可信、证据绑定的 registry receipt 可驱动确定性的 sim-only 晋级、降级或
+回滚，资本、风险、broker、订单与 live authority 始终独立关闭。
 
 分钟 freshness 也按用途分层：execution-equivalent 继续固定最多 30 秒；
 delayed observation 最多允许一个 bar cadence 加 30 秒 jitter，且禁止同 bar
 成交；historical PIT 不按当前墙钟判 stale，但必须由 immutable receipt、as-of、
 首次可见与 revision/vintage 证据证明当时可知。放宽观察延迟绝不放宽真实执行。
 
-A股 500 股完整 cohort 仍是 delayed-paper 新风险的硬门禁。`>=99%` 的预注册
-cohort 只允许零名义 shadow，必须输出精确 missing identity set，禁止静默补票、
+A股 500 股完整 cohort 只约束 `exact500`/完整 cohort delayed-paper 能力，不是所有 A 股
+模拟的全局门禁。身份、时间、key、lineage 与 PIT 安全的命名 symbol/shard 子集可独立进入
+simulation/delayed-paper，并必须声明精确覆盖、排除、费用/滑点且不得继承 `exact500`
+claim。对 `exact500` 能力本身，`>=99%` 的预注册 cohort 仍只允许零名义 shadow，必须输出
+精确 missing identity set，禁止静默补票、
 替换或生成模拟订单。routine query 使用 receipt-bound 单次终端遍历；仅 onboarding、
 逐 dataset 合同漂移、事故恢复和每日 full scrub 执行完整 same-observation 双遍历。
 
