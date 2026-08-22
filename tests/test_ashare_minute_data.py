@@ -887,7 +887,22 @@ def _load(
     return snapshot, audit
 
 
-def test_row_quality_rejection_is_quarantined_without_blocking_valid_rows() -> None:
+def test_row_quality_rejection_is_quarantined_without_blocking_valid_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    integrity_calls = 0
+    original_verify_integrity = minute_data_module.PagedQueryRun.verify_integrity
+
+    def counted_verify_integrity(*args: Any, **kwargs: Any) -> None:
+        nonlocal integrity_calls
+        integrity_calls += 1
+        original_verify_integrity(*args, **kwargs)
+
+    monkeypatch.setattr(
+        minute_data_module.PagedQueryRun,
+        "verify_integrity",
+        counted_verify_integrity,
+    )
     good = _row("600000.SH", "20260727 09:40:00")
     bad = _row("000001.SZ", "20260727 09:40:00", open_price=0.0)
     trailing_good = _row("600001.SH", "20260727 09:40:00")
@@ -897,6 +912,7 @@ def test_row_quality_rejection_is_quarantined_without_blocking_valid_rows() -> N
             _Transport(first_rows=[good, bad], second_rows=[trailing_good]),
         )
 
+    integrity_calls = 0
     snapshot, audit = _load(
         _Transport(first_rows=[good, bad], second_rows=[trailing_good]),
         allow_symbol_rejections=True,
@@ -909,6 +925,7 @@ def test_row_quality_rejection_is_quarantined_without_blocking_valid_rows() -> N
     assert rejection.symbol == "000001.SZ"
     assert rejection.reason_code == "minute_open_invalid"
     assert len(rejection.rejected_payload_sha256) == 64
+    assert integrity_calls == 2
 
 
 def test_exact_proof_mapping_uses_selected_row_receipts_not_latest_runtime_metadata() -> None:
