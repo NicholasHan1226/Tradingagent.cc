@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 
 
@@ -128,7 +129,14 @@ def test_root_release_helper_reconciles_g5_release_dropins_atomically() -> None:
     assert "g5_dropin_name=99-tradingagent-release.conf" in helper
     assert "prepare_g5_release_reconciliation" in helper
     assert "reconcile_g5_release_dropins \"$release_dir\"" in helper
-    assert "G5 unit must be inactive at release cutover" in helper
+    assert "require_g5_unit_stopped" in helper
+    assert '[[ "$state" == inactive ]]' in helper
+    assert '[[ "$state" == failed ]]' in helper
+    assert "MainPID" in helper
+    assert "ControlPID" in helper
+    assert '[[ "$main_pid" == 0 && "$control_pid" == 0 ]]' in helper
+    assert "G5 failed unit still has a process" in helper
+    assert "systemctl reset-failed" not in helper
     assert "validate_managed_g5_dropin" in helper
     assert "unsupported directive" in helper
     assert "systemctl daemon-reload" in helper
@@ -139,6 +147,66 @@ def test_root_release_helper_reconciles_g5_release_dropins_atomically() -> None:
     assert helper.index("restore_g5_release_dropins") < helper.index(
         'systemctl restart "$front_unit"'
     )
+
+
+def test_g5_release_cutover_accepts_only_stopped_units() -> None:
+    helper = _read("deploy/release.sh")
+    match = re.search(
+        r"require_g5_unit_stopped\(\) \{\n.*?\n\}\n",
+        helper,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    harness = f"""
+set -eu
+fail() {{ printf '%s\\n' "$*" >&2; exit 97; }}
+systemctl() {{
+  if [[ "$1" == is-active ]]; then
+    printf '%s\\n' "$MOCK_STATE"
+    return 0
+  fi
+  if [[ "$1" == show && "$2" == -p && "$4" == --value ]]; then
+    case "$3" in
+      MainPID) printf '%s\\n' "$MOCK_MAIN_PID" ;;
+      ControlPID) printf '%s\\n' "$MOCK_CONTROL_PID" ;;
+      *) return 98 ;;
+    esac
+    return 0
+  fi
+  return 98
+}}
+{match.group(0)}
+require_g5_unit_stopped example.service test-cutover
+"""
+
+    for state, main_pid, control_pid, expected_code in (
+        ("inactive", "123", "456", 0),
+        ("failed", "0", "0", 0),
+        ("failed", "123", "0", 97),
+        ("failed", "0", "456", 97),
+        ("failed", "invalid", "0", 97),
+        ("active", "0", "0", 97),
+        ("activating", "0", "0", 97),
+        ("deactivating", "0", "0", 97),
+    ):
+        completed = subprocess.run(
+            ["bash", "-c", harness],
+            env={
+                "PATH": "/usr/bin:/bin",
+                "MOCK_STATE": state,
+                "MOCK_MAIN_PID": main_pid,
+                "MOCK_CONTROL_PID": control_pid,
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == expected_code, (
+            state,
+            main_pid,
+            control_pid,
+            completed.stderr,
+        )
 
 
 def test_server_bootstrap_grants_only_the_fixed_release_helper() -> None:

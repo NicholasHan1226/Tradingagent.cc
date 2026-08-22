@@ -251,7 +251,9 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
 
 同一现役发布助手还负责收口五个 G5 round-trip unit 的 release 绑定。切换前五个
-one-shot unit 必须全部 `inactive`；助手保存现有有效 `TimeoutStartUSec`，只备份并移除
+one-shot unit 必须全部已停止：正常状态为 `inactive`；上一轮失败遗留的 `failed` 仅在
+`MainPID=0` 且 `ControlPID=0` 时允许切换，并保留失败事实，不执行 `reset-failed` 或手工
+启动。助手保存现有有效 `TimeoutStartUSec`，只备份并移除
 白名单内的旧 release drop-in，再为每个 unit 原子写入唯一的
 `99-tradingagent-release.conf`。该文件只绑定本次不可变 `WorkingDirectory`、
 `PYTHONPATH`、只读 release 路径和原有效 timeout；`daemon-reload` 后逐 unit 读回，旧

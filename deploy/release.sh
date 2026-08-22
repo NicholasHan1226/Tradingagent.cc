@@ -124,8 +124,27 @@ if not release_binding:
 PY
 }
 
+require_g5_unit_stopped() {
+  local unit="$1" phase="$2" state main_pid control_pid
+
+  state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+  if [[ "$state" == inactive ]]; then
+    return 0
+  fi
+  if [[ "$state" == failed ]]; then
+    main_pid="$(systemctl show -p MainPID --value "$unit")"
+    control_pid="$(systemctl show -p ControlPID --value "$unit")"
+    [[ "$main_pid" =~ ^[0-9]+$ && "$control_pid" =~ ^[0-9]+$ ]] \
+      || fail "G5 failed unit returned invalid process identifiers: $unit main_pid=$main_pid control_pid=$control_pid"
+    [[ "$main_pid" == 0 && "$control_pid" == 0 ]] \
+      || fail "G5 failed unit still has a process during $phase: $unit main_pid=$main_pid control_pid=$control_pid"
+    return 0
+  fi
+  fail "G5 unit must be stopped during $phase: $unit state=$state"
+}
+
 prepare_g5_release_reconciliation() {
-  local unit state timeout path rel canonical
+  local unit timeout path rel canonical
 
   g5_dropin_backup_dir="$(mktemp -d /var/tmp/tradingagent-g5-dropins.XXXXXX)"
   g5_dropin_manifest="$g5_dropin_backup_dir/manifest"
@@ -134,8 +153,7 @@ prepare_g5_release_reconciliation() {
 
   for unit in "${g5_units[@]}"; do
     systemctl cat "$unit" >/dev/null
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    [[ "$state" == inactive ]] || fail "G5 unit must be inactive at release cutover: $unit state=$state"
+    require_g5_unit_stopped "$unit" "release preflight"
     timeout="$(systemctl show -p TimeoutStartUSec --value "$unit")"
     [[ "$timeout" =~ ^([0-9]+(us|ms|s|min|h|d|w|month|y)|infinity)$ ]] \
       || fail "G5 unit has an unsupported start timeout: $unit timeout=$timeout"
@@ -181,7 +199,7 @@ restore_g5_release_dropins() {
 
 reconcile_g5_release_dropins() {
   local release_dir="$1"
-  local index unit unit_dir unit_dir_mode canonical tmp timeout state working environment dropins legacy
+  local index unit unit_dir unit_dir_mode canonical tmp timeout working environment dropins legacy
 
   g5_dropins_changed=1
   for index in "${!g5_units[@]}"; do
@@ -208,8 +226,7 @@ reconcile_g5_release_dropins() {
   systemctl daemon-reload
 
   for unit in "${g5_units[@]}"; do
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    [[ "$state" == inactive ]] || fail "G5 unit became active during release cutover: $unit state=$state"
+    require_g5_unit_stopped "$unit" "release cutover"
     working="$(systemctl show -p WorkingDirectory --value "$unit")"
     [[ "$working" == "$release_dir" ]] || fail "G5 unit WorkingDirectory did not reconcile: $unit"
     environment="$(systemctl show -p Environment --value "$unit")"
