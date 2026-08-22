@@ -705,6 +705,16 @@ def run_minute_canary(
     source_lineage_value = (
         source_lineage_sha256[0] if len(source_lineage_sha256) == 1 else None
     )
+    row_rejections = [
+        {
+            "symbol": item.symbol,
+            "reason_code": item.reason_code,
+            "dataset_id": item.dataset_id,
+            "catalog_version": item.catalog_version,
+            "rejected_payload_sha256": item.rejected_payload_sha256,
+        }
+        for item in audit.row_rejections()
+    ]
     proof_summary = snapshot.validated_proof_summary
     if proof_summary is not None and selected_bar_end is not None:
         proof_receipt_ids = list(proof_summary.receipt_ids)
@@ -734,7 +744,9 @@ def run_minute_canary(
         "consumer_profile_sha256": profile.consumer_profile_sha256,
         "row_count": snapshot.row_count,
         "quality_status": (
-            "usable" if not missing_symbols else "usable_degraded"
+            "usable"
+            if not missing_symbols and not row_rejections
+            else "usable_degraded"
         ),
         "requested_count": len(requested_symbols),
         "accepted_count": len(accepted_symbols),
@@ -770,6 +782,8 @@ def run_minute_canary(
             for bar in snapshot.bars
         ],
         "audit_rejections": len(audit.records()),
+        "row_rejection_count": len(row_rejections),
+        "row_rejections": row_rejections,
     }
     if proof_summary is not None and len(receipt_ids) > 1:
         receipt["selected_receipt_count"] = len(receipt_ids)

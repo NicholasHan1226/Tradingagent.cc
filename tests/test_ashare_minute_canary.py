@@ -340,6 +340,59 @@ def test_read_only_canary_uses_catalog_query_and_same_observation() -> None:
     assert all("/tushare" not in call["url"] for call in transport.calls)
 
 
+def test_canary_preserves_row_quality_quarantines_separately() -> None:
+    transport = _Transport(
+        rows=[
+            {
+                "ts_code": "600000.SH",
+                "time": "2026-07-28 09:35:00",
+                "open": 10.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "vol": 10_000,
+                "amount": 101_000,
+            },
+            {
+                "ts_code": "000001.SZ",
+                "time": "2026-07-28 09:35:00",
+                "open": 0.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "vol": 10_000,
+                "amount": 101_000,
+            },
+        ]
+    )
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 28),
+            previous_close_cny=9.98,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in ("600000.SH", "000001.SZ")
+    }
+
+    receipt = run_minute_canary(
+        _config(),
+        token_file=Path("/run/secrets/fixture.token"),
+        decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+        trading_date=date(2026, 7, 28),
+        reference_facts=references,
+        allow_symbol_rejections=True,
+        transport_factory=lambda *args, **kwargs: transport,
+    )
+
+    assert receipt["accepted_symbols"] == ["600000.SH"]
+    assert receipt["quality_status"] == "usable_degraded"
+    assert receipt["row_rejection_count"] == 1
+    assert receipt["row_rejections"][0]["symbol"] == "000001.SZ"
+    assert receipt["audit_rejections"] == 0
+
+
 def test_canary_uses_explicit_evidence_only_catalog_policy() -> None:
     assert _config().client_config().catalog_version_policy == "evidence_only"
 

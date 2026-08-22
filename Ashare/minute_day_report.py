@@ -123,6 +123,43 @@ def _reason_counts(records: list[Any]) -> dict[str, int]:
     return dict(sorted(values.items()))
 
 
+def _row_quality_summary(
+    receipt: Mapping[str, Any], reason: str
+) -> tuple[int, dict[str, int]]:
+    """Summarize row quarantines without treating them as batch failures."""
+
+    count = receipt.get("row_rejection_count", 0)
+    rows = receipt.get("row_rejections", [])
+    if (
+        isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        or not isinstance(rows, list)
+        or count != len(rows)
+    ):
+        raise MinuteDayReportError(reason)
+    reasons = Counter()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise MinuteDayReportError(reason)
+        symbol = row.get("symbol")
+        reason_code = row.get("reason_code")
+        if (
+            not isinstance(symbol, str)
+            or not symbol
+            or not isinstance(reason_code, str)
+            or not reason_code
+        ):
+            raise MinuteDayReportError(reason)
+        payload_hash = row.get("rejected_payload_sha256")
+        if payload_hash is not None and (
+            not isinstance(payload_hash, str) or len(payload_hash) != 64
+        ):
+            raise MinuteDayReportError(reason)
+        reasons[reason_code] += 1
+    return count, dict(sorted(reasons.items()))
+
+
 def _receipt_history(
     bundle: Mapping[str, Any],
     receipt: Mapping[str, Any],
@@ -156,6 +193,9 @@ def _receipt_history(
             or audit_rejections < 0
         ):
             raise MinuteDayReportError("minute_day_report_receipt_history_invalid")
+        _row_quality_summary(
+            item, "minute_day_report_receipt_history_invalid"
+        )
         bars.add(bar_end)
         history_bar_ends.append(bar_end)
         history_snapshot_hashes.append(snapshot_sha256)
@@ -225,6 +265,7 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
         or audit_rejections < 0
     ):
         raise MinuteDayReportError("minute_day_report_receipt_invalid")
+    _row_quality_summary(receipt, "minute_day_report_receipt_invalid")
     try:
         loop = MinuteFixtureClosedLoop.restore(
             _mapping(bundle.get("loop_state"), "minute_day_report_state_invalid")
@@ -249,6 +290,16 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
     cumulative_audit_rejections = sum(
         int(item["audit_rejections"]) for item in receipt_history
     )
+    row_quality_summaries = [
+        _row_quality_summary(item, "minute_day_report_receipt_history_invalid")
+        for item in receipt_history
+    ]
+    cumulative_row_quality_rejections = sum(
+        count for count, _ in row_quality_summaries
+    )
+    row_quality_reason_counts = Counter()
+    for _, reasons in row_quality_summaries:
+        row_quality_reason_counts.update(reasons)
     current = loop.feature_engine.export_state().get("current")
     if not isinstance(current, Mapping):
         raise MinuteDayReportError("minute_day_report_feature_state_invalid")
@@ -329,16 +380,26 @@ def build_minute_day_report(*, state_bundle: Path | str) -> dict[str, Any]:
             "observed_bar_slot_count": len(observed),
             "missing_bar_slot_count": len(missing),
             "audit_rejection_count": cumulative_audit_rejections,
+            "row_quality_rejection_count": cumulative_row_quality_rejections,
             "reconciliation_complete": reconciliation_complete,
         },
         "evidence": {
             "accepted_count": len(observed),
             "rejected_count": cumulative_audit_rejections,
+            "row_quality_rejected_count": cumulative_row_quality_rejections,
+            "row_quality_rejection_reason_counts": dict(
+                sorted(row_quality_reason_counts.items())
+            ),
             "receipt_history_complete": receipt_history_complete,
             "status": (
-                "accepted_fixture_evidence"
+                "accepted_fixture_evidence_with_quality_rejections"
                 if cumulative_audit_rejections == 0
-                else "accepted_fixture_evidence_with_rejections"
+                and cumulative_row_quality_rejections > 0
+                else (
+                    "accepted_fixture_evidence"
+                    if cumulative_audit_rejections == 0
+                    else "accepted_fixture_evidence_with_rejections"
+                )
             ),
         },
         "candidate_and_rejections": {

@@ -1230,8 +1230,13 @@ def _map_run(
     evidence_use: MinuteEvidenceUse,
     row_proof_metadata: tuple[Mapping[str, Any], ...] | None = None,
     row_indices: tuple[int, ...] | None = None,
+    verify_integrity: bool = True,
 ) -> tuple[MinuteBarEvidence, ...]:
-    run.verify_integrity(identity_fields=profile.identity_fields)
+    # Row-level quarantine validates the whole run once before mapping each
+    # row.  Repeating this envelope-wide hash/identity check for every row
+    # turns a bounded shard into quadratic work at scale.
+    if verify_integrity:
+        run.verify_integrity(identity_fields=profile.identity_fields)
     envelope = run.envelope
     metadata = envelope.metadata
     proof_bound = row_proof_metadata is not None
@@ -1507,6 +1512,7 @@ def _map_run_with_symbol_rejections(
                 evidence_use=evidence_use,
                 row_proof_metadata=row_proof_metadata,
                 row_indices=(index,),
+                verify_integrity=False,
             )
         except MinuteDataContractError as exc:
             if exc.reason_code not in _ROW_LEVEL_REJECTION_CODES:

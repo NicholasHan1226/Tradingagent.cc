@@ -517,8 +517,11 @@ The baseline sleeve is the only source for top-level candidate, simulated-fill
 and fee KPIs. Event, flow and dynamic sleeves are separately labelled as a
 non-comparable counterfactual aggregate, so four independent fixture books
 cannot be mistaken for one account's turnover, cost or PnL. New bundles retain
-one receipt per accepted bar; the report sums those audit rejections and marks
-legacy bundles whose earlier per-bar receipt history is unavailable.
+one receipt per accepted bar; the report sums batch-level audit rejections and
+separately exposes row-quality rejection counts and reason codes. Row-quality
+rejections are observations for repair and are not silently relabeled as
+batch failures. Legacy bundles whose earlier per-bar receipt history is
+unavailable remain explicitly marked.
 
 `minute_offline_learning.py` is a separate post-close, fixture-only projection.
 It appends verified day summaries only to an A-share-local learning journal,
@@ -597,13 +600,15 @@ a claim derived from an identityless suspension dataset. Every accepted bar
 must still be completed and have positive volume. In the normal strict path,
 any malformed row blocks the snapshot; in `rolling_eligible` delayed-paper
 mode, explicitly row-local quality failures are instead quarantined by symbol:
-valid rows continue into the simulation loop, while the receipt records the
-symbol, stable reason code and rejected-row hash in `row_rejections`. This is
-observation and data accumulation only; quarantined rows are never features,
-candidates, execution, training or promotion authority. A closed day is a safe
-no-op; degraded daily evidence, catalog drift, missing symbols, replay
-mismatch, conflicting existing inputs, or an already-started target session
-still fails closed at the affected snapshot/window boundary.
+valid rows continue into the simulation loop, while the receipt records
+`row_rejection_count`, the symbol, stable reason code and rejected-row hash in
+`row_rejections`. Canary receipts expose the same fields when row isolation is
+explicitly enabled. This is observation and data accumulation only;
+quarantined rows are never features, candidates, execution, training or
+promotion authority. A closed day is a safe no-op; degraded daily evidence,
+catalog drift, missing symbols, replay mismatch, conflicting existing inputs,
+or an already-started target session still fails closed at the affected
+snapshot/window boundary.
 
 ### Isolated scale-500 runtime candidate
 

@@ -20,6 +20,7 @@ def _bundle(
     accepted_bar_ends: list[str] | None = None,
     session_gaps: list[str] | None = None,
     audit_rejections: int = 2,
+    row_rejections: list[dict[str, object]] | None = None,
 ) -> Path:
     loop = MinuteFixtureClosedLoop(universe=MinuteResearchUniverse(instruments=()))
     state = loop.export_state()
@@ -34,21 +35,25 @@ def _bundle(
     payload["accepted_bar_ends"] = accepted
     payload["session_gaps"] = session_gaps or []
     state = {**payload, "state_sha256": _canonical_sha256(payload)}
+    last_receipt = {
+        "status": "pass",
+        "authority_tier": "non_production_fixture",
+        "real_trading_enabled": False,
+        "bar_end": accepted[-1],
+        "snapshot_sha256": (
+            "f" * 64 if mismatch else payload["processed_snapshot_hashes"][-1]
+        ),
+        "audit_rejections": audit_rejections,
+    }
+    if row_rejections is not None:
+        last_receipt["row_rejection_count"] = len(row_rejections)
+        last_receipt["row_rejections"] = row_rejections
     bundle = {
         "schema": "tradingagent.ashare.delayed_minute_paper_bundle.v1",
         "authority_tier": "non_production_fixture",
         "real_trading_enabled": False,
         "loop_state": state,
-        "last_receipt": {
-            "status": "pass",
-            "authority_tier": "non_production_fixture",
-            "real_trading_enabled": False,
-            "bar_end": accepted[-1],
-            "snapshot_sha256": (
-                "f" * 64 if mismatch else payload["processed_snapshot_hashes"][-1]
-            ),
-            "audit_rejections": audit_rejections,
-        },
+        "last_receipt": last_receipt,
     }
     path.write_text(json.dumps(bundle), encoding="utf-8")
     return path
@@ -82,6 +87,7 @@ def test_day_report_is_non_authoritative_and_covers_required_sections(
         "observed_bar_slot_count": 1,
         "missing_bar_slot_count": 47,
         "audit_rejection_count": 2,
+        "row_quality_rejection_count": 0,
         "reconciliation_complete": True,
     }
 
@@ -142,6 +148,8 @@ def test_day_report_uses_cumulative_per_bar_receipt_history(
     assert report["evidence"] == {
         "accepted_count": 2,
         "rejected_count": 1,
+        "row_quality_rejected_count": 0,
+        "row_quality_rejection_reason_counts": {},
         "receipt_history_complete": True,
         "status": "accepted_fixture_evidence_with_rejections",
     }
@@ -185,8 +193,44 @@ def test_day_report_marks_complete_clean_fixture_as_learning_projection_ready(
         "observed_bar_slot_count": 48,
         "missing_bar_slot_count": 0,
         "audit_rejection_count": 0,
+        "row_quality_rejection_count": 0,
         "reconciliation_complete": True,
     }
+
+
+def test_day_report_exposes_row_quality_rejections_without_batch_failure(
+    tmp_path: Path,
+) -> None:
+    row_rejections = [
+        {
+            "symbol": "000001.SZ",
+            "reason_code": "minute_open_invalid",
+            "rejected_payload_sha256": "a" * 64,
+        },
+        {
+            "symbol": "600000.SH",
+            "reason_code": "minute_open_invalid",
+            "rejected_payload_sha256": "b" * 64,
+        },
+    ]
+
+    report = build_minute_day_report(
+        state_bundle=_bundle(
+            tmp_path / "state.json",
+            audit_rejections=0,
+            row_rejections=row_rejections,
+        )
+    )
+
+    assert report["evidence"]["row_quality_rejected_count"] == 2
+    assert report["evidence"]["row_quality_rejection_reason_counts"] == {
+        "minute_open_invalid": 2
+    }
+    assert report["evidence"]["status"] == (
+        "accepted_fixture_evidence_with_quality_rejections"
+    )
+    assert report["operational_readiness"]["audit_rejection_count"] == 0
+    assert report["operational_readiness"]["row_quality_rejection_count"] == 2
 
 
 def test_day_report_blocks_full_session_without_per_bar_receipt_history(
