@@ -11,7 +11,7 @@ dated `docs/reports/`; it is never a substitute for a fresh readback.
 | Layer | Current observation | Claim boundary |
 |---|---|---|
 | 本地主线 | Kimi/user A-share lane, intentionally not acting as canonical main | resolve with `git rev-parse HEAD origin/main`; preserve and do not reset or repurpose |
-| GitHub 主线 | PR-level CI passed through merges `7ff7730` and `3bf8006`; exact-main validation green at `7ff7730`, dispatched for `3bf8006` | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
+| GitHub 主线 | branch CI passed and exact-main validation ran green for the latest research/docs merges at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
 | Ordinary server source | `1d58efe`, behind GitHub and containing untracked operational files | not synchronized; do not clean or fast-forward over unknown files |
 | Effective release | immutable release `9768907e741913541034f76357088d95febde057` | deployed code layer; no new release build was taken in this observation batch |
 | Runtime authority | all observed A-share/Crypto receipts reported real trading, execution, capital, production promotion, and automatic risk expansion disabled | simulation/read-only only |
@@ -80,10 +80,14 @@ historical-backfill-without-PIT; archived under `Crypto/reports/`):
 Runtime plane:
 
 - the delayed-exit shadow reversal threshold now matches the champion exit
-  rule on current main (`7ff7730` lineage);
+  rule on current main;
 - the forty-symbol public receipt/event identity defect (ten-symbol inherited
   names) remains open and still requires a forward fix plus a fresh natural
-  readback; the G5 delayed-paper service was not re-observed this batch;
+  readback;
+- the G5 delayed-paper service completed successfully with
+  `data_incomplete=false` in its latest applicable readback; this batch did
+  not re-observe it, and service completion alone does not prove a new
+  resolved label, fee-after baseline comparison, or shadow recommendation;
 - the 40-symbol timer remains disabled. No provider call or runtime activation
   is inferred from source presence.
 
