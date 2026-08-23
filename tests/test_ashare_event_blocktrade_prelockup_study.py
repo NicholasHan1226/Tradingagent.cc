@@ -97,6 +97,23 @@ class LoadersTest(unittest.TestCase):
             ):
                 study.load_symbol_daily_meta(cache / "e", {CODE})
 
+    def test_newest_first_daily_file_is_normalized_ascending(self) -> None:
+        # Tushare daily CSVs arrive newest-first; a descending file must
+        # still yield ascending session order (bisect correctness).
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            stem = f"daily_{CODE[:6]}{CODE[7:]}"
+            with (cache / f"{stem}.csv").open("w", newline="",
+                                              encoding="utf-8") as h:
+                w = csv.writer(h)
+                w.writerow(["ts_code", "trade_date", "close", "amount"])
+                for d in reversed(DAYS[:25]):
+                    w.writerow([CODE, d, 10.0, 1000.0])
+            meta = study.load_symbol_daily_meta(cache, {CODE})
+            days, _closes, amounts = meta[CODE]
+            self.assertEqual(days, DAYS[:25])
+            self.assertEqual(amounts, [1000.0] * 25)
+
 
 class AttachBlockStatesTest(unittest.TestCase):
     def _setup(self, cache: Path, block_rows, daily_amount: float = 10000.0):
