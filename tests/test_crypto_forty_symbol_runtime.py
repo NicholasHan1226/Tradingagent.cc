@@ -49,27 +49,27 @@ def test_forty_symbol_window_waits_for_its_fixed_receipt_settle_boundary() -> No
     window_end = datetime(2026, 8, 22, 11, 25, tzinfo=timezone.utc)
 
     before_settle = crypto_ten_symbol_observation_window(
-        window_end + timedelta(seconds=224),
+        window_end + timedelta(seconds=269),
         config=FORTY_SYMBOL_RUNTIME_CONFIG,
     )
     assert before_settle.window_end == window_end - timedelta(minutes=5)
-    assert before_settle.observation_cutoff == window_end - timedelta(seconds=75)
+    assert before_settle.observation_cutoff == window_end - timedelta(seconds=30)
 
     settled = crypto_ten_symbol_observation_window(
-        window_end + timedelta(seconds=225),
+        window_end + timedelta(seconds=270),
         config=FORTY_SYMBOL_RUNTIME_CONFIG,
     )
     assert settled.window_end == window_end
-    assert settled.observation_cutoff == window_end + timedelta(seconds=225)
+    assert settled.observation_cutoff == window_end + timedelta(seconds=270)
 
     jittered = crypto_ten_symbol_observation_window(
-        window_end + timedelta(seconds=228),
+        window_end + timedelta(seconds=288),
         config=FORTY_SYMBOL_RUNTIME_CONFIG,
     )
     assert jittered == settled
     assert _window_for_end(
         window_end, config=FORTY_SYMBOL_RUNTIME_CONFIG
-    ).observation_cutoff == window_end + timedelta(seconds=225)
+    ).observation_cutoff == window_end + timedelta(seconds=270)
 
     ten_symbol = crypto_ten_symbol_observation_window(
         window_end + timedelta(seconds=55),
