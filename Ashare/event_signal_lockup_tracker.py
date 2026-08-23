@@ -33,6 +33,11 @@ Mechanics:
   the lockup repair concentrates in weak markets — can be validated on
   rolling data; lockup events additionally carry their float-ratio bucket
   (same bins as the stratification study),
+* the lockup section previews the practice rule distilled from that
+  stratification research ("enter in weak markets, avoid the 3-5%
+  float-ratio band"): a report-only subset readout with net-of-cost
+  columns against the pre-registered evaluation basis — formal keep/fail
+  judgements remain bound to the milestone counts in the criteria doc,
 * for ``earnings_pos`` the report also shows the *pre-disclosure trade
   window* the study actually claims (entry at the close of the first
   session after the forecast announcement, exit at the disclosure-day
@@ -96,6 +101,7 @@ from Ashare.event_calendar_earnings_groups import (  # noqa: E402
     load_forecast_directions,
 )
 from Ashare.event_calendar_lockup_strata import (  # noqa: E402
+    COST_BPS_ROUNDTRIP_DEFAULT,
     REGIME_BINS,
     bucket_by_ratio,
     load_index_series,
@@ -645,6 +651,59 @@ def ratio_breakdown(
     }
 
 
+# Practice rule distilled from the stratification research ("enter in weak
+# markets, avoid the 3-5% float-ratio band").  The tracker only previews it
+# as a report-only readout against the pre-registered evaluation basis;
+# formal keep/fail judgements happen exclusively at the milestone sample
+# counts fixed in the criteria document.
+RULE_SUBSET_REGIME = "weak"
+RULE_SUBSET_EXCLUDED_RATIO_BAND = "3-5%"
+
+
+def rule_subset_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    regime_by_date: dict[str, str],
+    ratio_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Split labelled lockup outcomes into the practice rule vs the rest.
+
+    The subset keeps observations whose regime is weak and whose float
+    ratio is tagged outside the avoided band; everything else (other or
+    unknown regimes, untagged ratios, the 3-5% band itself) lands in
+    ``excluded`` so both sides always sum to the input.  ``*_net`` columns
+    deduct one round trip at the default cost model.
+    """
+
+    def _stats_with_net(values: list[float]) -> dict:
+        stats = _post_return_stats(values)
+        if not values:
+            return stats
+        net = [v - COST_BPS_ROUNDTRIP_DEFAULT / 1e4 for v in values]
+        stats.update(
+            {
+                "mean_net_bps": round(statistics.fmean(net) * 1e4, 1),
+                "win_net": round(sum(1 for v in net if v > 0) / len(net), 3),
+            }
+        )
+        return stats
+
+    subset: list[float] = []
+    excluded: list[float] = []
+    for obs in observations:
+        regime = regime_by_date.get(obs.scheduled_date.isoformat(), "unknown")
+        label = ratio_by_event.get(obs.event_id)
+        ret = float(obs.post_return)
+        if (
+            regime == RULE_SUBSET_REGIME
+            and label is not None
+            and label != RULE_SUBSET_EXCLUDED_RATIO_BAND
+        ):
+            subset.append(ret)
+        else:
+            excluded.append(ret)
+    return {"rule": _stats_with_net(subset), "excluded": _stats_with_net(excluded)}
+
+
 def prewindow_return(
     bars: list[DailyBar], ann_day: date, target_day: date
 ) -> float | None:
@@ -790,6 +849,35 @@ def render_report(
             lines += ["Labelled outcomes by float-ratio bucket:", ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        if key == LOCKUP_SIGNAL:
+            rule = rule_subset_breakdown(
+                bucket.labeled, view.regime_by_date, view.ratio_by_event
+            )
+            subset = rule["rule"]
+            if subset.get("n"):
+                excluded = rule["excluded"]
+                lines += [
+                    "Practice-rule subset (weak regime AND float-ratio outside"
+                    " the avoided 3-5% band; report-only preview of the"
+                    " pre-registered weak-market evaluation - formal judgement"
+                    " only at milestone counts, criteria doc):",
+                    "",
+                    (
+                        f"- rule_subset: n={subset['n']}, mean={subset['mean_bps']}bps,"
+                        f" mean_net={subset['mean_net_bps']}bps,"
+                        f" win_net={subset['win_net']}"
+                    ),
+                    (
+                        "- excluded: "
+                        + (
+                            f"n={excluded['n']}, mean_net={excluded['mean_net_bps']}bps,"
+                            f" win_net={excluded['win_net']}"
+                            if excluded.get("n")
+                            else "n=0"
+                        )
+                    ),
+                    "",
+                ]
     lines += ["## Journal writes", ""]
     if view.appended_records:
         lines.append(
@@ -874,6 +962,15 @@ def main() -> int:
                     }
                     for k, b in view.buckets.items()
                 },
+                "rule_subset_lockup": (
+                    rule_subset_breakdown(
+                        view.buckets[LOCKUP_SIGNAL].labeled,
+                        view.regime_by_date,
+                        view.ratio_by_event,
+                    )
+                    if LOCKUP_SIGNAL in view.signals
+                    else {}
+                ),
                 "prewindow": {
                     k: v
                     for k, v in view.prewindow_stats.items()
