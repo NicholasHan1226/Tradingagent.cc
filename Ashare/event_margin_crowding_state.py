@@ -118,8 +118,10 @@ def cross_tab(
     signals: list[dict[str, object]],
     cost_bps: float,
     key: str = "margin_state",
+    labels: tuple[str, ...] = ("deleverage", "neutral", "expansion"),
 ) -> dict[str, dict[str, object]]:
-    """Per state-bucket n / mean net bps / win rate (``key`` = annotation)."""
+    """Per state-bucket n / mean net bps / win rate (``key`` = annotation,
+    ``labels`` = bucket order)."""
     buckets: dict[str, list[float]] = {}
     for signal in signals:
         label = signal.get(key)
@@ -127,7 +129,7 @@ def cross_tab(
             continue
         buckets.setdefault(str(label), []).append(net_trade_return(signal, cost_bps))
     out: dict[str, dict[str, object]] = {}
-    for label in ("deleverage", "neutral", "expansion"):
+    for label in labels:
         rets = buckets.get(label, [])
         out[label] = {
             "n": len(rets),
