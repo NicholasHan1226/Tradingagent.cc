@@ -188,5 +188,38 @@ class AttachBlockStatesTest(unittest.TestCase):
                 self.assertEqual(stats2["insufficient_history"], 1)
 
 
+class BucketsForEventsTest(unittest.TestCase):
+    """Tracker side-table lookup: {(code, day): bucket}, absence = unlabeled."""
+
+    def test_lookup_rolls_anchor_and_omits_unlabeled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            _write_daily(cache, CODE, DAYS, amount=10000.0, close=10.0)
+            _write_daily(cache, "000002.SZ", DAYS, amount=10000.0, close=10.0)
+            out_dir = cache / study.BLOCKTRADE_DIRNAME
+            out_dir.mkdir(parents=True)
+            # Deep-discount print inside the DAYS[24] window (session 20);
+            # 000002.SZ trades the same days but never prints.
+            _write_blocks(out_dir, [(DAYS[20], CODE, 8.5, 400.0)])
+            buckets = study.block_buckets_for_events(cache, [
+                (CODE, DAYS[24]),         # exact session -> discount_deep
+                (CODE, DAYS[23]),         # anchor rolls into same window
+                ("000002.SZ", DAYS[24]),  # full history, zero prints -> none
+                ("000003.SZ", DAYS[24]),  # no daily file -> omitted
+            ])
+            self.assertEqual(buckets[(CODE, DAYS[24])], "discount_deep")
+            self.assertEqual(buckets[(CODE, DAYS[23])], "discount_deep")
+            self.assertEqual(buckets[("000002.SZ", DAYS[24])], "none")
+            self.assertNotIn(("000003.SZ", DAYS[24]), buckets)
+            # Missing cache fails closed through the shared loaders; the
+            # blocks loader runs first so its reason code surfaces.
+            with self.assertRaisesRegex(
+                study.BlocktradeStudyError, "blocktrade_dir_missing"
+            ):
+                study.block_buckets_for_events(
+                    cache / "e", [(CODE, DAYS[24])]
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

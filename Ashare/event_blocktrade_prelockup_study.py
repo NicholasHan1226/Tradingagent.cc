@@ -220,6 +220,34 @@ def attach_block_states(
     return stats
 
 
+def block_buckets_for_events(
+    cache: Path,
+    pairs: list[tuple[str, str]],
+) -> dict[tuple[str, str], str]:
+    """Event-label lookup for tracker side tables: {(ts_code, day): bucket}.
+
+    Reuses the study loaders and :func:`attach_block_states` on synthetic
+    signal dicts; ``day`` may be any calendar date (bisect rolls forward to
+    the symbol's first session on/after it).  Pairs without a daily file or
+    enough strictly-prior history are omitted — absence means "unlabeled",
+    never guessed.  Raises BlocktradeStudyError when the block-trade cache
+    directory is missing.
+    """
+
+    symbols = {str(code) for code, _day in pairs}
+    blocks = load_symbol_blocks(cache, symbols)
+    meta = load_symbol_daily_meta(cache, symbols)
+    synthetic = [
+        {"ts_code": str(code), "entry_day": str(day)} for code, day in pairs
+    ]
+    attach_block_states(synthetic, blocks, meta)
+    return {
+        (s["ts_code"], s["entry_day"]): s["block_bucket"]
+        for s in synthetic
+        if "block_bucket" in s
+    }
+
+
 def _fmt_pct(value: float) -> str:
     return f"{value * 100:+.2f}%"
 
