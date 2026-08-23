@@ -135,9 +135,9 @@ def load_symbol_daily_meta(
             continue  # no daily history for this symbol: leave it absent
         with handle:
             reader = csv.DictReader(handle)
-            days: list[str] = []
-            closes: dict[str, float] = {}
-            amounts: list[float] = []
+            # Tushare daily files arrive NEWEST-FIRST: normalize to ascending
+            # session order, otherwise every bisect below silently misreads.
+            rows_out: list[tuple[str, float, float]] = []
             for row in reader:
                 day = row.get("trade_date")
                 try:
@@ -145,9 +145,11 @@ def load_symbol_daily_meta(
                     amount = float(row["amount"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                days.append(day)
-                closes[day] = close
-                amounts.append(amount)
+                rows_out.append((day, close, amount))
+            rows_out.sort(key=lambda item: item[0])
+            days = [day for day, _close, _amount in rows_out]
+            closes = {day: close for day, close, _amount in rows_out}
+            amounts = [amount for _day, _close, amount in rows_out]
         code = f"{stem[6:12]}.{stem[12:]}"
         if days:
             series[code] = (days, closes, amounts)
