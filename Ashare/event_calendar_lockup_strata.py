@@ -12,6 +12,13 @@ rolling tracker can actually observe before the event:
 * market regime — SSE index return over the 10 sessions ending at the
   event-day close (weak / sideways / strong).
 
+Every stratum is additionally reported net of an explicit round-trip cost
+model (``COST_BPS_ROUNDTRIP_DEFAULT``, override with ``--cost-bps``), so
+the descriptive question "which subsets still clear costs" is answered on
+the same numbers the rolling tracker journals.  The default models a
+round trip as: commission ~2.5 bps per side + 5 bps stamp duty on the
+sell + ~0.2 bps transfer fee + ~5 bps slippage allowance ≈ 15 bps.
+
 One event per (symbol, expiry date): same-day rows from multiple holders
 are collapsed to the largest ``float_ratio`` so correlated rows do not
 inflate the counts.  Post-event returns are absolute (same measure the
@@ -21,7 +28,7 @@ is the partial control.  Nothing here is promotion evidence.
 Usage::
 
     python3 Ashare/event_calendar_lockup_strata.py \
-        [--cache /tmp/ashare_event_research] [--expanded]
+        [--cache /tmp/ashare_event_research] [--expanded] [--cost-bps N]
 """
 
 from __future__ import annotations
@@ -57,6 +64,10 @@ SIGNAL_ANTICIPATION_CLASS = "sell_off"
 REGIME_BINS = ((-1.0, -0.02, "weak"), (-0.02, 0.02, "sideways"), (0.02, 1.0, "strong"))
 RATIO_BINS = ((0.0, 1.0, "<1%"), (1.0, 3.0, "1-3%"), (3.0, 5.0, "3-5%"), (5.0, 1e9, ">=5%"))
 MIN_INDUSTRY_N = 40
+
+# Round-trip cost model (basis points): commission ~2.5bps/side, 5bps stamp
+# duty on the sell, ~0.2bps transfer fee, ~5bps slippage allowance.
+COST_BPS_ROUNDTRIP_DEFAULT = 15.0
 
 
 class StrataError(RuntimeError):
@@ -249,12 +260,14 @@ def bucket_by_ratio(ratio: float | None) -> str:
     return "unknown"
 
 
-def group_stats(values: list[float]) -> dict:
+def group_stats(values: list[float], cost_bps: float = 0.0) -> dict:
+    """Descriptive stats, gross and (when cost_bps > 0) net of one round trip."""
+
     n = len(values)
     if n == 0:
         return {"n": 0}
     ordered = sorted(values)
-    return {
+    stats = {
         "n": n,
         "mean_bps": round(statistics.fmean(values) * 1e4, 1),
         "median_bps": round(statistics.median(values) * 1e4, 1),
@@ -262,6 +275,12 @@ def group_stats(values: list[float]) -> dict:
         "p25_bps": round(ordered[n // 4] * 1e4, 1),
         "p75_bps": round(ordered[(3 * n) // 4] * 1e4, 1),
     }
+    if cost_bps > 0:
+        net = [v - cost_bps / 1e4 for v in values]
+        stats["mean_net_bps"] = round(statistics.fmean(net) * 1e4, 1)
+        stats["median_net_bps"] = round(statistics.median(net) * 1e4, 1)
+        stats["win_rate_net"] = round(sum(1 for v in net if v > 0) / len(net), 3)
+    return stats
 
 
 def main() -> int:
@@ -273,6 +292,11 @@ def main() -> int:
     expanded = "--expanded" in sys.argv
     symbols_file = "sample_symbols_expanded" if expanded else "sample_symbols"
     float_file = "share_float_expanded" if expanded else "share_float"
+    cost_bps = (
+        float(sys.argv[sys.argv.index("--cost-bps") + 1])
+        if "--cost-bps" in sys.argv
+        else COST_BPS_ROUNDTRIP_DEFAULT
+    )
 
     sym_rows = _read_csv(cache, symbols_file)
     samples = {r["ts_code"] for r in sym_rows}
@@ -355,13 +379,17 @@ def main() -> int:
         groups: dict[str, list[float]] = {}
         for item in outcomes:
             groups.setdefault(key_fn(item), []).append(item["post_return"])
-        return {key: group_stats(values) for key, values in sorted(groups.items())}
+        return {
+            key: group_stats(values, cost_bps)
+            for key, values in sorted(groups.items())
+        }
 
     summary: dict = {
         "research_only": True,
         "universe": symbols_file,
         "signal": f"{SIGNAL_EVENT_TYPE}|{SIGNAL_ANTICIPATION_CLASS}",
-        "overall": group_stats([o["post_return"] for o in outcomes]),
+        "cost_bps_roundtrip": cost_bps,
+        "overall": group_stats([o["post_return"] for o in outcomes], cost_bps),
         "by_float_ratio": stratify(lambda o: bucket_by_ratio(o["ratio"])),
         "by_regime": stratify(lambda o: o["regime"]),
     }
@@ -373,7 +401,7 @@ def main() -> int:
                 item["post_return"]
             )
     major = {
-        name: group_stats(values)
+        name: group_stats(values, cost_bps)
         for name, values in sorted(
             industry_groups.items(), key=lambda kv: -len(kv[1])
         )
@@ -386,7 +414,7 @@ def main() -> int:
         for v in values
     ]
     summary["by_industry_major"] = major
-    summary["by_industry_rest_aggregate"] = group_stats(rest)
+    summary["by_industry_rest_aggregate"] = group_stats(rest, cost_bps)
 
     out_path = cache / "lockup_strata_summary.json"
     out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -407,32 +435,56 @@ def main() -> int:
             else ""
         )
     )
+    print(f"- round-trip cost model: {cost_bps}bps (net columns deduct it once)")
     for section, title in labels.items():
         print(f"\n## {title}\n")
-        print("| 分层 | n | mean_bps | median_bps | win_rate | p25 | p75 |")
-        print("|---|---|---|---|---|---|---|")
+        print(
+            "| 分层 | n | mean_bps | median_bps | win_rate "
+            "| mean_net | median_net | win_net |"
+        )
+        print("|---|---|---|---|---|---|---|---|")
         for key, stat in summary[section].items():
             if not stat.get("n"):
-                print(f"| {key} | 0 | | | | | |")
+                print(f"| {key} | 0 | | | | | | |")
                 continue
             print(
                 f"| {key} | {stat['n']} | {stat['mean_bps']} | {stat['median_bps']} "
-                f"| {stat['win_rate']} | {stat['p25_bps']} | {stat['p75_bps']} |"
+                f"| {stat['win_rate']} | {stat.get('mean_net_bps', '')} "
+                f"| {stat.get('median_net_bps', '')} "
+                f"| {stat.get('win_rate_net', '')} |"
             )
     print("\n## 按行业（样本数 ≥ %d 的行业）\n" % MIN_INDUSTRY_N)
-    print("| 行业 | n | mean_bps | median_bps | win_rate |")
-    print("|---|---|---|---|---|")
+    print("| 行业 | n | mean_bps | median_bps | win_rate | mean_net | win_net |")
+    print("|---|---|---|---|---|---|---|")
     for name, stat in summary["by_industry_major"].items():
         print(
             f"| {name} | {stat['n']} | {stat['mean_bps']} | {stat['median_bps']} "
-            f"| {stat['win_rate']} |"
+            f"| {stat['win_rate']} | {stat.get('mean_net_bps', '')} "
+            f"| {stat.get('win_rate_net', '')} |"
         )
     rest_stat = summary["by_industry_rest_aggregate"]
     if rest_stat.get("n"):
         print(
             f"| 其余行业合计 | {rest_stat['n']} | {rest_stat['mean_bps']} "
-            f"| {rest_stat['median_bps']} | {rest_stat['win_rate']} |"
+            f"| {rest_stat['median_bps']} | {rest_stat['win_rate']} "
+            f"| {rest_stat.get('mean_net_bps', '')} "
+            f"| {rest_stat.get('win_rate_net', '')} |"
         )
+    survivors = [
+        (key, stat)
+        for section in ("by_float_ratio", "by_regime")
+        for key, stat in summary[section].items()
+        if stat.get("n") and stat["mean_net_bps"] > 0 and stat["win_rate_net"] > 0.5
+    ]
+    print("\n## 成本后仍为正的分层（mean_net>0 且 win_net>50%）\n")
+    if survivors:
+        for key, stat in survivors:
+            print(
+                f"- {key}: n={stat['n']}, mean_net={stat['mean_net_bps']}bps, "
+                f"win_net={stat['win_rate_net']}"
+            )
+    else:
+        print("- (none)")
     print(f"\nsaved -> {out_path}")
     return 0
 
