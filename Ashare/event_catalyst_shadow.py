@@ -278,18 +278,42 @@ _HYPOTHESIS_BY_CLASS = MappingProxyType(
     }
 )
 
+# Research profile.  The 2026-08-23 replay of 21,775 earnings/lockup events
+# (Ashare/reports/2026-08-23-ashare-event-calendar-study.md) showed pre-event
+# front-running in those families continues after the event instead of
+# reverting on confirmation, so front-run hypotheses switch to holding
+# through; sell_off -> hold_through_event was the supported cell and stays.
+# In-sample evidence only; the default profile remains untouched and is
+# still what production semantics assume.
+POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1 = "momentum_evidence_v1"
+_MOMENTUM_HYPOTHESIS_BY_CLASS = MappingProxyType(
+    {
+        "front_run": "hold_through_event",
+        "sell_off": "hold_through_event",
+        "quiet": "no_signal",
+    }
+)
+
 
 def _positioning_hypothesis(
-    anticipation_class: str, intensity: str | None
+    anticipation_class: str,
+    intensity: str | None,
+    profile: str = "default",
 ) -> str:
-    if anticipation_class == "front_run":
-        if intensity == "extreme":
-            # Extreme anticipation marks a strong catalyst; confirmation can
-            # extend the move, so the hypothesis is a confirmation-gated
-            # reduction, never an automatic full exit.
-            return "reduce_on_event_confirmation"
-        return "realize_on_event"
-    return _HYPOTHESIS_BY_CLASS[anticipation_class]
+    if profile == "default":
+        if anticipation_class == "front_run":
+            if intensity == "extreme":
+                # Extreme anticipation marks a strong catalyst; confirmation can
+                # extend the move, so the hypothesis is a confirmation-gated
+                # reduction, never an automatic full exit.
+                return "reduce_on_event_confirmation"
+            return "realize_on_event"
+        return _HYPOTHESIS_BY_CLASS[anticipation_class]
+    if profile == POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1:
+        return _MOMENTUM_HYPOTHESIS_BY_CLASS[anticipation_class]
+    raise EventCatalystShadowError(
+        "event_catalyst_positioning_profile_invalid"
+    )
 
 
 @dataclass(frozen=True)
@@ -315,6 +339,7 @@ class CatalystShadowObservation:
     observation_status: str
     input_receipt_sha256: str
     observation_sha256: str
+    positioning_profile: str = "default"
     shadow_only: bool = True
     calibrated_probability: None = None
     candidate_eligible: bool = False
@@ -370,7 +395,9 @@ class CatalystShadowObservation:
                 )
             if (
                 _positioning_hypothesis(
-                    self.anticipation_class, self.anticipation_intensity
+                    self.anticipation_class,
+                    self.anticipation_intensity,
+                    self.positioning_profile,
                 )
                 != self.positioning_hypothesis
             ):
@@ -490,6 +517,7 @@ def _observe_one(
     as_of: datetime,
     pre_window: int,
     post_window: int,
+    positioning_profile: str = "default",
 ) -> CatalystShadowObservation:
     if entry.symbol is None:
         # Market-wide events have no instrument series here; they stay as
@@ -550,7 +578,9 @@ def _observe_one(
             )
             anticipation_class = _classify_anticipation(pre_return)
             intensity = _anticipation_intensity(anticipation_class, pre_return)
-            hypothesis = _positioning_hypothesis(anticipation_class, intensity)
+            hypothesis = _positioning_hypothesis(
+                anticipation_class, intensity, positioning_profile
+            )
             status = "observed"
             post_end = event_index + post_window
             if post_end < len(bars):
@@ -589,6 +619,7 @@ def _observe_one(
         observation_status=status,
         input_receipt_sha256=input_receipt,
         observation_sha256=_sha256(observation_material),
+        positioning_profile=positioning_profile,
     )
 
 
@@ -599,6 +630,7 @@ def build_catalyst_shadow_batch(
     as_of: datetime,
     pre_window_sessions: int = DEFAULT_PRE_WINDOW_SESSIONS,
     post_window_sessions: int = DEFAULT_POST_WINDOW_SESSIONS,
+    positioning_profile: str = "default",
 ) -> CatalystShadowBatch:
     """Build one deterministic, PIT-checked shadow batch.
 
@@ -609,6 +641,8 @@ def build_catalyst_shadow_batch(
     """
 
     as_of = _aware(as_of, "event_catalyst_as_of_invalid")
+    # Fail closed on unknown profiles before any observation is built.
+    _positioning_hypothesis("quiet", None, positioning_profile)
     for field_name, value in (
         ("pre_window_sessions", pre_window_sessions),
         ("post_window_sessions", post_window_sessions),
@@ -636,6 +670,7 @@ def build_catalyst_shadow_batch(
             as_of=as_of,
             pre_window=pre_window_sessions,
             post_window=post_window_sessions,
+            positioning_profile=positioning_profile,
         )
         for entry in entries
     )
