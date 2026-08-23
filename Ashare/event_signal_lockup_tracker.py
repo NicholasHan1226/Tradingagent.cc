@@ -26,7 +26,11 @@ Mechanics:
   positioning profile — the default profile's reduce/realize hypotheses
   were falsified by the replay for these families,
 * labelled signal outcomes append to the shared SampleJournal via the
-  ``shadow_research`` bridge (excluded from trading-layer KPIs by policy).
+  ``shadow_research`` bridge (excluded from trading-layer KPIs by policy),
+* every tracked event is tagged with the market regime (SSE index return
+  over the 10 sessions ending at the event-day close, weak/sideways/
+  strong) so the 2026-08-23 stratification finding — the lockup repair
+  concentrates in weak markets — can be validated on rolling data.
 
 Deduplication: the observation receipt embeds ``as_of``, so re-running the
 same history on a later day produces different journal ids.  The tracker
@@ -81,6 +85,10 @@ from Ashare.event_catalyst_shadow import (  # noqa: E402
 from Ashare.event_calendar_earnings_groups import (  # noqa: E402
     direction_group,
     load_forecast_directions,
+)
+from Ashare.event_calendar_lockup_strata import (  # noqa: E402
+    load_index_series,
+    regime_bucket,
 )
 
 
@@ -302,6 +310,9 @@ class TrackerView:
     status_counts: dict[str, int] = field(default_factory=dict)
     buckets: dict[str, SignalBucket] = field(default_factory=dict)
     unattributed_labeled: int = 0
+    # ISO scheduled_date -> weak/sideways/strong/unknown (SSE 10-session
+    # return ending at the event-day close; see event_calendar_lockup_strata).
+    regime_by_date: dict[str, str] = field(default_factory=dict)
     appended_records: list[dict] = field(default_factory=list)
 
 
@@ -441,19 +452,6 @@ def append_new_outcomes(
     return appended
 
 
-def describe_post_returns(observations: tuple[CatalystShadowObservation, ...]) -> dict:
-    values = [float(o.post_return) for o in observations if o.post_return is not None]
-    n = len(values)
-    if n == 0:
-        return {"n": 0}
-    return {
-        "n": n,
-        "mean_bps": round(statistics.fmean(values) * 1e4, 1),
-        "median_bps": round(statistics.median(values) * 1e4, 1),
-        "win_rate": round(sum(1 for v in values if v > 0) / n, 3),
-    }
-
-
 class _NullJournal:
     """Dry-run stand-in that reports an empty written set and appends nothing."""
 
@@ -488,6 +486,7 @@ def run_tracker(
         entries.extend(disc_entries)
         skipped += disc_skipped
     bars_by_symbol = load_bars(cache, samples)
+    index_pairs = load_index_series(cache)
     batch = build_catalyst_shadow_batch(
         entries,
         bars_by_symbol,
@@ -497,6 +496,11 @@ def run_tracker(
         positioning_profile=POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1,
     )
     view = build_tracker_view(batch, signals)
+    view.regime_by_date = {
+        obs.scheduled_date.isoformat(): regime_bucket(index_pairs, obs.scheduled_date)
+        for obs in batch.observations
+        if obs.observation_status == "observed"
+    }
 
     from shared.review.sample_journal import SampleJournal
 
@@ -509,6 +513,37 @@ def run_tracker(
     )
     view.appended_records.extend(appended)
     return view
+
+
+def _post_return_stats(values: list[float]) -> dict:
+    n = len(values)
+    if n == 0:
+        return {"n": 0}
+    return {
+        "n": n,
+        "mean_bps": round(statistics.fmean(values) * 1e4, 1),
+        "median_bps": round(statistics.median(values) * 1e4, 1),
+        "win_rate": round(sum(1 for v in values if v > 0) / n, 3),
+    }
+
+
+def describe_post_returns(observations: tuple[CatalystShadowObservation, ...]) -> dict:
+    return _post_return_stats(
+        [float(o.post_return) for o in observations if o.post_return is not None]
+    )
+
+
+def regime_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    regime_by_date: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-observable market regime."""
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        regime = regime_by_date.get(obs.scheduled_date.isoformat(), "unknown")
+        groups.setdefault(regime, []).append(float(obs.post_return))
+    return {regime: _post_return_stats(v) for regime, v in sorted(groups.items())}
 
 
 def render_report(
@@ -544,15 +579,21 @@ def render_report(
         bucket = view.buckets.get(key, SignalBucket())
         lines += [f"## {titles.get(key, key)}", ""]
         if bucket.active:
-            lines.append("| event_id | symbol | event_date | pre_return | intensity |")
-            lines.append("|---|---|---|---|---|")
+            lines.append(
+                "| event_id | symbol | event_date | pre_return | intensity"
+                " | regime |"
+            )
+            lines.append("|---|---|---|---|---|---|")
             for obs in sorted(
                 bucket.active, key=lambda o: (o.scheduled_date, o.symbol or "")
             ):
                 pre_pct = f"{float(obs.pre_return) * 100:.2f}%"
+                regime = view.regime_by_date.get(
+                    obs.scheduled_date.isoformat(), "unknown"
+                )
                 lines.append(
                     f"| {obs.event_id} | {obs.symbol} | {obs.scheduled_date} "
-                    f"| {pre_pct} | {obs.anticipation_intensity} |"
+                    f"| {pre_pct} | {obs.anticipation_intensity} | {regime} |"
                 )
         else:
             lines.append("Currently tracked (post window open): (none)")
@@ -564,6 +605,19 @@ def render_report(
                 f", win_rate={stats['win_rate']}"
             )
         lines += ["", summary, ""]
+        breakdown = regime_breakdown(bucket.labeled, view.regime_by_date)
+        if any(item.get("n") for item in breakdown.values()):
+            parts = []
+            for regime, item in breakdown.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{regime}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by market regime:", ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
     lines += ["## Journal writes", ""]
     if view.appended_records:
         lines.append(
@@ -628,6 +682,16 @@ def main() -> int:
                 "status_counts": view.status_counts,
                 "active": {k: len(b.active) for k, b in view.buckets.items()},
                 "labeled": {k: len(b.labeled) for k, b in view.buckets.items()},
+                "labeled_by_regime": {
+                    k: {
+                        regime: item["n"]
+                        for regime, item in regime_breakdown(
+                            b.labeled, view.regime_by_date
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
                 "appended": len(view.appended_records),
                 "dry_run": dry_run,
             },
