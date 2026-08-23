@@ -277,6 +277,95 @@ class RunPortfolioTest(unittest.TestCase):
         self.assertEqual(run["skipped_no_cash"], 0)
 
 
+class SchedulingVariantsTest(unittest.TestCase):
+    def _signal(self, code: str, regime: str = "sideways",
+                entry_idx: int = 10) -> dict:
+        return {
+            "ts_code": code,
+            "float_date": INDEX_DAYS[entry_idx],
+            "entry_day": INDEX_DAYS[entry_idx],
+            "exit_day": INDEX_DAYS[entry_idx + 5],
+            "entry_price": 50.0,
+            "exit_price": 55.0,
+            "float_ratio": 2.0,
+            "pre_return": -0.10,
+            "regime": regime,
+        }
+
+    def test_default_kwargs_reproduce_locked_baseline(self) -> None:
+        books = RunPortfolioTest()._books_two(q1=55.0, q2=110.0)
+        signals = [self._signal("600000.SH"), self._signal("600001.SH")]
+        plain = sim.run_portfolio(signals, INDEX_DAYS, books, initial_cash=20000.0)
+        explicit = sim.run_portfolio(
+            signals, INDEX_DAYS, books, initial_cash=20000.0,
+            max_concurrent=None, cash_reserve_fraction=0.0,
+            regime_slot_multipliers=None,
+        )
+        self.assertEqual(plain["nav"], explicit["nav"])
+        self.assertEqual(plain["skipped_capped"], 0)
+
+    def test_max_concurrent_caps_same_day_batch(self) -> None:
+        books = RunPortfolioTest()._books_two(q1=55.0, q2=110.0)
+        signals = [self._signal("600000.SH"), self._signal("600001.SH")]
+        run = sim.run_portfolio(
+            signals, INDEX_DAYS, books, initial_cash=20000.0,
+            min_alloc=1000.0, max_concurrent=1,
+        )
+        self.assertEqual(run["spends"], [2000.0])  # one slot (10% of NAV)
+        self.assertEqual(run["closed_positions"], 1)
+        self.assertEqual(run["skipped_capped"], 1)
+
+    def test_cash_reserve_shrinks_spend(self) -> None:
+        books = RunPortfolioTest()._books_two(q1=55.0, q2=110.0)
+        run = sim.run_portfolio(
+            [self._signal("600000.SH")], INDEX_DAYS, books,
+            initial_cash=100000.0, min_alloc=1000.0,
+            cash_reserve_fraction=0.95,
+        )
+        # Slot wants 10000 but the 95% reserve floor leaves only
+        # cash - 0.95 * prior NAV = 5000 deployable.
+        self.assertEqual(run["spends"], [5000.0])
+
+    def test_regime_multipliers_scale_slots(self) -> None:
+        books = RunPortfolioTest()._books_two(q1=55.0, q2=110.0)
+        signals = [
+            self._signal("600000.SH", regime="weak"),
+            self._signal("600001.SH", regime="strong"),
+        ]
+        run = sim.run_portfolio(
+            signals, INDEX_DAYS, books, initial_cash=100000.0,
+            min_alloc=1000.0,
+            regime_slot_multipliers={"weak": 2.0, "*": 0.5},
+        )
+        self.assertEqual(run["spends"], [20000.0, 5000.0])
+
+
+class SweepRunnerTest(unittest.TestCase):
+    def test_variant_matrix_shape_and_baseline_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            _index_cache(cache)
+            _write_csv(cache / "daily_600000SH.csv", ["trade_date", "close"],
+                       [[d, c] for d, c in zip(INDEX_DAYS, INDEX_CLOSES)])
+            _write_csv(cache / "adjfactor_600000SH.csv", ["trade_date", "adj_factor"],
+                       [[d, 1.0] for d in INDEX_DAYS])
+            _write_csv(
+                cache / "share_float.csv",
+                ["ts_code", "ann_date", "float_date", "float_ratio"],
+                [["600000.SH", "20260101", INDEX_DAYS[14], "2.0"]],
+            )
+            rows = sim.run_variant_sweep(cache)
+            self.assertEqual(len(rows), 2 * len(sim.SWEEP_VARIANTS))
+            for row in rows:
+                self.assertTrue(row["research_only"])  # type: ignore[index]
+                self.assertGreaterEqual(float(row["win_rate"]), 0.0)  # type: ignore[index]
+                self.assertLessEqual(float(row["win_rate"]), 1.0)  # type: ignore[index]
+            baseline_all = next(
+                r for r in rows if r["arm"] == "all" and r["variant"] == "baseline"
+            )
+            self.assertEqual(baseline_all["signals"], 1)
+
+
 class MetricsTest(unittest.TestCase):
     def test_monthly_returns_use_base_for_first_month(self) -> None:
         nav = [("20260128", 100.0), ("20260130", 110.0), ("20260202", 121.0)]

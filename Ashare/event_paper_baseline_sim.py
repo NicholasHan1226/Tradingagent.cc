@@ -292,11 +292,24 @@ def run_portfolio(
     cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT,
     min_alloc: float = MIN_ALLOC_CNY,
     slot_fraction: float = SLOT_FRACTION,
+    max_concurrent: int | None = None,
+    cash_reserve_fraction: float = 0.0,
+    regime_slot_multipliers: dict[str, float] | None = None,
 ) -> dict[str, object]:
     """Slot-fractioned paper portfolio.  Exits first each day; each new
     entry may commit at most ``slot_fraction`` of PRIOR-DAY NAV (known at
     the open — no lookahead), capped by available cash; then mark-to-market.
-    Slot sizing keeps a lone-signal day from going all-in on one name."""
+    Slot sizing keeps a lone-signal day from going all-in on one name.
+
+    Optional scheduling variants (defaults preserve the locked baseline):
+      * ``max_concurrent`` — hard cap on simultaneously open positions;
+        entries beyond it are skipped and counted in ``skipped_capped``
+        (fills within one batch count toward the cap incrementally).
+      * ``cash_reserve_fraction`` — always hold this share of PRIOR-DAY
+        NAV in cash; an entry's spend is further capped by cash minus that
+        reserve floor.
+      * ``regime_slot_multipliers`` — per-regime multiplier on the slot
+        fraction (missing regimes fall back to the ``"*"`` key or 1.0)."""
     cost_rate = (cost_bps / 2.0) / 1e4
     global_pos = {d: i for i, d in enumerate(global_days)}
     entries: defaultdict[str, list[dict[str, object]]] = defaultdict(list)
@@ -322,6 +335,7 @@ def run_portfolio(
     trades: list[float] = []
     spends: list[float] = []
     skipped_no_cash = 0
+    skipped_capped = 0
     for day in global_days:
         surviving: list[dict[str, object]] = []
         for posn in positions:
@@ -336,7 +350,19 @@ def run_portfolio(
         batch = entries.get(day)
         if batch:
             for signal in batch:
-                spend = min(prev_equity * slot_fraction, cash)
+                if max_concurrent is not None and len(positions) >= max_concurrent:
+                    skipped_capped += 1
+                    continue
+                multiplier = 1.0
+                if regime_slot_multipliers:
+                    regime = str(signal.get("regime"))
+                    multiplier = regime_slot_multipliers.get(
+                        regime, regime_slot_multipliers.get("*", 1.0)
+                    )
+                reserve_floor = prev_equity * cash_reserve_fraction
+                spend = min(prev_equity * min(slot_fraction * multiplier, 1.0), cash)
+                if cash_reserve_fraction > 0.0:
+                    spend = min(spend, cash - reserve_floor)
                 if spend < min_alloc or spend <= 0.0:
                     skipped_no_cash += 1
                     continue
@@ -373,6 +399,7 @@ def run_portfolio(
         "spends": spends,
         "entries_attempted": len(arm_signals),
         "skipped_no_cash": skipped_no_cash,
+        "skipped_capped": skipped_capped,
         "closed_positions": len(trades),
         "win_rate": win_rate,
     }
@@ -428,6 +455,91 @@ def benchmark_return(index_pairs: list[tuple[object, float]], first_day: str, la
 
 def _fmt_pct(value: float) -> str:
     return f"{value * 100:+.2f}%"
+
+
+# Position-scheduling variants over the LOCKED slot convention (each entry
+# caps at a fraction of prior-day NAV).  The baseline row reproduces the
+# #423 readout exactly; every other row changes exactly one scheduling knob
+# so deltas stay attributable.
+REGIME_WEIGHTED_SLOTS: dict[str, float] = {
+    "weak": 1.5,
+    "sideways": 0.5,
+    "strong": 0.5,
+    "unknown": 0.5,
+}
+
+SWEEP_VARIANTS: list[tuple[str, dict[str, object]]] = [
+    ("baseline", {}),
+    ("cap3", {"max_concurrent": 3}),
+    ("cap6", {"max_concurrent": 6}),
+    ("cap10", {"max_concurrent": 10}),
+    ("reserve20", {"cash_reserve_fraction": 0.20}),
+    ("reserve40", {"cash_reserve_fraction": 0.40}),
+    ("regime-weighted", {"regime_slot_multipliers": REGIME_WEIGHTED_SLOTS}),
+    ("slot05", {"slot_fraction": 0.05}),
+    ("slot20", {"slot_fraction": 0.20}),
+]
+
+
+def run_variant_sweep(
+    cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT
+) -> list[dict[str, object]]:
+    """Run every arm × variant combination and return per-row metrics.
+
+    Same conventions as ``run_study``; the baseline rows must match the
+    #423 numbers bit-for-bit (same engine defaults)."""
+    index_pairs = load_index_series(cache)
+    global_days = [d.strftime("%Y%m%d") for d, _ in index_pairs if d.strftime("%Y%m%d") >= SIM_START]
+    if len(global_days) < PRE_WINDOW_SESSIONS + POST_HORIZON_SESSIONS + 2:
+        raise BaselineSimError("index_history_too_short")
+
+    events, _event_stats = load_events(cache)
+    books, uncovered = load_stock_books(cache)
+    signals, _signal_stats = build_signals(events, books, index_pairs, global_days[-1])
+    if not signals:
+        raise BaselineSimError("signals_empty")
+
+    arms = {
+        "all": signals,
+        "rule": [s for s in signals if rule_arm_filter(s)],
+    }
+    rows: list[dict[str, object]] = []
+    for arm_name, arm_signals in arms.items():
+        for variant_name, kwargs in SWEEP_VARIANTS:
+            run = run_portfolio(arm_signals, global_days, books, cost_bps=cost_bps, **kwargs)  # type: ignore[arg-type]
+            nav: list[tuple[str, float]] = run["nav"]  # type: ignore[assignment]
+            months = monthly_net_returns(nav, base=INITIAL_CASH_CNY)
+            monthly_vals = [r for _, r in months]
+            rows.append(
+                {
+                    "research_only": True,
+                    "arm": arm_name,
+                    "variant": variant_name,
+                    "signals": len(arm_signals),
+                    "closed_positions": run["closed_positions"],
+                    "skipped_no_cash": run["skipped_no_cash"],
+                    "skipped_capped": run["skipped_capped"],
+                    "win_rate": run["win_rate"],
+                    "total_net_return": nav[-1][1] / INITIAL_CASH_CNY - 1.0 if nav else 0.0,
+                    "max_drawdown": max_drawdown(nav),
+                    "monthly_mean": sum(monthly_vals) / len(monthly_vals) if monthly_vals else 0.0,
+                    "monthly_worst": min(monthly_vals) if monthly_vals else 0.0,
+                }
+            )
+    print(f"# universe_books={len(books)} uncovered={uncovered} cost_bps={cost_bps}")
+    header = (
+        f"{'arm':<5} {'variant':<15} {'closed':>6} {'capSkip':>7} "
+        f"{'总净':>9} {'月均净':>8} {'最差月':>8} {'回撤':>8} {'胜率':>6}"
+    )
+    print(header)
+    for row in rows:
+        print(
+            f"{row['arm']:<5} {row['variant']:<15} {row['closed_positions']:>6} "
+            f"{row['skipped_capped']:>7} {_fmt_pct(float(row['total_net_return'])):>9} "
+            f"{_fmt_pct(float(row['monthly_mean'])):>8} {_fmt_pct(float(row['monthly_worst'])):>8} "
+            f"{_fmt_pct(float(row['max_drawdown'])):>8} {row['win_rate']:>6.3f}"
+        )
+    return rows
 
 
 def run_study(cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT) -> dict[str, object]:
@@ -527,13 +639,22 @@ def main() -> int:
         help="Fetch per-stock unlock tables for priced symbols missing from "
         "the cache before simulating (network; needs TUSHARE token env).",
     )
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Run the position-scheduling variant matrix (arms x variants) "
+        "instead of the single baseline study.",
+    )
     args = parser.parse_args()
     from Ashare.event_calendar_fetch import CACHE_DIR
 
     cache = args.cache if args.cache is not None else CACHE_DIR
     if args.refresh_share_float:
         refresh_share_float(cache)
-    run_study(cache, cost_bps=args.cost_bps)
+    if args.sweep:
+        run_variant_sweep(cache, cost_bps=args.cost_bps)
+    else:
+        run_study(cache, cost_bps=args.cost_bps)
     return 0
 
 
