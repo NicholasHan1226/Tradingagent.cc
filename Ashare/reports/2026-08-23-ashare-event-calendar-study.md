@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(解禁信号滚动跟踪)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
 
 ## 结论摘要
 
@@ -122,6 +122,31 @@
 但提示「解禁超跌修复」强度可能随行情环境衰减——这正是滚动跟踪要回答的问题；
 继续积累样本，不据此调整任何假设参数。
 
+### 财报两信号并入跟踪器（第二期第 2 步）
+
+`--signals lockup,earnings_pos,earnings_neg` 把上文财报分组的两个候选信号也纳入
+同一跟踪框架：披露事件经 calendar-document adapter 入场，预告方向映射到
+`impact_direction`（无预告/不确定预告不入跟踪）；分类与标签仍全部由生产 shadow
+因子给出。注意口径：`earnings_pos` 的已标注事后窗口是「不在披露日退出」的对照组
+（该信号的可交易边际在事前漂移），`earnings_neg` 的已标注事后窗口才是信号本身的
+修复窗口。
+
+GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预热步骤
+（仅首次拉取，之后由 actions/cache 复用）。
+
+**三信号首次回填读数（2026-04-01 起，as_of 2026-08-23，本地真实写入验证通过、
+重跑零重复）**：
+
+| 信号 | 已标注 n | 事后 5 日均值 | 中位 | 胜率 |
+|---|---|---|---|---|
+| lockup sell_off（信号窗口） | 11 | −19.3bps | −198.0bps | 36.4% |
+| earnings_pos（对照窗口） | 20 | −167.7bps | −46.9bps | 50.0% |
+| earnings_neg（修复窗口） | 34 | +73.6bps | −6.2bps | 47.1% |
+
+早期读数与历史结构方向一致：不在预增组披露日退出平均损失明显（印证「兑现熄火」）；
+预减组落地后均值转正但胜率不足五成（右偏修复）。样本均太小，不构成任何结论，
+仅作为滚动跟踪基线。
+
 ## 财报披露按预告方向分组（`event_calendar_earnings_groups.py`）
 
 第一期发现披露事件事后分化极大（均值正、中位数为负），本节用 Tushare `forecast`
@@ -188,5 +213,5 @@
 ## 下一步建议
 
 1. ~~把解禁事件做成第一优先级日历信号~~ **已落地**：`event_signal_lockup_tracker.py` 在 shadow 通道滚动跟踪（2026-08-23 起），GitHub Actions 每交易日自动运行。
-2. ~~财报披露补「业绩预告方向」分组后再评估~~ **已完成**（见上文分组章节），两个候选信号待解禁信号积累足够样本后评估是否跟进跟踪器化。
+2. ~~财报披露补「业绩预告方向」分组后再评估~~ **已完成并并入跟踪器**：分组见上文章节，`earnings_pos` / `earnings_neg` 两信号已随 `--signals` 并入滚动跟踪与定时工作流。
 3. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
