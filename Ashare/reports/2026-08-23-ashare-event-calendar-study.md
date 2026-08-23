@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)、`Ashare/event_calendar_lockup_strata.py`(解禁信号质量分层+成本后边际)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）；滚动样本升降级规则见 `2026-08-23-ashare-event-signal-evaluation-criteria.md`。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)、`Ashare/event_calendar_lockup_strata.py`(解禁信号质量分层+成本后边际)、`Ashare/event_calendar_tradingdatas.py`(全市场日历 TD 数据源,服务器端)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）；滚动样本升降级规则见 `2026-08-23-ashare-event-signal-evaluation-criteria.md`。
 
 ## 结论摘要
 
@@ -291,9 +291,35 @@ GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预
 - 本目录 `calendar_view.md`（存档副本）与可重建源 `/tmp/ashare_event_research/calendar_view.md` — 人类可读月历（每日披露家数/解禁笔数 + LPR 预计日）
 - 本目录 `calendar_doc.json`（存档副本）— 456 条事件（解禁 452 + LPR 4），**已通过 `event_catalyst_adapter.catalyst_entries_from_calendar_document` 实测校验**，后续接入影子因子无需改格式。重跑 `Ashare/event_calendar_doc.py` 可刷新。
 
-覆盖边界：解禁日历覆盖 200 只样本股（全市场版需阶段二接入 TradingDatas 正式采集）；财报披露的未来预约依赖交易所公布进度，当前接口只更新到 2025 年报（2026 三季报预约预计 9 月起陆续可得，届时重跑 `event_calendar_doc.py` 即自动补全）；LPR 未来日期按「每月 20 日遇周末顺延」规则生成，置信度 `expected_window`，法定节假日可能再加 1–2 天偏移。
+覆盖边界：解禁日历覆盖 200 只样本股（全市场版的 TD 数据源消费端已落地，见「阶段二第 1 步」节，待生产窗口实测）；财报披露的未来预约依赖交易所公布进度，当前接口只更新到 2025 年报（2026 三季报预约预计 9 月起陆续可得，届时重跑 `event_calendar_doc.py` 即自动补全；TD 版同样受交易所公布节奏约束）；LPR 未来日期按「每月 20 日遇周末顺延」规则生成，置信度 `expected_window`，法定节假日可能再加 1–2 天偏移。
 
-## 局限（阅读结论前必读）
+## 阶段二第 1 步：全市场日历接入 TradingDatas 正式数据源（`event_calendar_tradingdatas.py`）
+
+调查确认 TradingDatas 已把两个事件数据集注册为 active 的 daily_reference 采集
+（`cn.dataset.share_float` / `cn.dataset.disclosure_date`），因此「全市场日历」
+不需要新建采集，只缺一个服务器端消费入口：
+
+- 新脚本按共享 fail-closed V1 客户端的线协议读取两个数据集：先读 catalog 校验
+  激活态 / 字段 / 过滤符 / 页大小并钉死 `catalog_version`，再按 `ann_date`
+  分区逐日扫描（默认回看 270 天、每分区有界分页预算），产出与
+  `event_calendar_doc` 完全兼容的 `calendar_doc.json` + `calendar_view.md`
+  （同一 adapter 合同，下游影子工具可互换消费），写盘后再过一次真实
+  adapter 自检。
+- 全市场口径下同一股票同日多持有人/多批次解禁都会出现，事件 id 显式包含
+  `holder_name` 与 `share_type`；跨公告日重复公告导致的 id 冲突直接
+  fail-closed 报错而不是静默去重。
+- 运行边界：TD 读 API 只在发布主机本机开放（公网不可达，已实测超时），
+  需要 0600 bearer token 文件；GitHub 云端 runner 无法运行本脚本，
+  现有跟踪器工作流不受影响。
+- 数据面现状：`cn.equity.daily`（个股日线收盘）与 `cn.dataset.adj_factor`
+  同为 active；`cn.dataset.index_daily` 与 `cn.dataset.forecast` 当前
+  **paused**——市场环境标签与财报预告两信号的 Tushare 依赖在它们激活前无法移除。
+- 未验证项：生产环境的真实行覆盖（历史起点、每日行量、字段完整度）尚未
+  实测，需要在维护窗口于服务器本机执行一次核对；离线侧已由 11 个单测
+  覆盖（假 transport 复刻 V1 目录/分页/fail-closed 合同）。research_only，
+  不构成任何晋级证据。
+
+
 
 1. 事件时间聚集（披露季/解禁潮），有效独立样本少于名义 n，t 值偏乐观。
 2. 三族 × 多窗口属探索性多重比较，显著阈值应从严（本报告仅以 |t|>2 为弱门槛）。
@@ -306,4 +332,4 @@ GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预
 2. ~~财报披露补「业绩预告方向」分组后再评估~~ **已完成并并入跟踪器**：分组见上文章节，`earnings_pos` / `earnings_neg` 两信号已随 `--signals` 并入滚动跟踪与定时工作流。
 3. ~~跟踪器为每条信号附市场环境标签~~ **已落地**：跟踪器输出与状态文件均按弱市/震荡/强市拆分已标注结果；首次带标签读数与历史分层方向一致（解禁信号强市 7 条全亏、弱市 4 条全盈）。
 4. ~~算清成本后的真实边际并预先固定信号升降级标准~~ **已落地（2026-08-23）**：成本后边际见上节——全体信号扣 15bps 往返成本后净胜率跌破五成，弱市是唯一在各成本档下稳健存活的分层；滚动样本的判定规则固定于[预注册评估标准](2026-08-23-ashare-event-signal-evaluation-criteria.md)。
-5. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
+5. ~~阶段二：全市场解禁/披露日历转正式采集~~ **消费端已落地（2026-08-23，见上文阶段二第 1 节）**：`event_calendar_tradingdatas.py` 从 TD 已激活数据集产出全市场主板未来日历，待生产窗口实测覆盖；宏观日历（CPI/PMI/FOMC 等）与跟踪器全面迁移 TD 作为后续独立增量。
