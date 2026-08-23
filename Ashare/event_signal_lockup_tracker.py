@@ -378,6 +378,10 @@ class TrackerView:
     regime_by_date: dict[str, str] = field(default_factory=dict)
     # entry event_id -> float-ratio bucket label (lockup events only).
     ratio_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-event order-flow absorption bucket (moneyflow
+    # side table, report-only like ratio_by_event; empty when the moneyflow
+    # cache is unavailable, e.g. CI).
+    absorption_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -576,6 +580,10 @@ def run_tracker(
         if obs.observation_status == "observed"
     }
     view.ratio_by_event = ratio_by_event
+    if LOCKUP_SIGNAL in signals:
+        view.absorption_by_event = _absorption_labels_for_observations(
+            cache, batch.observations
+        )
     if EARNINGS_POS_SIGNAL in signals:
         view.prewindow_stats[EARNINGS_POS_SIGNAL] = prewindow_breakdown(
             view.buckets[EARNINGS_POS_SIGNAL].labeled, ann_by_event, bars_by_symbol
@@ -649,6 +657,73 @@ def ratio_breakdown(
         for label in RATIO_LABEL_ORDER
         if label in groups
     }
+
+
+ABSORPTION_LABEL_ORDER = ("outflow", "balanced", "inflow")
+
+
+def absorption_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    absorption_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event absorption bucket.
+
+    Mirrors :func:`ratio_breakdown`: observations without a moneyflow-derived
+    label (dataset unavailable, insufficient history) are skipped, and an
+    empty label table yields an empty breakdown.  Report-only readout for
+    rolling validation of the #433 watchlist candidate — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = absorption_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in ABSORPTION_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _absorption_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> absorption bucket via the moneyflow cache.
+
+    Labelling is a report-only decoration on the tracking pass: any failure
+    to reach or read the moneyflow dataset (missing cache dir, unreadable
+    rows) degrades to "no labels" instead of breaking tracking — CI runs
+    without the dataset by design.
+    """
+
+    try:
+        from Ashare.event_moneyflow_absorption_study import (
+            absorption_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = absorption_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get((obs.symbol, obs.scheduled_date.strftime("%Y%m%d")))
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
 
 
 # Practice rule distilled from the stratification research ("enter in weak
@@ -849,6 +924,21 @@ def render_report(
             lines += ["Labelled outcomes by float-ratio bucket:", ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        absorption_stats = absorption_breakdown(
+            bucket.labeled, view.absorption_by_event
+        )
+        if any(item.get("n") for item in absorption_stats.values()):
+            parts = []
+            for label, item in absorption_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by absorption bucket:", ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -957,6 +1047,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in ratio_breakdown(
                             b.labeled, view.ratio_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_absorption": {
+                    k: {
+                        label: item["n"]
+                        for label, item in absorption_breakdown(
+                            b.labeled, view.absorption_by_event
                         ).items()
                         if item.get("n")
                     }
