@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T12:35:00+08:00
+Observed at: 2026-08-23T12:58:00+08:00
 
 This file is a replaceable current summary. It separates source, release, runtime,
 market evidence, and authority. Historical chronology remains in Git history and
@@ -13,7 +13,7 @@ dated `docs/reports/`; it is never a substitute for a fresh readback.
 | 本地主线 | Kimi/user A-share lane, intentionally not acting as canonical main | resolve with `git rev-parse HEAD origin/main`; preserve and do not reset or repurpose |
 | GitHub 主线 | branch CI passed and exact-main validation ran green for the latest research/docs merges at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
 | Ordinary server source | `1d58efe`, behind GitHub and containing untracked operational files | not synchronized; do not clean or fast-forward over unknown files |
-| Effective release | immutable release `9768907e741913541034f76357088d95febde057` | deployed code layer; no new release build was taken in this observation batch |
+| Effective release | immutable release `f74bd1999b576b0bdc44fe1a816479cf9cc8eb28` | deployed code layer, cut over 2026-08-23 with green exact-main and front health; the forty-symbol observer service was rebound to it by drop-in after cutover |
 | Runtime authority | all observed A-share/Crypto receipts reported real trading, execution, capital, production promotion, and automatic risk expansion disabled | simulation/read-only only |
 
 An effective immutable release can be valid while the ordinary source checkout is
@@ -92,15 +92,16 @@ Runtime plane:
 
 - the delayed-exit shadow reversal threshold now matches the champion exit
   rule on current main;
-- the forty-symbol public identity isolation fix is deployed and naturally
-  verified against production events: inherited ten-prefix events stop at
-  observation cutoff 2026-08-22T11:20:55Z and every later event carries the
-  forty-only contract and event prefix, with the seven legacy entries kept in
-  place as append-only history. The remaining open defect is that this observer
-  has produced zero successful observations since deployment (121 rejects and
-  86 gaps with watermark/query-shape fail-closed reasons) while the ten-symbol
-  observer keeps succeeding on the same data plane, so the lane stays unusable
-  for receipt-bound evaluation until a forward fix lands;
+- the forty-symbol observer is recovered and producing its first healthy
+  evidence. Root cause of the earlier zero-success state was the settle-clock
+  bug fixed on current main (the lane computed its cutoff with the ten-symbol
+  +55s boundary while its collector finishes later, so honest receipts failed
+  the watermark gate); the fix reached production through the 2026-08-23
+  release cutover plus an observer drop-in rebind, and the next natural cycle
+  produced a successful observation with all 40 spot sources fresh through the
+  just-closed bar plus a spread sidecar, correct forty-only identity, and all
+  authority flags false. The identity isolation readback (inherited ten-prefix
+  events stop at 2026-08-22T11:20:55Z) remains verified;
 - the G5 delayed-paper service completed successfully with
   `data_incomplete=false` in its latest applicable readback; this batch did
   not re-observe it, and service completion alone does not prove a new
@@ -133,12 +134,9 @@ coverage counts, and generated projections are not called learning.
 
 ## Next acceptance points
 
-1. Root-cause why the forty-symbol observer never succeeds (watermark and
-   query-shape fail-closed rejects while the ten-symbol observer stays healthy
-   on the same data plane), forward-fix it, then read back one natural
-   successful observation without changing timer or authority. The identity
-   half of this point is closed by the 2026-08-23 natural readback archived
-   under Crypto/reports/.
+1. Keep the recovered forty-symbol observer under natural readback across
+   several consecutive cycles without changing timer or authority, then feed
+   its receipts into the first rolling evaluation entry per point 4.
 2. On the next A-share market window, prove the first safe-subset simulation
    decision/outcome without waiting for exact500 or every rolling symbol.
 3. The only remaining crypto research lever is a different signal family: the
