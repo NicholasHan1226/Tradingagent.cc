@@ -1,0 +1,281 @@
+{
+  "assumes_touch_equals_fill": true,
+  "authority": "none",
+  "automatic_champion_replacement": false,
+  "automatic_risk_expansion_enabled": false,
+  "capital_write_eligible": false,
+  "champion_configuration": {
+    "decision_lookback_bars": 3,
+    "entry_fee": "0.001",
+    "entry_threshold": "0.001",
+    "exit_fee": "0.001",
+    "max_hold_bars": 288,
+    "minimum_regime_return": "0",
+    "regime_lookback_bars": 12,
+    "scan_performed": false,
+    "slippage_rate_per_leg": "0.0002",
+    "stop_loss_return": "-0.02",
+    "take_profit_return": "0.03"
+  },
+  "contract": "tradingagent.crypto.forty_symbol_rolling_evaluation.v1",
+  "evaluation": {
+    "abstentions_data_end": 15,
+    "baseline_buy_hold": {
+      "mean_net": "-0.0008963443946365649927334173125",
+      "per_symbol_net": {
+        "AAVEUSDT": {
+          "gross": "0.004304044177359103459477018",
+          "net": "0.001896563805312764221323584"
+        },
+        "ADAUSDT": {
+          "gross": "0.000458085203847915712322492",
+          "net": "-0.0019401757781201848998459167"
+        },
+        "APTUSDT": {
+          "gross": "0.008278145695364238410596026",
+          "net": "0.005861138754689019589681841"
+        },
+        "ARBUSDT": {
+          "gross": "0.011518324607329842931937173",
+          "net": "0.009093550430051623768901256"
+        },
+        "ATOMUSDT": {
+          "gross": "0",
+          "net": "-0.0023971628771228771228771229"
+        },
+        "AVAXUSDT": {
+          "gross": "-0.0008121277747698971304818625",
+          "net": "-0.0032073438493396154468163132"
+        },
+        "BCHUSDT": {
+          "gross": "-0.0110334681868333946303788157",
+          "net": "-0.0134041820436128784786379489"
+        },
+        "BNBUSDT": {
+          "gross": "-0.0065012334929618342765926571",
+          "net": "-0.0088828118544998753966973385"
+        },
+        "BTCUSDT": {
+          "gross": "-0.0074102807300300234261578954",
+          "net": "-0.0097896799572778135638065743"
+        },
+        "CRVUSDT": {
+          "gross": "0.000315258511979823455233291",
+          "net": "-0.0020826600911446686982626456"
+        },
+        "DOGEUSDT": {
+          "gross": "-0.0020934332304980167474658440",
+          "net": "-0.0044855778071950086053215186"
+        },
+        "DOTUSDT": {
+          "gross": "0.004504504504504504504504505",
+          "net": "0.002096543596403596403596405"
+        },
+        "ENAUSDT": {
+          "gross": "0.030100334448160535117056856",
+          "net": "0.027631016166709544635966041"
+        },
+        "ETCUSDT": {
+          "gross": "0.007802340702210663198959688",
+          "net": "0.005386474343601781833251275"
+        },
+        "ETHUSDT": {
+          "gross": "-0.0108797131938306797953518479",
+          "net": "-0.0132507956263715620393448932"
+        },
+        "FETUSDT": {
+          "gross": "0.004501607717041800643086817",
+          "net": "0.002093653753012261050846260"
+        },
+        "FILUSDT": {
+          "gross": "0.007282535401213755900202293",
+          "net": "0.004867915100575756003942114"
+        },
+        "GRTUSDT": {
+          "gross": "-0.0107868020304568527918781726",
+          "net": "-0.0131581071861894450726938037"
+        },
+        "HBARUSDT": {
+          "gross": "0.001303101381287464164712015",
+          "net": "-0.0010971852420917628110747730"
+        },
+        "INJUSDT": {
+          "gross": "0.003939456769645448890731910",
+          "net": "0.001532850372998347288208371"
+        },
+        "JUPUSDT": {
+          "gross": "0.004073319755600814663951120",
+          "net": "0.001666392467573160037518490"
+        },
+        "LDOUSDT": {
+          "gross": "-0.0039503386004514672686230248",
+          "net": "-0.0063380318725292765924820101"
+        },
+        "LINKUSDT": {
+          "gross": "-0.0172293160748644393912891377",
+          "net": "-0.0195851774750944350384616259"
+        },
+        "LTCUSDT": {
+          "gross": "0.002151799687010954616588419",
+          "net": "-0.0002505214044406297927424691"
+        },
+        "NEARUSDT": {
+          "gross": "0.011506849315068493150684932",
+          "net": "0.009082102645934887030777443"
+        },
+        "ONDOUSDT": {
+          "gross": "0.005370265686828716789146410",
+          "net": "0.002960229408161087075728116"
+        },
+        "OPUSDT": {
+          "gross": "0.008530805687203791469194313",
+          "net": "0.006113193079375600702614920"
+        },
+        "POLUSDT": {
+          "gross": "0.001946850968558356857782537",
+          "net": "-0.0004549788274336390758078674"
+        },
+        "PYTHUSDT": {
+          "gross": "0.014894919404203223831871047",
+          "net": "0.012462050979226853538218565"
+        },
+        "RENDERUSDT": {
+          "gross": "0",
+          "net": "-0.0023971628771228771228771229"
+        },
+        "SEIUSDT": {
+          "gross": "-0.0057105205359103887546672524",
+          "net": "-0.0080939943651955336558894654"
+        },
+        "SOLUSDT": {
+          "gross": "-0.0036359747620575339535878516",
+          "net": "-0.0060244216154586510698156512"
+        },
+        "STRKUSDT": {
+          "gross": "-0.0053010223400227186671715259",
+          "net": "-0.0076854778031812942831496409"
+        },
+        "SUIUSDT": {
+          "gross": "0.007334344967121901871522509",
+          "net": "0.004919600470515827116737588"
+        },
+        "TIAUSDT": {
+          "gross": "0.004140215291195142147391664",
+          "net": "0.001733127643672915547053002"
+        },
+        "TRXUSDT": {
+          "gross": "-0.0011658408627222384144564267",
+          "net": "-0.0035602090294083648790731275"
+        },
+        "UNIUSDT": {
+          "gross": "-0.0046217465336900997324252007",
+          "net": "-0.0070078303315949436114845991"
+        },
+        "WLDUSDT": {
+          "gross": "0.002930988542499333866240341",
+          "net": "0.000526799608449104851982550"
+        },
+        "XLMUSDT": {
+          "gross": "-0.0005202913631633714880332986",
+          "net": "-0.0029162070171451857195873844"
+        },
+        "XRPUSDT": {
+          "gross": "0.004641004641004641004641005",
+          "net": "0.002232716519843792571065299"
+        }
+      }
+    },
+    "excluded_symbols": [],
+    "exit_reason_counts": {
+      "data_end": 15,
+      "max_holding_period": 0,
+      "momentum_reversal_observed": 7,
+      "stop_loss": 0,
+      "take_profit": 0
+    },
+    "hit_rate": "0",
+    "hits": 0,
+    "max_drawdown_resolved": "-0.0444080603890327113868395645",
+    "mean_gross_resolved": "-0.003956329716608106959158141343",
+    "mean_net_resolved": "-0.006344008627004673055262794929",
+    "observe_slots_total": 328,
+    "recommendation": {
+      "action": "continue_accumulation",
+      "detail": "resolved trips below the pre-declared minimum sample; keep accumulating rolling entries before any retain/downweight/disable judgement"
+    },
+    "trips_resolved": 7,
+    "trips_total": 22,
+    "turnover_trips_per_symbol": "0.55"
+  },
+  "execution_authority": false,
+  "execution_eligible": false,
+  "generated_from": {
+    "bars_dir_file_count": 100,
+    "events_file_name": "events_full.jsonl",
+    "events_file_sha256": "a805ece4496625b44a188ea9cd318a4fdc18e201757045dffe685f8c41219d30",
+    "replay_command": "python3 -m Crypto.forty_symbol_rolling_evaluation --events /tmp/forty-eval-input/events_full.jsonl --bars-dir /tmp/forty-eval-input/bars"
+  },
+  "model_network_used": false,
+  "not_promotion_evidence": true,
+  "production_eligible": false,
+  "promotion_authorized": false,
+  "real_trading_enabled": false,
+  "receipt_bound_pit": true,
+  "receipts": [
+    {
+      "checksum": "441fceec038a830cdce0aa7c06ac03577c5f2ffa2fd43a73529f78f1f50350b4",
+      "event_id": "crypto-forty-observation-072ee3a70b2d188be5fac1e0",
+      "window_end": "2026-08-23T04:45:00Z"
+    },
+    {
+      "checksum": "f0e1d22c7a9a9ad6a71f7a08699f16ff399904a6059e7d0dd028975561f48d06",
+      "event_id": "crypto-forty-observation-6927389790d0c76459bbd822",
+      "window_end": "2026-08-23T04:50:00Z"
+    },
+    {
+      "checksum": "e99619553d25d08ebee6a5c15e077a8db43362ee08383775144b432512e3ccb9",
+      "event_id": "crypto-forty-observation-5fc95ded4a9c56f74ffbfd31",
+      "window_end": "2026-08-23T04:55:00Z"
+    },
+    {
+      "checksum": "3721881a3714bc65a03439b885f8c26910f99ba2efc16ad0909cfb92afc568ad",
+      "event_id": "crypto-forty-observation-1974ca894b749b35571036fd",
+      "window_end": "2026-08-23T05:00:00Z"
+    },
+    {
+      "checksum": "9bd4ba15d4bf0cceb71125f955d46fcd304bb5f66566767a162cf86d17f2753b",
+      "event_id": "crypto-forty-observation-dd86fc73666c17d10f7815f3",
+      "window_end": "2026-08-23T05:05:00Z"
+    },
+    {
+      "checksum": "cf3c5ca098e1cb67424a105e80991a26fadb1682cec66415509b2bacf799e64c",
+      "event_id": "crypto-forty-observation-59e5c4d444882ebeca804836",
+      "window_end": "2026-08-23T05:10:00Z"
+    },
+    {
+      "checksum": "a40b5b4201a3faef7f0d57c521bd6038e6df24560259b86aab42d997d9a8fb08",
+      "event_id": "crypto-forty-observation-f408399dbe57ca2c648272d3",
+      "window_end": "2026-08-23T05:15:00Z"
+    },
+    {
+      "checksum": "13e19116817ff886b840068d885cc60260298fe43871677a7e988c301dc4ad2d",
+      "event_id": "crypto-forty-observation-24788ab04b7ee500264a8bd6",
+      "window_end": "2026-08-23T05:20:00Z"
+    },
+    {
+      "checksum": "c25f4f73bfc602aa612a4d1866c63eef63584dba985458d14d506447452702d8",
+      "event_id": "crypto-forty-observation-3339355cdfa222be0fc9d2b7",
+      "window_end": "2026-08-23T05:25:00Z"
+    }
+  ],
+  "segment": {
+    "bar_count_per_symbol": 21,
+    "dropped_prefix_receipts": [],
+    "first_open_time": "2026-08-23T03:40:00.000Z",
+    "gap_free": true,
+    "last_open_time": "2026-08-23T05:20:00.000Z",
+    "slot_count": 9,
+    "symbols": 40
+  },
+  "shadow_only_recommendation": true
+}
