@@ -37,6 +37,7 @@ from Ashare.event_signal_lockup_tracker import (
     ratio_breakdown,
     regime_breakdown,
     render_report,
+    rule_subset_breakdown,
     run_tracker,
     signal_journal_records,
 )
@@ -315,6 +316,68 @@ class TestRatioTagsAndPrewindow:
         # Appointment before the entry session -> window holds nothing.
         assert prewindow_return(bars, date(2026, 7, 15), date(2026, 7, 14)) is None
         assert prewindow_return([], date(2026, 7, 15), date(2026, 7, 20)) is None
+
+
+class TestRuleSubsetReadout:
+    """The report-only weak-market / band-avoiding practice-rule preview."""
+
+    @staticmethod
+    def _lockup_obs():
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        return view.buckets[LOCKUP_SIGNAL].labeled[0]
+
+    def test_subset_splits_weak_nonband_from_rest(self):
+        obs = self._lockup_obs()
+        day = obs.scheduled_date.isoformat()
+        breakdown = rule_subset_breakdown(
+            (obs,), {day: "weak"}, {obs.event_id: ">=5%"}
+        )
+        assert breakdown["rule"]["n"] == 1
+        assert breakdown["excluded"]["n"] == 0
+
+    def test_excluded_band_other_regimes_and_missing_tags(self):
+        obs = self._lockup_obs()
+        day = obs.scheduled_date.isoformat()
+        for regime, tag in (("weak", "3-5%"), ("sideways", ">=5%"), ("weak", None)):
+            breakdown = rule_subset_breakdown((obs,), {day: regime}, {obs.event_id: tag})
+            assert breakdown["rule"].get("n", 0) == 0
+            assert breakdown["excluded"]["n"] == 1
+
+    def test_sides_always_sum_to_input(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        total = len(lockup.labeled)
+        breakdown = rule_subset_breakdown(
+            lockup.labeled,
+            {o.scheduled_date.isoformat(): "unknown" for o in lockup.labeled},
+            {},
+        )
+        assert breakdown["rule"].get("n", 0) + breakdown["excluded"]["n"] == total
+
+    def test_net_columns_deduct_one_round_trip(self):
+        obs = self._lockup_obs()
+        day = obs.scheduled_date.isoformat()
+        breakdown = rule_subset_breakdown(
+            (obs,), {day: "weak"}, {obs.event_id: "1-3%"}
+        )
+        rule = breakdown["rule"]
+        assert rule["mean_net_bps"] == pytest.approx(rule["mean_bps"] - 15.0, abs=0.2)
+
+    def test_render_report_shows_rule_subset_for_lockup(self):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        view = build_tracker_view(batch, ALL_SIGNALS)
+        view.regime_by_date = {
+            o.scheduled_date.isoformat(): "weak" for o in batch.observations
+        }
+        view.ratio_by_event = {
+            o.event_id: ">=5%" for o in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Practice-rule subset" in report
+        assert "rule_subset: n=" in report
+        assert "mean_net=" in report
 
 
 # --- journal write path -----------------------------------------------------
