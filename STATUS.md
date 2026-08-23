@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T12:58:00+08:00
+Observed at: 2026-08-23T14:55:00+08:00
 
 This file is a replaceable current summary. It separates source, release, runtime,
 market evidence, and authority. Historical chronology remains in Git history and
@@ -85,6 +85,24 @@ historical-backfill-without-PIT; archived under `Crypto/reports/`):
   under taker exits — the maker delta is pure fee arithmetic (+0.0998%). This
   closes execution-cost reduction as a lever: the per-trip loss is structural,
   not an artifact of exit fees or slippage;
+- the first receipt-bound rolling evaluation entry (2026-08-23, entry 001)
+  consumed a hash-chain-verified gap-free nine-slot segment from the recovered
+  forty-symbol observer: 22 champion trips with 7 resolved (all
+  momentum-reversal exits), 0 take-profits, mean net ≈ −0.63% per trip versus a
+  buy-and-hold baseline of ≈ −0.09%, shadow-only recommendation
+  `continue_accumulation` (below the 30-resolved-trip threshold for any
+  retain/downweight/disable call); accumulation continues;
+- the pre-registered forty-symbol cross-sectional prescreen (20 frozen
+  candidates over a ~186-day common grid: long-top relative strength /
+  long-bottom reversal × lookback 288/576 × K=5/10 × horizon 48/288 plus
+  dispersion-gated variants, replaced-weight taker costing, always-invested
+  equal-weight baseline) found the reversal family net-negative in all cells
+  (worst ≈ −28bp per window) and the relative-strength family directionally
+  positive only in the 24-hour-hold cells, best +43bp/window at t=1.47 — not
+  significant, median near zero. Verdict: no statistically significant usable
+  signal in the pre-registered grid; no grid widening or retuning. The
+  dispersion-gated variants were structurally inert on this window (gate
+  threshold unit defect reported as-is, not repaired post hoc);
 - the 2026-08-18 funding/basis carry research modules and reports landed on
   current main as archived assets.
 
@@ -134,18 +152,18 @@ coverage counts, and generated projections are not called learning.
 
 ## Next acceptance points
 
-1. Keep the recovered forty-symbol observer under natural readback across
-   several consecutive cycles without changing timer or authority, then feed
-   its receipts into the first rolling evaluation entry per point 4.
+1. Keep the recovered forty-symbol observer under natural readback and keep
+   feeding receipt-bound segments into rolling evaluation entries (first entry
+   recorded 2026-08-23 with `continue_accumulation`); a retain/downweight/
+   disable recommendation becomes eligible only at ≥30 resolved trips.
 2. On the next A-share market window, prove the first safe-subset simulation
    decision/outcome without waiting for exact500 or every rolling symbol.
-3. The only remaining crypto research lever is a different signal family: the
-   2026-08-23 event study exhausted threshold/horizon scanning under taker
-   costs, and the exit-cost counterfactual proved even the maker-exit upper
-   bound stays net-negative — so no further work should scan thresholds,
-   horizons, or execution variants of the current momentum entry; evaluate a
-   new signal hypothesis instead (the archived funding/basis carry modules are
-   one candidate starting point).
+3. Historical-grid scanning is exhausted for the crypto book: threshold/horizon
+   scanning of the momentum entry, maker-exit execution variants, and now the
+   cross-sectional family have all been screened under taker costs without a
+   significant positive survivor. No further historical scanning of any family
+   is justified; learning continues only through receipt-bound rolling
+   accumulation of resolved outcomes on live segments.
 4. For both markets, bind the next resolved outcome to fees/slippage, baseline,
    factor/strategy version, deterministic replay, exclusions, and a shadow-only
    recommendation.
