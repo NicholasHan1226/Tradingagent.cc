@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(解禁信号滚动跟踪)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(解禁信号滚动跟踪)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
 
 ## 结论摘要
 
@@ -146,6 +146,31 @@
 `disclosure_negative_relief`(预减→落地后修复窗口)。两者均为 research_only 候选,
 未接入任何跟踪或模拟盘;若推进,优先级建议在解禁信号积累足够样本之后。
 
+## 样本外扩稳健性检验（200 → 1000 只，`event_calendar_expand_samples.py`）
+
+把样本从「披露次数 top 200」扩到 top 1000 主板股（新增 800 只逐股拉日线/复权因子/
+解禁/预告），同口径重跑全部统计。**三大核心结论全部稳健成立**：
+
+| 结构 | top 200 | top 1000 | 判定 |
+|---|---|---|---|
+| 解禁：事前 10 日下跌 | −79bps（t=−2.6） | **−108bps（t=−6.4）**, n=2222 | ✅ 更强 |
+| 解禁：事后 5 日修复 | +86bps（t=+3.9） | +27bps（t=+2.2）, n=2247 | ✅ 方向不变，幅度收窄 |
+| 披露：事前漂移 | +73bps（t=+3.1） | +36bps（t=+3.5）, n=5850 | ✅ 稳健 |
+| 披露：事后分化 | 均值正/中位负 | 同样分化（day0 t=−6.2） | ✅ 分组必要性再确认 |
+| LPR：无结构 | t=1.65 | 完全一致（指数层面与样本无关） | ✅ |
+
+财报方向分组扩样本后**强度大幅提升**（补拉新增 800 只预告后重跑）：
+
+| 组 | n (200→1000) | 事前 10 日 | 披露当日 | 后 5 日 |
+|---|---|---|---|---|
+| 预增/利好 | 335 → **1535** | +223 → **+150bps（t=7.4）** | −7 → **−47bps（t=−7.6）** | 不显著（兑现熄火确认） |
+| 预减/利空 | 245 → **1199** | −105 → **−104bps（t=−4.6）** | +25bps（t=3.6） | +86 → **+85bps（t=5.1）** |
+
+解读：大样本下「买预期卖事实」的当日效应更清晰——预增股披露日平均显著下跌
+（t=−7.6），预减股披露日转正——两组的窗口结构完全符合各自假设；解禁修复幅度
+在含中小盘后从 +86 收窄至 +27bps 但方向和显著性保持。原报告结论无需修改，
+仅幅度预期应按大样本口径校准。
+
 ## 未来日历（已生成，可直接使用）
 
 - 本目录 `calendar_view.md`（存档副本）与可重建源 `/tmp/ashare_event_research/calendar_view.md` — 人类可读月历（每日披露家数/解禁笔数 + LPR 预计日）
@@ -157,11 +182,11 @@
 
 1. 事件时间聚集（披露季/解禁潮），有效独立样本少于名义 n，t 值偏乐观。
 2. 三族 × 多窗口属探索性多重比较，显著阈值应从严（本报告仅以 |t|>2 为弱门槛）。
-3. 未计交易成本与冲击；样本限主板 200 只，对小盘/次新外推未知。
+3. 未计交易成本与冲击；样本已扩至主板 top 1000，仍不含创业板/科创板/北交所。
 4. 全部为历史条件分布，不是校准概率，不得写入任何晋级材料。
 
 ## 下一步建议
 
-1. 把解禁事件做成第一优先级日历信号（回避窗口 = 前 10 交易日至解禁日；观察窗口 = 解禁后 5 日），先在模拟盘 shadow 观察，不动 Champion。
-2. 财报披露补「业绩预告方向」分组后再评估。
+1. ~~把解禁事件做成第一优先级日历信号~~ **已落地**：`event_signal_lockup_tracker.py` 在 shadow 通道滚动跟踪（2026-08-23 起），GitHub Actions 每交易日自动运行。
+2. ~~财报披露补「业绩预告方向」分组后再评估~~ **已完成**（见上文分组章节），两个候选信号待解禁信号积累足够样本后评估是否跟进跟踪器化。
 3. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
