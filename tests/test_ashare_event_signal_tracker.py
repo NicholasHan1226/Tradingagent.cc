@@ -31,7 +31,9 @@ from Ashare.event_signal_lockup_tracker import (
     build_tracker_view,
     load_disclosure_entries,
     load_lockup_entries,
+    make_regime_lookup,
     parse_signals,
+    regime_breakdown,
     render_report,
     run_tracker,
     signal_journal_records,
@@ -223,6 +225,61 @@ class TestParseSignals:
             parse_signals(",,")
 
 
+class TestRegimeTags:
+    @staticmethod
+    def _pairs(closes):
+        base = date(2026, 1, 1)
+        return [(base + timedelta(days=i), close) for i, close in enumerate(closes)]
+
+    def test_regime_boundaries(self):
+        lookup = make_regime_lookup(self._pairs([100.0] * 15))
+        assert lookup(date(2026, 1, 15)) == "sideways"
+        weak = make_regime_lookup(
+            self._pairs([100.0] * 10 + [100.0] * 4 + [97.0])
+        )
+        assert weak(date(2026, 1, 15)) == "weak"
+        strong = make_regime_lookup(
+            self._pairs([100.0] * 10 + [100.0] * 4 + [103.0])
+        )
+        assert strong(date(2026, 1, 15)) == "strong"
+
+    def test_regime_unknown_before_history_or_far_future(self):
+        lookup = make_regime_lookup(self._pairs([100.0] * 15))
+        # Fewer than 10 sessions of history before the day.
+        assert lookup(date(2026, 1, 5)) == "unknown"
+        # A day beyond the series resolves to the LAST known session...
+        late = make_regime_lookup(
+            self._pairs([100.0] * 10 + [100.0] * 4 + [97.0])
+        )
+        assert late(date(2026, 2, 20)) == "weak"
+
+    def test_regime_falls_back_to_last_session_before_non_trading_day(self):
+        # Sessions on Jan 1..15 with a gap: an appointment landing on a
+        # missing (weekend/holiday) day must use the last completed session
+        # instead of degrading to unknown.
+        closes = [100.0] * 10 + [100.0] * 4 + [97.0]
+        pairs = [
+            (date(2026, 1, 1) + timedelta(days=i), close)
+            for i, close in enumerate(closes)
+            if i not in (13,)  # one missing calendar day mid-series
+        ]
+        lookup = make_regime_lookup(pairs)
+        missing_day = date(2026, 1, 14)
+        assert all(day != missing_day for day, _ in pairs)
+        assert lookup(missing_day) == lookup(date(2026, 1, 13))
+
+    def test_regime_breakdown_groups_labelled_outcomes(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.regime_by_date = {
+            obs.scheduled_date.isoformat(): "weak"
+            for obs in _batch({SYMBOL: SELL_OFF_CLOSES}).observations
+        }
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        breakdown = regime_breakdown(lockup.labeled, view.regime_by_date)
+        assert set(breakdown) == {"weak"}
+        assert breakdown["weak"]["n"] == 1
+
+
 # --- journal write path -----------------------------------------------------
 
 
@@ -349,6 +406,28 @@ def mini_cache(tmp_path):
         ["ts_code", "trade_date", "adj_factor"],
         [[SYMBOL, d, "1.0"] for d in close_by_day],
     )
+
+    # SSE index series aligned with the same sessions: the 10-session return
+    # ending at the Aug 5 close is -3% (weak) and ending at the Aug 10 close
+    # is +3% (strong); every other date sits inside the sideways band.
+    index_days = sorted(close_by_day)
+    index_pos = {d: i for i, d in enumerate(index_days)}
+    aug5 = EVENT_DATE.strftime("%Y%m%d")
+    aug10 = date(2026, 8, 10).strftime("%Y%m%d")
+    index_closes: list[float] = []
+    for d in index_days:
+        if d == aug5:
+            index_closes.append(97.0)
+        elif d == aug10:
+            index_closes.append(103.0)
+        else:
+            base = 97.0 if index_pos[d] > index_pos[aug5] and index_pos[d] < index_pos[aug10] else 100.0
+            index_closes.append(base)
+    _write_csv(
+        cache / "index_000001SH.csv",
+        ["ts_code", "trade_date", "close"],
+        [["000001.SH", d, f"{close:.4f}"] for d, close in zip(index_days, index_closes)],
+    )
     return cache
 
 
@@ -366,6 +445,17 @@ class TestRunTracker:
         assert len(view.buckets[EARNINGS_POS_SIGNAL].labeled) == 1
         assert len(view.buckets[EARNINGS_NEG_SIGNAL].labeled) == 1
         assert view.appended_records and len(view.appended_records) == 3
+        # Regime tags: the fixture index makes Aug 5 weak and Aug 10 strong.
+        assert view.regime_by_date["2026-08-05"] == "weak"
+        assert view.regime_by_date["2026-08-10"] == "strong"
+        lockup_breakdown = regime_breakdown(
+            view.buckets[LOCKUP_SIGNAL].labeled, view.regime_by_date
+        )
+        assert lockup_breakdown["weak"]["n"] == 1
+        neg_breakdown = regime_breakdown(
+            view.buckets[EARNINGS_NEG_SIGNAL].labeled, view.regime_by_date
+        )
+        assert neg_breakdown["strong"]["n"] == 1
         rows = SampleJournal(journal_path).read_events()
         assert [r["record_type"] for r in rows] == ["shadow_research"] * 3
 
