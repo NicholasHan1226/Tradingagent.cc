@@ -154,6 +154,12 @@ reports/2026-08-24-moneyflow-absorption.md。
 Tushare daily 新→旧排序导致 bisect 静默错位（假 633 不足历史），
 已修复+回归测试看守。详见 reports/2026-08-24-blocktrade-prelockup.md。
 
+**滚动验证面已接通（#438）**：block 桶标签以 side-table 接入解禁跟踪器
+（复用 #434 absorption 模式，缓存缺失时降级为无标签），报告新增
+「pre-event block bucket」读数节、状态 JSON 落 `labeled_by_block`。
+真数据首读：11 个已标注结局全部解析（none 7 / near_flat 4），
+方向与反向梯度一致（near_flat 优于 none）；小样本仅作观察名单记录。
+
 ## 数据扩展原则
 
 1. 每条新管道绑定具体假设（解释现有信号衰减 / 生成新候选），不为采集而采集。
