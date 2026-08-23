@@ -35,16 +35,19 @@ if str(_REPO_ROOT) not in sys.path:
 from Ashare.event_calendar_fetch import (  # noqa: E402
     CACHE_DIR,
     FetchError,
+    call_api,
     fetch_ranged,
 )
 from Ashare.event_calendar_lockup_strata import (  # noqa: E402
     REGIME_BINS,
-    load_index_series,
 )
 
 MARGIN_START = "20100401"
 MARGIN_END = "20260821"
 AGGREGATE_NAME = "margin_aggregate"
+INDEX_NAME_DEFAULT = "index_000001SH"
+INDEX_NAME_LONG = "index_000001SH_long"
+INDEX_CODE_SSE = "000001.SH"
 FEATURE_LAG_SESSIONS = 20
 SHORT_LAG_SESSIONS = 5
 FORWARD_HORIZON_SESSIONS = 10
@@ -201,11 +204,11 @@ def quantile_spread(
     return {"n": n, "buckets": rows, "spread": spread}
 
 
-def _write_aggregate(cache: Path, fields: list[str], rows: list[list]) -> Path:
+def _write_csv(cache: Path, name: str, fields: list[str], rows: list[list]) -> Path:
     """Write inside the caller-supplied cache (the shared save_csv targets
     the fixed module-level directory and would bypass ``cache``)."""
     cache.mkdir(parents=True, exist_ok=True)
-    path = cache / f"{AGGREGATE_NAME}.csv"
+    path = cache / f"{name}.csv"
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(fields)
@@ -223,12 +226,52 @@ def load_cached_aggregate(cache: Path) -> tuple[list[str], list[list]]:
         return fields, [row for row in reader]
 
 
-def run_study(cache: Path = CACHE_DIR, refresh: bool = False) -> dict[str, object]:
+def _load_index_pairs(cache: Path, index_name: str) -> list[tuple[object, float]]:
+    """Parameterized twin of strata.load_index_series (YYYYMMDD dates)."""
+    from datetime import datetime
+
+    path = cache / f"{index_name}.csv"
+    if not path.exists():
+        raise MarginStudyError(f"cache_missing:{path.name}")
+    with path.open(encoding="utf-8") as handle:
+        reader = csv.reader(handle)
+        fields = next(reader)
+        date_i = fields.index("trade_date")
+        close_i = fields.index("close")
+        return sorted(
+            (datetime.strptime(r[date_i], "%Y%m%d").date(), float(r[close_i]))
+            for r in reader
+        )
+
+
+def ensure_long_index(cache: Path) -> None:
+    """Fetch the SSE daily series back to MARGIN_START under the long name."""
+    path = cache / f"{INDEX_NAME_LONG}.csv"
+    if path.exists():
+        return
+    fields, rows = call_api(
+        "index_daily",
+        {
+            "ts_code": INDEX_CODE_SSE,
+            "start_date": MARGIN_START,
+            "end_date": MARGIN_END,
+        },
+    )
+    if not rows:
+        raise MarginStudyError("index_daily_empty")
+    _write_csv(cache, f"{INDEX_NAME_LONG}", fields, rows)
+
+
+def run_study(
+    cache: Path = CACHE_DIR,
+    refresh: bool = False,
+    index_name: str = INDEX_NAME_DEFAULT,
+) -> dict[str, object]:
     """Fetch-if-needed then compute; returns the summary dict and prints it."""
     if refresh or not (cache / f"{AGGREGATE_NAME}.csv").exists():
         fields, rows = fetch_ranged("margin", MARGIN_START, MARGIN_END)
         fields, rows, _dups = dedupe_margin_rows(fields, rows)
-        _write_aggregate(cache, fields, rows)
+        _write_csv(cache, AGGREGATE_NAME, fields, rows)
     else:
         fields, rows = load_cached_aggregate(cache)
 
@@ -237,7 +280,7 @@ def run_study(cache: Path = CACHE_DIR, refresh: bool = False) -> dict[str, objec
         raise MarginStudyError("sample_too_short")
 
     features = margin_features(totals)
-    index_pairs = load_index_series(cache)
+    index_pairs = _load_index_pairs(cache, index_name)
     fwd = forward_return_map(index_pairs)
     regimes = regime_by_day(index_pairs)
 
@@ -307,8 +350,7 @@ def _render(summary: dict[str, object]) -> None:
     print("## 融资融券×市场阶段研究（research_only，报告读数非晋级证据）")
     print(f"- 样本：交易日 {summary['days_total']} 天（{summary['joined_first']}.."
           f"{summary['joined_last']} 可配对），特征+前向收益配对 "
-          f"{summary['days_joined']} 天（原始行 {summary['rows_raw']}）；"
-          f"配对窗受指数缓存起点限制")
+          f"{summary['days_joined']} 天（原始行 {summary['rows_raw']}）")
     for tag in ("regime_means_full", "regime_means_post2016"):
         print(f"- 融资余额20日变化 × 市场阶段 [{tag}]:")
         means = summary[tag]
@@ -332,8 +374,15 @@ def _render(summary: dict[str, object]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--refresh", action="store_true", help="refetch even when cached")
+    parser.add_argument(
+        "--long-index",
+        action="store_true",
+        help=f"use {INDEX_NAME_LONG} (SSE back to {MARGIN_START}); fetch if missing",
+    )
     args = parser.parse_args()
-    run_study(refresh=args.refresh)
+    if args.long_index:
+        ensure_long_index(CACHE_DIR)
+    run_study(refresh=args.refresh, index_name=INDEX_NAME_LONG if args.long_index else INDEX_NAME_DEFAULT)
     return 0
 
 
