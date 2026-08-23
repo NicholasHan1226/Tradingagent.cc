@@ -1,0 +1,4561 @@
+{
+ "calendar_id": "ashare-event-calendar-research-v1",
+ "entries": [
+  {
+   "event_id": "lpr:2026-08-20",
+   "event_type": "macro_release",
+   "scheduled_date": "2026-08-20",
+   "date_confidence": "expected_window",
+   "impact_direction": "unclear",
+   "source_ref": "rule:lpr_monthly_20th_rolled_to_trading_day",
+   "entity": "PBOC_LPR"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20260825:陶福生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-08-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "陶福生",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20260825:游爱军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-08-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "游爱军",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20260825:沈卫峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-08-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "沈卫峰",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20260825:丁力",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-08-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "丁力",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20260825:其他核心人员共计37人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-08-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "其他核心人员共计37人",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20260825:其他核心人员共计70人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-08-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "其他核心人员共计70人",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:马宝亮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "马宝亮",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:孟奎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "孟奎",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:魏亮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "魏亮",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:边同乐",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "边同乐",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:刘成友",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "刘成友",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:马维峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "马维峰",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:彭玉平",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "彭玉平",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:杨津",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "杨津",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:乔习学",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "乔习学",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:王冰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "王冰",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20260903:核心管理人员及核心技术(业务)骨干(106人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "核心管理人员及核心技术(业务)骨干(106人)",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:徐向科",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "徐向科",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:周炎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "周炎",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:陈朝勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "陈朝勇",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:张达",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "张达",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:姜英伟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "姜英伟",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:张婷",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "张婷",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20260904:管理人员、核心技术(业务)人员533人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260331",
+   "entity": "管理人员、核心技术(业务)人员533人",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20260911:中层管理人员、核心技术(业务)人员(34人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-09-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250912",
+   "entity": "中层管理人员、核心技术(业务)人员(34人)",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lpr:2026-09-21",
+   "event_type": "macro_release",
+   "scheduled_date": "2026-09-21",
+   "date_confidence": "expected_window",
+   "impact_direction": "unclear",
+   "source_ref": "rule:lpr_monthly_20th_rolled_to_trading_day",
+   "entity": "PBOC_LPR"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:沈健彧",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "沈健彧",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:许纪忠",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "许纪忠",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:杨剑飞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "杨剑飞",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:赵春财",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "赵春财",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:管永银",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "管永银",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:郑永伟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "郑永伟",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:李国平",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "李国平",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:林镇勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "林镇勇",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:沈孙强",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "沈孙强",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20261013:中层管理人员、核心技术(业务)人员(含控股子公司)(共计276人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260417",
+   "entity": "中层管理人员、核心技术(业务)人员(含控股子公司)(共计276人)",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lpr:2026-10-20",
+   "event_type": "macro_release",
+   "scheduled_date": "2026-10-20",
+   "date_confidence": "expected_window",
+   "impact_direction": "unclear",
+   "source_ref": "rule:lpr_monthly_20th_rolled_to_trading_day",
+   "entity": "PBOC_LPR"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20261023:周燕飞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "周燕飞",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20261023:康云华",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "康云华",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20261023:中层管理人员、核心技术(业务)人员(132人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "中层管理人员、核心技术(业务)人员(132人)",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:002575.SZ:20261102:陈婷",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231123",
+   "entity": "陈婷",
+   "symbol": "002575.SZ"
+  },
+  {
+   "event_id": "lockup:002575.SZ:20261102:杨光",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231123",
+   "entity": "杨光",
+   "symbol": "002575.SZ"
+  },
+  {
+   "event_id": "lockup:002575.SZ:20261102:核心骨干人员(10人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231123",
+   "entity": "核心骨干人员(10人)",
+   "symbol": "002575.SZ"
+  },
+  {
+   "event_id": "lockup:600367.SH:20261102:青岛红星化工集团有限责任公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231104",
+   "entity": "青岛红星化工集团有限责任公司",
+   "symbol": "600367.SH"
+  },
+  {
+   "event_id": "lockup:600050.SH:20261102:公司核心管理人才及专业人才",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20221118",
+   "entity": "公司核心管理人才及专业人才",
+   "symbol": "600050.SH"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20261109:中层管理人员、核心骨干员工(18人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231108",
+   "entity": "中层管理人员、核心骨干员工(18人)",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:601678.SH:20261116:于江",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241218",
+   "entity": "于江",
+   "symbol": "601678.SH"
+  },
+  {
+   "event_id": "lockup:601678.SH:20261116:董红波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241218",
+   "entity": "董红波",
+   "symbol": "601678.SH"
+  },
+  {
+   "event_id": "lockup:601678.SH:20261116:蔡颖辉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241218",
+   "entity": "蔡颖辉",
+   "symbol": "601678.SH"
+  },
+  {
+   "event_id": "lockup:601678.SH:20261116:核心骨干人员(6人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241218",
+   "entity": "核心骨干人员(6人)",
+   "symbol": "601678.SH"
+  },
+  {
+   "event_id": "lpr:2026-11-20",
+   "event_type": "macro_release",
+   "scheduled_date": "2026-11-20",
+   "date_confidence": "expected_window",
+   "impact_direction": "unclear",
+   "source_ref": "rule:lpr_monthly_20th_rolled_to_trading_day",
+   "entity": "PBOC_LPR"
+  },
+  {
+   "event_id": "lockup:600803.SH:20261130:核心管理/业务人员(共计15人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-30",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "核心管理/业务人员(共计15人)",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20261130:张宇迎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-30",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "张宇迎",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20261130:蒋承宏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-30",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "蒋承宏",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600062.SH:20261130:核心骨干人员(43人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-11-30",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20221130",
+   "entity": "核心骨干人员(43人)",
+   "symbol": "600062.SH"
+  },
+  {
+   "event_id": "lockup:002458.SZ:20261214:曹积生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231212",
+   "entity": "曹积生",
+   "symbol": "002458.SZ"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:伍杰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "伍杰",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:陈永阳",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "陈永阳",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:张燕",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "张燕",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:通富微电子股份有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "通富微电子股份有限公司",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:深圳海纳基石投资有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "深圳海纳基石投资有限公司",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:ASMPT Hong Kong Holding Limited",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "ASMPT Hong Kong Holding Limited",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:嘉兴厚熙宸浩股权投资合伙企业(有限合伙)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "嘉兴厚熙宸浩股权投资合伙企业(有限合伙)",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:芯绣咨询管理(上海)有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "芯绣咨询管理(上海)有限公司",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20261215:海南博林京融创业投资有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "海南博林京融创业投资有限公司",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:002572.SZ:20261229:江淦钧",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231228",
+   "entity": "江淦钧",
+   "symbol": "002572.SZ"
+  },
+  {
+   "event_id": "lockup:002572.SZ:20261229:柯建生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2026-12-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231228",
+   "entity": "柯建生",
+   "symbol": "002572.SZ"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270107:中国航空工业集团公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-01-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250709",
+   "entity": "中国航空工业集团公司",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:财通基金管理有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "财通基金管理有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:诺德基金管理有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "诺德基金管理有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:钟革",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "钟革",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:华泰资产管理有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "华泰资产管理有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:广发证券股份有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "广发证券股份有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:华安证券资产管理有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "华安证券资产管理有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:常德兴鑫产业发展投资基金合伙企业(有限合伙)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "常德兴鑫产业发展投资基金合伙企业(有限合伙)",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:湖南兴湘投资控股集团有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "湖南兴湘投资控股集团有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:郭伟松",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "郭伟松",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:西安博成基金管理有限公司-博成阳明良知1号私募证券投资基金",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "西安博成基金管理有限公司-博成阳明良知1号私募证券投资基金",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:济南瀚祥投资管理合伙企业(有限合伙)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "济南瀚祥投资管理合伙企业(有限合伙)",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:国泰海通证券股份有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "国泰海通证券股份有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20270224:UBS AG",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-02-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "UBS AG",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20270301:核心技术(业务)人员(共142人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "核心技术(业务)人员(共142人)",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20270301:兰波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "兰波",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20270301:杨林广",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "杨林广",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20270301:黄敏胜",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "黄敏胜",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20270301:张杨",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "张杨",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20270301:汤云峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "汤云峰",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270301:管理人员、核心技术(业务)人员(131人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251128",
+   "entity": "管理人员、核心技术(业务)人员(131人)",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:600729.SH:20270308:重庆渝富资本运营集团有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-08",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240307",
+   "entity": "重庆渝富资本运营集团有限公司",
+   "symbol": "600729.SH"
+  },
+  {
+   "event_id": "lockup:600729.SH:20270308:天津滨海新区物美津融商贸有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-08",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240307",
+   "entity": "天津滨海新区物美津融商贸有限公司",
+   "symbol": "600729.SH"
+  },
+  {
+   "event_id": "lockup:600729.SH:20270308:深圳嘉璟智慧零售有限责任公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-08",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240307",
+   "entity": "深圳嘉璟智慧零售有限责任公司",
+   "symbol": "600729.SH"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:王剑峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "王剑峰",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:闫英辉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "闫英辉",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:孙原",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "孙原",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:朱海涛",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "朱海涛",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:靳永亮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "靳永亮",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:张志勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "张志勇",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:张贞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "张贞",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20270311:其他管理人员、核心技术(业务)骨干人员(含控股子公司)(403人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-03-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "其他管理人员、核心技术(业务)骨干人员(含控股子公司)(403人)",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:核心管理/业务人员(共计54人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "核心管理/业务人员(共计54人)",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:于建潮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "于建潮",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:韩继深",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "韩继深",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:张瑾",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "张瑾",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:蒋承宏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "蒋承宏",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:苏莉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "苏莉",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:张晓阳",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "张晓阳",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:黄保光",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "黄保光",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:梁宏玉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "梁宏玉",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:张宇迎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "张宇迎",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:林燕",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "林燕",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:姜杨",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "姜杨",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:孙典飞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "孙典飞",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20270412:王博涵",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "王博涵",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:000848.SZ:20270419:沈志军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240429",
+   "entity": "沈志军",
+   "symbol": "000848.SZ"
+  },
+  {
+   "event_id": "lockup:000848.SZ:20270419:梁启朝",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240429",
+   "entity": "梁启朝",
+   "symbol": "000848.SZ"
+  },
+  {
+   "event_id": "lockup:000848.SZ:20270419:丁兴贤",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240429",
+   "entity": "丁兴贤",
+   "symbol": "000848.SZ"
+  },
+  {
+   "event_id": "lockup:000848.SZ:20270419:刘明珊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240429",
+   "entity": "刘明珊",
+   "symbol": "000848.SZ"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:张绍卓",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "张绍卓",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:纪瑞东",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "纪瑞东",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:关勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "关勇",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:薛洪宇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "薛洪宇",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:李建",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "李建",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:王仁泽",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "王仁泽",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:王琳锋",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "王琳锋",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:闫文粹",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "闫文粹",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:其他激励对象",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "其他激励对象",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:600760.SH:20270426:王克喜",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-04-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230428",
+   "entity": "王克喜",
+   "symbol": "600760.SH"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:李军风",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "李军风",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:毕林生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "毕林生",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:陈哲",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "陈哲",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:刘劲松",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "刘劲松",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:王劲东",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "王劲东",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:刘涛",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "刘涛",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20270505:中层管理人员、核心骨干员工(211人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20230505",
+   "entity": "中层管理人员、核心骨干员工(211人)",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:尹红宇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "尹红宇",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:成剑",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "成剑",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:吴玉祥",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "吴玉祥",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:朱千勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "朱千勇",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:沈燕娟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "沈燕娟",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:王剑锋",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "王剑锋",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20270524:中级管理人员及核心骨干共98名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-05-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "中级管理人员及核心骨干共98名",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270607:李延",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260603",
+   "entity": "李延",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270607:其他核心人员8名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260603",
+   "entity": "其他核心人员8名",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20270607:陈习良",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "陈习良",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20270607:伍伟成",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "伍伟成",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20270607:姚如卿",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "姚如卿",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20270607:张用钊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "张用钊",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20270607:颜文革",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "颜文革",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20270607:中层、核心技术(业务)人员",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "中层、核心技术(业务)人员",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:科研骨干人员(82人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "科研骨干人员(82人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:刘为权",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "刘为权",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:徐永前",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "徐永前",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:肖文斌",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "肖文斌",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:田永静",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "田永静",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:刘立新",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "刘立新",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:周违莉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "周违莉",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:中层管理人员(36人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "中层管理人员(36人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20270607:业务骨干人员(40人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-06-07",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "业务骨干人员(40人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270709:其他核心人员共计37人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250707",
+   "entity": "其他核心人员共计37人",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270709:其他核心人员共计73人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "其他核心人员共计73人",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270709:陶福生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "陶福生",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270709:游爱军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "游爱军",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20270709:沈卫峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "沈卫峰",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002780.SZ:20270712:张恒",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260429",
+   "entity": "张恒",
+   "symbol": "002780.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:孙金妮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "孙金妮",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:丁红岩",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "丁红岩",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:刘广源",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "刘广源",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:李新华",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "李新华",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:李庆川",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "李庆川",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:中层管理人员(21人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "中层管理人员(21人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:科研骨干与高技能人员(86人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "科研骨干与高技能人员(86人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20270719:业务骨干人员(60人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "业务骨干人员(60人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:603127.SH:20270722:核心技术(业务)骨干(238人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-07-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260724",
+   "entity": "核心技术(业务)骨干(238人)",
+   "symbol": "603127.SH"
+  },
+  {
+   "event_id": "lockup:002262.SZ:20270816:中层管理人员、核心骨干员工(801人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240809",
+   "entity": "中层管理人员、核心骨干员工(801人)",
+   "symbol": "002262.SZ"
+  },
+  {
+   "event_id": "lockup:002262.SZ:20270816:孙家权",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240809",
+   "entity": "孙家权",
+   "symbol": "002262.SZ"
+  },
+  {
+   "event_id": "lockup:002262.SZ:20270816:段保州",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240809",
+   "entity": "段保州",
+   "symbol": "002262.SZ"
+  },
+  {
+   "event_id": "lockup:002262.SZ:20270816:李岗生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-16",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240809",
+   "entity": "李岗生",
+   "symbol": "002262.SZ"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:高海龙",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "高海龙",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:李新芳",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "李新芳",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:王波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "王波",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:周雄",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "周雄",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:刘冬生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "刘冬生",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:朱文俊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "朱文俊",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:陈志文",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "陈志文",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:谢吴涛",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "谢吴涛",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:王利军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "王利军",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:曾辉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "曾辉",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20270819:中层管理人员、核心骨干(730人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-08-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "中层管理人员、核心骨干(730人)",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:马宝亮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "马宝亮",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:孟奎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "孟奎",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:魏亮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "魏亮",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:边同乐",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "边同乐",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:刘成友",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "刘成友",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:马维峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "马维峰",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:彭玉平",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "彭玉平",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:杨津",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "杨津",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:乔习学",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "乔习学",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:王冰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "王冰",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002442.SZ:20270903:核心管理人员及核心技术(业务)骨干(106人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-03",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240830",
+   "entity": "核心管理人员及核心技术(业务)骨干(106人)",
+   "symbol": "002442.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:徐向科",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "徐向科",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:周炎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "周炎",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:陈朝勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "陈朝勇",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:张达",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "张达",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:姜英伟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "姜英伟",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:张婷",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "张婷",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20270906:管理人员、核心技术(业务)人员533人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "管理人员、核心技术(业务)人员533人",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20270913:中层管理人员、核心技术(业务)人员(34人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-09-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250912",
+   "entity": "中层管理人员、核心技术(业务)人员(34人)",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:沈健彧",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "沈健彧",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:许纪忠",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "许纪忠",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:杨剑飞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "杨剑飞",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:赵春财",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "赵春财",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:管永银",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "管永银",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:郑永伟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "郑永伟",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:李国平",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "李国平",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:林镇勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "林镇勇",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:沈孙强",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "沈孙强",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:603225.SH:20271014:中层管理人员、核心技术(业务)人员(含控股子公司)(共计276人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241016",
+   "entity": "中层管理人员、核心技术(业务)人员(含控股子公司)(共计276人)",
+   "symbol": "603225.SH"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:毕松羚",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "毕松羚",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:邱建军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "邱建军",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:崔玲",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "崔玲",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:包腊梅",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "包腊梅",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:苏志忠",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "苏志忠",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:毕于村",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "毕于村",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:李振建",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "李振建",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:002810.SZ:20271018:中层管理人员及核心骨干员工(103人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241127",
+   "entity": "中层管理人员及核心骨干员工(103人)",
+   "symbol": "002810.SZ"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:中高层管理人员及核心技术(业务)人员(合计79人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "中高层管理人员及核心技术(业务)人员(合计79人)",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:张鹏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "张鹏",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:李景东",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "李景东",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:张立新",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "张立新",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:马晓勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "马晓勇",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:姜振生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "姜振生",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20271022:王宝杰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "王宝杰",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20271025:周燕飞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "周燕飞",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20271025:康云华",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "康云华",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:002796.SZ:20271025:中层管理人员、核心技术(业务)人员(132人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-10-25",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "中层管理人员、核心技术(业务)人员(132人)",
+   "symbol": "002796.SZ"
+  },
+  {
+   "event_id": "lockup:002575.SZ:20271101:陈婷",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231123",
+   "entity": "陈婷",
+   "symbol": "002575.SZ"
+  },
+  {
+   "event_id": "lockup:002575.SZ:20271101:杨光",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231123",
+   "entity": "杨光",
+   "symbol": "002575.SZ"
+  },
+  {
+   "event_id": "lockup:002575.SZ:20271101:核心骨干人员(10人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-01",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231123",
+   "entity": "核心骨干人员(10人)",
+   "symbol": "002575.SZ"
+  },
+  {
+   "event_id": "lockup:000969.SZ:20271108:中层管理人员、核心骨干员工(18人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-08",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20231108",
+   "entity": "中层管理人员、核心骨干员工(18人)",
+   "symbol": "000969.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:杨林",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "杨林",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:张清",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "张清",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:徐铁柱",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "徐铁柱",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:田华臣",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "田华臣",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:杜玉雄",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "杜玉雄",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:左桃林",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "左桃林",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20271115:中层管理人员及技术(业务)骨干人员(25人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "中层管理人员及技术(业务)骨干人员(25人)",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:600803.SH:20271129:核心管理/业务人员(共计15人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "核心管理/业务人员(共计15人)",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20271129:张宇迎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "张宇迎",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20271129:蒋承宏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-11-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "蒋承宏",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:000791.SZ:20271202:甘肃省电力投资集团有限责任公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-12-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250329",
+   "entity": "甘肃省电力投资集团有限责任公司",
+   "symbol": "000791.SZ"
+  },
+  {
+   "event_id": "lockup:002188.SZ:20271209:上海天纪投资有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2027-12-09",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250226",
+   "entity": "上海天纪投资有限公司",
+   "symbol": "002188.SZ"
+  },
+  {
+   "event_id": "lockup:002916.SZ:20280202:中层管理人员及核心骨干(654人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260129",
+   "entity": "中层管理人员及核心骨干(654人)",
+   "symbol": "002916.SZ"
+  },
+  {
+   "event_id": "lockup:002916.SZ:20280202:崔荣",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260129",
+   "entity": "崔荣",
+   "symbol": "002916.SZ"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280214:李海棠",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "李海棠",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280214:杨琰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "杨琰",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280214:中层管理人员(不超过2人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "中层管理人员(不超过2人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280214:科研骨干人员(不超过14人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "科研骨干人员(不超过14人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280214:业务骨干人员(不超过10人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "业务骨干人员(不超过10人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20280228:核心技术(业务)人员(共142人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "核心技术(业务)人员(共142人)",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20280228:兰波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "兰波",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20280228:杨林广",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "杨林广",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20280228:黄敏胜",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "黄敏胜",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20280228:张杨",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "张杨",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20280228:汤云峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "汤云峰",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280228:中层管理人员(3人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "中层管理人员(3人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280228:科研骨干与高技能人员(16人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "科研骨干与高技能人员(16人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280228:业务骨干人员(12人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "业务骨干人员(12人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280228:管理人员、核心技术(业务)人员(131人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-02-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251128",
+   "entity": "管理人员、核心技术(业务)人员(131人)",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:王剑峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "王剑峰",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:闫英辉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "闫英辉",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:孙原",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "孙原",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:朱海涛",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "朱海涛",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:靳永亮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "靳永亮",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:张志勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "张志勇",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:张贞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "张贞",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:000600.SZ:20280313:其他管理人员、核心技术(业务)骨干人员(含控股子公司)(403人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-03-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20240312",
+   "entity": "其他管理人员、核心技术(业务)骨干人员(含控股子公司)(403人)",
+   "symbol": "000600.SZ"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:核心管理/业务人员(共计54人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "核心管理/业务人员(共计54人)",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:于建潮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "于建潮",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:韩继深",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "韩继深",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:张瑾",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "张瑾",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:蒋承宏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "蒋承宏",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:苏莉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "苏莉",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:张晓阳",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "张晓阳",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:黄保光",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "黄保光",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:梁宏玉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "梁宏玉",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:张宇迎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "张宇迎",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:林燕",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "林燕",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:姜杨",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "姜杨",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:孙典飞",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "孙典飞",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20280410:王博涵",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-04-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250412",
+   "entity": "王博涵",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280512:秦建",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260508",
+   "entity": "秦建",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280512:中级管理人员及核心骨干共17名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260508",
+   "entity": "中级管理人员及核心骨干共17名",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:尹红宇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "尹红宇",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:成剑",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "成剑",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:吴玉祥",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "吴玉祥",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:朱千勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "朱千勇",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:沈燕娟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "沈燕娟",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:王剑锋",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "王剑锋",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20280522:中级管理人员及核心骨干共98名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "中级管理人员及核心骨干共98名",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280605:李延",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260603",
+   "entity": "李延",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280605:其他核心人员8名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260603",
+   "entity": "其他核心人员8名",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20280605:陈习良",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "陈习良",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20280605:伍伟成",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "伍伟成",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20280605:姚如卿",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "姚如卿",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20280605:张用钊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "张用钊",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20280605:颜文革",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "颜文革",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20280605:中层、核心技术(业务)人员",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "中层、核心技术(业务)人员",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:科研骨干人员(82人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "科研骨干人员(82人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:刘为权",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "刘为权",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:徐永前",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "徐永前",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:肖文斌",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "肖文斌",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:田永静",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "田永静",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:刘立新",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "刘立新",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:周违莉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "周违莉",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:中层管理人员(36人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "中层管理人员(36人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20280606:业务骨干人员(40人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "业务骨干人员(40人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280710:其他核心人员共计37人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250707",
+   "entity": "其他核心人员共计37人",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280710:其他核心人员共计73人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "其他核心人员共计73人",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280710:陶福生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "陶福生",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280710:游爱军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "游爱军",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:002825.SZ:20280710:沈卫峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-10",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250710",
+   "entity": "沈卫峰",
+   "symbol": "002825.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:孙金妮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "孙金妮",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:丁红岩",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "丁红岩",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:刘广源",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "刘广源",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:李新华",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "李新华",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:李庆川",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "李庆川",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:中层管理人员(21人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "中层管理人员(21人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:科研骨干与高技能人员(86人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "科研骨干与高技能人员(86人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20280718:业务骨干人员(60人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "业务骨干人员(60人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:603127.SH:20280724:核心技术(业务)骨干(238人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-07-24",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260724",
+   "entity": "核心技术(业务)骨干(238人)",
+   "symbol": "603127.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:高海龙",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "高海龙",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:李新芳",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "李新芳",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:王波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "王波",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:周雄",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "周雄",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:刘冬生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "刘冬生",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:朱文俊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "朱文俊",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:陈志文",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "陈志文",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:谢吴涛",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "谢吴涛",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:王利军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "王利军",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:曾辉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "曾辉",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20280821:中层管理人员、核心骨干(730人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-08-21",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "中层管理人员、核心骨干(730人)",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:徐向科",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "徐向科",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:周炎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "周炎",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:陈朝勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "陈朝勇",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:张达",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "张达",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:姜英伟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "姜英伟",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:张婷",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "张婷",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20280905:管理人员、核心技术(业务)人员533人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "管理人员、核心技术(业务)人员533人",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:601619.SH:20280926:上海博荣益弘科技有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-09-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250930",
+   "entity": "上海博荣益弘科技有限公司",
+   "symbol": "601619.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:中高层管理人员及核心技术(业务)人员(合计79人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "中高层管理人员及核心技术(业务)人员(合计79人)",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:张鹏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "张鹏",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:李景东",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "李景东",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:张立新",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "张立新",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:马晓勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "马晓勇",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:姜振生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "姜振生",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281023:王宝杰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20241024",
+   "entity": "王宝杰",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281030:由宇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-30",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251101",
+   "entity": "由宇",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20281030:中高层管理人员及核心技术(业务)人员(合计90人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-10-30",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251101",
+   "entity": "中高层管理人员及核心技术(业务)人员(合计90人)",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:杨林",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "杨林",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:张清",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "张清",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:徐铁柱",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "徐铁柱",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:田华臣",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "田华臣",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:杜玉雄",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "杜玉雄",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:左桃林",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "左桃林",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:002334.SZ:20281114:中层管理人员及技术(业务)骨干人员(25人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251113",
+   "entity": "中层管理人员及技术(业务)骨干人员(25人)",
+   "symbol": "002334.SZ"
+  },
+  {
+   "event_id": "lockup:600803.SH:20281128:核心管理/业务人员(共计15人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "核心管理/业务人员(共计15人)",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20281128:张宇迎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "张宇迎",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:600803.SH:20281128:蒋承宏",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-11-28",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251202",
+   "entity": "蒋承宏",
+   "symbol": "600803.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20281215:深圳市领先半导体发展有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "深圳市领先半导体发展有限公司",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:603991.SH:20281215:南宁市先进半导体科技有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2028-12-15",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251217",
+   "entity": "南宁市先进半导体科技有限公司",
+   "symbol": "603991.SH"
+  },
+  {
+   "event_id": "lockup:002916.SZ:20290202:中层管理人员及核心骨干(654人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260129",
+   "entity": "中层管理人员及核心骨干(654人)",
+   "symbol": "002916.SZ"
+  },
+  {
+   "event_id": "lockup:002916.SZ:20290202:崔荣",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-02",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260129",
+   "entity": "崔荣",
+   "symbol": "002916.SZ"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290219:李海棠",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "李海棠",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290219:杨琰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "杨琰",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290219:中层管理人员(不超过2人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "中层管理人员(不超过2人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290219:科研骨干人员(不超过14人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "科研骨干人员(不超过14人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290219:业务骨干人员(不超过10人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-19",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "业务骨干人员(不超过10人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290226:中层管理人员(3人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "中层管理人员(3人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290226:科研骨干与高技能人员(16人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "科研骨干与高技能人员(16人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290226:业务骨干人员(12人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "业务骨干人员(12人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20290227:核心技术(业务)人员(共142人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "核心技术(业务)人员(共142人)",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20290227:兰波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "兰波",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20290227:杨林广",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "杨林广",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20290227:黄敏胜",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "黄敏胜",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20290227:张杨",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "张杨",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002847.SZ:20290227:汤云峰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "汤云峰",
+   "symbol": "002847.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290227:管理人员、核心技术(业务)人员(131人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251128",
+   "entity": "管理人员、核心技术(业务)人员(131人)",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:000905.SZ:20290326:厦门国际港务有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-03-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260320",
+   "entity": "厦门国际港务有限公司",
+   "symbol": "000905.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290514:秦建",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260508",
+   "entity": "秦建",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290514:中级管理人员及核心骨干共17名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-14",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260508",
+   "entity": "中级管理人员及核心骨干共17名",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:尹红宇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "尹红宇",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:成剑",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "成剑",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:吴玉祥",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "吴玉祥",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:朱千勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "朱千勇",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:沈燕娟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "沈燕娟",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:王剑锋",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "王剑锋",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20290522:中级管理人员及核心骨干共98名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-05-22",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250519",
+   "entity": "中级管理人员及核心骨干共98名",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:000722.SZ:20290604:湖南能源集团电力投资有限公司",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-04",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260602",
+   "entity": "湖南能源集团电力投资有限公司",
+   "symbol": "000722.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20290605:陈习良",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "陈习良",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20290605:伍伟成",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "伍伟成",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20290605:姚如卿",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "姚如卿",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20290605:张用钊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "张用钊",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20290605:颜文革",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "颜文革",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:002728.SZ:20290605:中层、核心技术(业务)人员",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260608",
+   "entity": "中层、核心技术(业务)人员",
+   "symbol": "002728.SZ"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:科研骨干人员(82人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "科研骨干人员(82人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:刘为权",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "刘为权",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:徐永前",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "徐永前",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:肖文斌",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "肖文斌",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:田永静",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "田永静",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:刘立新",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "刘立新",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:周违莉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "周违莉",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:中层管理人员(36人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "中层管理人员(36人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20290606:业务骨干人员(40人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-06-06",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250610",
+   "entity": "业务骨干人员(40人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:孙金妮",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "孙金妮",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:丁红岩",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "丁红岩",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:刘广源",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "刘广源",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:李新华",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "李新华",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:李庆川",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "李庆川",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:中层管理人员(21人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "中层管理人员(21人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:科研骨干与高技能人员(86人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "科研骨干与高技能人员(86人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20290718:业务骨干人员(60人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-18",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250722",
+   "entity": "业务骨干人员(60人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:603127.SH:20290723:核心技术(业务)骨干(238人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-07-23",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260724",
+   "entity": "核心技术(业务)骨干(238人)",
+   "symbol": "603127.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:高海龙",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "高海龙",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:李新芳",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "李新芳",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:王波",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "王波",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:周雄",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "周雄",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:刘冬生",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "刘冬生",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:朱文俊",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "朱文俊",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:陈志文",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "陈志文",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:谢吴涛",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "谢吴涛",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:王利军",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "王利军",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:曾辉",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "曾辉",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:603179.SH:20290820:中层管理人员、核心骨干(730人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-08-20",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260821",
+   "entity": "中层管理人员、核心骨干(730人)",
+   "symbol": "603179.SH"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:徐向科",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "徐向科",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:周炎",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "周炎",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:陈朝勇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "陈朝勇",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:张达",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "张达",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:姜英伟",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "姜英伟",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:张婷",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "张婷",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20290905:管理人员、核心技术(业务)人员533人",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-09-05",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20250606",
+   "entity": "管理人员、核心技术(业务)人员533人",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:600231.SH:20291029:由宇",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-10-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251101",
+   "entity": "由宇",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:600231.SH:20291029:中高层管理人员及核心技术(业务)人员(合计90人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2029-10-29",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251101",
+   "entity": "中高层管理人员及核心技术(业务)人员(合计90人)",
+   "symbol": "600231.SH"
+  },
+  {
+   "event_id": "lockup:002916.SZ:20300211:中层管理人员及核心骨干(654人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260129",
+   "entity": "中层管理人员及核心骨干(654人)",
+   "symbol": "002916.SZ"
+  },
+  {
+   "event_id": "lockup:002916.SZ:20300211:崔荣",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-11",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260129",
+   "entity": "崔荣",
+   "symbol": "002916.SZ"
+  },
+  {
+   "event_id": "lockup:600750.SH:20300212:李海棠",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "李海棠",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20300212:杨琰",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "杨琰",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20300212:中层管理人员(不超过2人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "中层管理人员(不超过2人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20300212:科研骨干人员(不超过14人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "科研骨干人员(不超过14人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:600750.SH:20300212:业务骨干人员(不超过10人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-12",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260214",
+   "entity": "业务骨干人员(不超过10人)",
+   "symbol": "600750.SH"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20300226:中层管理人员(3人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "中层管理人员(3人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20300226:科研骨干与高技能人员(16人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "科研骨干与高技能人员(16人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:000423.SZ:20300226:业务骨干人员(12人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-26",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260302",
+   "entity": "业务骨干人员(12人)",
+   "symbol": "000423.SZ"
+  },
+  {
+   "event_id": "lockup:002821.SZ:20300227:管理人员、核心技术(业务)人员(131人)",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-02-27",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20251128",
+   "entity": "管理人员、核心技术(业务)人员(131人)",
+   "symbol": "002821.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20300513:秦建",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-05-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260508",
+   "entity": "秦建",
+   "symbol": "002349.SZ"
+  },
+  {
+   "event_id": "lockup:002349.SZ:20300513:中级管理人员及核心骨干共17名",
+   "event_type": "lockup_expiry",
+   "scheduled_date": "2030-05-13",
+   "date_confidence": "hard_date",
+   "impact_direction": "negative",
+   "source_ref": "tushare:share_float:20260508",
+   "entity": "中级管理人员及核心骨干共17名",
+   "symbol": "002349.SZ"
+  }
+ ]
+}
