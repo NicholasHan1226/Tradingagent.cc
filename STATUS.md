@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T14:55:00+08:00
+Observed at: 2026-08-23T17:40:00+08:00
 
 This file is a replaceable current summary. It separates source, release, runtime,
 market evidence, and authority. Historical chronology remains in Git history and
@@ -13,7 +13,7 @@ dated `docs/reports/`; it is never a substitute for a fresh readback.
 | 本地主线 | Kimi/user A-share lane, intentionally not acting as canonical main | resolve with `git rev-parse HEAD origin/main`; preserve and do not reset or repurpose |
 | GitHub 主线 | branch CI passed and exact-main validation ran green for the latest research/docs merges at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
 | Ordinary server source | `1d58efe`, behind GitHub and containing untracked operational files | not synchronized; do not clean or fast-forward over unknown files |
-| Effective release | immutable release `f74bd1999b576b0bdc44fe1a816479cf9cc8eb28` | deployed code layer, cut over 2026-08-23 with green exact-main and front health; the forty-symbol observer service was rebound to it by drop-in after cutover |
+| Effective release | immutable release `e64e20dca7ac992a5ce2e2839dd1204a8d8e8ee6` | deployed code layer, cut over 2026-08-23 with green exact-main and front health; the forty-symbol observer service drop-in and its systemd timer were rebound to it after cutover (+270 s settle margin, five-minute fires at wall-clock :x4:45) |
 | Runtime authority | all observed A-share/Crypto receipts reported real trading, execution, capital, production promotion, and automatic risk expansion disabled | simulation/read-only only |
 
 An effective immutable release can be valid while the ordinary source checkout is
@@ -110,16 +110,24 @@ Runtime plane:
 
 - the delayed-exit shadow reversal threshold now matches the champion exit
   rule on current main;
-- the forty-symbol observer is recovered and producing its first healthy
-  evidence. Root cause of the earlier zero-success state was the settle-clock
-  bug fixed on current main (the lane computed its cutoff with the ten-symbol
-  +55s boundary while its collector finishes later, so honest receipts failed
-  the watermark gate); the fix reached production through the 2026-08-23
-  release cutover plus an observer drop-in rebind, and the next natural cycle
-  produced a successful observation with all 40 spot sources fresh through the
-  just-closed bar plus a spread sidecar, correct forty-only identity, and all
-  authority flags false. The identity isolation readback (inherited ten-prefix
-  events stop at 2026-08-22T11:20:55Z) remains verified;
+- the forty-symbol observer runs on two hardening changes cut over on
+  2026-08-23 (release `e64e20d…`, service drop-in rebind plus timer retime).
+  First, the PIT cutoff settle margin moved from +225 s to +270 s (inside the
+  <300 s family cap): collector-write latency bursts were producing receipts
+  whose intrinsic `observed_at` timestamps could never pass the watermark gate
+  on any later re-read, so widening the margin is the primary lever and pure
+  retry cannot rescue those slots. Second, a bounded same-invocation retry now
+  covers only `crypto_observation_query_shape_invalid` transients (delays
+  20 s/45 s, invocation-budget guarded; the frozen ten-symbol family stays
+  pinned single-attempt). Live verification after cutover shows the new
+  arithmetic (`observation_cutoff == window_end + 270 s`) and the restored
+  five-minute fire cadence; the identity isolation readback (inherited
+  ten-prefix events stop at 2026-08-22T11:20:55Z) remains verified;
+- interim data-plane boundary: since ~17:00 CST on 2026-08-23 a concurrent
+  TradingDatas-side release has kept the crypto collection timers stopped, so
+  both observers emit honest fail-closed rejects instead of observations until
+  collection resumes and any resulting bar gap is backfilled. No fabricated or
+  partial observation enters the chain during the interruption;
 - the G5 delayed-paper service completed successfully with
   `data_incomplete=false` in its latest applicable readback; this batch did
   not re-observe it, and service completion alone does not prove a new
