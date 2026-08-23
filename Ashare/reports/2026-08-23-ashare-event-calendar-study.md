@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)、`Ashare/event_calendar_lockup_strata.py`(解禁信号质量分层)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
 
 ## 结论摘要
 
@@ -147,6 +147,47 @@ GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预
 预减组落地后均值转正但胜率不足五成（右偏修复）。样本均太小，不构成任何结论，
 仅作为滚动跟踪基线。
 
+## 解禁信号质量分层（`event_calendar_lockup_strata.py`）
+
+把历史全部解禁事件经真实 shadow 因子回放后，只取跟踪中的 sell_off 信号
+（同一股票同一天多持有人行合并为一条、取最大解禁比例，避免同日重复计数），
+按三个**事前可观察**的条件分层，回答「这个信号什么时候有效」。
+收益口径为绝对收益（与跟踪器入账一致，含市场 beta）。
+
+**top 1000 主板样本（2018–2026，n=777）**：
+
+| 分层 | 子组 | n | 事后 5 日均值 | 中位 | 胜率 |
+|---|---|---|---|---|---|
+| 全体 | — | 777 | +48.6bps | +7.7bps | 50.2% |
+| 解禁比例 | <1% | 244 | +30.0bps | −16.9bps | 48.8% |
+| 解禁比例 | 1–3% | 201 | +62.9bps | +50.0bps | 52.7% |
+| 解禁比例 | 3–5% | 106 | −7.6bps | −21.6bps | 47.2% |
+| 解禁比例 | ≥5% | 226 | **+82.5bps** | +14.9bps | 50.9% |
+| 市场环境* | 弱市（≤−2%） | 308 | **+106.6bps** | +78.9bps | **56.2%** |
+| 市场环境* | 震荡（±2%） | 385 | +1.6bps | −32.1bps | 46.2% |
+| 市场环境* | 强市（≥+2%） | 84 | +51.9bps | −72.4bps | 46.4% |
+
+\* 市场环境 = 上证指数截至事件日收盘的最近 10 个交易日收益（开仓时点完全可知）。
+
+**业务解读**：
+
+1. **市场环境是最强分层**：弱市里超跌修复又强又稳（均值、中位、胜率三高）；
+   震荡市信号基本消失；强市均值靠右尾撑着、中位数大幅为负——不可依赖。
+   这与「超跌修复」的机制自洽：弱市跌得深、修复动能才足。
+2. **解禁比例越大信号越真**（≥5% 最强），<1% 的小规模解禁没有可交易修复；
+   3–5% 区间反常偏弱、分层非单调，提示比例只能作粗过滤，不宜线性打分。
+3. **无行业集中度**：样本 ≥40 的行业只有元器件（n=62，均值反而为负），
+   其余合计 +54.7bps——信号是全市场现象，不需要（也不应）做行业过滤。
+4. **对近期跟踪读数的解释**：跟踪器前 11 条信号胜率仅 36.4%，其中 8 条集中在
+   2026-04-20（事件前指数 10 日 +5.2% 的强市段）、3 条在弱市段（−2.2%）——
+   与「强市不可依赖」的历史分层一致。近期偏弱主要是市场环境所致，
+   暂不构成信号失效证据，但需继续积累弱市样本验证。
+5. top 200 大盘股子样本同口径 n=259、均值 +167.8bps、胜率 57.9%，各分层方向
+   与 1000 只样本一致且更强——与超额收益口径「修复随市值下沉收窄」的结论互相印证。
+
+局限：绝对收益口径含 beta（市场环境分层只是部分控制）；比例与环境分界为探索性
+切分，属多重比较，未对 t 值做校正；未计成本。不构成任何晋级证据。
+
 ## 财报披露按预告方向分组（`event_calendar_earnings_groups.py`）
 
 第一期发现披露事件事后分化极大（均值正、中位数为负），本节用 Tushare `forecast`
@@ -214,4 +255,5 @@ GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预
 
 1. ~~把解禁事件做成第一优先级日历信号~~ **已落地**：`event_signal_lockup_tracker.py` 在 shadow 通道滚动跟踪（2026-08-23 起），GitHub Actions 每交易日自动运行。
 2. ~~财报披露补「业绩预告方向」分组后再评估~~ **已完成并并入跟踪器**：分组见上文章节，`earnings_pos` / `earnings_neg` 两信号已随 `--signals` 并入滚动跟踪与定时工作流。
-3. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
+3. 候选（研究增强）：跟踪器为每条信号附市场环境标签（弱/震荡/强），滚动验证「解禁修复集中在弱市」的分层结论能否在样本外复现；不改变任何交易行为。
+4. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
