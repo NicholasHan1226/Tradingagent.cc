@@ -41,5 +41,15 @@ python3 Ashare/event_td_coverage_probe.py \
 
 ## 边界
 
-- marketgraph-root SSH 为发布操作专用，本验证不得使用它做临时查询；token 使用现有只读凭据。
+- marketgraph-root SSH 为发布操作专用。**已批准的一次性例外（2026-08-24，Nicholas 批准）**：
+  本 runbook 的探针命令可在维护窗口内经 marketgraph-root 执行一次——仅限本条命令、
+  仅限本窗口、仅限只读；不得用于任何其它临时查询，事后不构成先例。
+  背景：现有受限诊断账号（marketgraph 用户）读不到 `/etc/tradingagent/tradingdatas-read.token`，
+  实测确认无法执行；更干净的长期方案（受限只读账号）随 #29 另行走审批。
 - 全部输出 research_only / not_promotion_evidence；不授予任何资金或部署权限。
+
+## 窗口记录
+
+- **2026-08-24（周一）09:45 CST 后，15 分钟内**：Nicholas 批准窗口与一次性 root 例外；
+  与 nicholashan-5a 早盘预检（约 09:42–09:45 结束）衔接，无并发冲突。执行后在本节回填
+  实际执行时间、catalog_version 与 `forward_capable` 判定结果。
