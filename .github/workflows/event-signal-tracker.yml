@@ -1,9 +1,11 @@
 name: A-share Event Signal Tracker
 
-# Research-only rolling tracker for the lockup oversold-rebound signal.
-# Runs after each mainland trading day once Tushare daily data is settled.
-# Requires the TUSHARE_MCP_TOKEN repository secret; without it the job
-# fails closed with TOKEN_MISSING in the first refresh step.
+# Research-only rolling tracker for the event-calendar study signals:
+# lockup oversold-rebound, disclosure positive drift and disclosure
+# negative relief.  Runs after each mainland trading day once Tushare daily
+# data is settled.  Requires the TUSHARE_MCP_TOKEN repository secret;
+# without it the job fails closed with TOKEN_MISSING in the first refresh
+# step.
 
 on:
   schedule:
@@ -12,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       since:
-        description: "Track lockup expiries on/after this date (YYYYMMDD)"
+        description: "Track events on/after this date (YYYYMMDD)"
         default: "20260401"
 
 permissions:
@@ -59,13 +61,35 @@ jobs:
           # matching RESEARCH_CACHE above, and reuses cached files when present.
           python3 Ashare/event_calendar_fetch.py
 
-      - name: Run lockup signal tracker
+      - name: Ensure earnings-forecast cache (once, then reused)
+        env:
+          TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
+        run: |
+          # forecast.csv (earliest pre-disclosure forecast per report period)
+          # is needed for the earnings signals; ensure_forecast_cache fetches
+          # per symbol only when the file is absent and is persisted by the
+          # actions/cache step above.
+          python3 -c "
+          import csv, sys
+          sys.path.insert(0, '.')
+          from pathlib import Path
+          from Ashare.event_calendar_earnings_groups import ensure_forecast_cache
+          cache = Path('$RESEARCH_CACHE')
+          with (cache / 'sample_symbols.csv').open(encoding='utf-8') as handle:
+              samples = {row['ts_code'] for row in csv.DictReader(handle)}
+          print(f'samples={len(samples)}')
+          path = ensure_forecast_cache(cache, samples)
+          print(f'forecast cache ready -> {path}')
+          "
+
+      - name: Run event signal tracker (all three signals)
         run: |
           mkdir -p "$RUNTIME_STATE"
           python3 Ashare/event_signal_lockup_tracker.py \
             --cache "$RESEARCH_CACHE" \
             --journal "$RUNTIME_STATE/sample_journal.jsonl" \
-            --since "${{ inputs.since || '20260401' }}"
+            --since "${{ inputs.since || '20260401' }}" \
+            --signals lockup,earnings_pos,earnings_neg
 
       - name: Archive tracker report and state
         if: always()
