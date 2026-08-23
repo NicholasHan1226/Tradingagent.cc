@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T11:43:00+08:00
+Observed at: 2026-08-23T12:35:00+08:00
 
 This file is a replaceable current summary. It separates source, release, runtime,
 market evidence, and authority. Historical chronology remains in Git history and
@@ -92,9 +92,15 @@ Runtime plane:
 
 - the delayed-exit shadow reversal threshold now matches the champion exit
   rule on current main;
-- the forty-symbol public receipt/event identity defect (ten-symbol inherited
-  names) remains open and still requires a forward fix plus a fresh natural
-  readback;
+- the forty-symbol public identity isolation fix is deployed and naturally
+  verified against production events: inherited ten-prefix events stop at
+  observation cutoff 2026-08-22T11:20:55Z and every later event carries the
+  forty-only contract and event prefix, with the seven legacy entries kept in
+  place as append-only history. The remaining open defect is that this observer
+  has produced zero successful observations since deployment (121 rejects and
+  86 gaps with watermark/query-shape fail-closed reasons) while the ten-symbol
+  observer keeps succeeding on the same data plane, so the lane stays unusable
+  for receipt-bound evaluation until a forward fix lands;
 - the G5 delayed-paper service completed successfully with
   `data_incomplete=false` in its latest applicable readback; this batch did
   not re-observe it, and service completion alone does not prove a new
@@ -127,8 +133,12 @@ coverage counts, and generated projections are not called learning.
 
 ## Next acceptance points
 
-1. Forward-fix the 40-symbol public identity on current main, then read back one
-   natural event without changing timer or authority.
+1. Root-cause why the forty-symbol observer never succeeds (watermark and
+   query-shape fail-closed rejects while the ten-symbol observer stays healthy
+   on the same data plane), forward-fix it, then read back one natural
+   successful observation without changing timer or authority. The identity
+   half of this point is closed by the 2026-08-23 natural readback archived
+   under Crypto/reports/.
 2. On the next A-share market window, prove the first safe-subset simulation
    decision/outcome without waiting for exact500 or every rolling symbol.
 3. The only remaining crypto research lever is a different signal family: the
