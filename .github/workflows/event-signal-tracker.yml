@@ -1,0 +1,78 @@
+name: A-share Event Signal Tracker
+
+# Research-only rolling tracker for the lockup oversold-rebound signal.
+# Runs after each mainland trading day once Tushare daily data is settled.
+# Requires the TUSHARE_MCP_TOKEN repository secret; without it the job
+# fails closed with TOKEN_MISSING in the first refresh step.
+
+on:
+  schedule:
+    # 19:07 Asia/Shanghai on weekdays (11:07 UTC), off the hour on purpose.
+    - cron: "7 11 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Track lockup expiries on/after this date (YYYYMMDD)"
+        default: "20260401"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: event-signal-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RESEARCH_CACHE: /tmp/ashare_event_research
+      RUNTIME_STATE: /tmp/ashare_tracker_state
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Restore research cache and tracker state
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/ashare_event_research
+            /tmp/ashare_tracker_state
+          key: ashare-event-research-${{ github.run_id }}
+          restore-keys: |
+            ashare-event-research-
+
+      - name: Refresh research data (Tushare incremental over cache)
+        env:
+          TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
+        run: |
+          # event_calendar_fetch writes CACHE_DIR=/tmp/ashare_event_research,
+          # matching RESEARCH_CACHE above, and reuses cached files when present.
+          python3 Ashare/event_calendar_fetch.py
+
+      - name: Run lockup signal tracker
+        run: |
+          mkdir -p "$RUNTIME_STATE"
+          python3 Ashare/event_signal_lockup_tracker.py \
+            --cache "$RESEARCH_CACHE" \
+            --journal "$RUNTIME_STATE/sample_journal.jsonl" \
+            --since "${{ inputs.since || '20260401' }}"
+
+      - name: Archive tracker report and state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracker-report-${{ github.run_number }}
+          path: |
+            /tmp/ashare_tracker_state/
+          retention-days: 90
+          if-no-files-found: warn
