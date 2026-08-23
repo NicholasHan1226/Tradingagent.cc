@@ -28,9 +28,10 @@ Mechanics:
 * labelled signal outcomes append to the shared SampleJournal via the
   ``shadow_research`` bridge (excluded from trading-layer KPIs by policy),
 * every tracked event is tagged with the market regime (SSE index return
-  over the 10 sessions ending at the event-day close, weak/sideways/
-  strong) so the 2026-08-23 stratification finding — the lockup repair
-  concentrates in weak markets — can be validated on rolling data.
+  over the 10 sessions ending at the last session on/before the event
+  day, weak/sideways/strong) so the 2026-08-23 stratification finding —
+  the lockup repair concentrates in weak markets — can be validated on
+  rolling data.
 
 Deduplication: the observation receipt embeds ``as_of``, so re-running the
 same history on a later day produces different journal ids.  The tracker
@@ -52,6 +53,7 @@ Usage::
 
 from __future__ import annotations
 
+import bisect
 import csv
 import json
 import statistics
@@ -87,8 +89,8 @@ from Ashare.event_calendar_earnings_groups import (  # noqa: E402
     load_forecast_directions,
 )
 from Ashare.event_calendar_lockup_strata import (  # noqa: E402
+    REGIME_BINS,
     load_index_series,
-    regime_bucket,
 )
 
 
@@ -109,6 +111,31 @@ KNOWN_SIGNALS = (LOCKUP_SIGNAL, EARNINGS_POS_SIGNAL, EARNINGS_NEG_SIGNAL)
 
 class TrackerError(RuntimeError):
     """Fail-closed tracker failure with a stable reason code."""
+
+
+def make_regime_lookup(index_pairs: list[tuple[date, float]]):
+    """Regime over the 10 sessions ending at the last session ON/BEFORE day.
+
+    Appointment dates occasionally fall on non-trading days (weekends,
+    holidays); the factor resolves their windows to surrounding sessions,
+    and the market state actually known when the window opened is the one
+    at the last completed session.  Falls back to ``unknown`` before 10
+    sessions of index history exist.
+    """
+
+    days = [d for d, _ in index_pairs]
+
+    def lookup(day: date) -> str:
+        pos = bisect.bisect_right(days, day) - 1
+        if pos < 10:
+            return "unknown"
+        ret = index_pairs[pos][1] / index_pairs[pos - 10][1] - 1.0
+        for low, high, label in REGIME_BINS:
+            if low <= ret < high:
+                return label
+        return "unknown"
+
+    return lookup
 
 
 def parse_signals(raw: str) -> tuple[str, ...]:
@@ -311,7 +338,7 @@ class TrackerView:
     buckets: dict[str, SignalBucket] = field(default_factory=dict)
     unattributed_labeled: int = 0
     # ISO scheduled_date -> weak/sideways/strong/unknown (SSE 10-session
-    # return ending at the event-day close; see event_calendar_lockup_strata).
+    # return ending at the last session on/before the event day).
     regime_by_date: dict[str, str] = field(default_factory=dict)
     appended_records: list[dict] = field(default_factory=list)
 
@@ -486,7 +513,7 @@ def run_tracker(
         entries.extend(disc_entries)
         skipped += disc_skipped
     bars_by_symbol = load_bars(cache, samples)
-    index_pairs = load_index_series(cache)
+    regime_of = make_regime_lookup(load_index_series(cache))
     batch = build_catalyst_shadow_batch(
         entries,
         bars_by_symbol,
@@ -497,7 +524,7 @@ def run_tracker(
     )
     view = build_tracker_view(batch, signals)
     view.regime_by_date = {
-        obs.scheduled_date.isoformat(): regime_bucket(index_pairs, obs.scheduled_date)
+        obs.scheduled_date.isoformat(): regime_of(obs.scheduled_date)
         for obs in batch.observations
         if obs.observation_status == "observed"
     }

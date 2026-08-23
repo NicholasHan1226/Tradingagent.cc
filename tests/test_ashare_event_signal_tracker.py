@@ -31,13 +31,13 @@ from Ashare.event_signal_lockup_tracker import (
     build_tracker_view,
     load_disclosure_entries,
     load_lockup_entries,
+    make_regime_lookup,
     parse_signals,
     regime_breakdown,
     render_report,
     run_tracker,
     signal_journal_records,
 )
-from Ashare.event_calendar_lockup_strata import regime_bucket
 from shared.review.sample_journal import SampleJournal
 
 
@@ -226,25 +226,47 @@ class TestParseSignals:
 
 
 class TestRegimeTags:
+    @staticmethod
+    def _pairs(closes):
+        base = date(2026, 1, 1)
+        return [(base + timedelta(days=i), close) for i, close in enumerate(closes)]
+
     def test_regime_boundaries(self):
-        from datetime import date as _date
+        lookup = make_regime_lookup(self._pairs([100.0] * 15))
+        assert lookup(date(2026, 1, 15)) == "sideways"
+        weak = make_regime_lookup(
+            self._pairs([100.0] * 10 + [100.0] * 4 + [97.0])
+        )
+        assert weak(date(2026, 1, 15)) == "weak"
+        strong = make_regime_lookup(
+            self._pairs([100.0] * 10 + [100.0] * 4 + [103.0])
+        )
+        assert strong(date(2026, 1, 15)) == "strong"
 
-        def _pairs(closes):
-            days = [
-                _date(2026, 1, 1) + timedelta(days=i) for i in range(len(closes))
-            ]
-            return list(zip(days, closes))
+    def test_regime_unknown_before_history_or_far_future(self):
+        lookup = make_regime_lookup(self._pairs([100.0] * 15))
+        # Fewer than 10 sessions of history before the day.
+        assert lookup(date(2026, 1, 5)) == "unknown"
+        # A day beyond the series resolves to the LAST known session...
+        late = make_regime_lookup(
+            self._pairs([100.0] * 10 + [100.0] * 4 + [97.0])
+        )
+        assert late(date(2026, 2, 20)) == "weak"
 
-        flat = _pairs([100.0] * 15)
-        assert regime_bucket(flat, flat[14][0]) == "sideways"
-        weak = _pairs([100.0] * 10 + [100.0] * 4 + [97.0])
-        assert regime_bucket(weak, weak[14][0]) == "weak"
-        strong = _pairs([100.0] * 10 + [100.0] * 4 + [103.0])
-        assert regime_bucket(strong, strong[14][0]) == "strong"
-        # Before 10 sessions of index history the regime is unknown.
-        assert regime_bucket(flat, flat[5][0]) == "unknown"
-        # A date absent from the series is unknown, never a crash.
-        assert regime_bucket(flat, _date(2030, 1, 1)) == "unknown"
+    def test_regime_falls_back_to_last_session_before_non_trading_day(self):
+        # Sessions on Jan 1..15 with a gap: an appointment landing on a
+        # missing (weekend/holiday) day must use the last completed session
+        # instead of degrading to unknown.
+        closes = [100.0] * 10 + [100.0] * 4 + [97.0]
+        pairs = [
+            (date(2026, 1, 1) + timedelta(days=i), close)
+            for i, close in enumerate(closes)
+            if i not in (13,)  # one missing calendar day mid-series
+        ]
+        lookup = make_regime_lookup(pairs)
+        missing_day = date(2026, 1, 14)
+        assert all(day != missing_day for day, _ in pairs)
+        assert lookup(missing_day) == lookup(date(2026, 1, 13))
 
     def test_regime_breakdown_groups_labelled_outcomes(self):
         view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
