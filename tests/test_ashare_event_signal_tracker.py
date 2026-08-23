@@ -8,6 +8,7 @@ read-back dedup guard.
 
 from __future__ import annotations
 
+import csv
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -18,6 +19,7 @@ from Ashare.event_catalyst_shadow import (
     build_catalyst_shadow_batch,
 )
 from Ashare.event_signal_lockup_tracker import (
+    ABSORPTION_LABEL_ORDER,
     DEFAULT_SINCE,
     EARNINGS_DISCLOSURE_EVENT_TYPE,
     EARNINGS_NEG_SIGNAL,
@@ -27,6 +29,8 @@ from Ashare.event_signal_lockup_tracker import (
     SIGNAL_ANTICIPATION_CLASS,
     SIGNAL_EVENT_TYPE,
     TrackerError,
+    _absorption_labels_for_observations,
+    absorption_breakdown,
     append_new_outcomes,
     build_tracker_view,
     load_disclosure_entries,
@@ -378,6 +382,99 @@ class TestRuleSubsetReadout:
         assert "Practice-rule subset" in report
         assert "rule_subset: n=" in report
         assert "mean_net=" in report
+
+
+class TestAbsorptionTags:
+    """Moneyflow side-table labels: report-only, degrade to no labels."""
+
+    @staticmethod
+    def _moneyflow_cache(tmp_path):
+        """25 weekday moneyflow sessions ending on the event day itself.
+
+        Uniform rows (buy_lg=sell_lg=500, everything else 100) give a zero
+        large-order net everywhere -> every labeled event is ``balanced``.
+        """
+
+        flow_dir = tmp_path / "moneyflow_daily"
+        flow_dir.mkdir(parents=True)
+        fields = [
+            "trade_date", "ts_code",
+            "buy_sm_amount", "sell_sm_amount",
+            "buy_md_amount", "sell_md_amount",
+            "buy_lg_amount", "sell_lg_amount",
+            "buy_elg_amount", "sell_elg_amount",
+        ]
+        days: list[date] = []
+        cursor = EVENT_DATE
+        while len(days) < 25:
+            if cursor.weekday() < 5:
+                days.append(cursor)
+            cursor -= timedelta(days=1)
+        for d in reversed(days):
+            with (flow_dir / f"{d:%Y%m%d}.csv").open(
+                "w", newline="", encoding="utf-8"
+            ) as handle:
+                writer = csv.writer(handle)
+                writer.writerow(fields)
+                # buy_sm..sell_md=100 x4, buy_lg=500, sell_lg=500,
+                # buy_elg=100, sell_elg=100 -> net 0, total positive.
+                writer.writerow(
+                    [f"{d:%Y%m%d}", SYMBOL] + [100.0] * 4
+                    + [500.0, 500.0, 100.0, 100.0]
+                )
+        return flow_dir.parent
+
+    def test_labels_cover_observed_events_from_moneyflow_cache(
+        self, tmp_path
+    ):
+        cache = self._moneyflow_cache(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _absorption_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        assert set(labels.values()) == {"balanced"}
+
+    def test_missing_moneyflow_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _absorption_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_absorption_breakdown_groups_in_label_order_and_skips_untagged(
+        self,
+    ):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = absorption_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "inflow",
+                pos.labeled[0].event_id: "outflow",
+            },
+        )
+        assert list(breakdown) == ["outflow", "inflow"]
+        assert list(ABSORPTION_LABEL_ORDER) == ["outflow", "balanced", "inflow"]
+        assert breakdown["outflow"]["n"] == 1
+        assert breakdown["inflow"]["n"] == 1
+        assert absorption_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_absorption_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.absorption_by_event = {
+            obs.event_id: "balanced"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by absorption bucket:" in report
+        assert "balanced: n=" in report
 
 
 # --- journal write path -----------------------------------------------------

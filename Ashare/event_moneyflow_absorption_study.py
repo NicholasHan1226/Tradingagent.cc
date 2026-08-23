@@ -115,6 +115,30 @@ def load_symbol_moneyflow(
     return series
 
 
+def _bucket_at_position(
+    nets: list[float],
+    totals: list[float],
+    pos: int,
+    *,
+    pre_window: int,
+    trail_window: int,
+) -> str | None:
+    """Bucket for an entry at series index ``pos``, or None if unlabeled.
+
+    Windows are strictly prior: sessions at/after ``pos`` never enter either
+    window; fewer than ``max(pre, trail)`` prior sessions or a zero turnover
+    normalizer leaves the event unlabeled.
+    """
+
+    need = max(pre_window, trail_window)
+    if pos < need:
+        return None
+    avg_total = sum(totals[pos - trail_window:pos]) / trail_window
+    if avg_total <= 0.0:
+        return None
+    return classify_absorption(sum(nets[pos - pre_window:pos]) / avg_total)
+
+
 def attach_absorption(
     signals: list[dict[str, object]],
     series: dict[str, tuple[list[str], list[float], list[float]]],
@@ -123,7 +147,6 @@ def attach_absorption(
 ) -> dict[str, int]:
     """Annotate each signal with its pre-event absorption bucket, in place."""
     stats = {"missing_series": 0, "insufficient_history": 0, "attached": 0}
-    need = max(pre_window, trail_window)
     for signal in signals:
         book = series.get(str(signal["ts_code"]))
         if book is None:
@@ -132,20 +155,51 @@ def attach_absorption(
             continue
         days, nets, totals = book
         pos = bisect.bisect_left(days, str(signal["entry_day"]))
-        if pos < need:
+        bucket = _bucket_at_position(
+            nets, totals, pos, pre_window=pre_window, trail_window=trail_window
+        )
+        if bucket is None:
             signal["absorption_bucket"] = "insufficient_history"
             stats["insufficient_history"] += 1
             continue
         avg_total = sum(totals[pos - trail_window:pos]) / trail_window
-        if avg_total <= 0.0:
-            signal["absorption_bucket"] = "insufficient_history"
-            stats["insufficient_history"] += 1
-            continue
-        ratio = sum(nets[pos - pre_window:pos]) / avg_total
-        signal["absorption_ratio"] = ratio
-        signal["absorption_bucket"] = classify_absorption(ratio)
+        signal["absorption_ratio"] = sum(nets[pos - pre_window:pos]) / avg_total
+        signal["absorption_bucket"] = bucket
         stats["attached"] += 1
     return stats
+
+
+def absorption_buckets_for_events(
+    cache: Path,
+    pairs: list[tuple[str, str]],
+    pre_window: int = PRE_WINDOW_SESSIONS,
+    trail_window: int = TRAIL_WINDOW_SESSIONS,
+) -> dict[tuple[str, str], str]:
+    """Event-label lookup for tracker side tables: {(ts_code, day): bucket}.
+
+    ``day`` may be any calendar date; it resolves to the symbol's first
+    session on/after that day (weekend anchors roll forward), keeping the
+    strictly-prior window semantics.  Pairs without enough prior history or
+    without a series are simply omitted from the result — absence means
+    "unlabeled", never guessed.  Raises AbsorptionStudyError when the
+    moneyflow cache directory is missing.
+    """
+
+    wanted: dict[str, set[str]] = {}
+    for code, day in pairs:
+        wanted.setdefault(str(code), set()).add(str(day))
+    series = load_symbol_moneyflow(cache, set(wanted))
+    out: dict[tuple[str, str], str] = {}
+    for code, book in series.items():
+        days, nets, totals = book
+        for day in wanted[code]:
+            pos = bisect.bisect_left(days, day)
+            bucket = _bucket_at_position(
+                nets, totals, pos, pre_window=pre_window, trail_window=trail_window
+            )
+            if bucket is not None:
+                out[(code, day)] = bucket
+    return out
 
 
 def _fmt_pct(value: float) -> str:

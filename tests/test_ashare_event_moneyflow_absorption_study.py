@@ -100,5 +100,47 @@ class AttachAbsorptionTest(unittest.TestCase):
         self.assertEqual(stats2["insufficient_history"], 1)
 
 
+class BucketsForEventsTest(unittest.TestCase):
+    """Tracker side-table lookup: {(code, day): bucket}, absence = unlabeled."""
+
+    @staticmethod
+    def _write_day(out_dir: Path, day: str, big_buy: bool = False) -> None:
+        # Uniform turnover rows; big_buy flips the large-order net strongly
+        # positive (buy_lg 2100 vs sell_lg 100, everything else 100).
+        buy_lg, sell_lg = (2100.0, 100.0) if big_buy else (500.0, 500.0)
+        with (out_dir / f"{day}.csv").open("w", newline="", encoding="utf-8") as h:
+            w = csv.writer(h)
+            w.writerow(FIELDS)
+            w.writerow([day, "600000.SH"] + [100.0] * 4
+                       + [buy_lg, sell_lg, 100.0, 100.0])
+
+    def test_rolls_non_session_anchor_and_omits_unlabeled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            out_dir = cache / abs_study.MONEYFLOW_DIRNAME
+            out_dir.mkdir(parents=True)
+            for i, day in enumerate(DAYS[:25]):
+                self._write_day(out_dir, day, big_buy=19 <= i <= 23)
+
+            buckets = abs_study.absorption_buckets_for_events(cache, [
+                ("600000.SH", "20260131"),  # Saturday -> first session on/after
+                ("600000.SH", "20260206"),  # exact session, pos=24
+                ("600000.SH", "20260106"),  # pos=1: insufficient history
+                ("000001.SZ", "20260206"),  # no series
+            ])
+            # Sat Jan 31 rolls to DAYS[20]; pre-window rows 19..23 carry
+            # net +2000 each, trail avg total 1300 -> strongly positive.
+            self.assertEqual(buckets[("600000.SH", "20260131")], "inflow")
+            self.assertEqual(buckets[("600000.SH", "20260206")], "inflow")
+            self.assertNotIn(("600000.SH", "20260106"), buckets)
+            self.assertNotIn(("000001.SZ", "20260206"), buckets)
+            with self.assertRaisesRegex(
+                abs_study.AbsorptionStudyError, "moneyflow_dir_missing"
+            ):
+                abs_study.absorption_buckets_for_events(
+                    cache / "nope", [("600000.SH", "20260206")]
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
