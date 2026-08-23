@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T05:40:00+08:00
+Observed at: 2026-08-23T11:43:00+08:00
 
 This file is a replaceable current summary. It separates source, release, runtime,
 market evidence, and authority. Historical chronology remains in Git history and
@@ -74,6 +74,17 @@ historical-backfill-without-PIT; archived under `Crypto/reports/`):
   |t(net)| ≥ 3.9 under round-trip taker costs, and per-trip net loss equals
   the ~0.24% cost line. Shadow-only conclusion: no parameter change is
   justified; frequency/threshold tuning cannot rescue this signal family;
+- the exit-cost counterfactual on the same frozen champion simulated full
+  round trips at path level over the identical window (non-overlapping strides,
+  stop-loss checked before take-profit inside each bar, 6,208–7,423 trips per
+  cell): mean gross return is ≈ 0 in every threshold cell (best +0.008%),
+  momentum-reversal exits dominate at 94–96% of trips while take-profit is hit
+  only 3–5%, mean favorable excursion never approaches the +3% target, and even
+  the maker-exit upper bound (assumes touch equals fill) leaves every cell
+  net-negative at about −0.139% to −0.167% per trip versus −0.239% to −0.267%
+  under taker exits — the maker delta is pure fee arithmetic (+0.0998%). This
+  closes execution-cost reduction as a lever: the per-trip loss is structural,
+  not an artifact of exit fees or slippage;
 - the 2026-08-18 funding/basis carry research modules and reports landed on
   current main as archived assets.
 
@@ -120,10 +131,13 @@ coverage counts, and generated projections are not called learning.
    natural event without changing timer or authority.
 2. On the next A-share market window, prove the first safe-subset simulation
    decision/outcome without waiting for exact500 or every rolling symbol.
-3. Crypto research next lever is execution-cost reduction (maker-exit /
-   post-only-entry counterfactual pre-study) or a different signal family — not
-   further threshold/horizon scanning of the current entry signal, which the
-   2026-08-23 event study exhausted under taker costs.
+3. The only remaining crypto research lever is a different signal family: the
+   2026-08-23 event study exhausted threshold/horizon scanning under taker
+   costs, and the exit-cost counterfactual proved even the maker-exit upper
+   bound stays net-negative — so no further work should scan thresholds,
+   horizons, or execution variants of the current momentum entry; evaluate a
+   new signal hypothesis instead (the archived funding/basis carry modules are
+   one candidate starting point).
 4. For both markets, bind the next resolved outcome to fees/slippage, baseline,
    factor/strategy version, deterministic replay, exclusions, and a shadow-only
    recommendation.
