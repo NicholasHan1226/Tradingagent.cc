@@ -58,6 +58,7 @@ shared/runtime_test/*_latest.json
 shared/runtime_test/ashare_health_*.json
 shared/review/**/*.json
 shared/review/**/*.jsonl
+shared/review/**/*.lock
 *.bak.*
 shared/review/**/*.md
 shared/review/**/*.bak
