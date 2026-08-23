@@ -33,6 +33,8 @@ from Ashare.event_signal_lockup_tracker import (
     load_lockup_entries,
     make_regime_lookup,
     parse_signals,
+    prewindow_return,
+    ratio_breakdown,
     regime_breakdown,
     render_report,
     run_tracker,
@@ -280,6 +282,41 @@ class TestRegimeTags:
         assert breakdown["weak"]["n"] == 1
 
 
+class TestRatioTagsAndPrewindow:
+    def test_ratio_breakdown_skips_untagged_and_orders_bins(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        # Only the lockup event carries a tag; bins render in stratification order.
+        breakdown = ratio_breakdown(
+            lockup.labeled + pos.labeled,
+            {lockup.labeled[0].event_id: ">=5%"},
+        )
+        assert list(breakdown) == [">=5%"]
+        assert breakdown[">=5%"]["n"] == 1
+
+    def test_prewindow_return_entry_after_announcement_exit_at_target(self):
+        # Sessions: Jul15=100, Jul16=101, Jul17=102, Jul20=103, Jul21=104.
+        bars = _weekday_bars(
+            date(2026, 7, 15),
+            [100.0, 101.0, 102.0, 103.0, 104.0],
+        )
+        # Entry at the first session strictly after the announcement day...
+        ret = prewindow_return(bars, date(2026, 7, 15), date(2026, 7, 20))
+        assert ret == pytest.approx(103.0 / 101.0 - 1.0)
+        # ...and exit at the last session on/before the appointment.
+        ret = prewindow_return(bars, date(2026, 7, 15), date(2026, 7, 19))
+        assert ret == pytest.approx(102.0 / 101.0 - 1.0)
+
+    def test_prewindow_return_fails_soft_on_unobservable_endpoints(self):
+        bars = _weekday_bars(date(2026, 7, 15), [100.0, 101.0])
+        # Announcement after every session -> no entry point.
+        assert prewindow_return(bars, date(2026, 7, 16), date(2026, 7, 17)) is None
+        # Appointment before the entry session -> window holds nothing.
+        assert prewindow_return(bars, date(2026, 7, 15), date(2026, 7, 14)) is None
+        assert prewindow_return([], date(2026, 7, 15), date(2026, 7, 20)) is None
+
+
 # --- journal write path -----------------------------------------------------
 
 
@@ -456,6 +493,23 @@ class TestRunTracker:
             view.buckets[EARNINGS_NEG_SIGNAL].labeled, view.regime_by_date
         )
         assert neg_breakdown["strong"]["n"] == 1
+        # Float-ratio tags land on lockup events only.
+        lockup_obs = view.buckets[LOCKUP_SIGNAL].labeled[0]
+        assert view.ratio_by_event[lockup_obs.event_id] == "1-3%"
+        ratio_stats = ratio_breakdown(
+            view.buckets[LOCKUP_SIGNAL].labeled, view.ratio_by_event
+        )
+        assert ratio_stats["1-3%"]["n"] == 1
+        assert ratio_breakdown(
+            view.buckets[EARNINGS_POS_SIGNAL].labeled, view.ratio_by_event
+        ) == {}
+        # Pre-disclosure trade window for earnings_pos: forecast announced
+        # 2026-06-15 -> first session close after it is Jul 15 (105.0);
+        # exit at the Aug 5 appointment close (100.0) => -4.76%.
+        pre = view.prewindow_stats[EARNINGS_POS_SIGNAL]
+        assert pre["n"] == 1
+        assert pre["mean_bps"] == pytest.approx(-476.2, abs=0.2)
+        assert EARNINGS_NEG_SIGNAL not in view.prewindow_stats
         rows = SampleJournal(journal_path).read_events()
         assert [r["record_type"] for r in rows] == ["shadow_research"] * 3
 
@@ -486,22 +540,30 @@ class TestRunTracker:
 
     def test_lockup_only_skips_invalid_rows_and_counts_skips(self, mini_cache):
         samples = {SYMBOL}
-        entries, skipped = load_lockup_entries(
+        entries, skipped, ratio_by_event = load_lockup_entries(
             mini_cache, samples, since=date(2026, 1, 1)
         )
         assert skipped == 1  # blank float_share row fails closed
         assert len(entries) == 1
         assert entries[0].event_type == SIGNAL_EVENT_TYPE
+        # The valid fixture row unlocks 1.5% of the float.
+        assert ratio_by_event[entries[0].event_id] == "1-3%"
 
     def test_disclosure_loader_skips_forecastless_and_uncertain_rows(
         self, mini_cache
     ):
         samples = {SYMBOL}
-        entries, skipped = load_disclosure_entries(
+        entries, skipped, ann_by_event = load_disclosure_entries(
             mini_cache, samples, since=date(2026, 1, 1)
         )
         assert skipped == 2  # no-forecast row + uncertain row
         assert len(entries) == 2
+        # Forecast announcement dates re-join onto the prefixed event ids so
+        # the pre-disclosure trade window can be measured.
+        assert sorted(ann_by_event.values()) == [
+            date(2026, 6, 15),
+            date(2026, 7, 20),
+        ]
         impacts = sorted(entry.impact_direction for entry in entries)
         assert impacts == ["negative", "positive"]
         types = {entry.event_type for entry in entries}
@@ -563,3 +625,25 @@ class TestRenderReport:
         report = render_report(view, since=date(2026, 6, 1), as_of=AS_OF, dry_run=True)
         assert SYMBOL in report
         assert "-4.76%" in report
+        assert "float_ratio" in report  # active-table column
+
+    def test_report_shows_prewindow_readout_when_present(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.prewindow_stats = {
+            EARNINGS_POS_SIGNAL: {
+                "n": 1,
+                "mean_bps": -476.2,
+                "median_bps": -476.2,
+                "win_rate": 0.0,
+            }
+        }
+        report = render_report(view, since=date(2026, 6, 1), as_of=AS_OF, dry_run=True)
+        assert "Pre-disclosure trade window" in report
+        assert "report-only, not journaled" in report
+        assert "-476.2bps" in report
+
+    def test_report_omits_prewindow_and_ratio_sections_when_absent(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        report = render_report(view, since=date(2026, 6, 1), as_of=AS_OF, dry_run=True)
+        assert "Pre-disclosure trade window" not in report
+        assert "Labelled outcomes by float-ratio bucket" not in report

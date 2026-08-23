@@ -31,7 +31,14 @@ Mechanics:
   over the 10 sessions ending at the last session on/before the event
   day, weak/sideways/strong) so the 2026-08-23 stratification finding —
   the lockup repair concentrates in weak markets — can be validated on
-  rolling data.
+  rolling data; lockup events additionally carry their float-ratio bucket
+  (same bins as the stratification study),
+* for ``earnings_pos`` the report also shows the *pre-disclosure trade
+  window* the study actually claims (entry at the close of the first
+  session after the forecast announcement, exit at the disclosure-day
+  close).  This is a report-only readout recomputed each pass — it is not
+  journaled; the journaled labelled outcome remains the
+  hold-past-disclosure control.
 
 Deduplication: the observation receipt embeds ``as_of``, so re-running the
 same history on a later day produces different journal ids.  The tracker
@@ -90,6 +97,7 @@ from Ashare.event_calendar_earnings_groups import (  # noqa: E402
 )
 from Ashare.event_calendar_lockup_strata import (  # noqa: E402
     REGIME_BINS,
+    bucket_by_ratio,
     load_index_series,
 )
 
@@ -184,11 +192,13 @@ def _parse_day(raw: str) -> date:
 
 def load_lockup_entries(
     cache: Path, samples: set[str], since: date
-) -> tuple[list, int]:
+) -> tuple[list, int, dict[str, str]]:
     """Mint lockup-expiry catalyst entries on/after ``since`` via the adapter.
 
-    Returns the validated entries plus the count of real rows the adapter
-    failed closed on (blank or non-positive share counts).
+    Returns the validated entries, the count of real rows the adapter
+    failed closed on (blank or non-positive share counts), and a mapping of
+    entry event id -> float-ratio bucket label (stratification bins) so the
+    report can tag each tracked signal with how much of the float unlocks.
     """
 
     _fields, rows = _read_csv(cache, "share_float")
@@ -200,6 +210,7 @@ def load_lockup_entries(
         and _parse_day(r["float_date"]) >= since
     ]
     entries = []
+    ratio_by_event: dict[str, str] = {}
     skipped = 0
     for idx, raw_row in enumerate(eligible):
         # CSV cells are strings; the adapter requires numeric share counts.
@@ -219,12 +230,17 @@ def load_lockup_entries(
             skipped += 1
             continue
         entries.append(entry)
-    return entries, skipped
+        try:
+            ratio = float(raw_row.get("float_ratio"))
+        except (TypeError, ValueError):
+            ratio = None
+        ratio_by_event[entry.event_id] = bucket_by_ratio(ratio)
+    return entries, skipped, ratio_by_event
 
 
 def load_disclosure_entries(
     cache: Path, samples: set[str], since: date
-) -> tuple[list, int]:
+) -> tuple[list, int, dict[str, date]]:
     """Mint disclosure entries whose prior forecast has a usable direction.
 
     The forecast direction (from the study cache's ``forecast.csv``, earliest
@@ -233,11 +249,15 @@ def load_disclosure_entries(
     (symbol, appointment date); disclosures with no prior forecast, an
     uncertain one, or none before the disclosure are not tracked — the study
     found no structure there.
+
+    Also returns a mapping of final entry event id -> forecast announcement
+    date so the report can measure the pre-disclosure trade window.
     """
 
     forecasts = load_forecast_directions(cache)
     _fields, rows = _read_csv(cache, "disclosure")
     doc_entries: list[dict] = []
+    ann_by_key: dict[tuple[str, str], date] = {}
     seen_events: set[tuple[str, str]] = set()
     skipped = 0
     for row in rows:
@@ -264,6 +284,9 @@ def load_disclosure_entries(
             skipped += 1
             continue
         seen_events.add(key)
+        ann_by_key[(code, f"{appointment[:4]}-{appointment[4:6]}-{appointment[6:8]}")] = _parse_day(
+            prior[0]
+        )
         doc_entries.append(
             {
                 "event_id": f"disc:{code}:{row['end_date']}:{appointment}",
@@ -281,9 +304,16 @@ def load_disclosure_entries(
         raise TrackerError("disclosure_entries_empty")
     document = {"calendar_id": "ashare-event-tracker-v1", "entries": doc_entries}
     try:
-        return list(catalyst_entries_from_calendar_document(document)), skipped
+        entries = list(catalyst_entries_from_calendar_document(document))
     except EventCatalystAdapterError as exc:
         raise TrackerError(f"disclosure_adapter_failed:{exc.reason_code}") from exc
+    # The calendar path prefixes event ids; re-join via (symbol, date).
+    ann_by_event = {
+        entry.event_id: ann_by_key[(entry.symbol or "", entry.scheduled_date.isoformat())]
+        for entry in entries
+        if (entry.symbol or "", entry.scheduled_date.isoformat()) in ann_by_key
+    }
+    return entries, skipped, ann_by_event
 
 
 def load_bars(cache: Path, samples: set[str]) -> dict[str, list[DailyBar]]:
@@ -340,6 +370,11 @@ class TrackerView:
     # ISO scheduled_date -> weak/sideways/strong/unknown (SSE 10-session
     # return ending at the last session on/before the event day).
     regime_by_date: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> float-ratio bucket label (lockup events only).
+    ratio_by_event: dict[str, str] = field(default_factory=dict)
+    # signal key -> pre-disclosure trade-window stats (report-only readout,
+    # computed for earnings_pos; never journaled).
+    prewindow_stats: dict[str, dict] = field(default_factory=dict)
     appended_records: list[dict] = field(default_factory=list)
 
 
@@ -503,13 +538,19 @@ def run_tracker(
     _fields, sym_rows = _read_csv(cache, "sample_symbols")
     samples = {r["ts_code"] for r in sym_rows}
     entries: list = []
+    ratio_by_event: dict[str, str] = {}
+    ann_by_event: dict[str, date] = {}
     skipped = 0
     if LOCKUP_SIGNAL in signals:
-        lockup_entries, lockup_skipped = load_lockup_entries(cache, samples, since)
+        lockup_entries, lockup_skipped, ratio_by_event = load_lockup_entries(
+            cache, samples, since
+        )
         entries.extend(lockup_entries)
         skipped += lockup_skipped
     if EARNINGS_POS_SIGNAL in signals or EARNINGS_NEG_SIGNAL in signals:
-        disc_entries, disc_skipped = load_disclosure_entries(cache, samples, since)
+        disc_entries, disc_skipped, ann_by_event = load_disclosure_entries(
+            cache, samples, since
+        )
         entries.extend(disc_entries)
         skipped += disc_skipped
     bars_by_symbol = load_bars(cache, samples)
@@ -528,6 +569,11 @@ def run_tracker(
         for obs in batch.observations
         if obs.observation_status == "observed"
     }
+    view.ratio_by_event = ratio_by_event
+    if EARNINGS_POS_SIGNAL in signals:
+        view.prewindow_stats[EARNINGS_POS_SIGNAL] = prewindow_breakdown(
+            view.buckets[EARNINGS_POS_SIGNAL].labeled, ann_by_event, bars_by_symbol
+        )
 
     from shared.review.sample_journal import SampleJournal
 
@@ -573,6 +619,79 @@ def regime_breakdown(
     return {regime: _post_return_stats(v) for regime, v in sorted(groups.items())}
 
 
+RATIO_LABEL_ORDER = ("<1%", "1-3%", "3-5%", ">=5%", "unknown")
+
+
+def ratio_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    ratio_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by float-ratio bucket (lockup events).
+
+    Observations without a ratio tag (e.g. disclosure events) are skipped:
+    the float-ratio dimension only exists for lockups.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = ratio_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in RATIO_LABEL_ORDER
+        if label in groups
+    }
+
+
+def prewindow_return(
+    bars: list[DailyBar], ann_day: date, target_day: date
+) -> float | None:
+    """Return over the study's pre-disclosure trade window.
+
+    Entry at the close of the first session strictly AFTER the forecast
+    announcement (forecasts are typically published after hours), exit at
+    the close of the last session on/before the disclosure appointment.
+    ``None`` when either endpoint is not observable in the bar series or
+    the window holds no session.
+    """
+
+    if not bars:
+        return None
+    days = [bar.trade_date for bar in bars]
+    entry_i = bisect.bisect_right(days, ann_day)
+    exit_j = bisect.bisect_right(days, target_day) - 1
+    if entry_i >= len(days) or exit_j < entry_i:
+        return None
+    return bars[exit_j].close / bars[entry_i].close - 1.0
+
+
+def prewindow_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    ann_by_event: dict[str, date],
+    bars_by_symbol: dict[str, list[DailyBar]],
+) -> dict:
+    """Aggregate the pre-disclosure trade-window returns for one signal.
+
+    Report-only readout of the studied trade; observations without a known
+    forecast announcement date or unobservable endpoints are skipped rather
+    than guessed.
+    """
+
+    values: list[float] = []
+    for obs in observations:
+        ann_day = ann_by_event.get(obs.event_id)
+        if ann_day is None:
+            continue
+        ret = prewindow_return(
+            bars_by_symbol.get(obs.symbol or "", []), ann_day, obs.scheduled_date
+        )
+        if ret is not None:
+            values.append(ret)
+    return _post_return_stats(values)
+
+
 def render_report(
     view: TrackerView,
     *,
@@ -608,9 +727,9 @@ def render_report(
         if bucket.active:
             lines.append(
                 "| event_id | symbol | event_date | pre_return | intensity"
-                " | regime |"
+                " | regime | float_ratio |"
             )
-            lines.append("|---|---|---|---|---|---|")
+            lines.append("|---|---|---|---|---|---|---|")
             for obs in sorted(
                 bucket.active, key=lambda o: (o.scheduled_date, o.symbol or "")
             ):
@@ -618,9 +737,11 @@ def render_report(
                 regime = view.regime_by_date.get(
                     obs.scheduled_date.isoformat(), "unknown"
                 )
+                ratio = view.ratio_by_event.get(obs.event_id, "-")
                 lines.append(
                     f"| {obs.event_id} | {obs.symbol} | {obs.scheduled_date} "
-                    f"| {pre_pct} | {obs.anticipation_intensity} | {regime} |"
+                    f"| {pre_pct} | {obs.anticipation_intensity} | {regime} "
+                    f"| {ratio} |"
                 )
         else:
             lines.append("Currently tracked (post window open): (none)")
@@ -632,6 +753,17 @@ def render_report(
                 f", win_rate={stats['win_rate']}"
             )
         lines += ["", summary, ""]
+        pre = view.prewindow_stats.get(key)
+        if pre and pre.get("n"):
+            lines += [
+                "Pre-disclosure trade window (entry: first session close after"
+                " the forecast announcement; exit: disclosure-day close;"
+                " report-only, not journaled):",
+                "",
+                f"- n={pre['n']}, mean={pre['mean_bps']}bps,"
+                f" median={pre['median_bps']}bps, win_rate={pre['win_rate']}",
+                "",
+            ]
         breakdown = regime_breakdown(bucket.labeled, view.regime_by_date)
         if any(item.get("n") for item in breakdown.values()):
             parts = []
@@ -643,6 +775,19 @@ def render_report(
                     f" win_rate={item['win_rate']}"
                 )
             lines += ["Labelled outcomes by market regime:", ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
+        ratio_stats = ratio_breakdown(bucket.labeled, view.ratio_by_event)
+        if any(item.get("n") for item in ratio_stats.values()):
+            parts = []
+            for label, item in ratio_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by float-ratio bucket:", ""] + [
                 f"- {part}" for part in parts
             ] + [""]
     lines += ["## Journal writes", ""]
@@ -718,6 +863,21 @@ def main() -> int:
                         if item.get("n")
                     }
                     for k, b in view.buckets.items()
+                },
+                "labeled_by_ratio": {
+                    k: {
+                        label: item["n"]
+                        for label, item in ratio_breakdown(
+                            b.labeled, view.ratio_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "prewindow": {
+                    k: v
+                    for k, v in view.prewindow_stats.items()
+                    if v.get("n")
                 },
                 "appended": len(view.appended_records),
                 "dry_run": dry_run,
