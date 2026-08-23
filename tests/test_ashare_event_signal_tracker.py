@@ -20,6 +20,7 @@ from Ashare.event_catalyst_shadow import (
 )
 from Ashare.event_signal_lockup_tracker import (
     ABSORPTION_LABEL_ORDER,
+    BLOCK_LABEL_ORDER,
     DEFAULT_SINCE,
     EARNINGS_DISCLOSURE_EVENT_TYPE,
     EARNINGS_NEG_SIGNAL,
@@ -30,7 +31,9 @@ from Ashare.event_signal_lockup_tracker import (
     SIGNAL_EVENT_TYPE,
     TrackerError,
     _absorption_labels_for_observations,
+    _block_labels_for_observations,
     absorption_breakdown,
+    block_breakdown,
     append_new_outcomes,
     build_tracker_view,
     load_disclosure_entries,
@@ -475,6 +478,87 @@ class TestAbsorptionTags:
         )
         assert "Labelled outcomes by absorption bucket:" in report
         assert "balanced: n=" in report
+
+
+class TestBlockTags:
+    """Block-trade side-table labels: report-only, degrade to no labels."""
+
+    @staticmethod
+    def _block_caches(tmp_path):
+        """Daily history (written NEWEST-first, as Tushare delivers it) plus
+        a blocktrade cache whose only print sits outside every window, so
+        each labeled event resolves to ``none``."""
+
+        stem = f"daily_{SYMBOL[:6]}{SYMBOL[7:]}"
+        with (tmp_path / f"{stem}.csv").open("w", newline="",
+                                             encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "trade_date", "close", "amount"])
+            days: list[date] = []
+            cursor = EVENT_DATE
+            while len(days) < 25:
+                if cursor.weekday() < 5:
+                    days.append(cursor)
+                cursor -= timedelta(days=1)
+            for d in days:  # newest first on purpose
+                writer.writerow([SYMBOL, f"{d:%Y%m%d}", 10.0, 1000.0])
+        flow_dir = tmp_path / "blocktrade_daily"
+        flow_dir.mkdir(parents=True)
+        old_day = (days[-1] - timedelta(days=40)).strftime("%Y%m%d")
+        with (flow_dir / f"{old_day}.csv").open("w", newline="",
+                                                encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "trade_date", "price", "vol",
+                             "amount", "buyer", "seller"])
+            writer.writerow([SYMBOL, old_day, 9.0, 100.0, 900.0, "买", "卖"])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_block_caches(self, tmp_path):
+        cache = self._block_caches(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _block_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        assert set(labels.values()) == {"none"}
+
+    def test_missing_block_caches_degrade_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _block_labels_for_observations(tmp_path, batch.observations) == {}
+        )
+
+    def test_block_breakdown_groups_in_label_order_and_skips_untagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = block_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "near_flat",
+                pos.labeled[0].event_id: "none",
+            },
+        )
+        assert list(breakdown) == ["none", "near_flat"]
+        assert list(BLOCK_LABEL_ORDER) == ["none", "discount_deep", "near_flat"]
+        assert breakdown["none"]["n"] == 1
+        assert breakdown["near_flat"]["n"] == 1
+        assert block_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_block_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.blocks_by_event = {
+            obs.event_id: "discount_deep"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by pre-event block bucket:" in report
+        assert "discount_deep: n=" in report
 
 
 # --- journal write path -----------------------------------------------------
