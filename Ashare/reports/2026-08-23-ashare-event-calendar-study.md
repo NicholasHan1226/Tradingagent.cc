@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(解禁信号滚动跟踪)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
 
 ## 结论摘要
 
@@ -92,6 +92,35 @@
 
 局限：以上为绝对收益（含市场整体上行 beta）、未计成本、单一 5 日窗口；结论仅用于修正研究假设，不构成任何晋级证据。
 
+
+## 信号跟踪器（第二期第 1 步，`event_signal_lockup_tracker.py`）
+
+把「解禁超跌修复」落成第一个正式跟踪的事件信号：解禁事件经真实 adapter 入场，
+分类与标签全部由生产 shadow 因子给出（不自造阈值），信号定义 =
+**lockup_expiry 且事前 10 日收益 ≤ −3%（sell_off 类）**。
+
+- 输出三类信息：当前跟踪中（post 窗口未走完的 sell_off 解禁）、已标注结果
+  （写入共享 SampleJournal 的 `shadow_research` 层，按策略排除在交易层 KPI 外）、状态计数。
+- 去重双保险：观察回执含运行时间戳，同一事件重跑会生成不同日志 ID；跟踪器自带
+  append-only 台账 + 日志反查（journal read-back），事件只入日志一次后冻结。
+- 运行方式（离线、无网络、fail-closed）：
+
+  ```
+  python3 Ashare/event_signal_lockup_tracker.py --since 20260401 [--dry-run]
+  ```
+
+**首次回填读数（2026-04-01 起的解禁事件，as_of 2026-08-23）**：
+
+| 指标 | 数值 |
+|---|---|
+| 可完整观察解禁事件 | 90 |
+| sell_off 信号（已标注） | n=11 |
+| 信号事后 5 日均值 / 中位 | −19.3bps / −198.0bps |
+| 信号事后胜率 | 36.4% |
+
+近期样本明显弱于 2018–2026 回放（同组历史 +205bps、胜率 59.6%）。n=11 不构成结论，
+但提示「解禁超跌修复」强度可能随行情环境衰减——这正是滚动跟踪要回答的问题；
+继续积累样本，不据此调整任何假设参数。
 
 ## 未来日历（已生成，可直接使用）
 
