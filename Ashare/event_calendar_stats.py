@@ -108,9 +108,10 @@ def load_events_disclosure(
 
 
 def load_events_lockup(
-    cache: Path, samples: set[str]
+    cache: Path, samples: set[str], *, expanded: bool = False
 ) -> list[tuple[str, str]]:
-    _fields, rows = _read_csv(cache, "share_float")
+    name = "share_float_expanded" if expanded else "share_float"
+    _fields, rows = _read_csv(cache, name)
     events = {
         (r["ts_code"], r["float_date"])
         for r in rows
@@ -205,9 +206,13 @@ def main() -> int:
         if "--cache" in sys.argv
         else Path("/tmp/ashare_event_research")
     )
+    # --expanded switches the panel to the top-N expansion set produced by
+    # event_calendar_expand_samples (robustness check for the top-200 study).
+    expanded = "--expanded" in sys.argv
+    symbol_file = "sample_symbols_expanded" if expanded else "sample_symbols"
 
     idx_panel = DailyPanel(load_index_series(cache))
-    _fields, sym_rows = _read_csv(cache, "sample_symbols")
+    _fields, sym_rows = _read_csv(cache, symbol_file)
     samples = {r["ts_code"] for r in sym_rows}
     panels: dict[str, DailyPanel] = {}
     for code in sorted(samples):
@@ -267,7 +272,7 @@ def main() -> int:
 
     # --- 2 & 3. Symbol-level families vs pooled unconditional excess ------
     disc_events = load_events_disclosure(cache, samples)
-    lock_events = load_events_lockup(cache, samples)
+    lock_events = load_events_lockup(cache, samples, expanded=expanded)
 
     accumulators = {
         family: {
