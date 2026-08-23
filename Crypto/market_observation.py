@@ -13,7 +13,8 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import http.client
 import json
-from typing import Any, Mapping
+import time
+from typing import Any, Callable, Mapping
 import urllib.error
 
 from shared.data.sharedsignals_v1 import (
@@ -30,6 +31,10 @@ from shared.governance.evidence_readiness import dataset_contract_fingerprint
 OBSERVATION_CONTRACT = "tradingagent.crypto.market_observation.v1"
 FIVE_MINUTES = timedelta(minutes=5)
 BAR_COUNT = 13
+# Headroom kept against the caller's invocation budget before spending a
+# same-invocation shape retry, so the remaining symbols and the auxiliary
+# spread leg always keep room to finish.
+BAR_SHAPE_RETRY_RESERVE_SECONDS = 15.0
 BAR_FIELDS = (
     "symbol",
     "open_time",
@@ -461,6 +466,90 @@ def _validate_run(
     )
 
 
+def _fetch_and_shape_validate(
+    client: SharedSignalsV1Client,
+    *,
+    catalog: CatalogEnvelope,
+    symbol: str,
+    dataset_id: str,
+    window: CryptoObservationWindow,
+) -> tuple[PagedQueryRun, CryptoObservationSource]:
+    """Run the exact bounded bar query once and gate its envelope shape."""
+
+    run = collect_query_pages(
+        client=client,
+        request=QueryRequest(
+            dataset_id=dataset_id,
+            schema_major=1,
+            fields=BAR_FIELDS,
+            filters={
+                "symbol": {"eq": symbol},
+                "open_time": {
+                    "between": [
+                        _wire_iso(window.first_open_time),
+                        _wire_iso(window.last_open_time),
+                    ]
+                },
+            },
+            # This is a current health observation, not a historical/PIT
+            # read.  The formal ten-symbol 18083 contract supports the
+            # exact bounded current window with as_of omitted.
+            order=("symbol:asc", "open_time:asc"),
+            limit=BAR_COUNT,
+        ),
+        identity_fields=("symbol", "open_time"),
+        max_pages=1,
+        max_rows=BAR_COUNT,
+    )
+    source = _validate_run(run, symbol=symbol, dataset_id=dataset_id, window=window)
+    return run, source
+
+
+def _collect_symbol_bar_run(
+    client: SharedSignalsV1Client,
+    *,
+    catalog: CatalogEnvelope,
+    symbol: str,
+    dataset_id: str,
+    window: CryptoObservationWindow,
+    shape_retry_delays: tuple[float, ...],
+    retry_sleep: Callable[[float], None],
+    budget_remaining: Callable[[], float] | None,
+) -> tuple[PagedQueryRun, CryptoObservationSource]:
+    """Fetch one symbol's bars, retrying only the mid-write shape transient.
+
+    A ``crypto_observation_query_shape_invalid`` reject means the paged read
+    raced an in-progress collection write (typically a short row count).
+    When enabled, the identical bounded query is re-issued after fixed
+    delays while the caller's invocation budget still affords it; every
+    validation gate is unchanged and exhausting the retries (or running out
+    of budget) re-raises the original error, so the fail-closed contract is
+    preserved.  Every other reason propagates on its first attempt.
+    """
+
+    for attempt in range(1 + len(shape_retry_delays)):
+        try:
+            return _fetch_and_shape_validate(
+                client,
+                catalog=catalog,
+                symbol=symbol,
+                dataset_id=dataset_id,
+                window=window,
+            )
+        except CryptoMarketObservationError as exc:
+            if (
+                str(exc) != "crypto_observation_query_shape_invalid"
+                or attempt == len(shape_retry_delays)
+            ):
+                raise
+            delay = shape_retry_delays[attempt]
+            if budget_remaining is not None and (
+                budget_remaining() <= delay + BAR_SHAPE_RETRY_RESERVE_SECONDS
+            ):
+                raise
+            retry_sleep(delay)
+
+
 def _collect_market_observation_rows_with_catalog(
     client: SharedSignalsV1Client,
     *,
@@ -468,6 +557,9 @@ def _collect_market_observation_rows_with_catalog(
     expected_catalog_version: str,
     window: CryptoObservationWindow,
     symbols: tuple[str, ...] = OBSERVATION_SYMBOLS,
+    shape_retry_delays: tuple[float, ...] = (),
+    retry_sleep: Callable[[float], None] = time.sleep,
+    budget_remaining: Callable[[], float] | None = None,
 ) -> tuple[CryptoMarketObservation, dict[str, list[dict[str, Any]]]]:
     """Collect the cohort and also return the validated raw bar rows.
 
@@ -475,6 +567,10 @@ def _collect_market_observation_rows_with_catalog(
     the accumulator runtime can persist them as an immutable bars sidecar
     whose digests re-derive exactly the per-source ``identity_sha256`` and
     ``market_data_sha256`` already bound in the observation evidence.
+
+    The bounded mid-write shape retry is opt-in per family: by default every
+    symbol is a single attempt, so frozen call sites keep their established
+    behavior byte-for-byte.
     """
 
     if (
@@ -487,34 +583,17 @@ def _collect_market_observation_rows_with_catalog(
     for symbol in symbols:
         dataset_id = _bar_dataset_id(symbol)
         _verify_catalog(catalog, dataset_id)
-        run = collect_query_pages(
-            client=client,
-            request=QueryRequest(
-                dataset_id=dataset_id,
-                schema_major=1,
-                fields=BAR_FIELDS,
-                filters={
-                    "symbol": {"eq": symbol},
-                    "open_time": {
-                        "between": [
-                            _wire_iso(window.first_open_time),
-                            _wire_iso(window.last_open_time),
-                        ]
-                    },
-                },
-                # This is a current health observation, not a historical/PIT
-                # read.  The formal ten-symbol 18083 contract supports the
-                # exact bounded current window with as_of omitted.
-                order=("symbol:asc", "open_time:asc"),
-                limit=BAR_COUNT,
-            ),
-            identity_fields=("symbol", "open_time"),
-            max_pages=1,
-            max_rows=BAR_COUNT,
+        run, source = _collect_symbol_bar_run(
+            client,
+            catalog=catalog,
+            symbol=symbol,
+            dataset_id=dataset_id,
+            window=window,
+            shape_retry_delays=shape_retry_delays,
+            retry_sleep=retry_sleep,
+            budget_remaining=budget_remaining,
         )
-        sources.append(
-            _validate_run(run, symbol=symbol, dataset_id=dataset_id, window=window)
-        )
+        sources.append(source)
         rows_by_symbol[symbol] = [dict(row) for row in run.envelope.data]
     sources_tuple = tuple(sources)
     market_data_payload = {
@@ -1325,6 +1404,7 @@ def collect_market_observation(
 __all__ = [
     "BAR_COUNT",
     "BAR_FIELDS",
+    "BAR_SHAPE_RETRY_RESERVE_SECONDS",
     "BOOK_TICKER_FIELDS",
     "BOOK_TICKER_ROW_COUNT",
     "FORTY_SYMBOL_BARS_SIDECAR_CONTRACT",

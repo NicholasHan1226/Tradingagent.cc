@@ -168,6 +168,7 @@ class CryptoTenSymbolObservationRuntimeConfig:
     event_id_prefix: str
     reason_code_prefix: str
     slot_settle_delay_seconds: int
+    bar_shape_retry_delays: tuple[float, ...]
 
 
 TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
@@ -184,6 +185,8 @@ TEN_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     event_id_prefix="crypto-ten",
     reason_code_prefix="crypto_ten_symbol",
     slot_settle_delay_seconds=SLOT_CUTOFF_DELAY_SECONDS,
+    # The frozen ten-symbol chain keeps single-attempt bar collection.
+    bar_shape_retry_delays=(),
 )
 FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     runtime_contract="tradingagent.crypto.forty_symbol_observation_runtime.v1",
@@ -199,10 +202,16 @@ FORTY_SYMBOL_RUNTIME_CONFIG = CryptoTenSymbolObservationRuntimeConfig(
     event_id_prefix="crypto-forty",
     reason_code_prefix="crypto_forty_symbol",
     # The isolated forty-symbol collector can finish after the core +55s
-    # receipt boundary.  Its reader runs at close +3m45s, so bind the PIT
-    # cutoff to that fixed, replayable availability boundary instead of
-    # rejecting an honest receipt merely because collection took over 55s.
-    slot_settle_delay_seconds=225,
+    # receipt boundary.  2026-08-23 natural evidence: two chain breaks
+    # (06:50Z, 07:55Z) both had the shared collector still mid-write at the
+    # close +225s boundary while the ten-symbol reader failed at the same
+    # instants, and a later re-read of the completed data still failed the
+    # watermark gate because the receipt timestamp is intrinsic to the
+    # collection.  Bind the PIT cutoff to close +270s (still under the <300s
+    # family cap; the timer fires at close +285s) and enable a bounded
+    # same-invocation retry for the mid-write query-shape transient only.
+    slot_settle_delay_seconds=270,
+    bar_shape_retry_delays=(20.0, 45.0),
 )
 
 
@@ -881,6 +890,9 @@ class _LazyObservationPort:
                     expected_catalog_version=catalog.catalog_version,
                     window=window,
                     symbols=self._config.symbols,
+                    shape_retry_delays=self._config.bar_shape_retry_delays,
+                    retry_sleep=self._retry_sleep,
+                    budget_remaining=self._budget_check,
                 )
             )
             spread = self._collect_spread(transport=transport, window=window)

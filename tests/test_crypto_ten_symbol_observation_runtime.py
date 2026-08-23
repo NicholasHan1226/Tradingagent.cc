@@ -1208,3 +1208,76 @@ def test_absolute_budget_defers_without_recording_timeout_as_data_reject(
     store = CryptoTenSymbolObservationStore(output_root)
     assert store.pending_record() is not None
     assert store.checkpoint()["data_reject_count"] == 0
+
+
+def test_forty_family_settle_margin_and_shape_retry_pins() -> None:
+    assert (
+        runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG.slot_settle_delay_seconds == 270
+    )
+    assert runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG.bar_shape_retry_delays == (
+        20.0,
+        45.0,
+    )
+    # The frozen ten-symbol chain keeps its +55s boundary and its
+    # single-attempt bar collection byte-for-byte.
+    assert runtime_module.TEN_SYMBOL_RUNTIME_CONFIG.slot_settle_delay_seconds == 55
+    assert runtime_module.TEN_SYMBOL_RUNTIME_CONFIG.bar_shape_retry_delays == ()
+    for config in (
+        runtime_module.TEN_SYMBOL_RUNTIME_CONFIG,
+        runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG,
+    ):
+        assert 0 <= config.slot_settle_delay_seconds < 5 * 60
+
+
+def test_forty_family_wires_the_bounded_shape_retry_into_bar_collection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_collect(
+        client: Any,
+        *,
+        catalog: Any,
+        expected_catalog_version: str,
+        window: Any,
+        symbols: tuple[str, ...],
+        shape_retry_delays: tuple[float, ...],
+        retry_sleep: Callable[[float], None],
+        budget_remaining: Callable[[], float] | None,
+    ) -> tuple[Any, dict[str, list[dict[str, Any]]]]:
+        captured["symbols"] = symbols
+        captured["shape_retry_delays"] = shape_retry_delays
+        captured["retry_sleep"] = retry_sleep
+        captured["budget_remaining"] = budget_remaining
+        raise RuntimeError("stop-before-persistence")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "_collect_market_observation_rows_with_catalog",
+        fake_collect,
+    )
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    manifest = load_crypto_ten_symbol_observation_runtime_manifest(
+        _write_manifest(tmp_path, payload=_manifest_payload(output_root))
+    )
+    sleeps: list[float] = []
+    port = runtime_module._LazyObservationPort(
+        manifest=manifest,
+        token_file=token_file,
+        transport_factory=_factory(
+            lambda **kwargs: HTTPResponse(200, catalog_payload())
+        ),
+        config=runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG,
+        retry_sleep=sleeps.append,
+    )
+    window = runtime_module._window_for_end(
+        WINDOW_END, config=runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG
+    )
+    with pytest.raises(RuntimeError, match="stop-before-persistence"):
+        port.collect(window)
+
+    assert captured["symbols"] == runtime_module.OBSERVATION_SYMBOLS_V40
+    assert captured["shape_retry_delays"] == (20.0, 45.0)
+    assert callable(captured["retry_sleep"])
+    assert callable(captured["budget_remaining"])
