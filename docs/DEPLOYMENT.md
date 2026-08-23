@@ -242,3 +242,11 @@ Repository tests also lock the main deployment trust boundaries: workflow trigge
 Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are M1 infrastructure changes. They require a fresh Controller review of the immutable candidate head, a Controller merge, and exact-main test evidence.
 
 CI is candidate evidence, not production-deployment authority. The narrowly defined `automerge-m0` path may merge only a trusted, current-main-base PR that changes only `docs/**`, `tests/**`, or Markdown files; it then dispatches exact-main validation and cannot deploy. Everything outside that path—including all business, shared, workflow and deployment changes—remains Controller-merged M1. For each accepted M1 merge, the Controller independently records the merge commit and exact successful main test run before issuing the narrowly scoped deployment dispatch; afterward it reads back GitHub, server source, immutable effective release, and runtime separately. High-authority actions, including real trading, capital, accounts, secrets, and public exposure, remain outside this workflow.
+
+## Push-CI recursion caveat
+
+A merge performed by a workflow using the built-in `GITHUB_TOKEN` does not
+trigger a `push`-event run on `main`. When a deployable push run is required,
+the merge must be performed with user credentials (for example the controller
+squash-merge path); otherwise `main` has no fresh push-event artifact and the
+production gate cannot be satisfied for that head.
