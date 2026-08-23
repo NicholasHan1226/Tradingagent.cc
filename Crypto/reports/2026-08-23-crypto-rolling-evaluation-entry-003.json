@@ -1,0 +1,475 @@
+{
+  "assumes_touch_equals_fill": true,
+  "authority": "none",
+  "automatic_champion_replacement": false,
+  "automatic_risk_expansion_enabled": false,
+  "capital_write_eligible": false,
+  "champion_configuration": {
+    "decision_lookback_bars": 3,
+    "entry_fee": "0.001",
+    "entry_threshold": "0.001",
+    "exit_fee": "0.001",
+    "max_hold_bars": 288,
+    "minimum_regime_return": "0",
+    "regime_lookback_bars": 12,
+    "scan_performed": false,
+    "slippage_rate_per_leg": "0.0002",
+    "stop_loss_return": "-0.02",
+    "take_profit_return": "0.03"
+  },
+  "contract": "tradingagent.crypto.forty_symbol_rolling_evaluation.v1",
+  "evaluation": {
+    "abstentions_data_end": 1,
+    "baseline_buy_hold": {
+      "mean_net": "0.01546413043954095680909126716",
+      "per_symbol_net": {
+        "AAVEUSDT": {
+          "gross": "0.068339100346020761245674740",
+          "net": "0.065778117514492427987237675"
+        },
+        "ADAUSDT": {
+          "gross": "0.015744489428699955015744489",
+          "net": "0.013309584445999344784769884"
+        },
+        "APTUSDT": {
+          "gross": "0.040128410914927768860353130",
+          "net": "0.037635053700841694421148675"
+        },
+        "ARBUSDT": {
+          "gross": "0.019057171514543630892678034",
+          "net": "0.016614325493323126221822310"
+        },
+        "ATOMUSDT": {
+          "gross": "0.020369191597708465945257798",
+          "net": "0.017923200450650558861889225"
+        },
+        "AVAXUSDT": {
+          "gross": "0.014356634912115926472561385",
+          "net": "0.011925056842741318791231578"
+        },
+        "BCHUSDT": {
+          "gross": "0.003664345914254305606449249",
+          "net": "0.001258399003136841172751763"
+        },
+        "BNBUSDT": {
+          "gross": "0.006281207033794051667993342",
+          "net": "0.003868987080346240343345777"
+        },
+        "BTCUSDT": {
+          "gross": "0.004515938564603436500696686",
+          "net": "0.002107950247198124448075557"
+        },
+        "CRVUSDT": {
+          "gross": "-0.0131578947368421052631578947",
+          "net": "-0.0155235159971607340028392659"
+        },
+        "DOGEUSDT": {
+          "gross": "0.002488369576977171913880775",
+          "net": "0.000085241672679803156920976"
+        },
+        "DOTUSDT": {
+          "gross": "0.014301430143014301430143014",
+          "net": "0.011869984408462824304408462"
+        },
+        "ENAUSDT": {
+          "gross": "-0.0404328018223234624145785877",
+          "net": "-0.0427330406878997995171115900"
+        },
+        "ETCUSDT": {
+          "gross": "0.005095541401273885350318471",
+          "net": "0.002686163681465031783503121"
+        },
+        "ETHUSDT": {
+          "gross": "0.007043040342303347306306045",
+          "net": "0.004628994150329821798059837"
+        },
+        "FETUSDT": {
+          "gross": "0.017857142857142857142857143",
+          "net": "0.015417173500071357214214357"
+        },
+        "FILUSDT": {
+          "gross": "0.013738441215323645970937913",
+          "net": "0.011308345056929860100269612"
+        },
+        "GRTUSDT": {
+          "gross": "0.043397396156230626162430254",
+          "net": "0.040896202652078237943086052"
+        },
+        "HBARUSDT": {
+          "gross": "0.002916560994166878011666244",
+          "net": "0.000512406645299919456652908"
+        },
+        "INJUSDT": {
+          "gross": "0.024027005559968228752978554",
+          "net": "0.021572246037068570825520785"
+        },
+        "JUPUSDT": {
+          "gross": "0.032544378698224852071005917",
+          "net": "0.030069201644627561787325100"
+        },
+        "LDOUSDT": {
+          "gross": "0.037537132055090467188765866",
+          "net": "0.035049986558491468024279260"
+        },
+        "LINKUSDT": {
+          "gross": "0.004285089637079142982072584",
+          "net": "0.001877654702153115795441986"
+        },
+        "LTCUSDT": {
+          "gross": "-0.0036356678147722923842326827",
+          "net": "-0.0060241154039760469151973170"
+        },
+        "NEARUSDT": {
+          "gross": "-0.0005120327700972862263184844",
+          "net": "-0.0029079682212718157418618248"
+        },
+        "ONDOUSDT": {
+          "gross": "0.033833560709413369713506139",
+          "net": "0.031355293276557003705707662"
+        },
+        "OPUSDT": {
+          "gross": "0.014505893019038984587488667",
+          "net": "0.012073957153671351314143698"
+        },
+        "POLUSDT": {
+          "gross": "-0.0003713330857779428147047902",
+          "net": "-0.0027676058170125455680598644"
+        },
+        "PYTHUSDT": {
+          "gross": "0.059437118677425703601653218",
+          "net": "0.056897475345886154782041419"
+        },
+        "RENDERUSDT": {
+          "gross": "0.019986216402481047553411440",
+          "net": "0.017541143309343998523874471"
+        },
+        "SEIUSDT": {
+          "gross": "0.018953262976523799267714840",
+          "net": "0.016510666040993251848302463"
+        },
+        "SOLUSDT": {
+          "gross": "0.011301844546326900522443757",
+          "net": "0.008877589307014554908786703"
+        },
+        "STRKUSDT": {
+          "gross": "0.036444775009297136481963555",
+          "net": "0.033960248070456876704552420"
+        },
+        "SUIUSDT": {
+          "gross": "0.016468548786527984150569589",
+          "net": "0.014031908115613955138472227"
+        },
+        "TIAUSDT": {
+          "gross": "0.023249599144842330304649920",
+          "net": "0.020796703191741449357697354"
+        },
+        "TRXUSDT": {
+          "gross": "-0.0002909514111143439045679372",
+          "net": "-0.0026874168303154512057625237"
+        },
+        "UNIUSDT": {
+          "gross": "0.058531980174651876327590276",
+          "net": "0.055994506607529831509062097"
+        },
+        "WLDUSDT": {
+          "gross": "0.044745057232049947970863684",
+          "net": "0.042240633164795662194205379"
+        },
+        "XLMUSDT": {
+          "gross": "0.020565552699228791773778920",
+          "net": "0.018119090842627809208786072"
+        },
+        "XRPUSDT": {
+          "gross": "0.018857758620689655172413793",
+          "net": "0.016415390624655516896896207"
+        }
+      }
+    },
+    "excluded_symbols": [],
+    "exit_reason_counts": {
+      "data_end": 1,
+      "max_holding_period": 0,
+      "momentum_reversal_observed": 62,
+      "stop_loss": 14,
+      "take_profit": 13
+    },
+    "hit_rate": "0.3483146067415730337078651685",
+    "hits": 31,
+    "max_drawdown_resolved": "-0.1562929704132919897033394189",
+    "mean_gross_resolved": "0.001021259794302464680247550698",
+    "mean_net_resolved": "-0.001378351208887212456535899213",
+    "observe_slots_total": 354,
+    "recommendation": {
+      "action": "downweight",
+      "detail": "negative but marginal mean net"
+    },
+    "trips_resolved": 89,
+    "trips_total": 90,
+    "turnover_trips_per_symbol": "2.25"
+  },
+  "execution_authority": false,
+  "execution_eligible": false,
+  "generated_from": {
+    "bars_dir_file_count": 181,
+    "events_file_name": "events.jsonl",
+    "events_file_sha256": "43a3e1fb95a37527f9e9beae3f3998fa17fe1ebcf74031a942a518217c5a9daa",
+    "replay_command": "python3 -m Crypto.forty_symbol_rolling_evaluation --events /tmp/entry003-data/events.jsonl --bars-dir /tmp/entry003-data/bars"
+  },
+  "model_network_used": false,
+  "not_promotion_evidence": true,
+  "production_eligible": false,
+  "promotion_authorized": false,
+  "real_trading_enabled": false,
+  "receipt_bound_pit": true,
+  "receipts": [
+    {
+      "checksum": "5e51a90d7fee27fd48d7951e93bc6f0580a13955dad55fb19e7fb21bd2df181b",
+      "event_id": "crypto-forty-observation-0841fcbde886608267ba89b9",
+      "window_end": "2026-08-23T11:45:00Z"
+    },
+    {
+      "checksum": "c3d2ce3bbdd4e590d016b2de1b155c24ec7b3d359704b02d6627de0068b85825",
+      "event_id": "crypto-forty-observation-f341ca92afafe61e51f67a96",
+      "window_end": "2026-08-23T11:50:00Z"
+    },
+    {
+      "checksum": "d7b06a6b7eb3465632f0a714614ecfb62720f39b57e509c0305fd8727b8b7c1a",
+      "event_id": "crypto-forty-observation-846d61d1ebf6265d05efa9f7",
+      "window_end": "2026-08-23T11:55:00Z"
+    },
+    {
+      "checksum": "8fe33f8e66ef4cbb220197a88c06ae58ccae46ec84c9acfd2e46a6b70717d50f",
+      "event_id": "crypto-forty-observation-4c2e7950dc5ee4a26c6f03d2",
+      "window_end": "2026-08-23T12:00:00Z"
+    },
+    {
+      "checksum": "09fa7cd58445dace6c3e57c8c9366b6f3068755631504d199eecb205471f19ee",
+      "event_id": "crypto-forty-observation-7a5dfb205999a2f914a68823",
+      "window_end": "2026-08-23T12:05:00Z"
+    },
+    {
+      "checksum": "5db4516d4301e8690646fa422595c4a33755911c48f0e8e1b926acb2fa1c36d7",
+      "event_id": "crypto-forty-observation-1853d8cfbcfff6ba39b04931",
+      "window_end": "2026-08-23T12:10:00Z"
+    },
+    {
+      "checksum": "bd2a1f1cc6f3153f06d7ca2f519d10ccaee201cf38c4f4aac70cdf02cd928bb5",
+      "event_id": "crypto-forty-observation-b9360d56414238acc562ddf2",
+      "window_end": "2026-08-23T12:15:00Z"
+    },
+    {
+      "checksum": "e37f7eae384cdb01272c603d236a96c4897c17dfcbfe6bf33604114239b9677a",
+      "event_id": "crypto-forty-observation-51184ff03836c22320d72590",
+      "window_end": "2026-08-23T12:20:00Z"
+    },
+    {
+      "checksum": "11ac25727fb205fc6132fad7a691d236bb69401c917482a2533223c5f7a00bc9",
+      "event_id": "crypto-forty-observation-7f29c13861921b29579c2453",
+      "window_end": "2026-08-23T12:25:00Z"
+    },
+    {
+      "checksum": "b139994029b9db18f369b01eef010b334bfa0496b755f974b0485e6a294ff8fc",
+      "event_id": "crypto-forty-observation-c0ce313bc2d45abcb14d2eab",
+      "window_end": "2026-08-23T12:30:00Z"
+    },
+    {
+      "checksum": "d759b13a989104e0770c8d1f8263a97f595b270b71d58f6f239cbd96321a0bed",
+      "event_id": "crypto-forty-observation-98c234a756c2c7c3c0d68b14",
+      "window_end": "2026-08-23T12:35:00Z"
+    },
+    {
+      "checksum": "3a4ffb29b17e7f099264ef4ca8c05cf3b81d182cd4c0490063d95edb6cc46028",
+      "event_id": "crypto-forty-observation-8d9313d3aefc237b04ca54ab",
+      "window_end": "2026-08-23T12:40:00Z"
+    },
+    {
+      "checksum": "d2ddf4d669ff58ef4622554d5150629b6799a8338a73998c547476d9e17a6eb3",
+      "event_id": "crypto-forty-observation-c7fe03ddd4aceda98a089b82",
+      "window_end": "2026-08-23T12:45:00Z"
+    },
+    {
+      "checksum": "1b05a5421e41db174fa2aeaa4f5c732a612dcc03ee56069b3ab50bc7c504af05",
+      "event_id": "crypto-forty-observation-aa0e8f0fca1fe7edf8ad6e6a",
+      "window_end": "2026-08-23T12:50:00Z"
+    },
+    {
+      "checksum": "27fdb8bf782f19bd5e4cd6873d7cee4d4ff93754c55e8559147fadccabbc4ef9",
+      "event_id": "crypto-forty-observation-9aa738bdd2fde87bc28397fa",
+      "window_end": "2026-08-23T12:55:00Z"
+    },
+    {
+      "checksum": "478ab5782b761bac64e72fa1c2b9faaaf0f04f5d36ee3a9e93879114977b3db0",
+      "event_id": "crypto-forty-observation-4bcf74e8ab9c1c84968fd5ec",
+      "window_end": "2026-08-23T13:00:00Z"
+    },
+    {
+      "checksum": "0b035c1bffb54ff1ad8d8e0296b74ef005220d8a45981b13fb34cc686b218450",
+      "event_id": "crypto-forty-observation-c6b0db7706b3582797e31b76",
+      "window_end": "2026-08-23T13:05:00Z"
+    },
+    {
+      "checksum": "29717eef27e16d731f5e6e0446ebf7387d75089bf2322a1ecdd970352036390a",
+      "event_id": "crypto-forty-observation-b537b7abe0eeea58d1528785",
+      "window_end": "2026-08-23T13:10:00Z"
+    },
+    {
+      "checksum": "2342f1acbec7d2adf9e372ba632de2d120f48dd5d1bd0b0b913e0bee1166d5c3",
+      "event_id": "crypto-forty-observation-af40a4c8a88bd967a988644d",
+      "window_end": "2026-08-23T13:15:00Z"
+    },
+    {
+      "checksum": "37f90cd1c19ecda5bafcad4778d3762f83e15c7c14488f59eba430e00c7929be",
+      "event_id": "crypto-forty-observation-89f0edb9935c8360d0605109",
+      "window_end": "2026-08-23T13:20:00Z"
+    },
+    {
+      "checksum": "7a263f8fa27647b9ac0341a2127292120d893d21d40b64b9d4d1c20f6434405a",
+      "event_id": "crypto-forty-observation-663b05df0ab8cc907d864eef",
+      "window_end": "2026-08-23T13:25:00Z"
+    },
+    {
+      "checksum": "09a67e20d165e9b6e13a934510c7b5ec4c2b720552b735dc90e927144cbbd206",
+      "event_id": "crypto-forty-observation-acd4c02c0fbc6cf3e95a29cf",
+      "window_end": "2026-08-23T13:30:00Z"
+    },
+    {
+      "checksum": "f92c6777bc837436fe6bda2903c45acdd8c6f597ed833a466ae176370932c8ce",
+      "event_id": "crypto-forty-observation-309cf56403ddac1985156972",
+      "window_end": "2026-08-23T13:35:00Z"
+    },
+    {
+      "checksum": "d0a1c5d1270a79a86433bb6fcf4549cfbb5e54116d6b52b3bede8cfa384ad5f6",
+      "event_id": "crypto-forty-observation-1dffe6b0651fb69b031a9a98",
+      "window_end": "2026-08-23T13:40:00Z"
+    },
+    {
+      "checksum": "68342d9fb309fdc653a4a34f28ad8824c66b66ea4e4640e6c300be1eb175ac72",
+      "event_id": "crypto-forty-observation-4c64041acbbc0ac074b88275",
+      "window_end": "2026-08-23T13:45:00Z"
+    },
+    {
+      "checksum": "ecdb9214111177de68e482c607df8c8f4aaf27e492327189dbfc39900a35ba51",
+      "event_id": "crypto-forty-observation-5701679c7542f05e34d49f31",
+      "window_end": "2026-08-23T13:50:00Z"
+    },
+    {
+      "checksum": "e4506cb99b4a4564ddd93956f8b7bdf0d4c580d9ed28e1dcbf98b00e9765882f",
+      "event_id": "crypto-forty-observation-823319d2e969c3f6844ac9cb",
+      "window_end": "2026-08-23T13:55:00Z"
+    },
+    {
+      "checksum": "c311fdd67f6ae0c021e980bb4c65106d840f3e930c39ea766643a2077b6a2d92",
+      "event_id": "crypto-forty-observation-50418fc1208dfd8f6608c069",
+      "window_end": "2026-08-23T14:00:00Z"
+    },
+    {
+      "checksum": "00ed694a94da3bca88def2041792d96b8f22d268f236c353becad428acd6b132",
+      "event_id": "crypto-forty-observation-e07b322db89b62fa1364e8a3",
+      "window_end": "2026-08-23T14:05:00Z"
+    },
+    {
+      "checksum": "0560753c8574b48bf69fc79e40a9abdf9600d1b1cade7e34af85af0776ca1726",
+      "event_id": "crypto-forty-observation-c6af826ba7ccbbbe116d5a5c",
+      "window_end": "2026-08-23T14:10:00Z"
+    },
+    {
+      "checksum": "6aea871bfacfe408e36842b15e48883501d5cec23ae9e0237e6b0b93f2d16db6",
+      "event_id": "crypto-forty-observation-13dd83cea0f7f045a09a8267",
+      "window_end": "2026-08-23T14:15:00Z"
+    },
+    {
+      "checksum": "7b6bb173a76509d0548cb65f21060bfaa904f5f52312a6896a96fd1e66603c87",
+      "event_id": "crypto-forty-observation-5edec411f1561e39940cb65b",
+      "window_end": "2026-08-23T14:20:00Z"
+    },
+    {
+      "checksum": "f8c3d005294ea7930df2e4c99e5e2ef6bec15195fafb8e8358115b3a2c02cb0e",
+      "event_id": "crypto-forty-observation-30c2bf11004516d79ae6aa3f",
+      "window_end": "2026-08-23T14:25:00Z"
+    },
+    {
+      "checksum": "8cac41dab003ad9968a411f96bcaddcc583c4c9932b4424f132bbb1d710fd87f",
+      "event_id": "crypto-forty-observation-72b01d9b36f2cc4b0c9d9254",
+      "window_end": "2026-08-23T14:30:00Z"
+    },
+    {
+      "checksum": "ded9d5d5b86ea1c92c09281009d5baf995415a06da4488f4b021e289aac3c256",
+      "event_id": "crypto-forty-observation-d80cfcce872ff70d361b0a77",
+      "window_end": "2026-08-23T14:35:00Z"
+    },
+    {
+      "checksum": "cee069782531053c99837f7151a89bef265ddb47a893e61cf650984d2b3153d3",
+      "event_id": "crypto-forty-observation-3102cdb7ccb3d93e7cbf32f1",
+      "window_end": "2026-08-23T14:40:00Z"
+    },
+    {
+      "checksum": "4b82a2d98e342689a4b6eec5b4d63141496aadefe715f4b66e44b839bd5f0750",
+      "event_id": "crypto-forty-observation-78a6f9a4587c5f44c26e2110",
+      "window_end": "2026-08-23T14:45:00Z"
+    },
+    {
+      "checksum": "58e5a8a41df1d70a65f4f30fda187178f489f0631461205fad18846466ba7032",
+      "event_id": "crypto-forty-observation-8f2fcda1a1bf64fa4daf4ed8",
+      "window_end": "2026-08-23T14:50:00Z"
+    }
+  ],
+  "segment": {
+    "bar_count_per_symbol": 50,
+    "dropped_prefix_receipts": [
+      "2026-08-23T04:45:00Z",
+      "2026-08-23T04:50:00Z",
+      "2026-08-23T04:55:00Z",
+      "2026-08-23T05:00:00Z",
+      "2026-08-23T05:05:00Z",
+      "2026-08-23T05:10:00Z",
+      "2026-08-23T05:15:00Z",
+      "2026-08-23T05:20:00Z",
+      "2026-08-23T05:25:00Z",
+      "2026-08-23T05:30:00Z",
+      "2026-08-23T05:35:00Z",
+      "2026-08-23T05:40:00Z",
+      "2026-08-23T05:45:00Z",
+      "2026-08-23T05:50:00Z",
+      "2026-08-23T05:55:00Z",
+      "2026-08-23T06:00:00Z",
+      "2026-08-23T06:05:00Z",
+      "2026-08-23T06:10:00Z",
+      "2026-08-23T06:15:00Z",
+      "2026-08-23T06:20:00Z",
+      "2026-08-23T06:25:00Z",
+      "2026-08-23T06:30:00Z",
+      "2026-08-23T06:35:00Z",
+      "2026-08-23T06:40:00Z",
+      "2026-08-23T06:45:00Z",
+      "2026-08-23T07:00:00Z",
+      "2026-08-23T07:05:00Z",
+      "2026-08-23T07:10:00Z",
+      "2026-08-23T07:15:00Z",
+      "2026-08-23T07:20:00Z",
+      "2026-08-23T07:25:00Z",
+      "2026-08-23T07:30:00Z",
+      "2026-08-23T07:35:00Z",
+      "2026-08-23T07:40:00Z",
+      "2026-08-23T07:45:00Z",
+      "2026-08-23T07:50:00Z",
+      "2026-08-23T08:05:00Z",
+      "2026-08-23T08:10:00Z",
+      "2026-08-23T08:15:00Z",
+      "2026-08-23T08:20:00Z",
+      "2026-08-23T08:25:00Z",
+      "2026-08-23T08:30:00Z",
+      "2026-08-23T08:35:00Z",
+      "2026-08-23T08:40:00Z",
+      "2026-08-23T08:45:00Z",
+      "2026-08-23T08:50:00Z",
+      "2026-08-23T08:55:00Z",
+      "2026-08-23T09:00:00Z"
+    ],
+    "first_open_time": "2026-08-23T10:40:00.000Z",
+    "gap_free": true,
+    "last_open_time": "2026-08-23T14:45:00.000Z",
+    "slot_count": 38,
+    "symbols": 40
+  },
+  "shadow_only_recommendation": true
+}
