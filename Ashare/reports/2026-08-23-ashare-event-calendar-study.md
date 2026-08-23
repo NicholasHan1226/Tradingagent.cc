@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计)、`Ashare/event_calendar_doc.py`(未来日历)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
 
 ## 结论摘要
 
@@ -69,6 +69,29 @@
 | 后 5 日 | +102.6 | +41.5 | 52.9% | +86.2 | 3.86 |
 
 形态完整：提前下跌 → 落地 → 修复，两端 t 均 > 2。
+
+## 影子因子回放验证（`event_calendar_shadow_replay.py`）
+
+把全部历史事件（财报预约 1,577 + 解禁约 20,200，合计 21,775 条）通过**真实的**
+`event_catalyst_shadow` 因子和 `event_catalyst_adapter` 回放，检验因子内置的
+三分类定位假设在历史上的实际收益含义（绝对收益口径，5 日事后窗口，6,502 个可完整观察）：
+
+| 事件 | 分类 | 因子假设 | n | 事后均值 | 胜率 |
+|---|---|---|---|---|---|
+| 解禁 | 提前跌 ≥3%（sell_off） | hold_through_event | 1,884 | **+205bps** | **59.6%** |
+| 解禁 | 提前涨 ≥10%（extreme 抢跑） | reduce_on_event_confirmation | 445 | **+333bps** | 58.7% |
+| 解禁 | 抢跑 3–10%（moderate） | realize_on_event | 802 | +158bps | 50.6% |
+| 财报 | 提前跌 ≥3% | hold_through_event | 516 | +148bps | 55.4% |
+| 财报 | 极端/中度抢跑 | 兑现/减仓确认 | 190/360 | +103/+49bps | 54.7%/52.8% |
+
+**核心发现：因子的两个"卖事实"退出假设没有得到本样本支持。**
+
+1. 数据显示的是**动量延续**而非兑现回落：无论是财报还是解禁，事前抢跑越猛的事后涨得越多（解禁 extreme 组 +333bps 全场最强），而因子当前把它们映射到"事件兑现减仓/落袋"。
+2. 真正有效的结构性信号是 **sell_off→hold_through（超跌+利空落地后修复）**，在解禁和财报上都是胜率最高的一组，与本文超额收益部分"解禁前跌、落地反弹"的结论互相印证。
+3. 因子现假设来自 56 个政策事件观察（docstring 注明），对财报/解禁事件族外推失效——建议后续按事件类型区分定位假设参数，而不是全局一套阈值。
+
+局限：以上为绝对收益（含市场整体上行 beta）、未计成本、单一 5 日窗口；结论仅用于修正研究假设，不构成任何晋级证据。
+
 
 ## 未来日历（已生成，可直接使用）
 
