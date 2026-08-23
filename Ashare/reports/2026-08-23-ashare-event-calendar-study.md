@@ -2,7 +2,7 @@
 
 - 日期：2026-08-23
 - 性质：**纯研究 / research_only / not_promotion_evidence**。本文全部数字是描述性历史统计，不构成预测概率、投资建议或晋级证据；LLM 与本研究均无候选、排名、仓位、风险、订单或账户 authority（AGENTS.md 红线适用）。
-- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)、`Ashare/event_calendar_lockup_strata.py`(解禁信号质量分层)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）。
+- 产物：`Ashare/event_calendar_fetch.py`（数据拉取）、`Ashare/event_calendar_stats.py`(统计,支持 --expanded)、`Ashare/event_calendar_doc.py`(未来日历)、`Ashare/event_calendar_shadow_replay.py`(影子因子回放)、`Ashare/event_signal_lockup_tracker.py`(事件信号滚动跟踪,--signals 多信号)、`Ashare/event_calendar_earnings_groups.py`(财报预告方向分组)、`Ashare/event_calendar_expand_samples.py`(样本外扩至 top-N)、`Ashare/event_calendar_lockup_strata.py`(解禁信号质量分层+成本后边际)；缓存与 JSON 结果在 `/tmp/ashare_event_research/`（过程性产物，可由脚本一键重建）；滚动样本升降级规则见 `2026-08-23-ashare-event-signal-evaluation-criteria.md`。
 
 ## 结论摘要
 
@@ -202,6 +202,41 @@ GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预
 局限：绝对收益口径含 beta（市场环境分层只是部分控制）；比例与环境分界为探索性
 切分，属多重比较，未对 t 值做校正；未计成本。不构成任何晋级证据。
 
+### 成本后真实边际（同管线扣除一次往返成本）
+
+往返成本模型默认 **15bps**（佣金约 2.5bps×2 + 印花税 5bps + 过户费约 0.2bps +
+滑点预留 5bps），`--cost-bps` 可覆盖。下表为 top-1000 口径（n=777）关键分层：
+
+| 分层 | n | 毛均值 | **净均值(15bps)** | 毛胜率 | **净胜率(15bps)** |
+|---|---|---|---|---|---|
+| 全体 | 777 | +48.6 | +33.6 | 50.2% | ~49% |
+| 弱市 | 308 | +106.6 | **+91.6** | 56.2% | **55.2%** |
+| 震荡 | 385 | +1.6 | −13.4 | 46.2% | 45.5% |
+| 强市 | 84 | +51.9 | +36.9 | 46.4% | 46.4%（中位净 −87bps） |
+| 比例 1–3% | 201 | +62.9 | +47.9 | 52.7% | 51.2% |
+| 比例 ≥5% | 226 | +82.5 | +67.5 | 50.9% | 50.0%（中位净 −0.1bps） |
+| 比例 <1% | 244 | +30.0 | +15.0 | 48.8% | 48.4% |
+
+**业务解读**：
+
+1. **不解剖子集，信号扣完成本就不成立**：全体净胜率跌破五成——「解禁修复」
+   作为全市场信号不可交易，必须叠加条件。
+2. **弱市是唯一在所有成本档下都稳健存活的分层**：净均值/净胜率在 10/15/25/40bps
+   成本下分别为 +97/+92/+82/+67bps 与 0.55/0.55/0.54/0.54——即使成本假设翻倍
+   以上结论不变。
+3. **毛口径「≥5% 最强」经不起成本检验**：中位净值 ≈0，收益靠右尾撑着；
+   1–3% 名义过线但很薄。比例维度只能作辅助。
+4. **弱市内部比例过滤几乎不再增益**（弱市×<1% 反而是最强交叉格 +165bps、58.2%，
+   弱市×≥5% +141bps、55.3%），唯独 3–5% 带在各切面一致偏弱
+   （弱市×3–5% 为 −21.5bps）。实践规则收敛为：**弱市入场、回避 3–5% 带**，
+   比例不必线性打分。
+5. top-200 大盘股子样本同口径净均值 +152.8bps、净胜率 56.8%——大盘股修复
+   幅度足以覆盖成本，与超额收益口径「市值下沉修复收窄」一致。
+
+局限：成本模型是假设（实际佣金/滑点因人而异，已给敏感性）；净统计未做显著性
+检验；仍是描述性历史统计。不构成任何晋级证据。滚动样本的升降级判定标准见
+[预注册评估标准](2026-08-23-ashare-event-signal-evaluation-criteria.md)。
+
 ## 财报披露按预告方向分组（`event_calendar_earnings_groups.py`）
 
 第一期发现披露事件事后分化极大（均值正、中位数为负），本节用 Tushare `forecast`
@@ -270,4 +305,5 @@ GitHub Actions 工作流同步改为三信号运行，并新增 forecast.csv 预
 1. ~~把解禁事件做成第一优先级日历信号~~ **已落地**：`event_signal_lockup_tracker.py` 在 shadow 通道滚动跟踪（2026-08-23 起），GitHub Actions 每交易日自动运行。
 2. ~~财报披露补「业绩预告方向」分组后再评估~~ **已完成并并入跟踪器**：分组见上文章节，`earnings_pos` / `earnings_neg` 两信号已随 `--signals` 并入滚动跟踪与定时工作流。
 3. ~~跟踪器为每条信号附市场环境标签~~ **已落地**：跟踪器输出与状态文件均按弱市/震荡/强市拆分已标注结果；首次带标签读数与历史分层方向一致（解禁信号强市 7 条全亏、弱市 4 条全盈）。
-4. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
+4. ~~算清成本后的真实边际并预先固定信号升降级标准~~ **已落地（2026-08-23）**：成本后边际见上节——全体信号扣 15bps 往返成本后净胜率跌破五成，弱市是唯一在各成本档下稳健存活的分层；滚动样本的判定规则固定于[预注册评估标准](2026-08-23-ashare-event-signal-evaluation-criteria.md)。
+5. 阶段二：宏观日历（CPI/PMI/FOMC 等）接入 TradingDatas 排程 + 海外源 adapter；全市场解禁/披露日历转正式采集。
