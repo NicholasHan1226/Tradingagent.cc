@@ -173,7 +173,7 @@ class RunPortfolioTest(unittest.TestCase):
             "600001.SH": sim.StockBook(days, b),
         }
 
-    def test_equal_split_cost_invariant(self) -> None:
+    def test_slot_sizing_caps_and_cost_invariant(self) -> None:
         days = INDEX_DAYS
         books = self._books_two(q1=55.0, q2=110.0)
         signals = []
@@ -190,19 +190,45 @@ class RunPortfolioTest(unittest.TestCase):
                 "regime": "sideways",
             })
         cost_rate = (15.0 / 2.0) / 1e4
-        run_cost = sim.run_portfolio(signals, days, books, initial_cash=20000.0)
-        run_free = sim.run_portfolio(signals, days, books, initial_cash=20000.0, cost_bps=0.0)
+        # Slot fraction caps each same-day entry at 10% of prior-day NAV —
+        # two concurrent signals must NOT split or exceed that cap.
+        run_cost = sim.run_portfolio(
+            signals, days, books, initial_cash=20000.0, min_alloc=1000.0
+        )
+        run_free = sim.run_portfolio(
+            signals, days, books, initial_cash=20000.0, min_alloc=1000.0, cost_bps=0.0
+        )
+        self.assertEqual(run_cost["spends"], [2000.0, 2000.0])
         self.assertEqual(run_cost["closed_positions"], 2)
-        self.assertEqual(run_free["closed_positions"], 2)
         eq_cost = run_cost["nav"][-1][1]
         eq_free = run_free["nav"][-1][1]
-        # Full deployment then full exit compounds the per-side fee twice:
-        # eq_cost = (1-rate)^2 * zero-cost gross proceeds.
+        # Deployed legs compound the per-side fee twice:
+        # leg proceeds = (1-rate)^2 * zero-cost gross; idle cash untouched.
         gross_free = 0.0
         for signal in signals:
-            gross_free += (10000.0 / signal["entry_price"]) * signal["exit_price"]
-        self.assertAlmostEqual(eq_cost, (1.0 - cost_rate) ** 2 * gross_free, places=6)
-        self.assertAlmostEqual(eq_free, gross_free, places=6)
+            gross_free += (2000.0 / signal["entry_price"]) * signal["exit_price"]
+        self.assertAlmostEqual(
+            eq_cost, 16000.0 + (1.0 - cost_rate) ** 2 * gross_free, places=6
+        )
+        self.assertAlmostEqual(eq_free, 16000.0 + gross_free, places=6)
+
+    def test_lone_signal_cannot_go_all_in(self) -> None:
+        books = self._books_two(q1=55.0, q2=110.0)
+        signal = {
+            "ts_code": "600000.SH",
+            "float_date": INDEX_DAYS[5],
+            "entry_day": INDEX_DAYS[5],
+            "exit_day": INDEX_DAYS[10],
+            "entry_price": 50.0,
+            "exit_price": 55.0,
+            "float_ratio": 2.0,
+            "pre_return": -0.10,
+            "regime": "sideways",
+        }
+        run = sim.run_portfolio(
+            [signal], INDEX_DAYS, books, initial_cash=100000.0, min_alloc=1000.0
+        )
+        self.assertEqual(run["spends"], [10000.0])  # exactly one slot
 
     def test_insufficient_cash_skips_counted(self) -> None:
         books = self._books_two(q1=55.0, q2=110.0)
@@ -244,7 +270,9 @@ class RunPortfolioTest(unittest.TestCase):
             "exit_price": 110.0,
             **common,
         }
-        run = sim.run_portfolio([first, second], INDEX_DAYS, books, initial_cash=8000.0)
+        run = sim.run_portfolio(
+            [first, second], INDEX_DAYS, books, initial_cash=8000.0, min_alloc=500.0
+        )
         self.assertEqual(run["closed_positions"], 2)
         self.assertEqual(run["skipped_no_cash"], 0)
 

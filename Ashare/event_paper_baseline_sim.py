@@ -2,9 +2,10 @@
 
 Research-only L4 foundation.  The per-event statistics lane (shadow replay,
 strata, margin studies) measures single-event windows; this script turns the
-SAME signal definition into an actual portfolio NAV curve — equal-split
-sizing, cash constraints, round-trip costs, daily mark-to-market — so the
-north-star measuring stick has a measured baseline instead of none.
+SAME signal definition into an actual portfolio NAV curve — slot-fractioned
+sizing (each entry caps at a share of prior-day NAV), cash constraints,
+round-trip costs, daily mark-to-market — so the north-star measuring stick
+has a measured baseline instead of none.
 
 Conventions inherited unchanged from the existing lane:
   * signal = lockup expiry classified ``sell_off`` by the production shadow
@@ -52,6 +53,7 @@ PRE_WINDOW_SESSIONS = 10  # shadow factor DEFAULT_PRE_WINDOW_SESSIONS
 POST_HORIZON_SESSIONS = 5  # tracker lockup post-window
 INITIAL_CASH_CNY = 1_000_000.0
 MIN_ALLOC_CNY = 5_000.0
+SLOT_FRACTION = 0.10  # max share of prior-day NAV committed per new entry
 
 
 class BaselineSimError(RuntimeError):
@@ -288,9 +290,13 @@ def run_portfolio(
     books: dict[str, StockBook],
     initial_cash: float = INITIAL_CASH_CNY,
     cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT,
+    min_alloc: float = MIN_ALLOC_CNY,
+    slot_fraction: float = SLOT_FRACTION,
 ) -> dict[str, object]:
-    """Equal-split paper portfolio: exits first each day, then same-day
-    entries split the available cash evenly, then mark-to-market."""
+    """Slot-fractioned paper portfolio.  Exits first each day; each new
+    entry may commit at most ``slot_fraction`` of PRIOR-DAY NAV (known at
+    the open — no lookahead), capped by available cash; then mark-to-market.
+    Slot sizing keeps a lone-signal day from going all-in on one name."""
     cost_rate = (cost_bps / 2.0) / 1e4
     global_pos = {d: i for i, d in enumerate(global_days)}
     entries: defaultdict[str, list[dict[str, object]]] = defaultdict(list)
@@ -310,9 +316,11 @@ def run_portfolio(
         return global_days[i] if i < len(global_days) else None
 
     cash = initial_cash
+    prev_equity = initial_cash
     positions: list[dict[str, object]] = []
     nav: list[tuple[str, float]] = []
     trades: list[float] = []
+    spends: list[float] = []
     skipped_no_cash = 0
     for day in global_days:
         surviving: list[dict[str, object]] = []
@@ -327,15 +335,15 @@ def run_portfolio(
         positions = surviving
         batch = entries.get(day)
         if batch:
-            alloc = cash / len(batch)
             for signal in batch:
-                spend = min(alloc, cash)
-                if spend < MIN_ALLOC_CNY or spend <= 0.0:
+                spend = min(prev_equity * slot_fraction, cash)
+                if spend < min_alloc or spend <= 0.0:
                     skipped_no_cash += 1
                     continue
                 fee = spend * cost_rate
                 shares = (spend - fee) / float(signal["entry_price"])
                 cash -= spend
+                spends.append(spend)
                 exit_day = _roll_exit(str(signal["exit_day"]))
                 if exit_day is None:
                     # Exit beyond the sim span cannot happen (build_signals
@@ -355,12 +363,14 @@ def run_portfolio(
             for posn in positions
         )
         nav.append((day, equity))
+        prev_equity = equity
     win_rate = (
         sum(1 for pnl in trades if pnl > 0.0) / len(trades) if trades else 0.0
     )
     return {
         "nav": nav,
         "trades": trades,
+        "spends": spends,
         "entries_attempted": len(arm_signals),
         "skipped_no_cash": skipped_no_cash,
         "closed_positions": len(trades),
