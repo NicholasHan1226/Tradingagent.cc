@@ -10,6 +10,7 @@ from Ashare.event_catalyst_shadow import (
     ANTICIPATION_CLASSES,
     EVENT_CATALYST_SHADOW_CONTRACT,
     EVENT_TYPES,
+    POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1,
     CatalystEntry,
     CatalystShadowBatch,
     CatalystShadowObservation,
@@ -344,4 +345,64 @@ class TestAuthorityLocks:
         assert (
             excinfo.value.reason_code
             == "event_catalyst_obs_hypothesis_mismatch"
+        )
+
+
+class TestPositioningProfiles:
+    """The momentum_evidence_v1 research profile (2026-08-23 replay)."""
+
+    def _batch(self, profile):
+        return build_catalyst_shadow_batch(
+            [_entry(event_type="lockup_expiry", impact_direction="negative")],
+            {SYMBOL: _front_run_bars()},
+            as_of=AS_OF,
+            positioning_profile=profile,
+        )
+
+    def test_default_profile_unchanged_for_front_run(self):
+        batch = self._batch("default")
+        obs = batch.observations[0]
+        assert obs.anticipation_class == "front_run"
+        assert obs.positioning_hypothesis == "reduce_on_event_confirmation"
+        assert obs.positioning_profile == "default"
+
+    def test_momentum_profile_holds_front_runs_through_event(self):
+        batch = self._batch(POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1)
+        obs = batch.observations[0]
+        assert obs.anticipation_class == "front_run"
+        assert obs.positioning_profile == POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1
+        assert obs.positioning_hypothesis == "hold_through_event"
+
+    def test_unknown_profile_fails_closed(self):
+        with pytest.raises(EventCatalystShadowError) as excinfo:
+            self._batch("does-not-exist")
+        assert (
+            excinfo.value.reason_code
+            == "event_catalyst_positioning_profile_invalid"
+        )
+
+    def test_observation_receipt_binds_hypothesis_not_profile_name(self):
+        # Same hypothesis under both profiles (sell_off -> hold_through) must
+        # stay receipt-identical; differing hypotheses must differ.
+        sell_off_bars = {SYMBOL: _ramped_bars(-1.2)}
+        default_batch = build_catalyst_shadow_batch(
+            [_entry(event_type="lockup_expiry", impact_direction="negative")],
+            sell_off_bars,
+            as_of=AS_OF,
+            positioning_profile="default",
+        )
+        momentum_batch = build_catalyst_shadow_batch(
+            [_entry(event_type="lockup_expiry", impact_direction="negative")],
+            sell_off_bars,
+            as_of=AS_OF,
+            positioning_profile=POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1,
+        )
+        assert (
+            default_batch.observations[0].positioning_hypothesis
+            == momentum_batch.observations[0].positioning_hypothesis
+            == "hold_through_event"
+        )
+        assert (
+            default_batch.observations[0].observation_sha256
+            == momentum_batch.observations[0].observation_sha256
         )

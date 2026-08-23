@@ -9,8 +9,11 @@ turns that structure into the first formally tracked event signal:
 * it mints lockup-expiry entries from the research cache through the real
   ``event_catalyst_adapter`` row path,
 * feeds them with forward-adjusted bars into the real
-  ``event_catalyst_shadow`` factor so every classification and label comes
-  from production code rather than a reimplementation,
+  ``event_catalyst_shadow`` factor using the ``momentum_evidence_v1``
+  positioning profile — the default profile's "reduce/realize on
+  confirmation" hypotheses were falsified by the 2026-08-23 replay for the
+  lockup family (front-running continues after the event), so the tracked
+  labels follow the replay-supported mapping instead,
 * reports ``sell_off`` observations still inside their post window as the
   currently tracked signal list,
 * appends labelled ``sell_off`` outcomes to the shared SampleJournal via the
@@ -59,6 +62,7 @@ from Ashare.event_catalyst_journal import (  # noqa: E402
     journal_records_from_shadow_batch,
 )
 from Ashare.event_catalyst_shadow import (  # noqa: E402
+    POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1,
     CatalystShadowBatch,
     CatalystShadowObservation,
     DailyBar,
@@ -332,6 +336,7 @@ def run_tracker(
         as_of=as_of,
         pre_window_sessions=PRE_WINDOW_SESSIONS,
         post_window_sessions=POST_WINDOW_SESSIONS,
+        positioning_profile=POSITIONING_PROFILE_MOMENTUM_EVIDENCE_V1,
     )
     view = build_tracker_view(batch)
 
