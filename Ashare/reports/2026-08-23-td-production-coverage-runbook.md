@@ -48,6 +48,27 @@ python3 Ashare/event_td_coverage_probe.py \
   实测确认无法执行；更干净的长期方案（受限只读账号）随 #29 另行走审批。
 - 全部输出 research_only / not_promotion_evidence；不授予任何资金或部署权限。
 
+## 探针脚本的更新链路（决策层发布机制，08-24 凌晨实测）
+
+探针文件随决策层代码树发布：改 `Ashare/event_td_coverage_probe.py` 后，合并进 `main`
+**不会**自动出现在服务器上。上线唯一通道是 GitHub Actions
+`deploy-production.yml`（仅 `repository_dispatch: controller-accepted-deploy` 触发；
+服务器侧无定时拉取，勿与 18084 管理面的 td-admin-autodeploy 混淆）。
+
+- **dispatch 要件**：payload 必须带 `client_payload{sha=<40hex>, test_run_id=<数字>}`，
+  且被引用 run 同时满足 name=`TradingAgent Tests`、conclusion=success、head_branch=main、
+  event=push、head_sha==sha，并存在未过期 artifact `tradingagent-release-<sha>`；
+  缺任一项被 workflow 守卫秒拒。
+- **G5 安全窗（预检本质）**：`tradingagent-release` 预检要求三个 g5 单元
+  （acceptance / delayed-paper / health）同时 inactive。delayed-paper 每轮激活约 4 分钟、
+  非激活窗仅约 60 秒——按「定时器触发瞬间」避让必撞激活期。可靠打法＝服务器侧轮询三单元
+  is-active 与 systemd NextElapseUSecRealtime（该属性输出人类可读时间串而非 usec，
+  解析取第 2–3 个 token 按 `%Y-%m-%d %H:%M:%S` 处理），满足「三者全 inactive 且距下次
+  触发 ≥45s」即发射；整个 deploy run 约 36 秒。
+- **2026-08-24 ~05:1x 实际执行记录**：三次尝试——① 未带 payload 被守卫拒绝；
+  ② 撞 delayed-paper activating 窗口预检失败；③ 轮询自动发射成功。current →
+  `23f8cf8`（含 #438），探针脚本在位验证通过，g5 服务全部恢复正常。
+
 ## 窗口记录
 
 - **2026-08-24（周一）09:45 CST 后，15 分钟内**：Nicholas 批准窗口与一次性 root 例外；
