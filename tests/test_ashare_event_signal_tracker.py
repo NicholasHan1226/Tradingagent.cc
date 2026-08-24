@@ -30,12 +30,15 @@ from Ashare.event_signal_lockup_tracker import (
     SIGNAL_ANTICIPATION_CLASS,
     SIGNAL_EVENT_TYPE,
     TrackerError,
+    CHIPS_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     _absorption_labels_for_observations,
     _block_labels_for_observations,
+    _chips_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
     block_breakdown,
+    chips_breakdown,
     turnover_breakdown,
     append_new_outcomes,
     build_tracker_view,
@@ -644,6 +647,85 @@ class TestTurnoverTags:
         )
         assert "Labelled outcomes by pre-event turnover bucket:" in report
         assert "normal: n=" in report
+
+
+class TestChipsTags:
+    """Chips (winner_rate) side-table labels: report-only, degrade clean."""
+
+    @staticmethod
+    def _chips_caches(tmp_path):
+        """A cyqperf cache (written NEWEST-first, as Tushare delivers it)
+        whose winner_rate is a constant 50.0 (feed percent) so each labeled
+        event resolves to ``mid`` (fraction 0.5).  No daily cache needed:
+        the chips lookup reads only the cyqperf files."""
+
+        stem = f"cyqperf_{SYMBOL[:6]}{SYMBOL[7:]}"
+        with (tmp_path / f"{stem}.csv").open("w", newline="",
+                                             encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "trade_date", "his_low", "his_high",
+                             "cost_5pct", "cost_15pct", "cost_50pct",
+                             "cost_85pct", "cost_95pct", "weight_avg",
+                             "winner_rate"])
+            days: list[date] = []
+            cursor = EVENT_DATE
+            while len(days) < 25:
+                if cursor.weekday() < 5:
+                    days.append(cursor)
+                cursor -= timedelta(days=1)
+            for d in days:  # newest first on purpose (#437 regression guard)
+                writer.writerow([SYMBOL, f"{d:%Y%m%d}", 9.0, 11.0, 9.5,
+                                 9.8, 10.0, 10.3, 10.6, 10.05, 50.0])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_cyqperf(self, tmp_path):
+        cache = self._chips_caches(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _chips_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # constant 50.0 percent -> fraction 0.5 -> mid band
+        assert set(labels.values()) == {"mid"}
+
+    def test_missing_cyqperf_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _chips_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_chips_breakdown_groups_in_label_order_and_skips_untagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = chips_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "underwater",
+                pos.labeled[0].event_id: "profit",
+            },
+        )
+        assert list(breakdown) == ["underwater", "profit"]
+        assert list(CHIPS_LABEL_ORDER) == ["underwater", "mid", "profit"]
+        assert breakdown["underwater"]["n"] == 1
+        assert breakdown["profit"]["n"] == 1
+        assert chips_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_chips_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.chips_by_event = {
+            obs.event_id: "mid"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by pre-event chips bucket:" in report
+        assert "mid: n=" in report
 
 
 # --- journal write path -----------------------------------------------------
