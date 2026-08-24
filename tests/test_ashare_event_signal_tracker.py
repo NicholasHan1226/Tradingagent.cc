@@ -31,6 +31,7 @@ from Ashare.event_signal_lockup_tracker import (
     SIGNAL_EVENT_TYPE,
     TrackerError,
     CHIPS_LABEL_ORDER,
+    TOPLIST_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     HOLDER_LABEL_ORDER,
     PLEDGE_LABEL_ORDER,
@@ -40,6 +41,7 @@ from Ashare.event_signal_lockup_tracker import (
     _chips_labels_for_observations,
     _holder_labels_for_observations,
     _pledge_labels_for_observations,
+    _toplist_labels_for_observations,
     _repurchase_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
@@ -47,6 +49,7 @@ from Ashare.event_signal_lockup_tracker import (
     chips_breakdown,
     holders_breakdown,
     pledges_breakdown,
+    toplists_breakdown,
     repurchases_breakdown,
     turnover_breakdown,
     append_new_outcomes,
@@ -1004,6 +1007,96 @@ class TestPledgeTags:
         )
         assert "Labelled outcomes by pre-event pledge bucket:" in report
         assert "high: n=" in report
+
+
+class TestToplistTags:
+    """Pre-event dragon-tiger side-table labels: degrade clean, label
+    vocabulary mirrors the #477 frozen buckets."""
+
+    @staticmethod
+    def _toplist_cache(tmp_path):
+        """A toplist_daily cache with one listing dated EVENT_DATE-10
+        calendar days (inside the frozen [day-30d, day) window) with a
+        sell-deviation reason, so every observed event resolves to
+        ``sell_dev``.  Files are one trading day each, as the fetcher
+        lays them out."""
+
+        day = (EVENT_DATE - timedelta(days=10)).strftime("%Y%m%d")
+        folder = tmp_path / "toplist_daily"
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / f"{day}.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "reason"])
+            writer.writerow([SYMBOL, "日跌幅偏离值达到7%的前5只证券"])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_toplist(self, tmp_path):
+        cache = self._toplist_cache(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _toplist_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # single sell-deviation listing inside the window -> sell_dev
+        assert set(labels.values()) == {"sell_dev"}
+
+    def test_empty_window_yields_no_listing_label(self, tmp_path):
+        # cache exists but holds nothing near EVENT_DATE: no_listing is a
+        # real label, not an omission.
+        folder = tmp_path / "toplist_daily"
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / "20251201.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "reason"])
+            writer.writerow([SYMBOL, "日涨幅偏离值达到7%的前5只证券"])
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _toplist_labels_for_observations(
+            tmp_path, batch.observations
+        )
+        assert set(labels.values()) == {"no_listing"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _toplist_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_toplists_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = toplists_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "rise_dev",
+                pos.labeled[0].event_id: "no_listing",
+            },
+        )
+        assert list(breakdown) == ["rise_dev", "no_listing"]
+        assert list(TOPLIST_LABEL_ORDER) == [
+            "sell_dev", "rise_dev", "other", "no_listing"
+        ]
+        assert breakdown["rise_dev"]["n"] == 1
+        assert breakdown["no_listing"]["n"] == 1
+        assert toplists_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_toplist_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.toplists_by_event = {
+            obs.event_id: "sell_dev"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by pre-event dragon-tiger bucket:" in report
+        assert "sell_dev: n=" in report
 
 
 # --- journal write path -----------------------------------------------------
