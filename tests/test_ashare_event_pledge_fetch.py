@@ -73,6 +73,10 @@ class FetchSweepTest(unittest.TestCase):
             # both sweeps hit the same endpoint with per-symbol params
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0]["ts_code"], "000001.SZ")
+            # regression guard (live-verified 2026-08-24): ANY date param
+            # silently empties the pledge_stat response — ts_code only.
+            self.assertNotIn("start_date", calls[0])
+            self.assertNotIn("end_date", calls[0])
             target = cache / "pledgestat_000001SZ.csv"
             self.assertTrue(target.exists())
             # idempotent rerun: everything skipped, no extra calls
