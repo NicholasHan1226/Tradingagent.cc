@@ -1,0 +1,140 @@
+"""Offline tests for the per-symbol cyq_perf fetcher."""
+
+from __future__ import annotations
+
+import csv
+import tempfile
+import unittest
+import unittest.mock
+from pathlib import Path
+
+from Ashare import event_cyq_fetch as fetch
+
+
+def _write_csv(path: Path, fields: list[str], rows: list[list]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(fields)
+        writer.writerows(rows)
+
+
+FIELDS = ["ts_code", "trade_date", "his_low", "his_high", "cost_5pct",
+          "cost_15pct", "cost_50pct", "cost_85pct", "cost_95pct",
+          "weight_avg", "winner_rate"]
+
+
+class StemsTest(unittest.TestCase):
+    def test_stems_come_from_daily_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            _write_csv(cache / "daily_000001SZ.csv",
+                       ["trade_date", "close"], [["20260105", 10.0]])
+            _write_csv(cache / "daily_600000SH.csv",
+                       ["trade_date", "close"], [["20260105", 10.0]])
+            _write_csv(cache / "dailybasic_000001SZ.csv",
+                       ["trade_date"], [["20260105"]])
+            self.assertEqual(fetch._cached_stems(cache),
+                             ["000001SZ", "600000SH"])
+
+    def test_missing_daily_cache_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(fetch.CyqFetchError,
+                                        "daily_cache_missing"):
+                fetch.fetch_cyq(Path(tmp))
+
+
+class FetchSweepTest(unittest.TestCase):
+    def _daily(self, cache: Path) -> None:
+        _write_csv(cache / "daily_000001SZ.csv",
+                   ["trade_date", "close"], [["20260105", 10.0]])
+        _write_csv(cache / "daily_600000SH.csv",
+                   ["trade_date", "close"], [["20260105", 11.0]])
+
+    def test_fetches_per_symbol_writes_and_is_idempotent(self) -> None:
+        calls: list[dict] = []
+
+        def fake_call_api(api: str, params: dict):
+            self.assertEqual(api, "cyq_perf")
+            calls.append(dict(params))
+            return (
+                FIELDS,
+                [[params["ts_code"], "20260821", 9.5, 11.0, 8.8, 9.2, 10.0,
+                  10.6, 11.2, 10.1, 55.5]],
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            self._daily(cache)
+            with unittest.mock.patch(
+                "Ashare.event_calendar_fetch.call_api",
+                side_effect=fake_call_api,
+            ):
+                summary = fetch.fetch_cyq(cache)
+            self.assertEqual(len(calls), 2)
+            for call in calls:
+                self.assertEqual(
+                    sorted(call), ["end_date", "start_date", "ts_code"]
+                )
+            self.assertEqual(summary["fetched"], 2)
+            path = cache / "cyqperf_000001SZ.csv"
+            with path.open(encoding="utf-8") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(rows[0], FIELDS)
+            self.assertEqual(rows[1][10], "55.5")  # raw row stays raw
+            # Rerun hits no network at all.
+            calls.clear()
+            with unittest.mock.patch(
+                "Ashare.event_calendar_fetch.call_api",
+                side_effect=fake_call_api,
+            ):
+                again = fetch.fetch_cyq(cache)
+            self.assertEqual(calls, [])
+            self.assertEqual(again["fetched"], 0)
+            self.assertEqual(again["skipped_existing"], 2)
+
+    def test_empty_and_failed_symbols_leave_no_file(self) -> None:
+        def flaky_call_api(api: str, params: dict):
+            if params["ts_code"] == "000001.SZ":
+                raise RuntimeError("network down")
+            return FIELDS, []  # no chip history for this symbol
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            self._daily(cache)
+            with unittest.mock.patch(
+                "Ashare.event_calendar_fetch.call_api",
+                side_effect=flaky_call_api,
+            ):
+                summary = fetch.fetch_cyq(cache)
+            self.assertFalse(any(cache.glob("cyqperf_*.csv")))
+            self.assertEqual(summary["failed_symbols"], ["000001SZ"])
+            self.assertEqual(summary["empty_symbols"], ["600000SH"])
+            self.assertEqual(summary["fetched"], 0)
+
+    def test_disk_guard_fails_closed(self) -> None:
+        def fake_call_api(api: str, params: dict):
+            return FIELDS, [[params["ts_code"], "20260821"] + [1.0] * 9]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            self._daily(cache)
+            original_free = fetch.MIN_FREE_BYTES
+            fetch.MIN_FREE_BYTES = 10 ** 30  # impossible free-space demand
+            try:
+                with unittest.mock.patch(
+                    "Ashare.event_calendar_fetch.call_api",
+                    side_effect=fake_call_api,
+                ):
+                    with self.assertRaises(fetch.CyqFetchError):
+                        fetch.fetch_cyq(cache)
+            finally:
+                fetch.MIN_FREE_BYTES = original_free
+
+    def test_stem_to_code_mapping(self) -> None:
+        self.assertEqual(fetch.stem_to_code("000001SZ"), "000001.SZ")
+        self.assertEqual(fetch.stem_to_code("600000SH"), "600000.SH")
+
+
+if __name__ == "__main__":
+    unittest.main()
