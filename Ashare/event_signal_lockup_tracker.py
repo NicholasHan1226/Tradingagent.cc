@@ -408,6 +408,14 @@ class TrackerView:
     # table keyed by scheduled date, report-only; empty when the macro_*
     # cache is unavailable).
     macro_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-entry valuation-percentile bucket (dailybasic
+    # side table, report-only; empty when the dailybasic_* caches are
+    # unavailable).
+    valuations_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> unlock-batch holder-type bucket (share_float side
+    # table, report-only; every observed event gets a bucket — unknown
+    # batches label as no_match; empty when share_float is unavailable).
+    holdertypes_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -635,6 +643,12 @@ def run_tracker(
             cache, batch.observations
         )
         view.macro_by_event = _macro_labels_for_observations(
+            cache, batch.observations
+        )
+        view.valuations_by_event = _valuation_labels_for_observations(
+            cache, batch.observations
+        )
+        view.holdertypes_by_event = _holdertype_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -1398,6 +1412,151 @@ def _macro_labels_for_observations(
     return labels
 
 
+VALUATION_LABEL_ORDER = (
+    "low_le25", "mid", "high_ge75", "short_history", "loss_or_missing",
+)
+
+
+def valuations_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    valuations_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by valuation-percentile bucket.
+
+    Mirrors :func:`macro_breakdown`.  Labels come from the #534 frozen
+    D1 pre-entry pe_ttm self-percentile.  Report-only readout for
+    rolling validation of the #536 pursue item (rule-arm ``low_le25``,
+    value-anchored absorption) — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = valuations_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in VALUATION_LABEL_ORDER
+        if label in groups
+    }
+
+
+HOLDERTYPE_LABEL_ORDER = (
+    "placement", "insider", "incentive", "other_legacy", "no_match",
+)
+
+
+def holdertypes_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    holdertypes_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by unlock-batch holder-type bucket.
+
+    Mirrors :func:`macro_breakdown`.  Labels key on float_date identity
+    from the #531 frozen precedence rule; unknown batches label as
+    ``no_match`` so coverage is total whenever share_float is readable.
+    Report-only readout for rolling validation of the #536 pursue item
+    (rule-arm ``incentive``) — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = holdertypes_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in HOLDERTYPE_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _valuation_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> pre-entry valuation-percentile bucket via the cache.
+
+    Per-symbol side table keyed on (symbol, scheduled_date): the adapter
+    snaps the unlock day to the shard's own last session so labels match
+    the study engine exactly.  Report-only decoration on the tracking
+    pass: any failure to reach the dataset degrades to "no labels"
+    instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_valuation_prelockup_study import (
+            valuation_buckets_for_entries,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = valuation_buckets_for_entries(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
+def _holdertype_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> unlock-batch holder-type bucket via the cache.
+
+    Keys on (symbol, float_date) identity — scheduled_date IS the lockup
+    float_date for hard-dated catalyst entries, matching the frozen
+    engine's float-date keying exactly.  Unknown batches map to
+    ``no_match``; only a missing share_float.csv degrades to "no
+    labels".
+    """
+
+    try:
+        from Ashare.event_unlock_holdertype_study import (
+            holdertype_buckets_for_entries,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = holdertype_buckets_for_entries(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1750,6 +1909,42 @@ def render_report(
                       ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        valuations_stats = valuations_breakdown(
+            bucket.labeled, view.valuations_by_event
+        )
+        if any(item.get("n") for item in valuations_stats.values()):
+            parts = []
+            for label, item in valuations_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += [
+                "Labelled outcomes by pre-entry valuation-percentile bucket:",
+                "",
+            ] + [
+                f"- {part}" for part in parts
+            ] + [""]
+        holdertypes_stats = holdertypes_breakdown(
+            bucket.labeled, view.holdertypes_by_event
+        )
+        if any(item.get("n") for item in holdertypes_stats.values()):
+            parts = []
+            for label, item in holdertypes_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += [
+                "Labelled outcomes by unlock-batch holder-type bucket:",
+                "",
+            ] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1958,6 +2153,26 @@ def main() -> int:
                         label: item["n"]
                         for label, item in macro_breakdown(
                             b.labeled, view.macro_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_valuations": {
+                    k: {
+                        label: item["n"]
+                        for label, item in valuations_breakdown(
+                            b.labeled, view.valuations_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_holdertypes": {
+                    k: {
+                        label: item["n"]
+                        for label, item in holdertypes_breakdown(
+                            b.labeled, view.holdertypes_by_event
                         ).items()
                         if item.get("n")
                     }

@@ -139,6 +139,25 @@ def attach_holdertype_bucket(
     return stats
 
 
+def holdertype_buckets_for_entries(
+    cache: Path,
+    entries: list[tuple[str, str]],
+) -> dict[tuple[str, str], str]:
+    """Side-table helper: (ts_code, float_date) -> frozen bucket label.
+
+    Keys on float_date identity exactly like ``attach_holdertype_bucket``
+    (event identity, never entry_day).  Unknown batches map to
+    ``no_match`` rather than erroring, mirroring engine semantics;
+    missing share_float.csv stays fail-closed and the tracker wrapper
+    degrades to "no labels" instead of breaking tracking.
+    """
+    index = load_holdertype_index(cache)
+    return {
+        (code, day): holdertype_bucket(index.get((code, day), set()))
+        for code, day in dict.fromkeys(entries)
+    }
+
+
 def run_study(
     cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT
 ) -> dict[str, object]:

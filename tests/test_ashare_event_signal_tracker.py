@@ -34,6 +34,8 @@ from Ashare.event_signal_lockup_tracker import (
     TOPLIST_LABEL_ORDER,
     HOLDERNUM_LABEL_ORDER,
     MACRO_LABEL_ORDER,
+    VALUATION_LABEL_ORDER,
+    HOLDERTYPE_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     HOLDER_LABEL_ORDER,
     PLEDGE_LABEL_ORDER,
@@ -46,6 +48,8 @@ from Ashare.event_signal_lockup_tracker import (
     _toplist_labels_for_observations,
     _holdernum_labels_for_observations,
     _macro_labels_for_observations,
+    _valuation_labels_for_observations,
+    _holdertype_labels_for_observations,
     _repurchase_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
@@ -56,6 +60,8 @@ from Ashare.event_signal_lockup_tracker import (
     toplists_breakdown,
     holdernums_breakdown,
     macro_breakdown,
+    valuations_breakdown,
+    holdertypes_breakdown,
     repurchases_breakdown,
     turnover_breakdown,
     append_new_outcomes,
@@ -1285,6 +1291,275 @@ class TestMacroTags:
             "Labelled outcomes by macro release-window bucket:" in report
         )
         assert "same_day: n=" in report
+
+
+class TestValuationTags:
+    """Pre-entry valuation-percentile side-table labels (#534/#536):
+    per-symbol dailybasic shards keyed by (symbol, scheduled_date),
+    degrade clean when a shard is missing."""
+
+    @staticmethod
+    def _weekday_days(start: date, end: date) -> list[str]:
+        days: list[str] = []
+        cur = start
+        while cur <= end:
+            if cur.weekday() < 5:
+                days.append(cur.strftime("%Y%m%d"))
+            cur += timedelta(days=1)
+        return days
+
+    @classmethod
+    def _valuation_cache(cls, tmp_path):
+        """Descending shard (newest first, like production dailybasic
+        exports): steadily FALLING pe_ttm over ~a year of weekdays, so
+        the last value strictly before each August 2026 entry sits below
+        its whole history window -> low_le25."""
+        days = cls._weekday_days(date(2025, 8, 4), date(2026, 8, 14))
+        rows = [
+            (day, f"{1600 - 2 * i:.2f}") for i, day in enumerate(days)
+        ]
+        rows.reverse()  # production shards store newest-first
+        with (tmp_path / "dailybasic_600001SH.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "trade_date", "pe_ttm"])
+            writer.writerows([["600001.SH", d, v] for d, v in rows])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_valuation_cache(
+            self, tmp_path):
+        cache = self._valuation_cache(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _valuation_labels_for_observations(
+            cache, batch.observations
+        )
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed"
+        }
+        assert set(labels) == expected
+        # falling pe_ttm -> current sits at the bottom of its own history
+        assert set(labels.values()) == {"low_le25"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _valuation_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_adapter_snaps_event_day_and_covers_edge_buckets(
+            self, tmp_path):
+        from Ashare.event_valuation_prelockup_study import (
+            valuation_buckets_for_entries,
+        )
+
+        # 600001.SH: ~220 rising-pe sessions ending 2026-08-05 -> high_ge75
+        days = self._weekday_days(date(2025, 9, 15), date(2026, 8, 5))
+        rising = [(d, f"{100 + i}.0") for i, d in enumerate(days)]
+        # 000002.SZ: five sessions only -> always short_history
+        tiny = [("20260729", "10.0"), ("20260730", "11.0"),
+                ("20260731", "12.0"), ("20260803", "13.0"),
+                ("20260804", "14.0")]
+        # 000003.SZ: long book whose next-to-last value is null ->
+        # loss_or_missing when querying the last day
+        gap_days = self._weekday_days(date(2025, 9, 1), date(2026, 8, 5))
+        gap = [(d, f"{i + 1}.0") if i != len(gap_days) - 2 else (d, "")
+               for i, d in enumerate(gap_days)]
+        books = {
+            "600001SH": ("600001.SH", rising),
+            "000002SZ": ("000002.SZ", tiny),
+            "000003SZ": ("000003.SZ", gap),
+        }
+        for stem, (code, rows) in books.items():
+            with (tmp_path / f"dailybasic_{stem}.csv").open(
+                    "w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["ts_code", "trade_date", "pe_ttm"])
+                writer.writerows([[code, d, v] for d, v in rows])
+        labels = valuation_buckets_for_entries(
+            tmp_path,
+            [
+                ("600001.SH", "20260806"),  # off-calendar -> snaps to 08-05
+                ("600001.SH", "20260805"),
+                ("600001.SH", "20150101"),  # before the shard starts
+                ("000002.SZ", "20260804"),
+                ("000003.SZ", gap_days[-1]),
+            ],
+        )
+        assert labels[("600001.SH", "20260806")] \
+            == labels[("600001.SH", "20260805")] == "high_ge75"
+        assert labels[("600001.SH", "20150101")] == "short_history"
+        assert labels[("000002.SZ", "20260804")] == "short_history"
+        assert labels[("000003.SZ", gap_days[-1])] == "loss_or_missing"
+        # shard absent -> that entry stays unlabeled, the rest still
+        # label (one unknown symbol must not silence the whole table)
+        assert valuation_buckets_for_entries(
+            tmp_path,
+            [("999999.SZ", "20260805"), ("000002.SZ", "20260804")],
+        ) == {("000002.SZ", "20260804"): "short_history"}
+
+    def test_valuation_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(
+            _batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS
+        )
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = valuations_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "high_ge75",
+                pos.labeled[0].event_id: "low_le25",
+            },
+        )
+        assert list(breakdown) == ["low_le25", "high_ge75"]
+        assert list(VALUATION_LABEL_ORDER) == [
+            "low_le25", "mid", "high_ge75", "short_history",
+            "loss_or_missing",
+        ]
+        assert breakdown["low_le25"]["n"] == 1
+        # label table missing -> empty breakdown, never an error
+        assert valuations_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_valuation_lines_when_tagged(self):
+        view = build_tracker_view(
+            _batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS
+        )
+        view.valuations_by_event = {
+            obs.event_id: "mid"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert (
+            "Labelled outcomes by pre-entry valuation-percentile bucket:"
+            in report
+        )
+        assert "mid: n=" in report
+
+
+class TestHolderTypeTags:
+    """Unlock-batch holder-type side-table labels (#531/#536): keyed on
+    (symbol, scheduled_date) == (ts_code, float_date) identity; unknown
+    batches label as no_match so coverage is total."""
+
+    @staticmethod
+    def _write_float_cache(tmp_path, rows):
+        with (tmp_path / "share_float.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(
+                ["ts_code", "ann_date", "float_date", "float_ratio",
+                 "share_type"]
+            )
+            writer.writerows(rows)
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_holdertype_cache(
+            self, tmp_path):
+        cache = self._write_float_cache(
+            tmp_path,
+            [("600001.SH", "20260701", "20260805", "5.0", "定增股份")],
+        )
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _holdertype_labels_for_observations(
+            cache, batch.observations
+        )
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed"
+        }
+        assert set(labels) == expected  # no_match keeps coverage total
+        assert set(labels.values()) == {"placement", "no_match"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _holdertype_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_adapter_precedence_and_invalid_rows(self, tmp_path):
+        from Ashare.event_unlock_holdertype_study import (
+            holdertype_buckets_for_entries,
+        )
+
+        cache = self._write_float_cache(
+            tmp_path,
+            [
+                # mixed batch: placement outranks incentive (frozen order)
+                ("600001.SH", "20260701", "20260805", "5.0", "定增股份"),
+                ("600001.SH", "20260701", "20260805", "1.0",
+                 "股权激励限售流通"),
+                ("600002.SH", "20260701", "20260805", "2.0",
+                 "股权激励限售流通"),
+                ("600003.SH", "20260701", "20260805", "1.0",
+                 "高管锁定股份"),
+                # invalid rows are skipped silently -> no_match
+                ("600004.SH", "20260701", "20260601", "3.0", "首发原始股"),
+                ("600005.SH", "20260701", "20260805", "bad", "定增股份"),
+                ("600006.SH", "20170601", "20170101", "9.9", "首发原始股"),
+            ],
+        )
+        labels = holdertype_buckets_for_entries(
+            tmp_path,
+            [
+                ("600001.SH", "20260805"),
+                ("600002.SH", "20260805"),
+                ("600003.SH", "20260805"),
+                ("600004.SH", "20260805"),
+                ("600005.SH", "20260805"),
+                ("600006.SH", "20260805"),
+            ],
+        )
+        assert [labels[(code, "20260805")] for code in (
+            "600001.SH", "600002.SH", "600003.SH", "600004.SH",
+            "600005.SH", "600006.SH",
+        )] == [
+            "placement", "incentive", "other_legacy", "no_match",
+            "no_match", "no_match",
+        ]
+
+    def test_holdertypes_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(
+            _batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS
+        )
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = holdertypes_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "incentive",
+                pos.labeled[0].event_id: "placement",
+            },
+        )
+        assert list(breakdown) == ["placement", "incentive"]
+        assert list(HOLDERTYPE_LABEL_ORDER) == [
+            "placement", "insider", "incentive", "other_legacy",
+            "no_match",
+        ]
+        assert breakdown["placement"]["n"] == 1
+        assert holdertypes_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_holdertype_lines_when_tagged(self):
+        view = build_tracker_view(
+            _batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS
+        )
+        view.holdertypes_by_event = {
+            obs.event_id: "incentive"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert (
+            "Labelled outcomes by unlock-batch holder-type bucket:"
+            in report
+        )
+        assert "incentive: n=" in report
 
 
 # --- journal write path -----------------------------------------------------

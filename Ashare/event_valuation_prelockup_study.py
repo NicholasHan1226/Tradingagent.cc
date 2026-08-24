@@ -156,6 +156,40 @@ def attach_valuation_bucket(
     return stats
 
 
+def valuation_buckets_for_entries(
+    cache: Path, entries: list[tuple[str, str]]
+) -> dict[tuple[str, str], str]:
+    """Side-table helper: (ts_code, event_day) -> frozen bucket label.
+
+    ``day`` is the unlock day (float_date); it is snapped to the shard's
+    own last session on or before that day so the label reproduces the
+    study engine's entry_day semantics exactly (``build_signals`` snaps
+    on the price-book grid; the dailybasic grid carries the same session
+    set).  Entries whose shard is absent stay unlabeled instead of
+    failing the batch — the tracker universe grows beyond the study's
+    1,000-symbol shard set, and one unknown symbol must not silence the
+    whole rolling table (unlabeled is honest, mislabeled is not).
+    """
+    labels: dict[tuple[str, str], str] = {}
+    books: dict[str, tuple[list[str], list[float]] | None] = {}
+    for code, day in dict.fromkeys(entries):
+        if code not in books:
+            try:
+                books[code] = load_pe_book(cache, code)
+            except ValuationStudyError:
+                books[code] = None
+        book = books[code]
+        if book is None:
+            continue
+        days, pes = book
+        pos = bisect.bisect_right(days, str(day))
+        if pos == 0:
+            labels[(code, day)] = "short_history"
+            continue
+        labels[(code, day)] = valuation_label(days, pes, days[pos - 1])
+    return labels
+
+
 def run_study(
     cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT
 ) -> dict[str, object]:
