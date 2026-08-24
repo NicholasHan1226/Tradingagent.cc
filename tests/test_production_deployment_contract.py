@@ -115,7 +115,7 @@ def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
     assert "front API process is not running from the requested immutable release" in helper
 
 
-def test_root_release_helper_reconciles_g5_release_dropins_atomically() -> None:
+def test_root_release_helper_reconciles_runtime_release_dropins_atomically() -> None:
     helper = _read("deploy/release.sh")
 
     for unit in (
@@ -124,8 +124,11 @@ def test_root_release_helper_reconciles_g5_release_dropins_atomically() -> None:
         "tradingagent-crypto-round-trip-g5-health.service",
         "tradingagent-crypto-round-trip-g5-learning.service",
         "tradingagent-crypto-round-trip-g5-learning-scrub.service",
+        "tradingagent-ashare-minute-paper.service",
     ):
         assert unit in helper
+    assert 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")' in helper
+    assert "20-ashare-release.conf" in helper
     assert "g5_dropin_name=99-tradingagent-release.conf" in helper
     assert "prepare_g5_release_reconciliation" in helper
     assert "reconcile_g5_release_dropins \"$release_dir\"" in helper

@@ -18,6 +18,10 @@ g5_units=(
   tradingagent-crypto-round-trip-g5-learning.service
   tradingagent-crypto-round-trip-g5-learning-scrub.service
 )
+ashare_release_units=(
+  tradingagent-ashare-minute-paper.service
+)
+release_units=("${g5_units[@]}" "${ashare_release_units[@]}")
 g5_legacy_dropins=(
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-acceptance.service.d/20-g5-release.conf
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-delayed-paper.service.d/20-g5-release.conf
@@ -27,6 +31,10 @@ g5_legacy_dropins=(
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning.service.d/20-immutable-release.conf
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning-scrub.service.d/20-immutable-release.conf
 )
+ashare_legacy_dropins=(
+  /etc/systemd/system/tradingagent-ashare-minute-paper.service.d/20-ashare-release.conf
+)
+release_legacy_dropins=("${g5_legacy_dropins[@]}" "${ashare_legacy_dropins[@]}")
 g5_dropin_name=99-tradingagent-release.conf
 
 fail() {
@@ -151,7 +159,7 @@ prepare_g5_release_reconciliation() {
   : > "$g5_dropin_manifest"
   g5_timeouts=()
 
-  for unit in "${g5_units[@]}"; do
+  for unit in "${release_units[@]}"; do
     systemctl cat "$unit" >/dev/null
     require_g5_unit_stopped "$unit" "release preflight"
     timeout="$(systemctl show -p TimeoutStartUSec --value "$unit")"
@@ -160,7 +168,7 @@ prepare_g5_release_reconciliation() {
     g5_timeouts+=("$timeout")
   done
 
-  for path in "${g5_legacy_dropins[@]}"; do
+  for path in "${release_legacy_dropins[@]}"; do
     if [[ -e "$path" || -L "$path" ]]; then
       validate_managed_g5_dropin "$path"
       rel="${path#/}"
@@ -168,7 +176,7 @@ prepare_g5_release_reconciliation() {
       printf '%s\n' "$path" >> "$g5_dropin_manifest"
     fi
   done
-  for unit in "${g5_units[@]}"; do
+  for unit in "${release_units[@]}"; do
     canonical="/etc/systemd/system/$unit.d/$g5_dropin_name"
     if [[ -e "$canonical" || -L "$canonical" ]]; then
       validate_managed_g5_dropin "$canonical"
@@ -183,10 +191,10 @@ restore_g5_release_dropins() {
   local unit path rel
 
   [[ -n "${g5_dropin_backup_dir:-}" && -d "$g5_dropin_backup_dir" ]] || return 0
-  for unit in "${g5_units[@]}"; do
+  for unit in "${release_units[@]}"; do
     rm -f -- "/etc/systemd/system/$unit.d/$g5_dropin_name"
   done
-  for path in "${g5_legacy_dropins[@]}"; do
+  for path in "${release_legacy_dropins[@]}"; do
     rm -f -- "$path"
   done
   while IFS= read -r path; do
@@ -202,8 +210,8 @@ reconcile_g5_release_dropins() {
   local index unit unit_dir unit_dir_mode canonical tmp timeout working environment dropins legacy
 
   g5_dropins_changed=1
-  for index in "${!g5_units[@]}"; do
-    unit="${g5_units[$index]}"
+  for index in "${!release_units[@]}"; do
+    unit="${release_units[$index]}"
     timeout="${g5_timeouts[$index]}"
     unit_dir="/etc/systemd/system/$unit.d"
     [[ -d "$unit_dir" && ! -L "$unit_dir" ]] || fail "G5 drop-in directory is missing or unsafe: $unit_dir"
@@ -220,12 +228,12 @@ reconcile_g5_release_dropins() {
     canonical="$unit_dir/$g5_dropin_name"
     mv -f -- "$tmp" "$canonical"
   done
-  for legacy in "${g5_legacy_dropins[@]}"; do
+  for legacy in "${release_legacy_dropins[@]}"; do
     rm -f -- "$legacy"
   done
   systemctl daemon-reload
 
-  for unit in "${g5_units[@]}"; do
+  for unit in "${release_units[@]}"; do
     require_g5_unit_stopped "$unit" "release cutover"
     working="$(systemctl show -p WorkingDirectory --value "$unit")"
     [[ "$working" == "$release_dir" ]] || fail "G5 unit WorkingDirectory did not reconcile: $unit"
@@ -240,7 +248,7 @@ reconcile_g5_release_dropins() {
       *" $canonical "*) ;;
       *) fail "G5 canonical release drop-in is not effective: $unit" ;;
     esac
-    for legacy in "${g5_legacy_dropins[@]}"; do
+    for legacy in "${release_legacy_dropins[@]}"; do
       case " $dropins " in
         *" $legacy "*) fail "legacy G5 release drop-in remains effective: $legacy" ;;
       esac
