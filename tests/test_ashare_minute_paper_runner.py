@@ -17,7 +17,11 @@ from Ashare.minute_data import (
     MinuteRowRejection,
     MinuteTimestampSemantics,
 )
-from Ashare.minute_event_aux import HITS_FILENAME, MinuteEventAuxError
+from Ashare.minute_event_aux import (
+    HITS_FILENAME,
+    LockupHitBatch,
+    MinuteEventAuxError,
+)
 from Ashare.minute_loop import MinuteFixtureClosedLoop, MinuteLoopContractError, _canonical_sha256
 from Ashare.minute_paper_runner import (
     MinutePaperRunnerError,
@@ -622,7 +626,100 @@ def test_event_aux_fetch_failure_degrades_without_failing_the_bar(
     )
 
     assert result["status"] == "pass"
-    assert result["event_aux_status"].startswith(
-        "degraded:minute_event_aux_catalog_failed"
-    )
+    assert result["event_aux_status"].startswith("degraded:")
+    assert "minute_event_aux_catalog_failed" in result["event_aux_status"]
     assert not (tmp_path / HITS_FILENAME).exists()
+
+
+def test_event_aux_first_bar_fetch_success_persists_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First bar of the day: fetch success writes the tamper-checked cache.
+
+    This is the path every shadow-trial session starts on, so its receipt
+    binding and cache persistence are pinned end-to-end here.
+    """
+
+    manifest, references, universe = _write_inputs(tmp_path)
+    source_binding = {
+        "receipt_id": "td-receipt-fetch-001",
+        "data_through": "2026-07-28T09:35:00+08:00",
+        "observed_at": "2026-07-28T09:40:00+08:00",
+        "catalog_version": "catalog-v1",
+        "lineage": {"receipt": "lineage-001"},
+        "pagination_trace_sha256": "a" * 64,
+        "semantic_sha256": "b" * 64,
+        "ordered_rows_sha256": "c" * 64,
+        "row_receipt_proofs_sha256": "d" * 64,
+    }
+    source_binding["source_binding_sha256"] = _canonical_sha256(source_binding)
+    batch = LockupHitBatch(
+        hits={"600000.SH": {"latest_float_date": "20260710", "max_ratio": 4.2}},
+        source_binding=source_binding,
+    )
+
+    def fake_fetch(client, *, session_date):
+        assert session_date == date(2026, 7, 28)
+        return batch
+
+    # The real transport factory refuses to build without the runtime gate
+    # env; the client is never touched because fetch is stubbed too.
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.make_session_client",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.fetch_lockup_hits", fake_fetch
+    )
+    captured: list[tuple] = []
+    real_process = MinuteFixtureClosedLoop.process_snapshot
+
+    def spying_process(
+        self, *, snapshot, manifest_sha256, auxiliary_evidence=()
+    ):
+        captured.append(auxiliary_evidence)
+        return real_process(
+            self,
+            snapshot=snapshot,
+            manifest_sha256=manifest_sha256,
+            auxiliary_evidence=auxiliary_evidence,
+        )
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        return (
+            _profile(),
+            _snapshot("2026-07-28T09:35:00+08:00", 10.0),
+            MinuteEvidenceAuditLedger(),
+        )
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot", fake_load
+    )
+    monkeypatch.setattr(MinuteFixtureClosedLoop, "process_snapshot", spying_process)
+    state = tmp_path / "state" / "bundle.json"
+
+    result = run_delayed_minute_paper_once(
+        manifest=manifest,
+        reference_facts_path=references,
+        universe_path=universe,
+        token_file=tmp_path / "token",
+        state_bundle=state,
+        decision_time=datetime.fromisoformat("2026-07-28T09:40:07+08:00"),
+        trading_date=date(2026, 7, 28),
+        bar_end="2026-07-28 09:35:00",
+        event_aux_enabled=True,
+    )
+
+    assert result["status"] == "pass"
+    assert result["event_aux_status"] == "ok_fetched:1"
+    # The tamper-checked v2 cache now exists for the remaining bars.
+    document = json.loads(
+        (Path(manifest).parent / HITS_FILENAME).read_text(encoding="utf-8")
+    )
+    assert document["schema"] == "tradingagent.ashare.minute_event_aux_hits.v2"
+    assert document["hits_sha256"] == _canonical_sha256(batch.hits)
+    assert document["source_binding"]["receipt_id"] == "td-receipt-fetch-001"
+    # The same run already consumed the fetched evidence in the loop.
+    evidence = captured[0]
+    assert [item.symbol for item in evidence] == ["600000.SH"]
+    assert evidence[0].execution_authority is False
