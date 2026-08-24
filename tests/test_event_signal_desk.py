@@ -181,3 +181,54 @@ def test_fail_closed_on_missing_inputs(tmp_path) -> None:
         assert "cache_missing:stock_basic_named.csv" in str(exc)
     else:
         raise AssertionError("expected DeskError for missing cache file")
+
+
+def _append_td_disclosure(doc_path: Path, entries: list[dict]) -> None:
+    doc = json.loads(doc_path.read_text(encoding="utf-8"))
+    doc["entries"].extend(entries)
+    doc_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+
+def _td_entry(scheduled: str) -> dict:
+    return {
+        "event_id": f"disc:600000.SH:20260630:{scheduled}:20260710",
+        "event_type": "earnings_disclosure",
+        "scheduled_date": scheduled,
+        "date_confidence": "hard_date",
+        "impact_direction": "unclear",
+        "source_ref": "td:cn.dataset.disclosure_date",
+        "entity": "20260630",
+        "symbol": "600000.SH",
+    }
+
+
+def test_td_document_drives_appointments_without_cache_csv(tmp_path) -> None:
+    cache, doc_path = build_cache(tmp_path)
+    # hybrid wiring: when the document carries earnings_disclosure entries
+    # the Tushare appointment file is not needed at all
+    (cache / "disclosure_all.csv").unlink()
+    _append_td_disclosure(doc_path, [
+        _td_entry("2026-08-26"),
+        _td_entry("2026-08-26"),      # duplicate -> deduped
+        _td_entry("2026-07-15"),      # before month start -> filtered
+    ])
+
+    data = load_desk_data(cache, doc_path, TODAY)
+    day = data["payload"]["2026-08-26"]
+    assert [r["code"] for r in day["pos"]] == ["600000.SH"]
+    # forecast was public (20260710) before the appointment -> honest grouping
+    assert day["pos"][0]["rng"] == "+50%~+60%"
+    window = [s for s in data["sigs"]
+              if s["sig"] == "pos" and s["phase"] == "window"]
+    assert [(s["code"], s["d"]) for s in window] == [("600000.SH", "2026-08-26")]
+
+
+def test_no_disclosure_source_anywhere_fails_closed(tmp_path) -> None:
+    cache, doc_path = build_cache(tmp_path)
+    (cache / "disclosure_all.csv").unlink()  # and the doc carries no TD entries
+    try:
+        load_desk_data(cache, doc_path, TODAY)
+    except DeskError as exc:
+        assert "cache_missing:disclosure_all.csv" in str(exc)
+    else:
+        raise AssertionError("expected DeskError without any appointment source")
