@@ -24,7 +24,11 @@ from Ashare.minute_event_aux import (
     make_session_client,
 )
 from Ashare.minute_loop import _canonical_sha256
-from shared.data.sharedsignals_v1 import SharedSignalsV1Client
+from shared.data.sharedsignals_v1 import (
+    HTTPResponse,
+    SharedSignalsV1Client,
+    SharedSignalsV1Config,
+)
 
 _CST = ZoneInfo("Asia/Shanghai")
 _SESSION = date(2026, 8, 24)
@@ -248,6 +252,220 @@ class FetchLayerContractTest(unittest.TestCase):
     def test_event_query_requests_receipt_proofs(self) -> None:
         source = Path(__file__).resolve().parents[1] / "Ashare" / "minute_event_aux.py"
         assert "include_receipt_proofs=True" in source.read_text(encoding="utf-8")
+
+
+_WIRE_SESSION = date(2026, 8, 24)
+
+
+def _catalog_payload() -> dict[str, object]:
+    return {
+        "api_version": "v1",
+        "catalog_version": "v1-wire-test",
+        "request_id": "req-catalog",
+        "data": [
+            {
+                "dataset_id": "cn.dataset.share_float",
+                "schema_major": 1,
+                "default_fields": [
+                    "ts_code",
+                    "ann_date",
+                    "float_date",
+                    "float_share",
+                    "float_ratio",
+                    "holder_name",
+                    "share_type",
+                ],
+            }
+        ],
+    }
+
+
+def _query_page(rows: list[dict[str, object]], next_cursor: str | None) -> dict[str, object]:
+    """One query response in the exact wire shape observed on 2026-08-24."""
+
+    return {
+        "api_version": "v1",
+        "catalog_version": "v1-wire-test",
+        "request_id": f"req-page-{next_cursor or 'final'}",
+        "dataset_id": "cn.dataset.share_float",
+        "data": rows,
+        "next_cursor": next_cursor,
+        "metadata": {
+            "state": "success",
+            "degraded": False,
+            "receipt_id": "td-receipt-wire-1",
+            "data_through": "2026-08-23T00:00:00+08:00",
+            "observed_at": "2026-08-24T09:35:10+08:00",
+            "reasons": [],
+            "row_receipt_proofs": [{"receipt_id": f"p{index}"} for index in range(len(rows))],
+            "freshness": {"as_of": "2026-08-24T00:00:00+08:00"},
+            "quality": {"row_count": len(rows)},
+            "lineage": {"receipt": "lineage-wire-1"},
+        },
+    }
+
+
+class _WireStubTransport:
+    """Serve canned V1 payloads with production wire shapes; no network."""
+
+    def __init__(self, catalog: dict, pages: list[dict]) -> None:
+        self._catalog = catalog
+        self._pages = list(pages)
+        self.calls: list[tuple[str, str]] = []
+        self.bodies: list[dict | None] = []
+
+    def __call__(self, *, method, url, headers, json_body, timeout_seconds):
+        self.calls.append((method, url))
+        self.bodies.append(json_body)
+        if method == "GET":
+            return HTTPResponse(status_code=200, json_body=self._catalog)
+        return HTTPResponse(status_code=200, json_body=self._pages.pop(0))
+
+
+class WireRehearsalTest(unittest.TestCase):
+    """End-to-end fetch through the real client, pagination and envelopes.
+
+    Rehearsed against production on 2026-08-24 (see PR #485 discussion):
+    envelope ``data`` is a property (not callable), the engine rejects
+    gte/lte with HTTP 400 despite catalog advertising, filtering on
+    ``float_date`` is unreachable because the registry partitions this
+    dataset by ``ann_date``, and several holders legitimately share one
+    (symbol, ann_date, float_date) so identity must be the dataset-declared
+    five-tuple.
+    """
+
+    def _wire_client(self, transport: _WireStubTransport) -> SharedSignalsV1Client:
+        config = SharedSignalsV1Config(
+            base_url="http://127.0.0.1:18082",
+            expected_catalog_version="v1-wire-test",
+            dataset_ids=frozenset({"cn.dataset.share_float"}),
+            access_policy_id="tradingagent-read-v1",
+            catalog_version_policy="evidence_only",
+            timeout_seconds=5,
+            max_limit=500,
+            cache_ttl_seconds=0,
+        )
+        return SharedSignalsV1Client(config, transport=transport)
+
+    def test_fetch_survives_duplicate_triples_across_pages(self) -> None:
+        page_one_rows = [
+            {
+                "ts_code": "000657.SZ",
+                "ann_date": "20260731",
+                "float_date": "20260803",
+                "float_ratio": 0.0772,
+                "holder_name": "Holder A",
+                "share_type": "limited shares",
+            },
+            {
+                # Same triple as above — legal multi-holder row.
+                "ts_code": "000657.SZ",
+                "ann_date": "20260731",
+                "float_date": "20260803",
+                "float_ratio": 0.0101,
+                "holder_name": "Holder B",
+                "share_type": "limited shares",
+            },
+            {
+                "ts_code": "300750.SZ",
+                "ann_date": "20260731",
+                "float_date": "20260805",
+                "float_ratio": None,
+                "holder_name": "ChiNext Holder",
+                "share_type": "restricted",
+            },
+        ]
+        page_two_rows = [
+            {
+                "ts_code": "600000.SH",
+                "ann_date": "20260801",
+                "float_date": "20260810",
+                "float_ratio": 5.0,
+                "holder_name": "Big Holder",
+                "share_type": "size restricted",
+            },
+            {
+                # Inverted row: float before announcement — skipped.
+                "ts_code": "600001.SH",
+                "ann_date": "20260901",
+                "float_date": "20260805",
+                "float_ratio": 1.0,
+                "holder_name": "Odd Holder",
+                "share_type": "restricted",
+            },
+            {
+                # Outside the frozen [T-30, T) float window — filtered locally.
+                "ts_code": "600002.SH",
+                "ann_date": "20251231",
+                "float_date": "20260101",
+                "float_ratio": 9.9,
+                "holder_name": "Old Holder",
+                "share_type": "restricted",
+            },
+        ]
+        transport = _WireStubTransport(
+            _catalog_payload(),
+            [
+                _query_page(page_one_rows, "cursor-page-2"),
+                _query_page(page_two_rows, None),
+            ],
+        )
+
+        batch = fetch_lockup_hits(
+            self._wire_client(transport), session_date=_WIRE_SESSION
+        )
+
+        # Server-side net rides the ann_date partition column with compact
+        # dates; no order clause; receipt proofs requested.
+        query_bodies = [
+            body
+            for body, (method, _url) in zip(transport.bodies, transport.calls)
+            if method == "POST"
+        ]
+        self.assertEqual(len(query_bodies), 2)
+        for body in query_bodies:
+            self.assertEqual(
+                body["filters"],
+                {
+                    "ann_date": {
+                        "between": [
+                            (_WIRE_SESSION - timedelta(days=120)).strftime("%Y%m%d"),
+                            _WIRE_SESSION.strftime("%Y%m%d"),
+                        ]
+                    }
+                },
+            )
+            self.assertNotIn("order", body)
+            self.assertTrue(body["include_receipt_proofs"])
+        methods = [method for method, _url in transport.calls]
+        self.assertEqual(methods, ["GET", "POST", "POST"])
+
+        # fetch returns raw hits (mainboard filtering happens in
+        # build_event_evidence); duplicates survived pagination, inverted
+        # and out-of-window rows were dropped locally.
+        self.assertEqual(
+            batch.hits,
+            {
+                "000657.SZ": {"latest_float_date": "20260803", "max_ratio": 0.0772},
+                "300750.SZ": {"latest_float_date": "20260805", "max_ratio": None},
+                "600000.SH": {"latest_float_date": "20260810", "max_ratio": 5.0},
+            },
+        )
+        # The TD provenance binding survives the same run.
+        self.assertEqual(
+            batch.source_binding["receipt_id"], "td-receipt-wire-1"
+        )
+        self.assertIn("source_binding_sha256", batch.source_binding)
+
+    def test_catalog_fault_wraps_into_aux_error(self) -> None:
+        class BrokenTransport:
+            def __call__(self, **kwargs):
+                raise RuntimeError("socket exploded")
+
+        with pytest.raises(MinuteEventAuxError, match="catalog_failed"):
+            fetch_lockup_hits(
+                self._wire_client(BrokenTransport()), session_date=_WIRE_SESSION
+            )
 
 
 if __name__ == "__main__":
