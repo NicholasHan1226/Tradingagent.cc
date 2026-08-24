@@ -484,5 +484,121 @@ class RefreshShareFloatTest(unittest.TestCase):
                 sim.refresh_share_float(Path(tmp))
 
 
+class LimitRealismTest(unittest.TestCase):
+    """Frozen D1/D2/D3 rules (pre-registration PR #448)."""
+
+    CODE = "600000.SH"
+    DAYS = _sessions(20, start=date(2020, 1, 5))  # after roster coverage start
+
+    @staticmethod
+    def _signal(entry_idx: int, exit_idx: int) -> dict:
+        days = LimitRealismTest.DAYS
+        return {
+            "ts_code": LimitRealismTest.CODE,
+            "float_date": days[entry_idx - 1],
+            "entry_day": days[entry_idx],
+            "exit_day": days[exit_idx],
+            "entry_price": 10.0,
+            "exit_price": 11.0,
+            "float_ratio": 2.0,
+            "pre_return": -0.12,
+            "regime": "weak",
+        }
+
+    def _apply(self, signals, roster):
+        closes = [10.0 + 0.1 * i for i in range(len(self.DAYS))]
+        books = {self.CODE: sim.StockBook(list(self.DAYS), closes)}
+        return sim.apply_limit_realism(signals, books, roster, self.DAYS[-1])
+
+    def test_locked_entry_skipped_and_sealed_exit_rolled_one_session(self):
+        s_skip = self._signal(5, 10)
+        s_roll = self._signal(6, 10)
+        roster = {
+            self.DAYS[5]: {self.CODE: "U"},   # entry sealed -> drop signal
+            self.DAYS[10]: {self.CODE: "D"},  # exit sealed -> roll forward
+        }
+        out, stats = self._apply([s_skip, s_roll], roster)
+        self.assertEqual(
+            [s["entry_day"] for s in out], [self.DAYS[6]]
+        )
+        self.assertEqual(stats["skipped_locked_entry"], 1)
+        self.assertEqual(stats["rolled_exits"], 1)
+        self.assertEqual(stats["roll_len_1"], 1)
+        # rolled onto the first non-sealed session's close
+        self.assertEqual(out[0]["exit_day"], self.DAYS[11])
+        self.assertAlmostEqual(float(out[0]["exit_price"]), 10.0 + 0.1 * 11)
+
+    def test_z_flag_and_absent_rows_leave_signals_untouched(self):
+        signals = [self._signal(5, 10), self._signal(6, 12)]
+        roster = {
+            self.DAYS[10]: {self.CODE: "Z"},
+            self.DAYS[12]: {"000999.SZ": "D"},  # other symbol only
+        }
+        out, stats = self._apply(signals, roster)
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out[1]["exit_day"], self.DAYS[12])
+        for key in ("skipped_locked_entry", "rolled_exits",
+                    "rolled_to_end", "pre_coverage_untouched"):
+            self.assertEqual(stats[key], 0)
+
+    def test_pre_coverage_signal_untouched_even_if_roster_has_flags(self):
+        early_days = _sessions(20, start=date(2019, 1, 7))  # before 20191128
+        signal = {
+            "ts_code": self.CODE,
+            "float_date": early_days[4],
+            "entry_day": early_days[5],
+            "exit_day": early_days[10],
+            "entry_price": 10.0,
+            "exit_price": 11.0,
+            "float_ratio": 2.0,
+            "pre_return": -0.12,
+            "regime": "weak",
+        }
+        closes = [10.0] * len(early_days)
+        books = {self.CODE: sim.StockBook(early_days, closes)}
+        out, stats = sim.apply_limit_realism(
+            [signal], books, {}, early_days[-1]
+        )
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["exit_day"], early_days[10])  # unchanged
+        self.assertEqual(stats["pre_coverage_untouched"], 1)
+        self.assertEqual(stats["skipped_locked_entry"], 0)
+
+    def test_fully_sealed_tail_settles_on_last_in_span_session(self):
+        signal = self._signal(5, 10)
+        roster = {
+            day: {self.CODE: "D"} for day in self.DAYS[10:]  # sealed to end
+        }
+        out, stats = self._apply([signal], roster)
+        # frozen tail rule: settle on the last session even though sealed
+        self.assertEqual(out[0]["exit_day"], self.DAYS[-1])
+        self.assertEqual(stats["rolled_to_end"], 1)
+        self.assertEqual(stats["roll_len_2plus"], 1)
+        self.assertEqual(stats["rolled_exits"], 1)
+
+    def test_load_limit_roster_reads_files_and_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            folder = cache / "limitlist_daily"
+            _write_csv(
+                folder / "20260820.csv",
+                ["trade_date", "ts_code", "limit"],
+                [["20260820", self.CODE, "U"], ["20260820", "000001.SZ", "D"]],
+            )
+            _write_csv(
+                folder / "20260821.csv",
+                ["trade_date", "ts_code", "limit"],
+                [["20260821", self.CODE, "Z"]],
+            )
+            roster = sim.load_limit_roster(cache)
+            self.assertEqual(roster["20260820"][self.CODE], "U")
+            self.assertEqual(roster["20260821"][self.CODE], "Z")
+            self.assertEqual(roster["20260820"]["000001.SZ"], "D")
+            with self.assertRaisesRegex(
+                sim.BaselineSimError, "limit_cache_missing"
+            ):
+                sim.load_limit_roster(cache / "empty")
+
+
 if __name__ == "__main__":
     unittest.main()

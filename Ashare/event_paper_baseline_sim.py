@@ -25,6 +25,7 @@ outputs are research_only / not_promotion_evidence.
 Usage::
 
     python3 Ashare/event_paper_baseline_sim.py [--cache DIR] [--cost-bps X]
+        [--limit-realism]
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ POST_HORIZON_SESSIONS = 5  # tracker lockup post-window
 INITIAL_CASH_CNY = 1_000_000.0
 MIN_ALLOC_CNY = 5_000.0
 SLOT_FRACTION = 0.10  # max share of prior-day NAV committed per new entry
+# limitlist_daily roster depth (#442); signals before this stay untouched.
+LIMIT_COVERAGE_START = "20191128"
 
 
 class BaselineSimError(RuntimeError):
@@ -282,6 +285,93 @@ def rule_arm_filter(signal: dict[str, object]) -> bool:
     if ratio is None:
         return False
     return not (3.0 <= float(ratio) < 5.0)
+
+
+def load_limit_roster(cache: Path) -> dict[str, dict[str, str]]:
+    """Day -> {ts_code: limit flag} from the per-day limitlist files (#442).
+
+    The roster is the seal-state ground truth for the limit-lock realism
+    fix (pre-registration 2026-08-24-limitlock-realism-preregistration.md):
+    ``U`` = closed sealed limit-up, ``D`` = closed sealed limit-down,
+    ``Z`` = touched and opened.  Fail-closed when the directory is absent —
+    only callers that requested the realism fix reach this loader.
+    """
+    folder = cache / "limitlist_daily"
+    if not folder.is_dir():
+        raise BaselineSimError("limit_cache_missing")
+    roster: dict[str, dict[str, str]] = {}
+    for path in sorted(folder.glob("*.csv")):
+        flags = roster.setdefault(path.stem, {})
+        with path.open(encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                code = row.get("ts_code")
+                flag = row.get("limit")
+                if code and flag:
+                    flags[code] = flag
+    if not roster:
+        raise BaselineSimError("limit_roster_empty")
+    return roster
+
+
+def apply_limit_realism(
+    signals: list[dict[str, object]],
+    books: dict[str, StockBook],
+    roster: dict[str, dict[str, str]],
+    last_global_day: str,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Frozen D1/D2/D3 rules from the pre-registration report.
+
+    D1: an entry day closed sealed limit-up (``U``) makes the buy fill
+    unreachable — drop the whole signal.  D2: an exit day closed sealed
+    limit-down (``D``) makes the sell unfillable — roll forward on the
+    symbol's own calendar to the first non-sealed session's close; past the
+    data end the exit settles on the last in-span session even if still
+    sealed (counted ``rolled_to_end``, per the frozen tail rule).  D3:
+    signals touching days before roster coverage are left untouched — no
+    imputation.  Everything else about the signal stream is unchanged.
+    """
+    stats = {
+        "skipped_locked_entry": 0,
+        "rolled_exits": 0,
+        "roll_len_1": 0,
+        "roll_len_2plus": 0,
+        "rolled_to_end": 0,
+        "pre_coverage_untouched": 0,
+    }
+    out: list[dict[str, object]] = []
+    for signal in signals:
+        code = str(signal["ts_code"])
+        entry_day = str(signal["entry_day"])
+        exit_day = str(signal["exit_day"])
+        if entry_day < LIMIT_COVERAGE_START or exit_day < LIMIT_COVERAGE_START:
+            stats["pre_coverage_untouched"] += 1
+            out.append(signal)
+            continue
+        if roster.get(entry_day, {}).get(code) == "U":
+            stats["skipped_locked_entry"] += 1
+            continue
+        book = books[code]  # build_signals guarantees presence
+        j = bisect.bisect_left(book.days, exit_day)
+        rolls = 0
+        while (
+            j < len(book.days)
+            and book.days[j] <= last_global_day
+            and roster.get(book.days[j], {}).get(code) == "D"
+        ):
+            j += 1
+            rolls += 1
+        if j >= len(book.days) or book.days[j] > last_global_day:
+            # Frozen tail rule: settle on the last in-span session even if
+            # still sealed; j advanced at least once to get here.
+            j -= 1
+            stats["rolled_to_end"] += 1
+        if rolls:
+            stats["rolled_exits"] += 1
+            stats["roll_len_1" if rolls == 1 else "roll_len_2plus"] += 1
+            signal["exit_day"] = book.days[j]
+            signal["exit_price"] = book.closes[j]
+        out.append(signal)
+    return out, stats
 
 
 def run_portfolio(
@@ -542,7 +632,11 @@ def run_variant_sweep(
     return rows
 
 
-def run_study(cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT) -> dict[str, object]:
+def run_study(
+    cache: Path,
+    cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT,
+    limit_realism: bool = False,
+) -> dict[str, object]:
     index_pairs = load_index_series(cache)
     global_days = [d.strftime("%Y%m%d") for d, _ in index_pairs if d.strftime("%Y%m%d") >= SIM_START]
     if len(global_days) < PRE_WINDOW_SESSIONS + POST_HORIZON_SESSIONS + 2:
@@ -553,6 +647,17 @@ def run_study(cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT) -> dict
     signals, signal_stats = build_signals(events, books, index_pairs, global_days[-1])
     if not signals:
         raise BaselineSimError("signals_empty")
+
+    realism_stats: dict[str, int] | None = None
+    if limit_realism:
+        # Opt-in realism mode per the frozen pre-registration (PR #448):
+        # default OFF preserves the locked baseline readouts bit-for-bit.
+        roster = load_limit_roster(cache)
+        signals, realism_stats = apply_limit_realism(
+            signals, books, roster, global_days[-1]
+        )
+        if not signals:
+            raise BaselineSimError("signals_empty_after_limit_realism")
 
     arms = {
         "all": signals,
@@ -567,6 +672,7 @@ def run_study(cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT) -> dict
         "universe_uncovered_symbols": uncovered,
         "events_total": len(events),
         "signal_stats": {**event_stats, **signal_stats},
+        "limit_realism_stats": realism_stats,
         "arms": {},
     }
     for name, arm_signals in arms.items():
@@ -608,6 +714,8 @@ def _render(results: dict[str, object]) -> None:
         f"- 覆盖：{results['universe_books']} 只有缓存个股 / {results['events_total']} 个事件；"
         f"跳过统计 {results['signal_stats']}"
     )
+    if results.get("limit_realism_stats") is not None:
+        print(f"- 涨停真实性修正（预注册 #448）：{results['limit_realism_stats']}")
     for name in ("all", "rule"):
         arm = results["arms"][name]  # type: ignore[index]
         assert isinstance(arm, dict)
@@ -645,6 +753,13 @@ def main() -> int:
         help="Run the position-scheduling variant matrix (arms x variants) "
         "instead of the single baseline study.",
     )
+    parser.add_argument(
+        "--limit-realism",
+        action="store_true",
+        help="Apply the frozen limit-lock realism rules (skip entries sealed "
+        "limit-up at close, roll exits sealed limit-down forward) from the "
+        "2026-08-24 pre-registration; requires the limitlist_daily cache.",
+    )
     args = parser.parse_args()
     from Ashare.event_calendar_fetch import CACHE_DIR
 
@@ -654,7 +769,9 @@ def main() -> int:
     if args.sweep:
         run_variant_sweep(cache, cost_bps=args.cost_bps)
     else:
-        run_study(cache, cost_bps=args.cost_bps)
+        run_study(
+            cache, cost_bps=args.cost_bps, limit_realism=args.limit_realism
+        )
     return 0
 
 
