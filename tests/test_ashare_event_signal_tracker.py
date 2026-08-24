@@ -30,10 +30,13 @@ from Ashare.event_signal_lockup_tracker import (
     SIGNAL_ANTICIPATION_CLASS,
     SIGNAL_EVENT_TYPE,
     TrackerError,
+    TURNOVER_LABEL_ORDER,
     _absorption_labels_for_observations,
     _block_labels_for_observations,
+    _turnover_labels_for_observations,
     absorption_breakdown,
     block_breakdown,
+    turnover_breakdown,
     append_new_outcomes,
     build_tracker_view,
     load_disclosure_entries,
@@ -559,6 +562,88 @@ class TestBlockTags:
         )
         assert "Labelled outcomes by pre-event block bucket:" in report
         assert "discount_deep: n=" in report
+
+
+class TestTurnoverTags:
+    """Turnover side-table labels: report-only, degrade to no labels."""
+
+    @staticmethod
+    def _turnover_caches(tmp_path):
+        """Daily history plus a dailybasic cache (written NEWEST-first, as
+        Tushare delivers it) whose free-float turnover is constant 1.0, so
+        each labeled event resolves to ``normal`` (ratio exactly 1.0)."""
+
+        stem = f"daily_{SYMBOL[:6]}{SYMBOL[7:]}"
+        with (tmp_path / f"{stem}.csv").open("w", newline="",
+                                             encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "trade_date", "close", "amount"])
+            days: list[date] = []
+            cursor = EVENT_DATE
+            while len(days) < 25:
+                if cursor.weekday() < 5:
+                    days.append(cursor)
+                cursor -= timedelta(days=1)
+            for d in days:  # newest first on purpose
+                writer.writerow([SYMBOL, f"{d:%Y%m%d}", 10.0, 1000.0])
+        db_stem = f"dailybasic_{SYMBOL[:6]}{SYMBOL[7:]}"
+        with (tmp_path / f"{db_stem}.csv").open("w", newline="",
+                                                encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "trade_date", "close",
+                             "turnover_rate_f", "turnover_rate"])
+            for d in days:  # newest first on purpose (#437 regression guard)
+                writer.writerow([SYMBOL, f"{d:%Y%m%d}", 10.0, 1.0, 1.0])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_dailybasic(self, tmp_path):
+        cache = self._turnover_caches(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _turnover_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # flat tape -> window mean == baseline -> ratio 1.0 -> normal
+        assert set(labels.values()) == {"normal"}
+
+    def test_missing_dailybasic_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _turnover_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_turnover_breakdown_groups_in_label_order_and_skips_untagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = turnover_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "surge",
+                pos.labeled[0].event_id: "shrink",
+            },
+        )
+        assert list(breakdown) == ["shrink", "surge"]
+        assert list(TURNOVER_LABEL_ORDER) == ["shrink", "normal", "surge"]
+        assert breakdown["shrink"]["n"] == 1
+        assert breakdown["surge"]["n"] == 1
+        assert turnover_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_turnover_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.turnover_by_event = {
+            obs.event_id: "normal"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by pre-event turnover bucket:" in report
+        assert "normal: n=" in report
 
 
 # --- journal write path -----------------------------------------------------

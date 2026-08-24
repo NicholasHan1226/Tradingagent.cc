@@ -385,6 +385,9 @@ class TrackerView:
     # entry event_id -> pre-event block-trade bucket (blocktrade side table,
     # report-only; empty when the blocktrade/daily caches are unavailable).
     blocks_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-event turnover bucket (daily_basic side table,
+    # report-only; empty when the dailybasic/daily caches are unavailable).
+    turnover_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -590,6 +593,9 @@ def run_tracker(
         view.blocks_by_event = _block_labels_for_observations(
             cache, batch.observations
         )
+        view.turnover_by_event = _turnover_labels_for_observations(
+            cache, batch.observations
+        )
     if EARNINGS_POS_SIGNAL in signals:
         view.prewindow_stats[EARNINGS_POS_SIGNAL] = prewindow_breakdown(
             view.buckets[EARNINGS_POS_SIGNAL].labeled, ann_by_event, bars_by_symbol
@@ -793,6 +799,74 @@ def _block_labels_for_observations(
         if obs.observation_status != "observed" or not obs.symbol:
             continue
         bucket = buckets.get((obs.symbol, obs.scheduled_date.strftime("%Y%m%d")))
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
+TURNOVER_LABEL_ORDER = ("shrink", "normal", "surge")
+
+
+def turnover_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    turnover_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event turnover bucket.
+
+    Mirrors :func:`block_breakdown`: observations without a label
+    (dailybasic cache unavailable, insufficient strictly-prior history,
+    flat baseline) are skipped, and an empty label table yields an empty
+    breakdown.  Report-only readout for rolling validation of the #441
+    first-read structure — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = turnover_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in TURNOVER_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _turnover_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> turnover bucket via the dailybasic + daily caches.
+
+    Report-only decoration on the tracking pass: any failure to reach the
+    datasets degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_turnover_prelockup_study import (
+            turnover_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = turnover_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
         if bucket is not None:
             labels[obs.event_id] = bucket
     return labels
@@ -1024,6 +1098,22 @@ def render_report(
             lines += ["Labelled outcomes by pre-event block bucket:", ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        turnover_stats = turnover_breakdown(
+            bucket.labeled, view.turnover_by_event
+        )
+        if any(item.get("n") for item in turnover_stats.values()):
+            parts = []
+            for label, item in turnover_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by pre-event turnover bucket:",
+                      ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1152,6 +1242,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in block_breakdown(
                             b.labeled, view.blocks_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_turnover": {
+                    k: {
+                        label: item["n"]
+                        for label, item in turnover_breakdown(
+                            b.labeled, view.turnover_by_event
                         ).items()
                         if item.get("n")
                     }
