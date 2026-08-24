@@ -24,6 +24,18 @@ ENV_FILE="${PREFLIGHT_ENV_FILE:-/etc/tradingagent/ashare-minute-scale500.env}"
 MAX_SECONDS="${PREFLIGHT_MAX_SECONDS:-150}"
 
 fail2() { echo "PREFLIGHT_FAIL $1"; exit 2; }
+
+# 宇宙文件校验强制「当前用户不可写」(immutable-universe guard, W_OK)，
+# root 必然不通过——自动降权到服务用户重入，临时状态根也随之归属服务用户。
+RUN_USER="${PREFLIGHT_RUN_USER:-tradingagent}"
+if [ "$(id -un)" != "$RUN_USER" ]; then
+  exec sudo -u "$RUN_USER" \
+    PREFLIGHT_PYTHON="$PYTHON" PREFLIGHT_REPO_ROOT="$REPO_ROOT" \
+    PREFLIGHT_TOKEN_FILE="$TOKEN_FILE" PREFLIGHT_ENV_FILE="$ENV_FILE" \
+    PREFLIGHT_MAX_SECONDS="$MAX_SECONDS" PREFLIGHT_RUN_USER="$RUN_USER" \
+    bash "$0"
+fi
+
 [ -x "$PYTHON" ] || fail2 "python_missing:$PYTHON"
 [ -f "$TOKEN_FILE" ] || fail2 "token_missing"
 [ -f "$ENV_FILE" ] || fail2 "env_file_missing:$ENV_FILE"
@@ -34,10 +46,23 @@ fi
 UNIVERSE_SOURCE=$(grep -h '^ASHARE_MINUTE_SCALE500_UNIVERSE_SOURCE=' "$ENV_FILE" | head -1 | cut -d= -f2-)
 UNIVERSE_SHA=$(grep -h '^ASHARE_MINUTE_SCALE500_UNIVERSE_SHA256=' "$ENV_FILE" | head -1 | cut -d= -f2-)
 [ -n "$UNIVERSE_SOURCE" ] && [ -n "$UNIVERSE_SHA" ] || fail2 "universe_env_unreadable"
+PROD_STATE_ROOT=$(grep -h '^ASHARE_MINUTE_SCALE500_STATE_ROOT=' "$ENV_FILE" | head -1 | cut -d= -f2-)
+[ -n "$PROD_STATE_ROOT" ] && [ -d "$PROD_STATE_ROOT" ] || fail2 "prod_state_root_unreadable:$PROD_STATE_ROOT"
 
 STATE_ROOT=$(mktemp -d /tmp/scale500-preflight-state.XXXXXX)
 ROLLBACK_ROOT=$(mktemp -d /tmp/scale500-preflight-rollback.XXXXXX)
 trap 'rm -rf "$STATE_ROOT" "$ROLLBACK_ROOT"' EXIT
+
+# 初始化器需要「最近一个前一日会话」作模板（与生产状态根跨日续用的机制一致）：
+# 从生产根只读拷贝最新模板日（严格早于今日），其余一概不碰。
+cd /tmp
+TODAY=$(TZ=Asia/Shanghai date +%Y%m%d)
+TEMPLATE_DAY=$(find "$PROD_STATE_ROOT" -maxdepth 1 -type d -name '20*' \
+  | while read -r p; do [ "$(basename "$p")" -lt "$TODAY" ] && echo "$p"; done | sort | tail -1)
+[ -n "$TEMPLATE_DAY" ] && [ -f "$TEMPLATE_DAY/reference-facts.json" ] \
+  || fail2 "no_template_day_in_prod_state_root"
+cp -r "$TEMPLATE_DAY" "$STATE_ROOT/" || fail2 "template_copy_failed"
+echo "preflight: template day $(basename "$TEMPLATE_DAY") copied read-only"
 
 export REAL_TRADING_ENABLED=false PYTHONPATH="$REPO_ROOT"
 COMMON=(--rolling-eligible
