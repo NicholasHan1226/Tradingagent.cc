@@ -267,12 +267,20 @@ def run_study(
             if top["mean_net_bps"] is not None
             and bot["mean_net_bps"] is not None else None
         )
+        # Precompute cells: nested same-quote f-strings break py3.11 CI.
+        bot_bps = (
+            "—" if bot["mean_net_bps"] is None
+            else f"{float(bot['mean_net_bps']):+.1f}"
+        )
+        top_bps = (
+            "—" if top["mean_net_bps"] is None
+            else f"{float(top['mean_net_bps']):+.1f}"
+        )
+        spread_txt = "—" if spread is None else f"{spread:+.1f}"
         print(
-            f"- {name}: bottom(n={bot['n']}, "
-            f"{'—' if bot['mean_net_bps'] is None else f'{float(bot['mean_net_bps']):+.1f}'}bps)"
-            f" top(n={top['n']}, "
-            f"{'—' if top['mean_net_bps'] is None else f'{float(top['mean_net_bps']):+.1f}'}bps)"
-            f" 价差={'—' if spread is None else f'{spread:+.1f}bps'}"
+            f"- {name}: bottom(n={bot['n']}, {bot_bps}bps)"
+            f" top(n={top['n']}, {top_bps}bps)"
+            f" 价差={spread_txt}bps"
         )
 
     # R2: fixed-edge cross-tabs under the NEW buckets (descriptive only).
