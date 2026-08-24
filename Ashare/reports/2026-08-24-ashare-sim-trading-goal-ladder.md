@@ -160,6 +160,32 @@ Tushare daily 新→旧排序导致 bisect 静默错位（假 633 不足历史�
 真数据首读：11 个已标注结局全部解析（none 7 / near_flat 4），
 方向与反向梯度一致（near_flat 优于 none）；小样本仅作观察名单记录。
 
+## 换手率/筹码首读 + 四源数据面落地（2026-08-24 晨，#24/#25）
+
+**换手率研究首读（#441，daily_basic 面）**：1035 信号 attached=1023。
+预注册方向在 surge 端证伪（surge +341bps 但 n=7 不足为凭），shrink +99.9
+> normal +71.7 弱成立；rule 臂 rule[shrink] +154.7 vs rule[normal] +143.9
+增量微弱不晋级。**重要数据发现（HV 段）**：公告 float_ratio（解禁占比，
+均值≈7.5）与 daily_basic 流通/总股本（均值≈0.83）不是同一量纲，现行分层带
+的 92% "一致率" 是两侧同落 >5% 的假一致——分层变量带口径需用 daily_basic
+重建（已立项候选）。deleverage×shrink n=30 +325.4 win 0.733 与 #419 同向。
+turnover 标签已接入跟踪器滚动读出面（#444）。
+
+**筹码研究首读（#445，cyq_perf 面）**：attached=1014，**H1 方向按预注册
+单调成立**：underwater +49.8（n=807）< mid +152.4（n=195）< profit +190.1
+（n=12）；主对比 mid−underwater = +102bps 有样本量支撑。结构发现：78% 解禁
+发生在浮筹被套状态。该层是条件变量而非过滤器（各 chips 臂绝对收益低于
+pooled），无晋级候选；expansion×mid +334.8 win 0.591（n=66）vs expansion×
+underwater −110.3（n=187）为最突出联合单元格。HV 通过（close>成本组
+winner_rate 0.250 > close<组 0.120），cyq_perf 口径自洽。
+
+**四源数据面全历史落地**：停牌名单 2096 交易日全覆盖；涨跌停 U/D/Z 名单
+1633 日（数据源自 2019-11 起，此前为空属深度限制）；股东增减持按公告日
+2090 日（实测 trade_date 过滤返回 3000 行截断页，只有 ann_date 干净——坑
+已写进模块注释）；筹码分布 973 只 2018 起全量。涨停真实性修正
+（skip 入场/roll 出场预注册）所需 {symbol, day, limit_type, first_time,
+last_time, open_times} 名单基础就绪。
+
 ## 数据扩展原则
 
 1. 每条新管道绑定具体假设（解释现有信号衰减 / 生成新候选），不为采集而采集。
