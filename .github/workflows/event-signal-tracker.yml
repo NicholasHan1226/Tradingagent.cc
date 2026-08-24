@@ -2,10 +2,11 @@ name: A-share Event Signal Tracker
 
 # Research-only rolling tracker for the event-calendar study signals:
 # lockup oversold-rebound, disclosure positive drift and disclosure
-# negative relief.  It intentionally has no schedule: external provider
-# collection remains an explicit, separately authorized research action.
-# The TUSHARE_MCP_TOKEN repository secret is consumed only by a manually
-# dispatched run; without it the job fails closed with TOKEN_MISSING.
+# negative relief.  Scheduled runs (weekly, Monday) were authorized by
+# Nicholas on 2026-08-24 and replace the previous manual-dispatch-only
+# posture; manual dispatch remains available.  The TUSHARE_MCP_TOKEN
+# repository secret is required either way; without it the job fails
+# closed with TOKEN_MISSING.
 
 on:
   workflow_dispatch:
@@ -13,6 +14,10 @@ on:
       since:
         description: "Track events on/after this date (YYYYMMDD)"
         default: "20260401"
+  schedule:
+    # Weekly Monday 13:23 UTC = 21:23 Beijing, after the evening
+    # announcement window; off-minute to avoid shared-hour load spikes.
+    - cron: "23 13 * * 1"
 
 permissions:
   contents: read
