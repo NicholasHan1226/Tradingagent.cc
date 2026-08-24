@@ -33,6 +33,7 @@ from Ashare.event_signal_lockup_tracker import (
     CHIPS_LABEL_ORDER,
     TOPLIST_LABEL_ORDER,
     HOLDERNUM_LABEL_ORDER,
+    MACRO_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     HOLDER_LABEL_ORDER,
     PLEDGE_LABEL_ORDER,
@@ -44,6 +45,7 @@ from Ashare.event_signal_lockup_tracker import (
     _pledge_labels_for_observations,
     _toplist_labels_for_observations,
     _holdernum_labels_for_observations,
+    _macro_labels_for_observations,
     _repurchase_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
@@ -53,6 +55,7 @@ from Ashare.event_signal_lockup_tracker import (
     pledges_breakdown,
     toplists_breakdown,
     holdernums_breakdown,
+    macro_breakdown,
     repurchases_breakdown,
     turnover_breakdown,
     append_new_outcomes,
@@ -1192,6 +1195,96 @@ class TestHoldernumTags:
             in report
         )
         assert "expand: n=" in report
+
+
+class TestMacroTags:
+    """Macro release-window side-table labels (#509/#512): market-level
+    (keyed by entry day only, no symbol pairing), degrade clean when the
+    macro_* caches are unavailable."""
+
+    @staticmethod
+    def _macro_cache(tmp_path):
+        """Index calendar with a gap after the 2026-08-05 event day plus
+        the four endpoint files.  CPI/PPI (month 2026-07 -> presumed day
+        9) land off-calendar and shift forward to 08-10 = the very next
+        trading session after the event day, so every observed event is
+        ``ante``; M2 shifts to 08-12; GDP Q1 sits before the span start
+        and must be skipped silently (no fail-closed error)."""
+
+        days = ["20260701", "20260715", "20260803", "20260804",
+                "20260805", "20260810", "20260812", "20260818"]
+        with (tmp_path / "index_000001SH.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["trade_date", "close"])
+            for i, day in enumerate(days):
+                writer.writerow([day, 3000 + i])
+        for stem, fields, rows in [
+            ("cpi", ["month", "nt_val", "nt_yoy"], [["202607", 100.1, 0.1]]),
+            ("ppi", ["month", "ppi_yoy"], [["202607", 3.0]]),
+            ("money", ["month", "m2_yoy"], [["202607", 7.0]]),
+            ("gdp", ["quarter", "gdp_yoy"], [["2026Q1", 4.0]]),
+        ]:
+            with (tmp_path / f"macro_{stem}.csv").open(
+                    "w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(fields)
+                writer.writerows(rows)
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_macro_caches(self, tmp_path):
+        cache = self._macro_cache(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _macro_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed"
+        }
+        assert set(labels) == expected
+        # release lands on the next trading day after entry: ante wins
+        assert set(labels.values()) == {"ante"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _macro_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_macro_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = macro_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "outside",
+                pos.labeled[0].event_id: "ante",
+            },
+        )
+        assert list(breakdown) == ["ante", "outside"]  # MACRO_LABEL_ORDER
+        assert list(MACRO_LABEL_ORDER) == [
+            "ante", "same_day", "post", "outside"
+        ]
+        assert breakdown["ante"]["n"] == 1
+        assert breakdown["outside"]["n"] == 1
+        # market-level table missing -> empty breakdown, never an error
+        assert macro_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_macro_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.macro_by_event = {
+            obs.event_id: "same_day"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert (
+            "Labelled outcomes by macro release-window bucket:" in report
+        )
+        assert "same_day: n=" in report
 
 
 # --- journal write path -----------------------------------------------------
