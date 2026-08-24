@@ -388,6 +388,9 @@ class TrackerView:
     # entry event_id -> pre-event turnover bucket (daily_basic side table,
     # report-only; empty when the dailybasic/daily caches are unavailable).
     turnover_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-event chips (winner_rate) bucket (cyq_perf side
+    # table, report-only; empty when the cyqperf cache is unavailable).
+    chips_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -594,6 +597,9 @@ def run_tracker(
             cache, batch.observations
         )
         view.turnover_by_event = _turnover_labels_for_observations(
+            cache, batch.observations
+        )
+        view.chips_by_event = _chips_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -872,6 +878,74 @@ def _turnover_labels_for_observations(
     return labels
 
 
+CHIPS_LABEL_ORDER = ("underwater", "mid", "profit")
+
+
+def chips_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    chips_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event chips bucket.
+
+    Mirrors :func:`turnover_breakdown`: observations without a label
+    (cyqperf cache unavailable, no strictly-prior session, stale anchor
+    beyond the calendar cap) are skipped, and an empty label table yields
+    an empty breakdown.  Report-only readout for rolling validation of
+    the #445 first-read structure — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = chips_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in CHIPS_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _chips_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> chips (winner_rate) bucket via the cyqperf cache.
+
+    Report-only decoration on the tracking pass: any failure to reach the
+    dataset degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_chips_prelockup_study import (
+            chips_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = chips_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1114,6 +1188,20 @@ def render_report(
                       ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        chips_stats = chips_breakdown(bucket.labeled, view.chips_by_event)
+        if any(item.get("n") for item in chips_stats.values()):
+            parts = []
+            for label, item in chips_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by pre-event chips bucket:",
+                      ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1252,6 +1340,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in turnover_breakdown(
                             b.labeled, view.turnover_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_chips": {
+                    k: {
+                        label: item["n"]
+                        for label, item in chips_breakdown(
+                            b.labeled, view.chips_by_event
                         ).items()
                         if item.get("n")
                     }
