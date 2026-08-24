@@ -391,6 +391,7 @@ class TrackerView:
     # entry event_id -> pre-event chips (winner_rate) bucket (cyq_perf side
     # table, report-only; empty when the cyqperf cache is unavailable).
     chips_by_event: dict[str, str] = field(default_factory=dict)
+    holders_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -600,6 +601,9 @@ def run_tracker(
             cache, batch.observations
         )
         view.chips_by_event = _chips_labels_for_observations(
+            cache, batch.observations
+        )
+        view.holders_by_event = _holder_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -946,6 +950,75 @@ def _chips_labels_for_observations(
     return labels
 
 
+HOLDER_LABEL_ORDER = ("net_buy", "flat", "net_sell", "no_records")
+
+
+def holders_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    holders_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event holder-trade bucket.
+
+    Mirrors :func:`chips_breakdown`: observations without a label
+    (holdertrade cache unavailable at the whole-cache level) are skipped,
+    and an empty label table yields an empty breakdown.  ``no_records``
+    is a real label here — the absence of pre-event insider trading is
+    itself the reference group for the #453/#455 exclusion-screen watch
+    item.  Report-only readout for rolling validation — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = holders_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in HOLDER_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _holder_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> pre-event holder-trade bucket via the cache.
+
+    Report-only decoration on the tracking pass: any failure to reach the
+    dataset degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_holdertrade_prelockup_study import (
+            holder_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = holder_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1202,6 +1275,22 @@ def render_report(
                       ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        holders_stats = holders_breakdown(
+            bucket.labeled, view.holders_by_event
+        )
+        if any(item.get("n") for item in holders_stats.values()):
+            parts = []
+            for label, item in holders_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by pre-event holder-trade bucket:",
+                      ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1350,6 +1439,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in chips_breakdown(
                             b.labeled, view.chips_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_holders": {
+                    k: {
+                        label: item["n"]
+                        for label, item in holders_breakdown(
+                            b.labeled, view.holders_by_event
                         ).items()
                         if item.get("n")
                     }

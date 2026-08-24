@@ -32,13 +32,16 @@ from Ashare.event_signal_lockup_tracker import (
     TrackerError,
     CHIPS_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
+    HOLDER_LABEL_ORDER,
     _absorption_labels_for_observations,
     _block_labels_for_observations,
     _chips_labels_for_observations,
+    _holder_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
     block_breakdown,
     chips_breakdown,
+    holders_breakdown,
     turnover_breakdown,
     append_new_outcomes,
     build_tracker_view,
@@ -726,6 +729,95 @@ class TestChipsTags:
         )
         assert "Labelled outcomes by pre-event chips bucket:" in report
         assert "mid: n=" in report
+
+
+class TestHolderTags:
+    """Pre-event holder-trade side-table labels: report-only, degrade clean."""
+
+    @staticmethod
+    def _holder_caches(tmp_path):
+        """A holdertrade cache with one IN record dated EVENT_DATE-10
+        calendar days (inside the frozen [day-30d, day) window), so every
+        observed event resolves to ``net_buy``.  Files are one ann_date
+        each, as the fetcher lays them out."""
+
+        ann = (EVENT_DATE - timedelta(days=10)).strftime("%Y%m%d")
+        folder = tmp_path / "holdertrade_daily"
+        folder.mkdir()
+        with (folder / f"{ann}.csv").open("w", newline="",
+                                          encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "ann_date", "holder_name",
+                             "holder_type", "in_de", "change_vol"])
+            writer.writerow([SYMBOL, ann, "某投资有限公司", "G", "IN",
+                             500000.0])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_holdertrade(self, tmp_path):
+        cache = self._holder_caches(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _holder_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # single IN record inside the window -> net_buy
+        assert set(labels.values()) == {"net_buy"}
+
+    def test_empty_window_yields_no_records_label(self, tmp_path):
+        # cache exists but holds nothing near EVENT_DATE: no_records is a
+        # real label, not an omission.
+        folder = tmp_path / "holdertrade_daily"
+        folder.mkdir()
+        ann = date(2025, 1, 6).strftime("%Y%m%d")
+        (folder / f"{ann}.csv").write_text(
+            "ts_code,ann_date,in_de,change_vol\n"
+            f"{SYMBOL},{ann},IN,1000.0\n",
+            encoding="utf-8",
+        )
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _holder_labels_for_observations(tmp_path, batch.observations)
+        assert set(labels.values()) == {"no_records"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _holder_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_holders_breakdown_groups_in_label_order_and_skips_untagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = holders_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "net_sell",
+                pos.labeled[0].event_id: "no_records",
+            },
+        )
+        assert list(breakdown) == ["net_sell", "no_records"]
+        assert list(HOLDER_LABEL_ORDER) == [
+            "net_buy", "flat", "net_sell", "no_records"
+        ]
+        assert breakdown["net_sell"]["n"] == 1
+        assert breakdown["no_records"]["n"] == 1
+        assert holders_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_holders_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.holders_by_event = {
+            obs.event_id: "net_buy"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by pre-event holder-trade bucket:" in report
+        assert "net_buy: n=" in report
 
 
 # --- journal write path -----------------------------------------------------

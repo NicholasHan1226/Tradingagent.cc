@@ -180,6 +180,30 @@ def attach_holdertrade_states(
     return stats
 
 
+def holder_buckets_for_events(
+    cache: Path,
+    pairs: list[tuple[str, str]],
+) -> dict[tuple[str, str], str]:
+    """Tracker side-table lookup: {(ts_code, day): holder bucket}.
+
+    Reuses the study loader on synthetic signals; ``day`` is the event
+    anchor and the frozen [day-30d, day) window applies unchanged.  Unlike
+    the chips table, an empty window yields ``no_records`` rather than an
+    omitted pair — the absence of insider trading IS the label; only a
+    cache-level failure (raised by the loader, caught by the tracker
+    wrapper) leaves events unlabeled.
+    """
+    index = load_holdertrade_index(cache)
+    synthetic = [
+        {"ts_code": str(code), "entry_day": str(day)} for code, day in pairs
+    ]
+    attach_holdertrade_states(synthetic, index)
+    return {
+        (s["ts_code"], s["entry_day"]): s["holder_bucket"]
+        for s in synthetic
+    }
+
+
 def run_study(
     cache: Path, cost_bps: float = COST_BPS_ROUNDTRIP_DEFAULT
 ) -> dict[str, object]:
