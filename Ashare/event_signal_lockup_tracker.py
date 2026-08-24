@@ -404,6 +404,10 @@ class TrackerView:
     # entry event_id -> pre-event shareholder-count bucket (holdernum side
     # table, report-only; empty when the holdernum_* cache is unavailable).
     holdernums_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> macro release-window bucket (market-level side
+    # table keyed by scheduled date, report-only; empty when the macro_*
+    # cache is unavailable).
+    macro_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -628,6 +632,9 @@ def run_tracker(
             cache, batch.observations
         )
         view.holdernums_by_event = _holdernum_labels_for_observations(
+            cache, batch.observations
+        )
+        view.macro_by_event = _macro_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -1321,6 +1328,76 @@ def _holdernum_labels_for_observations(
     return labels
 
 
+MACRO_LABEL_ORDER = ("ante", "same_day", "post", "outside")
+
+
+def macro_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    macro_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by macro release-window bucket.
+
+    Mirrors :func:`holdernums_breakdown`.  Labels are market-level —
+    every observation sharing an entry day shares one bucket from the
+    #509 frozen cadence rule table.  Observations without a label (macro
+    caches unavailable at the whole-cache level) are skipped, and an
+    empty label table yields an empty breakdown.  Report-only readout
+    for rolling validation of the #512 watch item (rule-arm ``ante``
+    double-high) — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = macro_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in MACRO_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _macro_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> macro release-window bucket via the cache.
+
+    Market-level side table keyed by scheduled_date (entry day): unlike
+    the per-symbol panels no symbol pairing is needed.  Report-only
+    decoration on the tracking pass: any failure to reach the dataset
+    degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_macro_release_window_study import (
+            macro_buckets_for_entries,
+        )
+    except ImportError:
+        return {}
+    entry_days = [
+        obs.scheduled_date.strftime("%Y%m%d")
+        for obs in observations
+        if obs.observation_status == "observed"
+    ]
+    if not entry_days:
+        return {}
+    try:
+        buckets = macro_buckets_for_entries(cache, entry_days)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed":
+            continue
+        bucket = buckets.get(obs.scheduled_date.strftime("%Y%m%d"))
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1659,6 +1736,20 @@ def render_report(
             ] + [
                 f"- {part}" for part in parts
             ] + [""]
+        macro_stats = macro_breakdown(bucket.labeled, view.macro_by_event)
+        if any(item.get("n") for item in macro_stats.values()):
+            parts = []
+            for label, item in macro_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by macro release-window bucket:",
+                      ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1857,6 +1948,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in holdernums_breakdown(
                             b.labeled, view.holdernums_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_macro": {
+                    k: {
+                        label: item["n"]
+                        for label, item in macro_breakdown(
+                            b.labeled, view.macro_by_event
                         ).items()
                         if item.get("n")
                     }

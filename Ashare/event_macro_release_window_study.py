@@ -52,13 +52,15 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from Ashare.event_calendar_lockup_strata import COST_BPS_ROUNDTRIP_DEFAULT  # noqa: E402
+from Ashare.event_calendar_lockup_strata import (  # noqa: E402
+    COST_BPS_ROUNDTRIP_DEFAULT,
+    load_index_series,
+)
 from Ashare.event_margin_crowding_state import cross_tab, net_trade_return  # noqa: E402
 from Ashare.event_paper_baseline_sim import (  # noqa: E402
     SIM_START,
     build_signals,
     load_events,
-    load_index_series,
     load_stock_books,
     rule_arm_filter,
 )
@@ -221,6 +223,32 @@ def attach_macro_states(
         stats[bucket] += 1
         stats["attached"] += 1
     return stats
+
+
+def macro_buckets_for_entries(
+    cache: Path,
+    entry_days: list[str],
+) -> dict[str, str]:
+    """Side-table helper: entry_day (YYYYMMDD) -> frozen bucket label.
+
+    Market-level conditioning — every signal sharing an entry day shares
+    one label.  Trading calendar comes from the shared index-series cache;
+    entry days off the calendar get no label.  Raises MacroStudyError /
+    StrataError on missing caches; the tracker wrapper degrades to "no
+    labels" instead of breaking tracking.
+    """
+    index_pairs = load_index_series(cache)
+    days = [d.strftime("%Y%m%d") for d, _ in index_pairs]
+    pos_of = {d: i for i, d in enumerate(days)}
+    release, _placeholders = presumed_release_days(
+        cache, set(days), span_start=days[0], span_end=days[-1]
+    )
+    keys = set(release)
+    labels: dict[str, str] = {}
+    for day in dict.fromkeys(entry_days):
+        if day in pos_of:
+            labels[day] = label_for_entry(day, keys, days, pos_of)
+    return labels
 
 
 def _baseline_cell(signals: list[dict[str, object]], cost_bps: float) -> dict:
