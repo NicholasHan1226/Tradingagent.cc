@@ -787,11 +787,35 @@ class MinuteFixtureClosedLoop:
             position = book.positions[candidate.instrument.symbol]
             quantity = position.quantity
         else:
-            quantity = self._quantity(
-                price_cny=bar.close_cny,
-                dynamic=sleeve_id == "dynamic_position" and score >= 0.5,
-                constraints=book.constraints,
-            )
+            try:
+                quantity = self._quantity(
+                    price_cny=bar.close_cny,
+                    dynamic=sleeve_id == "dynamic_position" and score >= 0.5,
+                    constraints=book.constraints,
+                )
+            except MinuteLoopContractError as exc:
+                # A top-ranked symbol priced beyond the account's single-name cap
+                # is a normal market state, not a data fault: audit it as an
+                # abstention instead of failing the whole bar for every sleeve.
+                if exc.args != ("minute_symbol_too_expensive_for_account",):
+                    raise
+                decision_id = (
+                    f"minute-decision:{sleeve_id}:{candidate.instrument.symbol}:"
+                    f"{candidate.feature.current_bar_sha256[:16]}:abstain"
+                )
+                self._append_record(
+                    sleeve_id=sleeve_id,
+                    decision_id=decision_id,
+                    cluster_id=cluster_id,
+                    decision_time=decision_time,
+                    symbol=candidate.instrument.symbol,
+                    manifest_sha256=manifest_sha256,
+                    action="abstain",
+                    outcome=MinuteDecisionOutcome.INSUFFICIENT_CAPITAL,
+                    requested_notional_cny=0.0,
+                    reason_code=str(exc),
+                )
+                return None
         requested_notional = round(quantity * bar.close_cny, 6)
         action = "open" if side == "buy" else "exit"
         decision_id = (
