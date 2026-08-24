@@ -392,6 +392,9 @@ class TrackerView:
     # table, report-only; empty when the cyqperf cache is unavailable).
     chips_by_event: dict[str, str] = field(default_factory=dict)
     holders_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-event repurchase state (repurchase side table,
+    # report-only; empty when the repurchase_ann cache is unavailable).
+    repurchases_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -604,6 +607,9 @@ def run_tracker(
             cache, batch.observations
         )
         view.holders_by_event = _holder_labels_for_observations(
+            cache, batch.observations
+        )
+        view.repurchases_by_event = _repurchase_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -1019,6 +1025,75 @@ def _holder_labels_for_observations(
     return labels
 
 
+REPURCHASE_LABEL_ORDER = ("active", "stopped", "done", "no_records")
+
+
+def repurchases_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    repurchases_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event repurchase state.
+
+    Mirrors :func:`holders_breakdown`: observations without a label
+    (repurchase cache unavailable at the whole-cache level) are skipped,
+    and an empty label table yields an empty breakdown.  ``no_records``
+    is a real label — the absence of pre-event buyback announcements is
+    the reference group for the #458/#460 rule[active] watch item.
+    Report-only readout for rolling validation — never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = repurchases_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in REPURCHASE_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _repurchase_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> pre-event repurchase state via the cache.
+
+    Report-only decoration on the tracking pass: any failure to reach the
+    dataset degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_repurchase_prelockup_study import (
+            repurchase_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = repurchase_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1291,6 +1366,22 @@ def render_report(
                       ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        repurchases_stats = repurchases_breakdown(
+            bucket.labeled, view.repurchases_by_event
+        )
+        if any(item.get("n") for item in repurchases_stats.values()):
+            parts = []
+            for label, item in repurchases_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by pre-event repurchase state:",
+                      ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1449,6 +1540,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in holders_breakdown(
                             b.labeled, view.holders_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_repurchases": {
+                    k: {
+                        label: item["n"]
+                        for label, item in repurchases_breakdown(
+                            b.labeled, view.repurchases_by_event
                         ).items()
                         if item.get("n")
                     }

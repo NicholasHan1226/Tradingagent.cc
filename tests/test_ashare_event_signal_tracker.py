@@ -33,15 +33,18 @@ from Ashare.event_signal_lockup_tracker import (
     CHIPS_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     HOLDER_LABEL_ORDER,
+    REPURCHASE_LABEL_ORDER,
     _absorption_labels_for_observations,
     _block_labels_for_observations,
     _chips_labels_for_observations,
     _holder_labels_for_observations,
+    _repurchase_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
     block_breakdown,
     chips_breakdown,
     holders_breakdown,
+    repurchases_breakdown,
     turnover_breakdown,
     append_new_outcomes,
     build_tracker_view,
@@ -818,6 +821,102 @@ class TestHolderTags:
         )
         assert "Labelled outcomes by pre-event holder-trade bucket:" in report
         assert "net_buy: n=" in report
+
+
+class TestRepurchaseTags:
+    """Pre-event repurchase side-table labels: report-only, degrade clean."""
+
+    @staticmethod
+    def _repurchase_caches(tmp_path):
+        """A repurchase cache with one 实施 record dated EVENT_DATE-10
+        calendar days (inside the frozen [day-30d, day) window), so every
+        observed event resolves to ``active``.  Files are one ann_date
+        each, as the fetcher lays them out."""
+
+        ann = (EVENT_DATE - timedelta(days=10)).strftime("%Y%m%d")
+        folder = tmp_path / "repurchase_ann"
+        folder.mkdir()
+        with (folder / f"{ann}.csv").open("w", newline="",
+                                          encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "ann_date", "end_date", "proc",
+                             "amount"])
+            writer.writerow([SYMBOL, ann, "", "实施", 1200000.0])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_repurchase(self, tmp_path):
+        cache = self._repurchase_caches(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _repurchase_labels_for_observations(
+            cache, batch.observations
+        )
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # single 实施 record inside the window -> active
+        assert set(labels.values()) == {"active"}
+
+    def test_empty_window_yields_no_records_label(self, tmp_path):
+        # cache exists but holds nothing near EVENT_DATE: no_records is a
+        # real label, not an omission.
+        folder = tmp_path / "repurchase_ann"
+        folder.mkdir()
+        ann = date(2025, 1, 6).strftime("%Y%m%d")
+        (folder / f"{ann}.csv").write_text(
+            "ts_code,ann_date,end_date,proc\n"
+            f"{SYMBOL},{ann},,完成\n",
+            encoding="utf-8",
+        )
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _repurchase_labels_for_observations(
+            tmp_path, batch.observations
+        )
+        assert set(labels.values()) == {"no_records"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _repurchase_labels_for_observations(
+                tmp_path, batch.observations
+            )
+            == {}
+        )
+
+    def test_repurchases_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = repurchases_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "done",
+                pos.labeled[0].event_id: "no_records",
+            },
+        )
+        assert list(breakdown) == ["done", "no_records"]
+        assert list(REPURCHASE_LABEL_ORDER) == [
+            "active", "stopped", "done", "no_records"
+        ]
+        assert breakdown["done"]["n"] == 1
+        assert breakdown["no_records"]["n"] == 1
+        assert repurchases_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_repurchases_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.repurchases_by_event = {
+            obs.event_id: "active"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert (
+            "Labelled outcomes by pre-event repurchase state:" in report
+        )
+        assert "active: n=" in report
 
 
 # --- journal write path -----------------------------------------------------
