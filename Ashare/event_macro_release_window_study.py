@@ -113,14 +113,30 @@ def _all_values_empty(fieldnames: list[str], row: dict[str, str]) -> bool:
 
 
 def presumed_release_days(
-    cache: Path, trading_days: set[str]
+    cache: Path,
+    trading_days: set[str],
+    span_start: str | None = None,
+    span_end: str | None = None,
 ) -> tuple[dict[str, set[str]], dict[str, int]]:
     """Union release-day table plus per-endpoint placeholder QA counts.
 
     Reads ONLY period keys (frozen D1 no-look-ahead clause); values are
     irrelevant to labels.  Each presumed day shifts forward to the next
-    trading day while off-calendar.
+    trading day while off-calendar.  Periods whose presumed day lies
+    outside ``[span_start - 15n, span_end]`` are skipped WITHOUT error —
+    the macro caches reach back decades before the trading calendar, and
+    out-of-span releases can never touch an in-span ±1td entry window
+    (this matches the frozen coverage-facts methodology, which counted
+    in-span days only).
     """
+    earliest_needed = (
+        None
+        if span_start is None
+        else (
+            date(int(span_start[:4]), int(span_start[4:6]), int(span_start[6:]))
+            - timedelta(days=15)
+        ).strftime("%Y%m%d")
+    )
     release: dict[str, set[str]] = {}
     placeholders: dict[str, int] = {}
     for stem, filename in MACRO_FILES.items():
@@ -147,6 +163,10 @@ def presumed_release_days(
                     f"{_add_month(raw_key, 1)}{MONTHLY_CADENCE_DAY[stem]:02d}"
                 )
             day = presumed
+            if earliest_needed is not None and day < earliest_needed:
+                continue
+            if span_end is not None and day > span_end:
+                continue
             probe = date(int(day[:4]), int(day[4:6]), int(day[6:]))
             while day not in trading_days:
                 probe += timedelta(days=1)
@@ -237,7 +257,9 @@ def run_study(
     books, uncovered = load_stock_books(cache)
     signals, _sig_stats = build_signals(events, books, index_pairs, global_days[-1])
 
-    release, placeholders = presumed_release_days(cache, set(days))
+    release, placeholders = presumed_release_days(
+        cache, set(days), span_start=days[0], span_end=days[-1]
+    )
     attach_stats = attach_macro_states(signals, release, days, pos_of)
 
     results: dict[str, object] = {

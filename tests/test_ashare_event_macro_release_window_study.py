@@ -79,6 +79,22 @@ class PresumedReleaseDaysTest(unittest.TestCase):
             # 20260109/11 land off this synthetic calendar -> next td 01-12
             self.assertEqual(set(release), {"20260112", "20260117"})
 
+    def test_out_of_span_periods_skipped_silently(self) -> None:
+        # caches reach back decades before the calendar: deep-history keys
+        # must be skipped (not error), matching the frozen coverage method
+        sparse = {"20260112", "20260113", "20260117"}
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            _write_macro(cache, "gdp", ["quarter", "gdp"],
+                         [["2017Q3", 1.0], ["2025Q4", 1.0]])  # one out-of-span
+            _write_macro(cache, "cpi", ["month", "nt_val"], [["201506", 1.0]])
+            _write_macro(cache, "ppi", ["month", "ppi_yoy"], [["202512", 1.0]])
+            _write_macro(cache, "money", ["month", "m2_yoy"],
+                         [["202512", 1.0]])
+            release, _ph = presumed_release_days(
+                cache, sparse, span_start="20260101", span_end="20260131")
+            self.assertEqual(set(release), {"20260112", "20260117"})
+
     def test_missing_file_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp)
