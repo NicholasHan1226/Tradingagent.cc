@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from Ashare.event_topinst_fetch import (
     fetch_topinst,
     resolve_trading_days,
 )
+import pytest
 
 
 def _row(day: str, code: str, exalter: str = "机构专用") -> dict:
@@ -94,9 +96,9 @@ class FetchTopinstTest(unittest.TestCase):
 
         fetch_topinst(self.cache, days=["20260821"], call=call)
         stats = fetch_topinst(self.cache, days=["20260821"], call=call)
-        self.assertEqual(calls["n"], 2)  # endpoint still queried...
+        self.assertEqual(calls["n"], 1)
         self.assertEqual(stats["files_written"], 0)
-        self.assertEqual(stats["files_skipped"], 1)  # ...but file preserved
+        self.assertEqual(stats["files_skipped"], 1)
 
     def test_empty_real_day_writes_nothing_and_is_counted(self) -> None:
         stats = fetch_topinst(
@@ -129,6 +131,21 @@ class FetchTopinstTest(unittest.TestCase):
         self.assertIn("20260820", stats["errors"][0])
         self.assertEqual(stats["files_written"], 1)
         self.assertTrue(bool(stats["errors"]))
+
+    def test_production_path_requires_token_before_any_provider_call(self) -> None:
+        previous = os.environ.pop("TUSHARE_MCP_TOKEN", None)
+        try:
+            with pytest.raises(TopinstFetchError, match="token_missing"):
+                fetch_topinst(self.cache, days=["20260821"])
+        finally:
+            if previous is not None:
+                os.environ["TUSHARE_MCP_TOKEN"] = previous
+
+    def test_atomic_write_leaves_no_partial_file(self) -> None:
+        fetch_topinst(self.cache, days=["20260821"], call=lambda day: [_row(day, "000017.SZ")])
+        folder = self.cache / TOPINST_DIRNAME
+        self.assertTrue((folder / "20260821.csv").is_file())
+        self.assertEqual(list(folder.glob("*.partial")), [])
 
 
 if __name__ == "__main__":

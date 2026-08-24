@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -128,6 +130,7 @@ def fetch_topinst(
         "errors": [],
     }
     if call is None:
+        _token()
 
         def call(trade_date: str):  # noqa: E306
             from Ashare.event_calendar_fetch import call_api
@@ -136,6 +139,12 @@ def fetch_topinst(
             return [dict(zip(fields, row)) for row in rows]
 
     for day in sessions:
+        path = folder / f"{day}.csv"
+        if path.exists():
+            # A completed day is immutable cache evidence.  Do not consume a
+            # provider call merely to rediscover its row count.
+            stats["files_skipped"] = int(stats["files_skipped"]) + 1
+            continue
         try:
             rows = call(day)
         except Exception as exc:  # noqa: BLE001 - recorded, sweep continues
@@ -160,20 +169,30 @@ def fetch_topinst(
             # write nothing so re-runs retry the day (limit-list rule).
             stats["empty_days"] = int(stats["empty_days"]) + 1
             continue
-        path = folder / f"{day}.csv"
-        if path.exists():
-            stats["files_skipped"] += len(kept)
-            continue
         _write_csv(path, kept)
         stats["files_written"] = int(stats["files_written"]) + 1
     return stats
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    handle = tempfile.NamedTemporaryFile(
+        "w", newline="", encoding="utf-8", dir=path.parent,
+        prefix=f".{path.name}.", suffix=".partial", delete=False,
+    )
+    try:
+        with handle:
+            writer = csv.DictWriter(handle, fieldnames=FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(handle.name, path)
+    except BaseException:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
 
 
 def main() -> int:
