@@ -409,6 +409,54 @@ def test_skipped_execution_bar_is_nonfill_not_same_bar_or_late_fill() -> None:
     assert loop.counterfactual_books["baseline"].positions == {}
 
 
+def test_unaffordable_top_symbol_abstains_instead_of_failing_the_bar() -> None:
+    loop = MinuteFixtureClosedLoop(universe=_universe())
+    manifest = _sha("c")
+    loop.process_snapshot(
+        snapshot=_snapshot("2026-07-27T09:35:00+08:00", close=10.0, volume=100_000),
+        manifest_sha256=manifest,
+    )
+    # 600000.SH rallies to 80 CNY: top raw score, but one lot (8000 CNY)
+    # exceeds the 7500 CNY single-name cap, so no whole lot is affordable.
+    expensive = _bar(
+        "2026-07-27T09:40:00+08:00",
+        symbol="600000.SH",
+        close=80.0,
+        volume=150_000,
+    )
+    normal = _bar(
+        "2026-07-27T09:40:00+08:00",
+        symbol="000001.SZ",
+        close=10.0,
+        volume=110_000,
+    )
+    snapshot = MinuteBarSnapshot(
+        profile=_profile(),
+        bars=(expensive, normal),
+        page_count=1,
+        row_count=2,
+        pagination_trace_sha256=_sha("5"),
+        first_semantic_sha256=_sha("6"),
+        replay_semantic_sha256=_sha("6"),
+        same_observation=True,
+    )
+
+    step = loop.process_snapshot(snapshot=snapshot, manifest_sha256=manifest)
+
+    for sleeve_step in step.sleeves:
+        assert sleeve_step.scheduled_order is None
+    for sleeve_id in ("baseline", "dynamic_position"):
+        rejections = loop.ledgers[sleeve_id].by_disposition(
+            ExposureDisposition.REJECTED
+        )
+        assert any(
+            record.rejection_reason == "minute_symbol_too_expensive_for_account"
+            for record in rejections
+        )
+    assert loop.counterfactual_books["baseline"].positions == {}
+    assert not loop.pending
+
+
 def test_data_failure_records_every_trade_symbol_and_adds_no_risk() -> None:
     loop = MinuteFixtureClosedLoop(universe=_universe())
     loop.record_data_failure(
