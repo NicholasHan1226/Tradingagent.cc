@@ -163,7 +163,7 @@ prepare_g5_release_reconciliation() {
     systemctl cat "$unit" >/dev/null
     require_g5_unit_stopped "$unit" "release preflight"
     timeout="$(systemctl show -p TimeoutStartUSec --value "$unit")"
-    [[ "$timeout" =~ ^([0-9]+(us|ms|s|min|h|d|w|month|y)|infinity)$ ]] \
+    [[ "$timeout" =~ ^([0-9]+(us|ms|s|min|h|d|w|month|y)([[:space:]]+[0-9]+(us|ms|s|min|h|d|w|month|y))*)$|^infinity$ ]] \
       || fail "G5 unit has an unsupported start timeout: $unit timeout=$timeout"
     g5_timeouts+=("$timeout")
   done

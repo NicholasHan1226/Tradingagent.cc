@@ -212,6 +212,35 @@ require_g5_unit_stopped example.service test-cutover
         )
 
 
+def test_release_helper_preserves_systemd_compound_timeout_values() -> None:
+    helper = _read("deploy/release.sh")
+    expected = (
+        '[[ "$timeout" =~ '
+        '^([0-9]+(us|ms|s|min|h|d|w|month|y)'
+        '([[:space:]]+[0-9]+(us|ms|s|min|h|d|w|month|y))*)$|^infinity$ ]]'
+    )
+    assert expected in helper
+
+    harness = """
+timeout="$1"
+[[ "$timeout" =~ ^([0-9]+(us|ms|s|min|h|d|w|month|y)([[:space:]]+[0-9]+(us|ms|s|min|h|d|w|month|y))*)$|^infinity$ ]]
+"""
+    for value, expected_code in (
+        ("1min 30s", 0),
+        ("45min", 0),
+        ("infinity", 0),
+        ("1min ; rm -rf /", 1),
+        ("", 1),
+    ):
+        completed = subprocess.run(
+            ["bash", "-c", harness, "--", value],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == expected_code, (value, completed.stderr)
+
+
 def test_server_bootstrap_grants_only_the_fixed_release_helper() -> None:
     bootstrap = _read("deploy/bootstrap-production-server.sh")
 
