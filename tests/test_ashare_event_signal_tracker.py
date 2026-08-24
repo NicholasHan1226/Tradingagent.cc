@@ -1393,6 +1393,12 @@ class TestValuationTags:
         assert labels[("600001.SH", "20150101")] == "short_history"
         assert labels[("000002.SZ", "20260804")] == "short_history"
         assert labels[("000003.SZ", gap_days[-1])] == "loss_or_missing"
+        # shard absent -> that entry stays unlabeled, the rest still
+        # label (one unknown symbol must not silence the whole table)
+        assert valuation_buckets_for_entries(
+            tmp_path,
+            [("999999.SZ", "20260805"), ("000002.SZ", "20260804")],
+        ) == {("000002.SZ", "20260804"): "short_history"}
 
     def test_valuation_breakdown_groups_in_label_order_and_skips(self):
         view = build_tracker_view(
