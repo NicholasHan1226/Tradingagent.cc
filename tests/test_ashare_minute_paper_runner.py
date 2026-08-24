@@ -17,7 +17,8 @@ from Ashare.minute_data import (
     MinuteRowRejection,
     MinuteTimestampSemantics,
 )
-from Ashare.minute_loop import MinuteLoopContractError
+from Ashare.minute_event_aux import HITS_FILENAME, MinuteEventAuxError
+from Ashare.minute_loop import MinuteFixtureClosedLoop, MinuteLoopContractError
 from Ashare.minute_paper_runner import (
     MinutePaperRunnerError,
     run_delayed_minute_paper_once,
@@ -493,3 +494,120 @@ def test_runner_keeps_row_quality_rejection_audit_only(
     assert result["row_rejection_count"] == 1
     assert result["row_rejections"][0]["symbol"] == "000001.SZ"
     assert state.exists()
+
+
+def test_event_aux_cache_wires_lockup_evidence_into_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the cache present, the event sleeve receives real evidence."""
+
+    manifest, references, universe = _write_inputs(tmp_path)
+    (tmp_path / HITS_FILENAME).write_text(
+        json.dumps(
+            {
+                "schema": "tradingagent.ashare.minute_event_aux_hits.v1",
+                "session_date": "2026-07-28",
+                "fetched_at": "2026-07-28T09:35:10+08:00",
+                "lookback_days": 30,
+                "hit_count": 1,
+                "hits": {
+                    "600000.SH": {
+                        "latest_float_date": "20260710",
+                        "max_ratio": 4.2,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured: list[tuple] = []
+    real_process = MinuteFixtureClosedLoop.process_snapshot
+
+    def spying_process(
+        self, *, snapshot, manifest_sha256, auxiliary_evidence=()
+    ):
+        captured.append(auxiliary_evidence)
+        return real_process(
+            self,
+            snapshot=snapshot,
+            manifest_sha256=manifest_sha256,
+            auxiliary_evidence=auxiliary_evidence,
+        )
+
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        return (
+            _profile(),
+            _snapshot("2026-07-28T09:35:00+08:00", 10.0),
+            MinuteEvidenceAuditLedger(),
+        )
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot", fake_load
+    )
+    monkeypatch.setattr(MinuteFixtureClosedLoop, "process_snapshot", spying_process)
+    state = tmp_path / "state" / "bundle.json"
+
+    result = run_delayed_minute_paper_once(
+        manifest=manifest,
+        reference_facts_path=references,
+        universe_path=universe,
+        token_file=tmp_path / "token",
+        state_bundle=state,
+        decision_time=datetime.fromisoformat("2026-07-28T09:40:07+08:00"),
+        trading_date=date(2026, 7, 28),
+        bar_end="2026-07-28 09:35:00",
+        event_aux_enabled=True,
+    )
+
+    assert result["status"] == "pass"
+    assert result["event_aux_status"] == "ok:1"
+    assert len(captured) == 1
+    evidence = captured[0]
+    assert len(evidence) == 1
+    assert evidence[0].symbol == "600000.SH"
+    assert evidence[0].normalized_score == 1.0
+    assert evidence[0].execution_authority is False
+
+
+def test_event_aux_fetch_failure_degrades_without_failing_the_bar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cache miss plus a dead feed degrades to the abstain status quo."""
+
+    manifest, references, universe = _write_inputs(tmp_path)
+
+    def broken_client(**kwargs):
+        raise MinuteEventAuxError("minute_event_aux_catalog_failed:offline")
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.make_session_client", broken_client
+    )
+    def fake_load(config: MinuteCanaryConfig, **kwargs):
+        return (
+            _profile(),
+            _snapshot("2026-07-28T09:35:00+08:00", 10.0),
+            MinuteEvidenceAuditLedger(),
+        )
+
+    monkeypatch.setattr(
+        "Ashare.minute_paper_runner.load_minute_snapshot", fake_load
+    )
+    state = tmp_path / "state" / "bundle.json"
+
+    result = run_delayed_minute_paper_once(
+        manifest=manifest,
+        reference_facts_path=references,
+        universe_path=universe,
+        token_file=tmp_path / "token",
+        state_bundle=state,
+        decision_time=datetime.fromisoformat("2026-07-28T09:40:07+08:00"),
+        trading_date=date(2026, 7, 28),
+        bar_end="2026-07-28 09:35:00",
+        event_aux_enabled=True,
+    )
+
+    assert result["status"] == "pass"
+    assert result["event_aux_status"].startswith(
+        "degraded:minute_event_aux_catalog_failed"
+    )
+    assert not (tmp_path / HITS_FILENAME).exists()

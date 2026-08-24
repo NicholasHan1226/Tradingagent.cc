@@ -24,6 +24,14 @@ from .minute_canary import (
     load_reference_facts,
 )
 from .minute_data import MinuteDataContractError, MinuteEvidenceUse
+from .minute_event_aux import (
+    MinuteEventAuxError,
+    build_event_evidence,
+    cached_hits_document,
+    fetch_lockup_hits,
+    load_or_refresh_daily_hits,
+    make_session_client,
+)
 from .minute_loop import MinuteFixtureClosedLoop, MinuteLoopContractError
 from .minute_research import (
     INITIAL_MONITOR_LIMIT,
@@ -31,7 +39,10 @@ from .minute_research import (
     MinuteResearchUniverse,
     MinuteUniverseInstrument,
 )
-from shared.data.tradingdatas_transport import RuntimeGateConfigurationError
+from shared.data.tradingdatas_transport import (
+    RuntimeGateConfigurationError,
+    build_runtime_transport,
+)
 
 
 class MinutePaperRunnerError(ValueError):
@@ -214,8 +225,15 @@ def run_delayed_minute_paper_once(
     gap_recovery: Mapping[str, object] | None = None,
     pin_universe_filter: bool = False,
     partial_observation_minimum: int | None = None,
+    event_aux_enabled: bool = False,
 ) -> dict[str, Any]:
-    """Process one exact completed bar in the delayed, simulation-only tier."""
+    """Process one exact completed bar in the delayed, simulation-only tier.
+
+    ``event_aux_enabled`` opts into the pre-registered lockup shadow trial:
+    the ``event`` sleeve then receives daily lockup-hit auxiliary evidence
+    while baseline/dynamic_position stay bit-for-bit unchanged. Feed faults
+    degrade to the abstain status quo and are reported in the receipt.
+    """
 
     if os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower() != "false":
         raise MinutePaperRunnerError("real_trading_must_remain_disabled")
@@ -381,14 +399,57 @@ def run_delayed_minute_paper_once(
             reason_code=reason_code,
             skipped_session_slots=skipped_slots,
         )
+    auxiliary_evidence: tuple = ()
+    event_aux_status = "disabled"
+    if event_aux_enabled:
+        # First bar of the day: no cache yet, so fetch once and persist.
+        # Every remaining fault degrades to today's status quo (the event
+        # sleeve abstains) instead of failing the bar.
+        try:
+            document = cached_hits_document(Path(manifest).parent)
+            fetched_at = datetime.fromisoformat(document["fetched_at"])
+            auxiliary_evidence = build_event_evidence(
+                document["hits"],
+                decision_time=decision_time,
+                available_at=fetched_at,
+            )
+            event_aux_status = f"ok:{len(auxiliary_evidence)}"
+        except MinuteEventAuxError:
+            try:
+                aux_client = make_session_client(
+                    transport_id=config.transport_id,
+                    token_file=token_file,
+                    base_url=config.base_url,
+                    transport_factory=build_runtime_transport,
+                    expected_catalog_version=config.expected_catalog_version,
+                    access_policy_id=config.access_policy_id,
+                    timeout_seconds=float(config.timeout_seconds),
+                )
+                fresh_hits = fetch_lockup_hits(aux_client, session_date=trading_date)
+                load_or_refresh_daily_hits(
+                    Path(manifest).parent,
+                    session_date=trading_date,
+                    refresh=fresh_hits,
+                )
+                auxiliary_evidence = build_event_evidence(
+                    fresh_hits,
+                    decision_time=decision_time,
+                    available_at=decision_time,
+                )
+                event_aux_status = f"ok_fetched:{len(auxiliary_evidence)}"
+            except MinuteEventAuxError as fetch_exc:
+                auxiliary_evidence = ()
+                event_aux_status = f"degraded:{fetch_exc}"
     step = loop.process_snapshot(
         snapshot=snapshot,
         manifest_sha256=profile.consumer_profile_sha256,
+        auxiliary_evidence=auxiliary_evidence,
     )
     marks = {bar.symbol: bar.close_cny for bar in snapshot.bars}
     attribution = loop.attribution_snapshot(marks=marks)
     receipt = {
         "status": "pass",
+        "event_aux_status": event_aux_status,
         "coverage_status": "partial" if partial_observation else "complete",
         "authority_tier": "non_production_fixture",
         "capital_authority": False,
