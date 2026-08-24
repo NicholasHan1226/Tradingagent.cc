@@ -18,7 +18,7 @@ from Ashare.minute_data import (
     MinuteTimestampSemantics,
 )
 from Ashare.minute_event_aux import HITS_FILENAME, MinuteEventAuxError
-from Ashare.minute_loop import MinuteFixtureClosedLoop, MinuteLoopContractError
+from Ashare.minute_loop import MinuteFixtureClosedLoop, MinuteLoopContractError, _canonical_sha256
 from Ashare.minute_paper_runner import (
     MinutePaperRunnerError,
     run_delayed_minute_paper_once,
@@ -502,20 +502,35 @@ def test_event_aux_cache_wires_lockup_evidence_into_loop(
     """With the cache present, the event sleeve receives real evidence."""
 
     manifest, references, universe = _write_inputs(tmp_path)
+    source_binding = {
+        "receipt_id": "td-receipt-001",
+        "data_through": "2026-07-28T09:35:00+08:00",
+        "observed_at": "2026-07-28T09:35:10+08:00",
+        "catalog_version": "catalog-v1",
+        "lineage": {"receipt": "lineage-001"},
+        "pagination_trace_sha256": "a" * 64,
+        "semantic_sha256": "b" * 64,
+        "ordered_rows_sha256": "c" * 64,
+        "row_receipt_proofs_sha256": "d" * 64,
+    }
+    source_binding["source_binding_sha256"] = _canonical_sha256(source_binding)
+    hits = {
+        "600000.SH": {
+            "latest_float_date": "20260710",
+            "max_ratio": 4.2,
+        }
+    }
     (tmp_path / HITS_FILENAME).write_text(
         json.dumps(
             {
-                "schema": "tradingagent.ashare.minute_event_aux_hits.v1",
+                "schema": "tradingagent.ashare.minute_event_aux_hits.v2",
                 "session_date": "2026-07-28",
                 "fetched_at": "2026-07-28T09:35:10+08:00",
                 "lookback_days": 30,
                 "hit_count": 1,
-                "hits": {
-                    "600000.SH": {
-                        "latest_float_date": "20260710",
-                        "max_ratio": 4.2,
-                    }
-                },
+                "hits": hits,
+                "hits_sha256": _canonical_sha256(hits),
+                "source_binding": source_binding,
             }
         ),
         encoding="utf-8",

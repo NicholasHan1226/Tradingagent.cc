@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
@@ -46,10 +48,19 @@ HITS_FILENAME = "event-lockup-hits.json"
 _MAX_PAGES = 8
 _MAX_ROWS = 20_000
 _CST = ZoneInfo("Asia/Shanghai")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class MinuteEventAuxError(RuntimeError):
     """Raised when the daily lockup auxiliary feed cannot be produced."""
+
+
+@dataclass(frozen=True)
+class LockupHitBatch:
+    """Hits together with their immutable TD query provenance."""
+
+    hits: dict[str, dict[str, Any]]
+    source_binding: dict[str, Any]
 
 
 def _session_date(raw: date | str) -> date:
@@ -110,7 +121,64 @@ def hits_from_rows(
     return hits
 
 
-def fetch_lockup_hits(client: SharedSignalsV1Client, *, session_date: date | str) -> dict[str, dict[str, Any]]:
+def _validated_source_binding(raw: Mapping[str, Any]) -> dict[str, Any]:
+    required_text = (
+        "receipt_id", "data_through", "observed_at", "catalog_version",
+        "pagination_trace_sha256", "semantic_sha256", "ordered_rows_sha256",
+        "row_receipt_proofs_sha256", "source_binding_sha256",
+    )
+    if any(not isinstance(raw.get(key), str) or not raw[key].strip() for key in required_text):
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid")
+    if not all(_SHA256.fullmatch(str(raw[key])) for key in required_text[4:]):
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid")
+    lineage = raw.get("lineage")
+    if not isinstance(lineage, Mapping) or not lineage:
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid")
+    try:
+        observed_at = datetime.fromisoformat(str(raw["observed_at"]))
+    except ValueError as exc:
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid") from exc
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid")
+    unsigned = {key: raw[key] for key in required_text[:-1]}
+    unsigned["lineage"] = dict(lineage)
+    if raw["source_binding_sha256"] != _canonical_sha256(unsigned):
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid")
+    return {**unsigned, "source_binding_sha256": raw["source_binding_sha256"]}
+
+
+def _source_binding_from_run(run: Any) -> dict[str, Any]:
+    metadata = run.envelope.metadata
+    if (
+        not isinstance(metadata.receipt_id, str)
+        or not metadata.receipt_id
+        or not isinstance(metadata.lineage, Mapping)
+        or not metadata.lineage
+        or not isinstance(metadata.data_through, str)
+        or not isinstance(metadata.observed_at, str)
+    ):
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_missing")
+    unsigned = {
+        "receipt_id": metadata.receipt_id,
+        "data_through": metadata.data_through,
+        "observed_at": metadata.observed_at,
+        "catalog_version": run.envelope.catalog_version,
+        "lineage": dict(metadata.lineage),
+        "pagination_trace_sha256": run.pagination_trace_sha256,
+        "semantic_sha256": run.semantic_sha256,
+        "ordered_rows_sha256": run.ordered_rows_sha256,
+        "row_receipt_proofs_sha256": _canonical_sha256(
+            list(metadata.row_receipt_proofs)
+        ),
+    }
+    return _validated_source_binding(
+        {**unsigned, "source_binding_sha256": _canonical_sha256(unsigned)}
+    )
+
+
+def fetch_lockup_hits(
+    client: SharedSignalsV1Client, *, session_date: date | str
+) -> LockupHitBatch:
     """Query the TradingDatas V1 plane once for this session's lockup hits."""
 
     if not isinstance(client, SharedSignalsV1Client):
@@ -151,7 +219,7 @@ def fetch_lockup_hits(client: SharedSignalsV1Client, *, session_date: date | str
         },
         order=["float_date:asc", "ts_code:asc"],
         limit=500,
-        include_receipt_proofs=False,
+        include_receipt_proofs=True,
     )
     try:
         run = collect_query_pages(
@@ -163,7 +231,10 @@ def fetch_lockup_hits(client: SharedSignalsV1Client, *, session_date: date | str
         )
     except Exception as exc:  # pagination contract / transport / HTTP failures
         raise MinuteEventAuxError(f"minute_event_aux_query_failed:{exc}") from exc
-    return hits_from_rows(tuple(run.envelope.data()), session_date=session)
+    return LockupHitBatch(
+        hits=hits_from_rows(tuple(run.envelope.data()), session_date=session),
+        source_binding=_source_binding_from_run(run),
+    )
 
 
 def build_event_evidence(
@@ -171,9 +242,18 @@ def build_event_evidence(
     *,
     decision_time: datetime,
     available_at: datetime,
+    source_binding_sha256: str,
 ) -> tuple[MinuteAuxiliaryEvidence, ...]:
     """Materialize one fresh event evidence per hit symbol for this bar."""
 
+    if not _SHA256.fullmatch(source_binding_sha256):
+        raise MinuteEventAuxError("minute_event_aux_receipt_binding_invalid")
+    if (
+        available_at.tzinfo is None
+        or available_at.utcoffset() is None
+        or available_at > decision_time
+    ):
+        raise MinuteEventAuxError("minute_event_aux_availability_invalid")
     expires_at = decision_time + AUX_EXPIRES_WINDOW
     evidence: list[MinuteAuxiliaryEvidence] = []
     for symbol in sorted(hits):
@@ -199,6 +279,7 @@ def build_event_evidence(
                         "symbol": symbol,
                         "float_date": float_day,
                         "evidence_type": EVIDENCE_TYPE,
+                        "source_binding_sha256": source_binding_sha256,
                     }
                 ),
             )
@@ -229,7 +310,9 @@ def _write_atomic(path: Path, payload: str) -> None:
         raise
 
 
-def cached_hits_document(day_dir: Path | str) -> dict[str, Any]:
+def cached_hits_document(
+    day_dir: Path | str, *, session_date: date | str | None = None
+) -> dict[str, Any]:
     """Return the full cached daily document (hits + provenance metadata)."""
 
     target = Path(day_dir) / HITS_FILENAME
@@ -239,21 +322,35 @@ def cached_hits_document(day_dir: Path | str) -> dict[str, Any]:
         document = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise MinuteEventAuxError(f"minute_event_aux_cache_corrupt:{exc}") from exc
-    if (
-        not isinstance(document, Mapping)
-        or not isinstance(document.get("hits"), Mapping)
-        or not isinstance(document.get("fetched_at"), str)
-    ):
+    if not isinstance(document, Mapping) or not isinstance(document.get("hits"), Mapping):
         raise MinuteEventAuxError("minute_event_aux_cache_shape_invalid")
-    return dict(document)
+    if document.get("schema") != "tradingagent.ashare.minute_event_aux_hits.v2":
+        raise MinuteEventAuxError("minute_event_aux_cache_shape_invalid")
+    if session_date is not None and document.get("session_date") != _session_date(
+        session_date
+    ).isoformat():
+        raise MinuteEventAuxError("minute_event_aux_cache_session_mismatch")
+    if not isinstance(document.get("fetched_at"), str) or not isinstance(document.get("hits_sha256"), str):
+        raise MinuteEventAuxError("minute_event_aux_cache_shape_invalid")
+    if document["hits_sha256"] != _canonical_sha256(dict(document["hits"])):
+        raise MinuteEventAuxError("minute_event_aux_cache_tampered")
+    source_binding = document.get("source_binding")
+    if not isinstance(source_binding, Mapping):
+        raise MinuteEventAuxError("minute_event_aux_cache_shape_invalid")
+    return {
+        **dict(document),
+        "hits": dict(document["hits"]),
+        "source_binding": _validated_source_binding(source_binding),
+    }
 
 
 def load_or_refresh_daily_hits(
     day_dir: Path | str,
     *,
     session_date: date | str,
-    refresh: bool,
-) -> dict[str, dict[str, Any]]:
+    refresh: Mapping[str, Mapping[str, Any]] | None = None,
+    source_binding: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Read the cached daily hit set, or persist a freshly fetched one.
 
     ``refresh`` carries the already-fetched mapping into the atomic cache
@@ -265,30 +362,28 @@ def load_or_refresh_daily_hits(
     directory = Path(day_dir)
     target = directory / HITS_FILENAME
     if target.exists():
-        try:
-            document = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise MinuteEventAuxError(f"minute_event_aux_cache_corrupt:{exc}") from exc
-        if not isinstance(document, Mapping) or not isinstance(document.get("hits"), Mapping):
-            raise MinuteEventAuxError("minute_event_aux_cache_shape_invalid")
-        return dict(document["hits"])
-    if not refresh:
+        return cached_hits_document(directory, session_date=session_date)
+    if refresh is None or source_binding is None:
         raise MinuteEventAuxError("minute_event_aux_cache_missing")
+    validated_binding = _validated_source_binding(source_binding)
+    hits = {str(symbol): dict(value) for symbol, value in refresh.items()}
     fetched_at = datetime.now(tz=_CST)
     document = {
-        "schema": "tradingagent.ashare.minute_event_aux_hits.v1",
+        "schema": "tradingagent.ashare.minute_event_aux_hits.v2",
         "session_date": _session_date(session_date).isoformat(),
         "fetched_at": fetched_at.isoformat(),
         "lookback_days": LOCKUP_LOOKBACK_DAYS,
-        "hit_count": len(refresh),
-        "hits": refresh,
+        "hit_count": len(hits),
+        "hits": hits,
+        "hits_sha256": _canonical_sha256(hits),
+        "source_binding": validated_binding,
     }
     try:
         directory.mkdir(parents=True, exist_ok=True)
         _write_atomic(target, json.dumps(document, ensure_ascii=False, sort_keys=True))
     except OSError as exc:
         raise MinuteEventAuxError(f"minute_event_aux_cache_write_failed:{exc}") from exc
-    return refresh
+    return cached_hits_document(directory, session_date=session_date)
 
 
 def make_session_client(

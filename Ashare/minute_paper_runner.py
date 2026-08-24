@@ -406,12 +406,17 @@ def run_delayed_minute_paper_once(
         # Every remaining fault degrades to today's status quo (the event
         # sleeve abstains) instead of failing the bar.
         try:
-            document = cached_hits_document(Path(manifest).parent)
-            fetched_at = datetime.fromisoformat(document["fetched_at"])
+            document = cached_hits_document(
+                Path(manifest).parent, session_date=trading_date
+            )
+            observed_at = datetime.fromisoformat(
+                document["source_binding"]["observed_at"]
+            )
             auxiliary_evidence = build_event_evidence(
                 document["hits"],
                 decision_time=decision_time,
-                available_at=fetched_at,
+                available_at=observed_at,
+                source_binding_sha256=document["source_binding"]["source_binding_sha256"],
             )
             event_aux_status = f"ok:{len(auxiliary_evidence)}"
         except MinuteEventAuxError:
@@ -425,16 +430,20 @@ def run_delayed_minute_paper_once(
                     access_policy_id=config.access_policy_id,
                     timeout_seconds=float(config.timeout_seconds),
                 )
-                fresh_hits = fetch_lockup_hits(aux_client, session_date=trading_date)
-                load_or_refresh_daily_hits(
+                fresh = fetch_lockup_hits(aux_client, session_date=trading_date)
+                document = load_or_refresh_daily_hits(
                     Path(manifest).parent,
                     session_date=trading_date,
-                    refresh=fresh_hits,
+                    refresh=fresh.hits,
+                    source_binding=fresh.source_binding,
                 )
                 auxiliary_evidence = build_event_evidence(
-                    fresh_hits,
+                    document["hits"],
                     decision_time=decision_time,
-                    available_at=decision_time,
+                    available_at=datetime.fromisoformat(
+                        document["source_binding"]["observed_at"]
+                    ),
+                    source_binding_sha256=document["source_binding"]["source_binding_sha256"],
                 )
                 event_aux_status = f"ok_fetched:{len(auxiliary_evidence)}"
             except MinuteEventAuxError as fetch_exc:

@@ -23,6 +23,7 @@ from Ashare.minute_event_aux import (
     load_or_refresh_daily_hits,
     make_session_client,
 )
+from Ashare.minute_loop import _canonical_sha256
 from shared.data.sharedsignals_v1 import SharedSignalsV1Client
 
 _CST = ZoneInfo("Asia/Shanghai")
@@ -91,6 +92,21 @@ def _available_at() -> datetime:
     return datetime(2026, 8, 24, 9, 5, 0, tzinfo=_CST)
 
 
+def _source_binding() -> dict[str, object]:
+    unsigned: dict[str, object] = {
+        "receipt_id": "td-receipt-001",
+        "data_through": "2026-08-24T09:35:00+08:00",
+        "observed_at": "2026-08-24T09:35:10+08:00",
+        "catalog_version": "catalog-v1",
+        "lineage": {"receipt": "lineage-001"},
+        "pagination_trace_sha256": "a" * 64,
+        "semantic_sha256": "b" * 64,
+        "ordered_rows_sha256": "c" * 64,
+        "row_receipt_proofs_sha256": "d" * 64,
+    }
+    return {**unsigned, "source_binding_sha256": _canonical_sha256(unsigned)}
+
+
 class BuildEventEvidenceTest(unittest.TestCase):
     def test_evidence_fields_and_ordering(self) -> None:
         hits = {
@@ -101,6 +117,7 @@ class BuildEventEvidenceTest(unittest.TestCase):
             hits,
             decision_time=_decision_time(),
             available_at=_available_at(),
+            source_binding_sha256=_source_binding()["source_binding_sha256"],
         )
         self.assertEqual([item.symbol for item in evidence], ["000001.SZ", "600000.SH"])
         first = evidence[0]
@@ -128,6 +145,7 @@ class BuildEventEvidenceTest(unittest.TestCase):
             hits,
             decision_time=_decision_time(),
             available_at=_available_at(),
+            source_binding_sha256=_source_binding()["source_binding_sha256"],
         )
         self.assertEqual([item.symbol for item in evidence], ["600000.SH"])
 
@@ -137,6 +155,7 @@ class BuildEventEvidenceTest(unittest.TestCase):
             hits,
             decision_time=_decision_time(),
             available_at=_available_at(),
+            source_binding_sha256=_source_binding()["source_binding_sha256"],
         )
         self.assertEqual(evidence, ())
 
@@ -146,30 +165,61 @@ class DailyHitsCacheTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with pytest.raises(MinuteEventAuxError, match="cache_missing"):
                 load_or_refresh_daily_hits(
-                    Path(tmp), session_date=_SESSION, refresh=False
+                    Path(tmp), session_date=_SESSION
                 )
 
     def test_round_trip_and_corruption(self) -> None:
         hits = {"600000.SH": {"latest_float_date": "20260810", "max_ratio": 4.2}}
         with tempfile.TemporaryDirectory() as tmp:
             loaded = load_or_refresh_daily_hits(
-                Path(tmp), session_date=_SESSION, refresh=hits
+                Path(tmp),
+                session_date=_SESSION,
+                refresh=hits,
+                source_binding=_source_binding(),
             )
-            self.assertEqual(loaded, hits)
+            self.assertEqual(loaded["hits"], hits)
             target = Path(tmp) / HITS_FILENAME
             self.assertTrue(target.exists())
             document = json.loads(target.read_text(encoding="utf-8"))
-            self.assertTrue(document["schema"].startswith("tradingagent.ashare."))
+            self.assertEqual(document["schema"], "tradingagent.ashare.minute_event_aux_hits.v2")
             self.assertEqual(document["session_date"], "2026-08-24")
+            self.assertEqual(document["source_binding"]["receipt_id"], "td-receipt-001")
             again = load_or_refresh_daily_hits(
-                Path(tmp), session_date=_SESSION, refresh=False
+                Path(tmp), session_date=_SESSION
             )
-            self.assertEqual(again, hits)
+            self.assertEqual(again["hits"], hits)
             target.write_text("{broken", encoding="utf-8")
             with pytest.raises(MinuteEventAuxError, match="cache_corrupt"):
                 load_or_refresh_daily_hits(
                     Path(tmp), session_date=_SESSION, refresh=False
                 )
+
+    def test_tampered_receipt_binding_fails_closed(self) -> None:
+        hits = {"600000.SH": {"latest_float_date": "20260810", "max_ratio": 4.2}}
+        with tempfile.TemporaryDirectory() as tmp:
+            load_or_refresh_daily_hits(
+                Path(tmp),
+                session_date=_SESSION,
+                refresh=hits,
+                source_binding=_source_binding(),
+            )
+            target = Path(tmp) / HITS_FILENAME
+            document = json.loads(target.read_text(encoding="utf-8"))
+            document["source_binding"]["receipt_id"] = "replaced"
+            target.write_text(json.dumps(document), encoding="utf-8")
+            with pytest.raises(MinuteEventAuxError, match="receipt_binding_invalid"):
+                load_or_refresh_daily_hits(Path(tmp), session_date=_SESSION)
+
+    def test_cache_for_another_session_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            load_or_refresh_daily_hits(
+                Path(tmp),
+                session_date=_SESSION,
+                refresh={"600000.SH": {"latest_float_date": "20260810", "max_ratio": 4.2}},
+                source_binding=_source_binding(),
+            )
+            with pytest.raises(MinuteEventAuxError, match="cache_session_mismatch"):
+                load_or_refresh_daily_hits(Path(tmp), session_date="2026-08-25")
 
 
 class FetchLayerContractTest(unittest.TestCase):
@@ -194,6 +244,10 @@ class FetchLayerContractTest(unittest.TestCase):
         # Static guard: the accepted client type stays bound to the real
         # shared-module class so refactors cannot silently bypass it.
         self.assertTrue(SharedSignalsV1Client is not None)
+
+    def test_event_query_requests_receipt_proofs(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "Ashare" / "minute_event_aux.py"
+        assert "include_receipt_proofs=True" in source.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":
