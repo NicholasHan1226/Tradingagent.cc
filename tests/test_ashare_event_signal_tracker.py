@@ -33,17 +33,20 @@ from Ashare.event_signal_lockup_tracker import (
     CHIPS_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     HOLDER_LABEL_ORDER,
+    PLEDGE_LABEL_ORDER,
     REPURCHASE_LABEL_ORDER,
     _absorption_labels_for_observations,
     _block_labels_for_observations,
     _chips_labels_for_observations,
     _holder_labels_for_observations,
+    _pledge_labels_for_observations,
     _repurchase_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
     block_breakdown,
     chips_breakdown,
     holders_breakdown,
+    pledges_breakdown,
     repurchases_breakdown,
     turnover_breakdown,
     append_new_outcomes,
@@ -917,6 +920,90 @@ class TestRepurchaseTags:
             "Labelled outcomes by pre-event repurchase state:" in report
         )
         assert "active: n=" in report
+
+
+class TestPledgeTags:
+    """Pre-event pledge side-table labels: report-only, degrade clean."""
+
+    @staticmethod
+    def _pledge_cache(tmp_path):
+        """A pledgestat cache with one snapshot dated EVENT_DATE-10
+        calendar days (inside the frozen [day-30d, day) window) at a
+        high ratio, so every observed event resolves to ``high``.
+        Files are one symbol each, as the fetcher lays them out."""
+
+        end = (EVENT_DATE - timedelta(days=10)).strftime("%Y%m%d")
+        with (tmp_path / "pledgestat_600001SH.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "end_date", "pledge_ratio"])
+            writer.writerow([SYMBOL, end, 25.0])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_pledge(self, tmp_path):
+        cache = self._pledge_cache(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _pledge_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # single 25% snapshot inside the window -> high
+        assert set(labels.values()) == {"high"}
+
+    def test_empty_window_yields_no_snapshot_label(self, tmp_path):
+        # cache exists but holds nothing near EVENT_DATE: no_snapshot is a
+        # real label, not an omission.
+        with (tmp_path / "pledgestat_600001SH.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "end_date", "pledge_ratio"])
+            writer.writerow([SYMBOL, "20251201", 25.0])
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _pledge_labels_for_observations(
+            tmp_path, batch.observations
+        )
+        assert set(labels.values()) == {"no_snapshot"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _pledge_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_pledges_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = pledges_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "mid",
+                pos.labeled[0].event_id: "no_snapshot",
+            },
+        )
+        assert list(breakdown) == ["mid", "no_snapshot"]
+        assert list(PLEDGE_LABEL_ORDER) == [
+            "high", "mid", "low", "no_snapshot"
+        ]
+        assert breakdown["mid"]["n"] == 1
+        assert breakdown["no_snapshot"]["n"] == 1
+        assert pledges_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_pledge_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.pledges_by_event = {
+            obs.event_id: "high"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert "Labelled outcomes by pre-event pledge bucket:" in report
+        assert "high: n=" in report
 
 
 # --- journal write path -----------------------------------------------------

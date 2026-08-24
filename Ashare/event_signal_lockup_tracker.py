@@ -395,6 +395,9 @@ class TrackerView:
     # entry event_id -> pre-event repurchase state (repurchase side table,
     # report-only; empty when the repurchase_ann cache is unavailable).
     repurchases_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-event pledge bucket (pledge side table,
+    # report-only; empty when the pledgestat cache is unavailable).
+    pledges_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -610,6 +613,9 @@ def run_tracker(
             cache, batch.observations
         )
         view.repurchases_by_event = _repurchase_labels_for_observations(
+            cache, batch.observations
+        )
+        view.pledges_by_event = _pledge_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -1094,6 +1100,75 @@ def _repurchase_labels_for_observations(
     return labels
 
 
+PLEDGE_LABEL_ORDER = ("high", "mid", "low", "no_snapshot")
+
+
+def pledges_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    pledges_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event pledge ratio bucket.
+
+    Mirrors :func:`repurchases_breakdown`: observations without a label
+    (pledgestat cache unavailable at the whole-cache level) are skipped,
+    and an empty label table yields an empty breakdown.  ``no_snapshot``
+    is a real label — the reference group for the #464/#467 rule[high]
+    exclusion watch item.  Report-only readout for rolling validation —
+    never journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = pledges_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in PLEDGE_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _pledge_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> pre-event pledge ratio bucket via the cache.
+
+    Report-only decoration on the tracking pass: any failure to reach the
+    dataset degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_pledge_prelockup_study import (
+            pledge_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = pledge_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1382,6 +1457,22 @@ def render_report(
                       ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        pledges_stats = pledges_breakdown(
+            bucket.labeled, view.pledges_by_event
+        )
+        if any(item.get("n") for item in pledges_stats.values()):
+            parts = []
+            for label, item in pledges_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += ["Labelled outcomes by pre-event pledge bucket:",
+                      ""] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1550,6 +1641,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in repurchases_breakdown(
                             b.labeled, view.repurchases_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_pledges": {
+                    k: {
+                        label: item["n"]
+                        for label, item in pledges_breakdown(
+                            b.labeled, view.pledges_by_event
                         ).items()
                         if item.get("n")
                     }
