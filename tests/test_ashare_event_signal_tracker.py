@@ -32,6 +32,7 @@ from Ashare.event_signal_lockup_tracker import (
     TrackerError,
     CHIPS_LABEL_ORDER,
     TOPLIST_LABEL_ORDER,
+    HOLDERNUM_LABEL_ORDER,
     TURNOVER_LABEL_ORDER,
     HOLDER_LABEL_ORDER,
     PLEDGE_LABEL_ORDER,
@@ -42,6 +43,7 @@ from Ashare.event_signal_lockup_tracker import (
     _holder_labels_for_observations,
     _pledge_labels_for_observations,
     _toplist_labels_for_observations,
+    _holdernum_labels_for_observations,
     _repurchase_labels_for_observations,
     _turnover_labels_for_observations,
     absorption_breakdown,
@@ -50,6 +52,7 @@ from Ashare.event_signal_lockup_tracker import (
     holders_breakdown,
     pledges_breakdown,
     toplists_breakdown,
+    holdernums_breakdown,
     repurchases_breakdown,
     turnover_breakdown,
     append_new_outcomes,
@@ -1097,6 +1100,98 @@ class TestToplistTags:
         )
         assert "Labelled outcomes by pre-event dragon-tiger bucket:" in report
         assert "sell_dev: n=" in report
+
+
+class TestHoldernumTags:
+    """Pre-event shareholder-count side-table labels: degrade clean,
+    label vocabulary mirrors the #497 frozen buckets."""
+
+    @staticmethod
+    def _holdernum_cache(tmp_path):
+        """A holdernum cache with two announcements inside the frozen
+        [day-365d, day) window: holder count drops 100000 -> 80000
+        (-20%), so every observed event resolves to ``contract``.
+        One file per symbol, stems re-dotted by the study loader
+        (holdernum_600001SH.csv -> ts_code 600001.SH)."""
+
+        prev_day = (EVENT_DATE - timedelta(days=100)).strftime("%Y%m%d")
+        anchor_day = (EVENT_DATE - timedelta(days=40)).strftime("%Y%m%d")
+        with (tmp_path / "holdernum_600001SH.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "ann_date", "end_date", "holder_num"])
+            writer.writerow([SYMBOL, prev_day, "20260331", "100000"])
+            writer.writerow([SYMBOL, anchor_day, "20260531", "80000"])
+        return tmp_path
+
+    def test_labels_cover_observed_events_from_holdernum(self, tmp_path):
+        cache = self._holdernum_cache(tmp_path)
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _holdernum_labels_for_observations(cache, batch.observations)
+        expected = {
+            obs.event_id
+            for obs in batch.observations
+            if obs.observation_status == "observed" and obs.symbol
+        }
+        assert set(labels) == expected
+        # 100000 -> 80000 across consecutive announcements: -20% contract
+        assert set(labels.values()) == {"contract"}
+
+    def test_empty_window_yields_no_snapshot_label(self, tmp_path):
+        # cache exists but both disclosures sit outside the window:
+        # no_snapshot is a real label, not an omission.
+        with (tmp_path / "holdernum_600001SH.csv").open(
+                "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["ts_code", "ann_date", "end_date", "holder_num"])
+            writer.writerow([SYMBOL, "20250110", "20241231", "100000"])
+            writer.writerow([SYMBOL, "20250210", "20250131", "90000"])
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        labels = _holdernum_labels_for_observations(
+            tmp_path, batch.observations
+        )
+        assert set(labels.values()) == {"no_snapshot"}
+
+    def test_missing_cache_degrades_to_no_labels(self, tmp_path):
+        batch = _batch({SYMBOL: SELL_OFF_CLOSES})
+        assert (
+            _holdernum_labels_for_observations(tmp_path, batch.observations)
+            == {}
+        )
+
+    def test_holdernums_breakdown_groups_in_label_order_and_skips(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        lockup = view.buckets[LOCKUP_SIGNAL]
+        pos = view.buckets[EARNINGS_POS_SIGNAL]
+        breakdown = holdernums_breakdown(
+            lockup.labeled + pos.labeled,
+            {
+                lockup.labeled[0].event_id: "expand",
+                pos.labeled[0].event_id: "no_snapshot",
+            },
+        )
+        assert list(breakdown) == ["expand", "no_snapshot"]
+        assert list(HOLDERNUM_LABEL_ORDER) == [
+            "contract", "stable", "expand", "no_snapshot"
+        ]
+        assert breakdown["expand"]["n"] == 1
+        assert breakdown["no_snapshot"]["n"] == 1
+        assert holdernums_breakdown(lockup.labeled, {}) == {}
+
+    def test_render_report_lists_holdernum_lines_when_tagged(self):
+        view = build_tracker_view(_batch({SYMBOL: SELL_OFF_CLOSES}), ALL_SIGNALS)
+        view.holdernums_by_event = {
+            obs.event_id: "expand"
+            for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        report = render_report(
+            view, since=date(2026, 4, 1), as_of=AS_OF, dry_run=True
+        )
+        assert (
+            "Labelled outcomes by pre-event shareholder-count bucket:"
+            in report
+        )
+        assert "expand: n=" in report
 
 
 # --- journal write path -----------------------------------------------------
