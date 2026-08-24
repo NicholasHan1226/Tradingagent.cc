@@ -7,16 +7,19 @@ that the flow-side panels (holdertrade #453, repurchase #457) cannot see.
 The study-layer preregistration lands BEFORE any readout; this module only
 moves raw rows.
 
-Fetched per SYMBOL via ``pledge_stat`` (one call returns the symbol's full
-snapshot history ≈ hundreds of rows, far below any row cap — verified live
-2026-08-24 that ts_code+date filtering works, while a market-wide
-cross-section by ``end_date`` alone is NOT enumerable because snapshot
-dates are irregular per stock), so files follow the existing per-symbol
-layout: ``pledgestat_<stem>.csv`` beside ``daily_<stem>.csv``.  The sweep
-is driven by symbols ALREADY in the local cache (stems of ``daily_*.csv``);
-idempotent skip-existing resume, one raw CSV per symbol, empty responses (a
-stock with no pledge record ever) leave NO file — absence is itself the
-reference bucket for the study layer, per-symbol failures are recorded
+Fetched per SYMBOL via ``pledge_stat`` with **ts_code ONLY** — one call
+returns the symbol's full snapshot history ≈ hundreds of rows, far below
+any row cap.  Verified live 2026-08-24: through the raw HTTP endpoint ANY
+date param (start_date or end_date) silently EMPTIES the response
+(ts_code only → 520 rows for a pledged stock; +dates → 0 rows), unlike
+the pro_api SDK which tolerates an exact ``end_date``; a market-wide
+cross-section is therefore not reachable either way and the sweep stays
+per-symbol.  Files follow the existing per-symbol layout:
+``pledgestat_<stem>.csv`` beside ``daily_<stem>.csv``.  The sweep is
+driven by symbols ALREADY in the local cache (stems of ``daily_*.csv``);
+idempotent skip-existing resume, one raw CSV per symbol, empty responses
+(a stock with no pledge record ever) leave NO file — absence is itself
+the reference bucket for the study layer, per-symbol failures are recorded
 without aborting the sweep, atomic ``.partial`` writes, fail-closed disk
 guard.  Rows stay raw.
 
@@ -24,8 +27,7 @@ research_only / not_promotion_evidence.
 
 Usage::
 
-    python3 Ashare/event_pledge_fetch.py [--cache DIR]
-        [--start YYYYMMDD] [--end YYYYMMDD] [--delay SECONDS]
+    python3 Ashare/event_pledge_fetch.py [--cache DIR] [--delay SECONDS]
 """
 
 from __future__ import annotations
@@ -41,8 +43,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-DEFAULT_START = "20180101"
-DEFAULT_END = "20260824"
 MIN_FREE_BYTES = 2 * 1024**3  # abort below 2 GiB free on the cache volume
 
 
@@ -73,15 +73,15 @@ def stem_to_code(stem: str) -> str:
 
 def fetch_pledge(
     cache: Path,
-    start: str = DEFAULT_START,
-    end: str = DEFAULT_END,
     delay_seconds: float = 0.12,
     call=None,
 ) -> dict[str, object]:
     """Fetch pledge_stat snapshots per cached symbol; idempotent/resumable.
 
-    ``call(api_name, params) -> (fields, rows)`` is injectable for offline
-    tests; the default resolves the shared authenticated helper lazily.
+    The API contract is ``ts_code`` ONLY — date params empty the response
+    (module docstring).  ``call(api_name, params) -> (fields, rows)`` is
+    injectable for offline tests; the default resolves the shared
+    authenticated helper lazily.
     """
     if call is None:
         from Ashare.event_calendar_fetch import call_api
@@ -106,10 +106,7 @@ def fetch_pledge(
             raise PledgeFetchError(f"disk_low:{free}")
         try:
             fields, rows = call(
-                "pledge_stat",
-                {"ts_code": stem_to_code(stem),
-                 "start_date": start,
-                 "end_date": end},
+                "pledge_stat", {"ts_code": stem_to_code(stem)}
             )
         except Exception:  # noqa: BLE001 - record the symbol, keep going
             failed_symbols.append(stem)
@@ -138,7 +135,7 @@ def fetch_pledge(
         "fields": fields_out,
     }
     print(
-        f"pledge done: range={start}-{end} fetched={fetched} "
+        f"pledge done: fetched={fetched} "
         f"skipped_existing={skipped_existing} empty={len(empty_symbols)} "
         f"failed={len(failed_symbols)}"
     )
@@ -151,16 +148,12 @@ def fetch_pledge(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", type=Path, default=None)
-    parser.add_argument("--start", type=str, default=DEFAULT_START)
-    parser.add_argument("--end", type=str, default=DEFAULT_END)
     parser.add_argument("--delay", type=float, default=0.12)
     args = parser.parse_args()
     from Ashare.event_calendar_fetch import CACHE_DIR
 
     cache = args.cache if args.cache is not None else CACHE_DIR
-    summary = fetch_pledge(
-        cache, start=args.start, end=args.end, delay_seconds=args.delay
-    )
+    summary = fetch_pledge(cache, delay_seconds=args.delay)
     return 1 if summary["failed_symbols"] else 0
 
 
