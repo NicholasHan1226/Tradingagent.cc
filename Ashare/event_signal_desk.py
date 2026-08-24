@@ -13,8 +13,15 @@ an honest executability label:
 * dividends are scheduling-layer only (no signal claim yet); index
   rebalancing has no stable data source and is not integrated.
 
-Reads the same research cache as ``event_calendar_doc`` plus the committed
-calendar document, and emits a self-contained HTML page.  No network access.
+Reads the same research cache as ``event_calendar_doc`` plus a calendar
+document, and emits a self-contained HTML page.  No network access.
+
+The ``--doc`` document has two interchangeable flavors: the committed
+research document, or the whole-market TD-sourced one produced by
+``event_calendar_tradingdatas.py`` (its ``earnings_disclosure`` entries
+then drive the appointment schedule and ``disclosure_all.csv`` becomes
+optional).  Direction grouping, float ratios and the index regime stay on
+the Tushare research cache either way (hybrid wiring decision 2026-08-25).
 
 Usage::
 
@@ -22,6 +29,13 @@ Usage::
         [--cache /tmp/ashare_event_research] \
         [--doc Ashare/reports/calendar_doc.json] \
         [--out /tmp/event_signal_desk.html] [--today YYYY-MM-DD]
+
+TD-flavored variant (whole-mainboard appointments)::
+
+    python3 Ashare/event_calendar_tradingdatas.py \
+        --token-file ... --out-dir /tmp/ashare_event_research_td
+    python3 Ashare/event_signal_desk.py \
+        --doc /tmp/ashare_event_research_td/calendar_doc.json ...
 """
 
 from __future__ import annotations
@@ -161,6 +175,12 @@ def load_desk_data(cache: Path, doc_path: Path, today: date) -> dict:
             })
 
     # ---- disclosures (whole-market appointment schedule) ------------------
+    # Appointment dates have two interchangeable sources: a TD-sourced
+    # calendar document (``event_calendar_tradingdatas.py`` emits
+    # ``earnings_disclosure`` entries from cn.dataset.disclosure_date) is
+    # authoritative when present; otherwise the per-sample Tushare cache
+    # file disclosure_all.csv is required.  Direction grouping always
+    # matches against forecast.csv.
     earliest_fc: dict[tuple[str, str], dict] = {}
     for r in _read_csv(cache, "forecast.csv"):
         key = (r["ts_code"], r["end_date"])
@@ -169,18 +189,41 @@ def load_desk_data(cache: Path, doc_path: Path, today: date) -> dict:
         if cur is None or ann < (cur.get("first_ann_date") or cur["ann_date"]):
             earliest_fc[key] = r
 
+    month_start = compact(date(today.year, today.month, 1))
+    appts: list[tuple[str, str, str]] = []  # (symbol, end_date, pre compact)
+    doc_disc = [e for e in doc["entries"]
+                if e.get("event_type") == "earnings_disclosure"]
+    if doc_disc:
+        seen_appt: set[tuple[str, str, str]] = set()
+        for e in doc_disc:
+            sym = e.get("symbol") or ""
+            end = e.get("entity") or ""
+            try:
+                pre = compact(datetime.strptime(
+                    e["scheduled_date"], "%Y-%m-%d").date())
+            except (KeyError, ValueError):
+                continue
+            if not sym or len(end) != 8 or pre < month_start:
+                continue
+            appt_key = (sym, end, pre)
+            if appt_key not in seen_appt:
+                seen_appt.add(appt_key)
+                appts.append(appt_key)
+    else:
+        for r in _read_csv(cache, "disclosure_all.csv"):
+            pre = r["pre_date"] or r["actual_date"]
+            if not pre or pre < month_start:
+                continue
+            appts.append((r["ts_code"], r["end_date"], pre))
+
     disc: dict[str, list[dict]] = defaultdict(list)
-    for r in _read_csv(cache, "disclosure_all.csv"):
-        pre = r["pre_date"] or r["actual_date"]
-        if not pre or pre < compact(date(today.year, today.month, 1)):
-            continue
+    for sym, end, pre in appts:
         pre_d = datetime.strptime(pre, "%Y%m%d").date()
         d = iso(pre_d)
-        sym = r["ts_code"]
         name, industry = names.get(sym, (sym, ""))
         row = {"code": sym, "name": name, "ind": industry,
-               "rep": report_label(r["end_date"]), "grp": "", "rng": ""}
-        fc = earliest_fc.get((sym, r["end_date"]))
+               "rep": report_label(end), "grp": "", "rng": ""}
+        fc = earliest_fc.get((sym, end))
         if fc is not None:
             ann = fc.get("first_ann_date") or fc["ann_date"]
             if ann and ann <= pre:
