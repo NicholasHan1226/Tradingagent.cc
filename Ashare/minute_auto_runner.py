@@ -209,6 +209,7 @@ def run_current_delayed_minute_paper(
     allow_late_start: bool = False,
     pin_universe_filter: bool = False,
     partial_observation_minimum: int | None = None,
+    event_aux_enabled: bool = False,
 ) -> dict[str, object]:
     """Process exactly one expected current delayed bar or return a safe no-op."""
 
@@ -274,6 +275,7 @@ def run_current_delayed_minute_paper(
             "trading_date": target.date(),
             "bar_end": target.strftime("%Y-%m-%d %H:%M:%S"),
             "pin_universe_filter": pin_universe_filter,
+            "event_aux_enabled": event_aux_enabled,
         }
         if partial_observation_minimum is not None:
             run_kwargs["partial_observation_minimum"] = partial_observation_minimum
@@ -368,6 +370,14 @@ def main(argv: list[str] | None = None) -> int:
             "claiming full-session or learning eligibility"
         ),
     )
+    parser.add_argument(
+        "--event-aux",
+        action="store_true",
+        help=(
+            "Opt into the pre-registered lockup shadow trial: the event sleeve "
+            "receives daily lockup auxiliary evidence (baseline unchanged)"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         now = (
@@ -381,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
             now=now,
             allow_late_start=args.allow_late_start,
             pin_universe_filter=True,
+            event_aux_enabled=args.event_aux,
         )
     except (MinuteAutoRunnerError, OSError, ValueError) as exc:
         print("automatic delayed minute paper runner failed closed", file=sys.stderr)
