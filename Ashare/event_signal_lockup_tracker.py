@@ -401,6 +401,9 @@ class TrackerView:
     # entry event_id -> pre-event dragon-tiger bucket (toplist side table,
     # report-only; empty when the toplist_daily cache is unavailable).
     toplists_by_event: dict[str, str] = field(default_factory=dict)
+    # entry event_id -> pre-event shareholder-count bucket (holdernum side
+    # table, report-only; empty when the holdernum_* cache is unavailable).
+    holdernums_by_event: dict[str, str] = field(default_factory=dict)
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
@@ -622,6 +625,9 @@ def run_tracker(
             cache, batch.observations
         )
         view.toplists_by_event = _toplist_labels_for_observations(
+            cache, batch.observations
+        )
+        view.holdernums_by_event = _holdernum_labels_for_observations(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
@@ -1244,6 +1250,77 @@ def _pledge_labels_for_observations(
     return labels
 
 
+HOLDERNUM_LABEL_ORDER = ("contract", "stable", "expand", "no_snapshot")
+
+
+def holdernums_breakdown(
+    observations: tuple[CatalystShadowObservation, ...],
+    holdernums_by_event: dict[str, str],
+) -> dict[str, dict]:
+    """Labelled-outcome stats grouped by pre-event holder-count bucket.
+
+    Mirrors :func:`toplists_breakdown`: observations without a label
+    (holdernum cache unavailable at the whole-cache level) are skipped,
+    and an empty label table yields an empty breakdown.  ``no_snapshot``
+    is a real label — reference group for the #497/#500 panel; on the
+    research universe its two-in-365 availability measured 100%, so it
+    is expected to stay empty in practice.  Report-only readout for
+    rolling validation of the #500 rule[expand] watch item — never
+    journaled.
+    """
+
+    groups: dict[str, list[float]] = {}
+    for obs in observations:
+        label = holdernums_by_event.get(obs.event_id)
+        if label is None:
+            continue
+        groups.setdefault(label, []).append(float(obs.post_return))
+    return {
+        label: _post_return_stats(groups[label])
+        for label in HOLDERNUM_LABEL_ORDER
+        if label in groups
+    }
+
+
+def _holdernum_labels_for_observations(
+    cache: Path,
+    observations: tuple[CatalystShadowObservation, ...],
+) -> dict[str, str]:
+    """Map event_id -> pre-event shareholder-count bucket via the cache.
+
+    Report-only decoration on the tracking pass: any failure to reach the
+    dataset degrades to "no labels" instead of breaking tracking.
+    """
+
+    try:
+        from Ashare.event_holdernum_prelockup_study import (
+            holdernum_buckets_for_events,
+        )
+    except ImportError:
+        return {}
+    pairs = [
+        (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        for obs in observations
+        if obs.observation_status == "observed" and obs.symbol
+    ]
+    if not pairs:
+        return {}
+    try:
+        buckets = holdernum_buckets_for_events(cache, pairs)
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    for obs in observations:
+        if obs.observation_status != "observed" or not obs.symbol:
+            continue
+        bucket = buckets.get(
+            (obs.symbol, obs.scheduled_date.strftime("%Y%m%d"))
+        )
+        if bucket is not None:
+            labels[obs.event_id] = bucket
+    return labels
+
+
 # Practice rule distilled from the stratification research ("enter in weak
 # markets, avoid the 3-5% float-ratio band").  The tracker only previews it
 # as a report-only readout against the pre-registered evaluation basis;
@@ -1564,6 +1641,24 @@ def render_report(
                       ""] + [
                 f"- {part}" for part in parts
             ] + [""]
+        holdernums_stats = holdernums_breakdown(
+            bucket.labeled, view.holdernums_by_event
+        )
+        if any(item.get("n") for item in holdernums_stats.values()):
+            parts = []
+            for label, item in holdernums_stats.items():
+                if not item.get("n"):
+                    continue
+                parts.append(
+                    f"{label}: n={item['n']}, mean={item['mean_bps']}bps,"
+                    f" win_rate={item['win_rate']}"
+                )
+            lines += [
+                "Labelled outcomes by pre-event shareholder-count bucket:",
+                "",
+            ] + [
+                f"- {part}" for part in parts
+            ] + [""]
         if key == LOCKUP_SIGNAL:
             rule = rule_subset_breakdown(
                 bucket.labeled, view.regime_by_date, view.ratio_by_event
@@ -1752,6 +1847,16 @@ def main() -> int:
                         label: item["n"]
                         for label, item in toplists_breakdown(
                             b.labeled, view.toplists_by_event
+                        ).items()
+                        if item.get("n")
+                    }
+                    for k, b in view.buckets.items()
+                },
+                "labeled_by_holdernums": {
+                    k: {
+                        label: item["n"]
+                        for label, item in holdernums_breakdown(
+                            b.labeled, view.holdernums_by_event
                         ).items()
                         if item.get("n")
                     }
