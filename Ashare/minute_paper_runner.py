@@ -446,9 +446,13 @@ def run_delayed_minute_paper_once(
                     source_binding_sha256=document["source_binding"]["source_binding_sha256"],
                 )
                 event_aux_status = f"ok_fetched:{len(auxiliary_evidence)}"
-            except MinuteEventAuxError as fetch_exc:
+            except Exception as fetch_exc:  # noqa: BLE001
+                # The client factory itself can raise non-aux errors (token
+                # file faults, transport gate configuration). Preregistration
+                # D1 freezes "any feed fault degrades to abstain", so this
+                # branch swallows everything and records the reason.
                 auxiliary_evidence = ()
-                event_aux_status = f"degraded:{fetch_exc}"
+                event_aux_status = f"degraded:{type(fetch_exc).__name__}:{fetch_exc}"
     step = loop.process_snapshot(
         snapshot=snapshot,
         manifest_sha256=profile.consumer_profile_sha256,

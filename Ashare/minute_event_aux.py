@@ -34,13 +34,17 @@ from shared.data.sharedsignals_v1 import (
     QueryRequest,
     SharedSignalsV1Client,
     SharedSignalsV1Config,
-    SharedSignalsV1Error,
 )
 from shared.data.tradingdatas_pagination import collect_query_pages
 from shared.universe.policy import is_mainboard_tradable
 
 EVENT_AUX_DATASET_ID = "cn.dataset.share_float"
 LOCKUP_LOOKBACK_DAYS = 30
+# Server-side pre-filter width over the registry partition column. Lockup
+# announcements lead their float dates by weeks-to-months, so the net must
+# reach back well beyond the 30-day hit window; the local reducer still owns
+# the exact frozen semantics.
+LOCKUP_ANN_NET_DAYS = 120
 LOCKUP_SCORE = 1.0
 EVIDENCE_TYPE = "event"
 AUX_EXPIRES_WINDOW = timedelta(minutes=10)
@@ -186,12 +190,14 @@ def fetch_lockup_hits(
     session = _session_date(session_date)
     try:
         catalog = client.get_catalog()
-    except SharedSignalsV1Error as exc:
+    except Exception as exc:  # any feed fault must degrade, never fail the bar
         raise MinuteEventAuxError(f"minute_event_aux_catalog_failed:{exc}") from exc
     entry = next(
         (
             item
-            for item in catalog.data()
+            # Wire reality (2026-08-24 rehearsal): envelope ``data`` is a
+            # property, not a method.
+            for item in catalog.data
             if isinstance(item, Mapping) and item.get("dataset_id") == EVENT_AUX_DATASET_ID
         ),
         None,
@@ -202,6 +208,21 @@ def fetch_lockup_hits(
         schema_major = int(entry["schema_major"])
     except (KeyError, TypeError, ValueError) as exc:
         raise MinuteEventAuxError("minute_event_aux_schema_unknown") from exc
+    # Wire realities rehearsed against production (2026-08-24):
+    #
+    # * the engine rejects gte/lte with HTTP 400 despite the catalog
+    #   advertising them — `between` over compact YYYYMMDD strings is the
+    #   supported range shape;
+    # * filtering on ``float_date`` is unreachable on this plane: even a
+    #   full-year float_date net returns zero rows while ``ann_date`` nets
+    #   return data (the registry partitions this dataset by ``ann_date``).
+    #   The server-side net therefore rides the partition column and
+    #   hits_from_rows applies the exact frozen [T-30, T) float_date
+    #   boundary locally; a missed row can only remove evidence
+    #   (fail-closed), never fabricate one;
+    # * several holders legitimately share one (symbol, ann_date,
+    #   float_date), so identity is the dataset-declared five-tuple — the
+    #   three-tuple makes collect_query_pages reject legal rows.
     request = QueryRequest(
         dataset_id=EVENT_AUX_DATASET_ID,
         schema_major=schema_major,
@@ -210,14 +231,17 @@ def fetch_lockup_hits(
             "ann_date",
             "float_date",
             "float_ratio",
+            "holder_name",
+            "share_type",
         ],
         filters={
-            "float_date": {
-                "gte": (session - timedelta(days=LOCKUP_LOOKBACK_DAYS)).isoformat(),
-                "lte": (session - timedelta(days=1)).isoformat(),
+            "ann_date": {
+                "between": [
+                    (session - timedelta(days=LOCKUP_ANN_NET_DAYS)).strftime("%Y%m%d"),
+                    session.strftime("%Y%m%d"),
+                ]
             }
         },
-        order=["float_date:asc", "ts_code:asc"],
         limit=500,
         include_receipt_proofs=True,
     )
@@ -225,14 +249,20 @@ def fetch_lockup_hits(
         run = collect_query_pages(
             client=client,
             request=request,
-            identity_fields=("ts_code", "ann_date", "float_date"),
+            identity_fields=(
+                "ann_date",
+                "float_date",
+                "ts_code",
+                "holder_name",
+                "share_type",
+            ),
             max_pages=_MAX_PAGES,
             max_rows=_MAX_ROWS,
         )
     except Exception as exc:  # pagination contract / transport / HTTP failures
         raise MinuteEventAuxError(f"minute_event_aux_query_failed:{exc}") from exc
     return LockupHitBatch(
-        hits=hits_from_rows(tuple(run.envelope.data()), session_date=session),
+        hits=hits_from_rows(tuple(run.envelope.data), session_date=session),
         source_binding=_source_binding_from_run(run),
     )
 
