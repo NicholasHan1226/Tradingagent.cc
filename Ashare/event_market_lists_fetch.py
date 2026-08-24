@@ -11,12 +11,17 @@ Data expansion bound to two mechanism hypotheses:
   optimistically (-9.85bps bias); a per-day limit roster gives the exact
   {symbol, day, limit_type} set needed to pre-register the skip/roll-forward
   polish (#441 follow-up) instead of approximating from price moves alone.
+- H3 (holder behavior): insider increase/decrease filings around unlock
+  windows are a direct supply-intent signal; ``stk_holdertrade`` rows carry
+  in_de direction, change_ratio vs float and avg_price for study-layer use.
 
-Both Tushare endpoints are per-DAY all-market rosters (``suspend_d``,
+All three Tushare endpoints are per-DAY all-market feeds (``suspend_d``,
 ``limit_list_d`` — the latter includes U/D/Z rows when ``limit_type`` is
-omitted), so ONE sweep covers them: per session, one call per endpoint,
-one raw CSV each under ``<cache>/suspend_daily/<day>.csv`` /
-``<cache>/limitlist_daily/<day>.csv``.  Layout & idempotency mirror the
+omitted — and ``stk_holdertrade``, keyed by announcement date), so ONE
+sweep covers them: per session, one call per endpoint with that endpoint's
+day-filter key, one raw CSV each under ``<cache>/suspend_daily/<day>.csv``
+/ ``<cache>/limitlist_daily/<day>.csv`` / ``<cache>/holdertrade_daily/
+<day>.csv``.  Layout & idempotency mirror the
 blocktrade fetcher (#423): existing files are never re-fetched (safe
 resume); empty responses leave NO file so a rerun retries that day;
 per-endpoint failures are recorded without aborting the sweep.  Roster
@@ -47,10 +52,15 @@ if str(_REPO_ROOT) not in sys.path:
 
 DEFAULT_START = "20180101"
 DEFAULT_END = "20260824"
-# (tushare endpoint, output subdirectory) — same per-day shape.
-LIST_SOURCES: tuple[tuple[str, str], ...] = (
-    ("suspend_d", "suspend_daily"),
-    ("limit_list_d", "limitlist_daily"),
+# (tushare endpoint, output subdirectory, day-filter param).  Verified live
+# 2026-08-24: ``stk_holdertrade`` filtered by ``trade_date`` returns a
+# 3000-row CAPPED page whose rows carry foreign ann_dates — only
+# ``ann_date`` is a clean single-announcement-day filter there; the two
+# roster endpoints key on ``trade_date``.
+LIST_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("suspend_d", "suspend_daily", "trade_date"),
+    ("limit_list_d", "limitlist_daily", "trade_date"),
+    ("stk_holdertrade", "holdertrade_daily", "ann_date"),
 )
 MIN_FREE_BYTES = 2 * 1024**3  # abort below 2 GiB free on the cache volume
 
@@ -96,21 +106,26 @@ def fetch_market_lists(
     """Fetch both daily rosters per session; idempotent and resumable."""
     from Ashare.event_calendar_fetch import call_api
 
-    out_dirs = {api: cache / dirname for api, dirname in LIST_SOURCES}
+    out_dirs = {api: cache / dirname for api, dirname, _p in LIST_SOURCES}
+    day_keys = {api: key for api, _d, key in LIST_SOURCES}
     days = _session_days(cache, start, end)
     if not days:
         raise MarketListsFetchError("no_sessions_in_range")
-    fetched = {api: 0 for api, _ in LIST_SOURCES}
-    skipped_existing = {api: 0 for api, _ in LIST_SOURCES}
-    empty_days: dict[str, list[str]] = {api: [] for api, _ in LIST_SOURCES}
-    failed_days: dict[str, list[str]] = {api: [] for api, _ in LIST_SOURCES}
+    fetched = {api: 0 for api, _d, _k in LIST_SOURCES}
+    skipped_existing = {api: 0 for api, _d, _k in LIST_SOURCES}
+    empty_days: dict[str, list[str]] = {
+        api: [] for api, _d, _k in LIST_SOURCES
+    }
+    failed_days: dict[str, list[str]] = {
+        api: [] for api, _d, _k in LIST_SOURCES
+    }
     fields_out: dict[str, list[str] | None] = {
-        api: None for api, _ in LIST_SOURCES
+        api: None for api, _d, _k in LIST_SOURCES
     }
     steps = len(days) * len(LIST_SOURCES)
     step = 0
     for day in days:
-        for api, _dirname in LIST_SOURCES:
+        for api, _dirname, param_key in LIST_SOURCES:
             target = out_dirs[api] / f"{day}.csv"
             step += 1
             if target.exists():
@@ -120,7 +135,7 @@ def fetch_market_lists(
             if free < MIN_FREE_BYTES:
                 raise MarketListsFetchError(f"disk_low:{free}")
             try:
-                fields, rows = call_api(api, {"trade_date": day})
+                fields, rows = call_api(api, {param_key: day})
             except Exception:  # noqa: BLE001 - record it, keep the sweep going
                 failed_days[api].append(day)
                 time.sleep(max(delay_seconds, 0.05))
@@ -134,7 +149,7 @@ def fetch_market_lists(
                 fetched[api] += 1
             if step % 400 == 0:
                 progress = " ".join(
-                    f"{api}={fetched[api]}" for api, _ in LIST_SOURCES
+                    f"{api}={fetched[api]}" for api, _d, _k in LIST_SOURCES
                 )
                 print(f"marketlists {step}/{steps} fetched {progress}",
                       flush=True)
@@ -150,16 +165,16 @@ def fetch_market_lists(
                 "fields": fields_out[api],
                 "out_dir": str(out_dirs[api]),
             }
-            for api, _ in LIST_SOURCES
+            for api, _d, _k in LIST_SOURCES
         },
     }
     parts = " ".join(
         f"{api}: fetched={fetched[api]} skipped={skipped_existing[api]} "
         f"empty={len(empty_days[api])} failed={len(failed_days[api])}"
-        for api, _ in LIST_SOURCES
+        for api, _d, _k in LIST_SOURCES
     )
     print(f"marketlists done: range={start}-{end} {parts}")
-    for api, _ in LIST_SOURCES:
+    for api, _d, _k in LIST_SOURCES:
         if failed_days[api]:
             print(f"{api} failed days (rerun resumes past existing files): "
                   + ",".join(failed_days[api]))

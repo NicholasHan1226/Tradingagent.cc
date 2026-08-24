@@ -65,20 +65,27 @@ class FetchSweepTest(unittest.TestCase):
         calls: list[tuple[str, str]] = []
 
         def fake_call_api(api: str, params: dict):
-            self.assertEqual(list(params), ["trade_date"])
-            calls.append((api, params["trade_date"]))
-            rows = {
-                "suspend_d": [["600000.SH", params["trade_date"], "S"]],
-                "limit_list_d": [[
-                    "000001.SZ", params["trade_date"], "U", 10.0,
-                ]],
+            day = next(iter(params.values()))
+            calls.append((api, day))
+            spec = {
+                "suspend_d": (
+                    {"trade_date": day},
+                    ["ts_code", "trade_date", "suspend_type"],
+                    [["600000.SH", day, "S"]],
+                ),
+                "limit_list_d": (
+                    {"trade_date": day},
+                    ["ts_code", "trade_date", "limit_type", "close"],
+                    [["000001.SZ", day, "U", 10.0]],
+                ),
+                "stk_holdertrade": (
+                    {"ann_date": day},
+                    ["ts_code", "ann_date", "in_de", "change_vol"],
+                    [["600052.SH", day, "DE", 6809600.0]],
+                ),
             }[api]
-            fields = {
-                "suspend_d": ["ts_code", "trade_date", "suspend_type"],
-                "limit_list_d": ["ts_code", "trade_date", "limit_type",
-                                 "close"],
-            }[api]
-            return fields, rows
+            self.assertEqual(params, spec[0])  # per-endpoint day-filter key
+            return list(spec[1]), list(spec[2])
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp)
@@ -90,7 +97,7 @@ class FetchSweepTest(unittest.TestCase):
             # every session x every endpoint was requested exactly once
             self.assertEqual(
                 sorted(calls),
-                sorted((api, d) for api, _ in fetch.LIST_SOURCES
+                sorted((api, d) for api, _dir, _key in fetch.LIST_SOURCES
                        for d in SESSIONS),
             )
             suspend_path = cache / "suspend_daily" / f"{SESSIONS[0]}.csv"
@@ -102,8 +109,12 @@ class FetchSweepTest(unittest.TestCase):
             self.assertTrue(
                 (cache / "limitlist_daily" / f"{SESSIONS[2]}.csv").exists()
             )
-            self.assertEqual(summary["sources"]["suspend_d"]["fetched"],
-                             len(SESSIONS))
+            self.assertTrue(
+                (cache / "holdertrade_daily" / f"{SESSIONS[3]}.csv").exists()
+            )
+            for api in ("suspend_d", "limit_list_d", "stk_holdertrade"):
+                self.assertEqual(summary["sources"][api]["fetched"],
+                                 len(SESSIONS))
             # Rerun hits no network at all.
             calls.clear()
             with unittest.mock.patch(
@@ -111,13 +122,16 @@ class FetchSweepTest(unittest.TestCase):
             ):
                 again = fetch.fetch_market_lists(cache)
             self.assertEqual(calls, [])
-            self.assertEqual(again["sources"]["suspend_d"]["skipped_existing"],
-                             len(SESSIONS))
+            for api in ("suspend_d", "limit_list_d", "stk_holdertrade"):
+                self.assertEqual(again["sources"][api]["skipped_existing"],
+                                 len(SESSIONS))
 
     def test_empty_and_failed_days_leave_no_file(self) -> None:
         def flaky_call_api(api: str, params: dict):
-            day = params["trade_date"]
+            day = next(iter(params.values()))
             if api == "limit_list_d" and day == SESSIONS[0]:
+                raise RuntimeError("network down")
+            if api == "stk_holdertrade" and day == SESSIONS[2]:
                 raise RuntimeError("network down")
             if api == "suspend_d" and day != SESSIONS[1]:
                 return ["ts_code", "trade_date"], []  # no rosters that day
@@ -136,9 +150,13 @@ class FetchSweepTest(unittest.TestCase):
                              [d for d in SESSIONS if d != SESSIONS[1]])
             self.assertEqual(sources["limit_list_d"]["failed_days"],
                              [SESSIONS[0]])
-            # the failed day left no file; the successful suspend day did
+            self.assertEqual(sources["stk_holdertrade"]["failed_days"],
+                             [SESSIONS[2]])
+            # each failed day left no file for ITS endpoint only
             self.assertFalse((cache / "limitlist_daily"
                               / f"{SESSIONS[0]}.csv").exists())
+            self.assertFalse((cache / "holdertrade_daily"
+                              / f"{SESSIONS[2]}.csv").exists())
             self.assertEqual(
                 sorted(p.name for p in
                        (cache / "suspend_daily").glob("*.csv")),
