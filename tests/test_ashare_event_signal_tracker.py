@@ -1838,6 +1838,140 @@ class TestRunTracker:
             )
 
 
+# --- universe selection (top-200 vs top-1000 expansion) ----------------------
+
+
+class TestUniverseSelection:
+    def _add_expanded_symbol(self, cache, extra: str) -> None:
+        """Give ``extra`` the same closed lockup window the base symbol has."""
+
+        stem = extra.replace(".", "")
+        base_stem = SYMBOL.replace(".", "")
+        bar_lines = (
+            cache / f"daily_{base_stem}.csv"
+        ).read_text(encoding="utf-8").splitlines()
+        header, rows = bar_lines[0], bar_lines[1:]
+        (cache / f"daily_{stem}.csv").write_text(
+            "\n".join([header] + rows) + "\n", encoding="utf-8"
+        )
+        adj_lines = (
+            cache / f"adjfactor_{base_stem}.csv"
+        ).read_text(encoding="utf-8").splitlines()
+        (cache / f"adjfactor_{stem}.csv").write_text(
+            "\n".join(adj_lines) + "\n", encoding="utf-8"
+        )
+        float_day = EVENT_DATE.strftime("%Y%m%d")
+        # share_float.csv already exists in the fixture; append one valid
+        # batch for the expanded symbol instead of rewriting it.
+        with (cache / "share_float.csv").open("a", encoding="utf-8") as handle:
+            handle.write(
+                f"{extra},20260701,{float_day},1200000,1.5,Holder X,IPO\n"
+            )
+
+    def test_default_tracks_baseline_universe(self, mini_cache, tmp_path):
+        view = run_tracker(
+            mini_cache,
+            tmp_path / "journal.jsonl",
+            since=date.fromisoformat(DEFAULT_SINCE),
+            as_of=AS_OF,
+            signals=(LOCKUP_SIGNAL,),
+            dry_run=True,
+        )
+        assert view.samples_file == "sample_symbols"
+        assert view.universe_size == 1
+        assert len(view.buckets[LOCKUP_SIGNAL].labeled) == 1
+
+    def test_expanded_file_extends_the_tracked_set(self, mini_cache, tmp_path):
+        extra = "600777.SH"
+        self._add_expanded_symbol(mini_cache, extra)
+        _write_csv(
+            mini_cache / "sample_symbols_expanded.csv",
+            ["ts_code"],
+            [[SYMBOL], [extra]],
+        )
+
+        view = run_tracker(
+            mini_cache,
+            tmp_path / "journal.jsonl",
+            since=date.fromisoformat(DEFAULT_SINCE),
+            as_of=AS_OF,
+            signals=(LOCKUP_SIGNAL,),
+            dry_run=True,
+            samples_file="sample_symbols_expanded",
+        )
+        assert view.samples_file == "sample_symbols_expanded"
+        assert view.universe_size == 2
+        labeled_codes = {
+            obs.symbol for obs in view.buckets[LOCKUP_SIGNAL].labeled
+        }
+        assert labeled_codes == {SYMBOL, extra}
+
+
+# --- incremental forecast warm-up (universe expansion support) ---------------
+
+
+class TestForecastCacheIncremental:
+    def _read_rows(self, path):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return lines[0], [line.split(",") for line in lines[1:]]
+
+    def test_existing_cache_gains_only_missing_symbols(self, tmp_path, monkeypatch):
+        from Ashare import event_calendar_earnings_groups as groups
+
+        cache = tmp_path
+        header = ["ts_code", "ann_date", "end_date", "type", "update_flag"]
+        _write_csv(
+            cache / "forecast.csv",
+            header,
+            [[SYMBOL, "20260615", "20260630", "预增", "1"]],
+        )
+        extra = "600777.SH"
+
+        calls: list[str] = []
+
+        def fake_call(ts_code: str):
+            calls.append(ts_code)
+            return header, [
+                [extra, "20260701", "20260930", "预减", "1"],
+                [extra, "20260702", "20260930", "预减", "2"],
+            ]
+
+        monkeypatch.setattr(groups, "_call_forecast", fake_call)
+
+        path = groups.ensure_forecast_cache(cache, {SYMBOL, extra})
+        assert calls == [extra]  # covered symbol never re-fetched
+        out_header, rows = self._read_rows(path)
+        assert out_header == ",".join(header)
+        codes = {r[0] for r in rows}
+        assert codes == {SYMBOL, extra}
+        # Original row preserved verbatim.
+        assert [SYMBOL, "20260615", "20260630", "预增", "1"] in rows
+
+        # Second pass over the same universe is a pure no-op.
+        path2 = groups.ensure_forecast_cache(cache, {SYMBOL, extra})
+        assert calls == [extra]
+        assert path2 == path
+        _, rows_again = self._read_rows(path2)
+        assert rows_again == rows
+
+    def test_fresh_build_fetches_everything(self, tmp_path, monkeypatch):
+        from Ashare import event_calendar_earnings_groups as groups
+
+        cache = tmp_path
+        header = ["ts_code", "ann_date", "end_date", "type", "update_flag"]
+        calls: list[str] = []
+
+        def fake_call(ts_code: str):
+            calls.append(ts_code)
+            return header, [[ts_code, "20260615", "20260630", "预增", "1"]]
+
+        monkeypatch.setattr(groups, "_call_forecast", fake_call)
+        path = groups.ensure_forecast_cache(cache, {"600001.SH", "600777.SH"})
+        assert sorted(calls) == ["600001.SH", "600777.SH"]
+        _, rows = self._read_rows(path)
+        assert len(rows) == 2
+
+
 # --- report rendering --------------------------------------------------------
 
 

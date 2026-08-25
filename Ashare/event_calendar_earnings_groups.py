@@ -113,31 +113,68 @@ def _call_forecast(ts_code: str) -> tuple[list[str], list[list]]:
 
 
 def ensure_forecast_cache(cache: Path, samples: set[str]) -> Path:
-    """Fetch per-symbol forecast history once into ``forecast.csv``."""
+    """Fetch per-symbol forecast history into ``forecast.csv``.
+
+    Idempotent and incremental: when the file already exists only symbols
+    absent from it are fetched and merged in.  The top-1000 universe
+    expansion added ~800 symbols next to an existing 200-symbol cache —
+    a rebuild-from-scratch would re-download everything, while the previous
+    exists-early-return silently never covered the newcomers.
+    """
 
     path = cache / "forecast.csv"
-    if path.exists():
-        return path
-    merged: dict[tuple, list] = {}
+    existing_rows: list[list] = []
     fields: list[str] | None = None
-    for i, code in enumerate(sorted(samples), 1):
+    covered: set[str] = set()
+    if path.exists():
+        with path.open(encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            fields = next(reader, None)
+            if fields:
+                name_i = fields.index("ts_code")
+                existing_rows = [row for row in reader]
+                covered = {row[name_i] for row in existing_rows if row}
+    todo = sorted(samples - covered)
+    print(
+        f"forecast_cache covered={len(covered)} todo={len(todo)}",
+        flush=True,
+    )
+    if not todo:
+        return path
+    new_merged: dict[tuple, list] = {}
+    fetched_fields: list[str] | None = None
+    for i, code in enumerate(todo, 1):
         row_fields, rows = _call_forecast(code)
-        if fields is None and row_fields:
-            fields = row_fields
+        if fetched_fields is None and row_fields:
+            fetched_fields = row_fields
         for row in rows:
             record = dict(zip(row_fields, row))
             key = (record["ts_code"], record["ann_date"], record["end_date"], record.get("update_flag", ""))
-            merged[key] = row
+            new_merged[key] = record
         if i % 25 == 0:
-            print(f"forecast_progress={i}/{len(samples)}", flush=True)
+            print(f"forecast_progress={i}/{len(todo)}", flush=True)
         time.sleep(REQUEST_INTERVAL_SECONDS)
-    if fields is None:
+    if not new_merged:
+        return path  # nothing usable fetched; leave the cache untouched
+    canonical = fields or fetched_fields
+    if not canonical:
         raise GroupError("forecast_empty")
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    out_rows = existing_rows + [
+        _forecast_row(record, canonical) for record in new_merged.values()
+    ]
+    tmp = path.with_suffix(".csv.tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(fields)
-        writer.writerows(merged.values())
+        writer.writerow(canonical)
+        writer.writerows(out_rows)
+    tmp.replace(path)
     return path
+
+
+def _forecast_row(record: dict, fields: list[str]) -> list:
+    """Project one fetched record onto the cache's canonical columns."""
+
+    return [record.get(name, "") for name in fields]
 
 
 def load_forecast_directions(cache: Path) -> dict[tuple[str, str], tuple[str, str]]:
