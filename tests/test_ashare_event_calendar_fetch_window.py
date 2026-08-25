@@ -165,3 +165,40 @@ class TestDisclosureRefresh:
             assert "schema_drift" in str(exc)
         else:
             raise AssertionError("expected FetchError on schema drift")
+
+    def test_fresh_sweep_prints_sentinel_without_warning(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        self._write_cached(tmp_path, [])
+        today = time.strftime("%Y%m%d")
+        served = {
+            "20260630": [["000001.SZ", "20260630", "20260831", today]],
+        }
+        monkeypatch.setattr(fetch_mod, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(
+            fetch_mod, "call_api",
+            lambda api, params: (list(self.FIELDS), [list(r) for r in served.get(params["end_date"], [])]),
+        )
+        fetch_mod.refresh_disclosure(force=True)
+        out = capsys.readouterr().out
+        assert "disclosure_freshness" in out
+        assert f"ann_max={today}" in out
+        assert "DISCLOSURE_STALE_WARNING" not in out
+
+    def test_stale_announcements_emit_wall_clock_warning(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        self._write_cached(tmp_path, [])
+        stale = fetch_mod._shift_date(time.strftime("%Y%m%d"), -90)
+        served = {
+            "20260630": [["000001.SZ", "20260630", "20260715", stale]],
+        }
+        monkeypatch.setattr(fetch_mod, "CACHE_DIR", tmp_path)
+        monkeypatch.setattr(
+            fetch_mod, "call_api",
+            lambda api, params: (list(self.FIELDS), [list(r) for r in served.get(params["end_date"], [])]),
+        )
+        fetch_mod.refresh_disclosure(force=True)
+        out = capsys.readouterr().out
+        assert f"ann_max={stale}" in out
+        assert "DISCLOSURE_STALE_WARNING" in out
