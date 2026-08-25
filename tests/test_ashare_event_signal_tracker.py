@@ -9,6 +9,7 @@ read-back dedup guard.
 from __future__ import annotations
 
 import csv
+import time
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -1920,10 +1921,12 @@ class TestForecastCacheIncremental:
 
         cache = tmp_path
         header = ["ts_code", "ann_date", "end_date", "type", "update_flag"]
+        today = time.strftime("%Y%m%d")
         _write_csv(
             cache / "forecast.csv",
             header,
-            [[SYMBOL, "20260615", "20260630", "预增", "1"]],
+            # Fresh newest-announcement date keeps the incremental path.
+            [[SYMBOL, today, "20260630", "预增", "1"]],
         )
         extra = "600777.SH"
 
@@ -1932,7 +1935,7 @@ class TestForecastCacheIncremental:
         def fake_call(ts_code: str):
             calls.append(ts_code)
             return header, [
-                [extra, "20260701", "20260930", "预减", "1"],
+                [extra, today, "20260930", "预减", "1"],
                 [extra, "20260702", "20260930", "预减", "2"],
             ]
 
@@ -1945,7 +1948,7 @@ class TestForecastCacheIncremental:
         codes = {r[0] for r in rows}
         assert codes == {SYMBOL, extra}
         # Original row preserved verbatim.
-        assert [SYMBOL, "20260615", "20260630", "预增", "1"] in rows
+        assert [SYMBOL, today, "20260630", "预增", "1"] in rows
 
         # Second pass over the same universe is a pure no-op.
         path2 = groups.ensure_forecast_cache(cache, {SYMBOL, extra})
@@ -1953,6 +1956,58 @@ class TestForecastCacheIncremental:
         assert path2 == path
         _, rows_again = self._read_rows(path2)
         assert rows_again == rows
+
+    def test_stale_cache_repulls_everything_without_duplicates(
+        self, tmp_path, monkeypatch
+    ):
+        """A frozen cache silently starves future disclosure events (#544).
+
+        When the stored newest announcement is older than the freshness
+        ceiling every sample symbol is re-pulled; batch identity dedupe
+        keeps already-stored rows exactly once while genuinely new
+        periods land.
+        """
+
+        from Ashare import event_calendar_earnings_groups as groups
+
+        cache = tmp_path
+        header = ["ts_code", "ann_date", "end_date", "type", "update_flag"]
+        today = time.strftime("%Y%m%d")
+        old_day = "20260101"
+        _write_csv(
+            cache / "forecast.csv",
+            header,
+            [[SYMBOL, old_day, "20260331", "预增", "1"]],
+        )
+        extra = "600777.SH"
+        calls: list[str] = []
+
+        def fake_call(ts_code: str):
+            calls.append(ts_code)
+            if ts_code == SYMBOL:
+                return header, [
+                    # Duplicate of the stored batch -> collapsed.
+                    [SYMBOL, old_day, "20260331", "预增", "1"],
+                    # New report period published later -> must land.
+                    [SYMBOL, today, "20260930", "预增", "1"],
+                ]
+            return header, [[extra, today, "20260930", "预减", "2"]]
+
+        monkeypatch.setattr(groups, "_call_forecast", fake_call)
+
+        groups.ensure_forecast_cache(cache, {SYMBOL, extra})
+        assert sorted(calls) == sorted([SYMBOL, extra])
+        _, rows = self._read_rows(cache / "forecast.csv")
+        stored_old = [r for r in rows if r[1] == old_day]
+        assert len(stored_old) == 1  # duplicate batch collapsed
+        assert [SYMBOL, today, "20260930", "预增", "1"] in rows
+        assert [extra, today, "20260930", "预减", "2"] in rows
+        assert len(rows) == 3
+
+        # The re-pull refreshed staleness: next pass is incremental again.
+        before = len(calls)
+        groups.ensure_forecast_cache(cache, {SYMBOL, extra})
+        assert len(calls) == before
 
     def test_fresh_build_fetches_everything(self, tmp_path, monkeypatch):
         from Ashare import event_calendar_earnings_groups as groups

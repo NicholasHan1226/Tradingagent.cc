@@ -112,15 +112,40 @@ def _call_forecast(ts_code: str) -> tuple[list[str], list[list]]:
     raise GroupError(f"forecast_fetch_failed:{ts_code}:{last_error}")
 
 
-def ensure_forecast_cache(cache: Path, samples: set[str]) -> Path:
+def _forecast_max_ann_day(
+    fields: list[str], rows: list[list]
+) -> str | None:
+    """Newest announcement date stored in the forecast cache."""
+
+    try:
+        idx = fields.index("ann_date")
+    except ValueError:
+        return None
+    last: str | None = None
+    for row in rows:
+        day = row[idx] if idx < len(row) else ""
+        if day > (last or ""):
+            last = day
+    return last
+
+
+def ensure_forecast_cache(
+    cache: Path, samples: set[str], max_age_days: int = 6
+) -> Path:
     """Fetch per-symbol forecast history into ``forecast.csv``.
 
-    Idempotent and incremental: when the file already exists only symbols
-    absent from it are fetched and merged in.  The top-1000 universe
-    expansion added ~800 symbols next to an existing 200-symbol cache —
-    a rebuild-from-scratch would re-download everything, while the previous
-    exists-early-return silently never covered the newcomers.
+    Idempotent with two coverage layers.  Symbols absent from the file are
+    always fetched.  On top of that, when the file's newest stored
+    announcement is staler than ``max_age_days`` every sample symbol is
+    re-pulled and merge-deduped on batch identity — otherwise forecasts a
+    covered symbol publishes later would never reach the file and their
+    disclosure events would silently fall into ``no_forecast``.  Staleness
+    is data-driven (newest ``ann_date``, like the bar-shard freshness gate)
+    rather than mtime so semantics survive cache restore; quiet stretches
+    between forecast seasons simply cost one weekly full-history sweep.
     """
+
+    from Ashare.event_calendar_fetch import _shift_date
 
     path = cache / "forecast.csv"
     existing_rows: list[list] = []
@@ -134,9 +159,20 @@ def ensure_forecast_cache(cache: Path, samples: set[str]) -> Path:
                 name_i = fields.index("ts_code")
                 existing_rows = [row for row in reader]
                 covered = {row[name_i] for row in existing_rows if row}
-    todo = sorted(samples - covered)
+    today = time.strftime("%Y%m%d")
+    last_ann = (
+        _forecast_max_ann_day(fields, existing_rows)
+        if fields is not None else None
+    )
+    stale = last_ann is None or last_ann < _shift_date(today, -max_age_days)
+    if stale:
+        todo = sorted(samples)
+        mode = f"full_refresh(last_ann={last_ann})"
+    else:
+        todo = sorted(samples - covered)
+        mode = "incremental"
     print(
-        f"forecast_cache covered={len(covered)} todo={len(todo)}",
+        f"forecast_cache covered={len(covered)} todo={len(todo)} mode={mode}",
         flush=True,
     )
     if not todo:
@@ -159,8 +195,23 @@ def ensure_forecast_cache(cache: Path, samples: set[str]) -> Path:
     canonical = fields or fetched_fields
     if not canonical:
         raise GroupError("forecast_empty")
+
+    def _stored_key(row: list) -> tuple:
+        def col(name: str) -> str:
+            try:
+                return row[canonical.index(name)]
+            except (ValueError, IndexError):
+                return ""
+        return (
+            col("ts_code"), col("ann_date"), col("end_date"),
+            col("update_flag"),
+        )
+
+    seen_keys = {_stored_key(row) for row in existing_rows}
     out_rows = existing_rows + [
-        _forecast_row(record, canonical) for record in new_merged.values()
+        _forecast_row(record, canonical)
+        for key, record in new_merged.items()
+        if key not in seen_keys
     ]
     tmp = path.with_suffix(".csv.tmp")
     with tmp.open("w", newline="", encoding="utf-8") as handle:
