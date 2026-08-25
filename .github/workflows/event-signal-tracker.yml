@@ -132,6 +132,19 @@ jobs:
             --signals lockup,earnings_pos,earnings_neg \
             --expanded
 
+      - name: Stop in-flight fetchers for a stable snapshot
+        # Cancellation leaves the current fetcher alive until job cleanup
+        # (the runner only reaps orphans at Complete job), and tar fails
+        # with exit 1 when files change mid-archive — the first cancel-safe
+        # save attempt died exactly this way.  Quiesce writers first; every
+        # sub-step is idempotent, so killing one mid-flight costs nothing
+        # beyond the rows it had not yet written.
+        if: ${{ failure() || cancelled() }}
+        run: |
+          pkill -f 'Ashare[./]event' 2>/dev/null || true
+          sleep 2
+          pkill -9 -f 'Ashare[./]event' 2>/dev/null || true
+
       - name: Persist partial research data on early exit
         # Every data sub-step writes incrementally to the cache dirs and is
         # idempotent on rerun (freshness gates, dedupe keys, skip-existing),

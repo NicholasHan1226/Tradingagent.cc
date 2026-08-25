@@ -41,5 +41,8 @@ def test_event_signal_tracker_schedule_is_bounded_weekly() -> None:
     # A timeout must not discard the backfill: actions/cache's post step is
     # success-only, so an explicit cancel-safe save persists whatever reached
     # disk (all sub-steps are resumable) for the next run's restore-keys.
+    # Writers are quiesced first — a live fetcher makes tar fail (exit 1)
+    # on the changing tree, which silently voided the first such save.
     assert "actions/cache/save@v4" in workflow
     assert "if: ${{ failure() || cancelled() }}" in workflow
+    assert "pkill -f 'Ashare[./]event'" in workflow
