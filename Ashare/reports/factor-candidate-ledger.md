@@ -1,9 +1,11 @@
-# 因子候选台账（备选考核因子唯一明细入口）
+# 因子候选台账（备选考核因子唯一明细入口：A股 C 系列 / 加密 K 系列）
 
-- 建立：2026-08-25。服务目标：备选考核因子 150 个（Nicholas 2026-08-25）。
-  汇总计数与冻结口径见 ladder doc「因子与策略库记分板」节；本文件只管逐条
-  明细与状态流转，两处数字必须对账一致。
-- research_only / not_promotion_evidence。
+- 建立：2026-08-25。服务目标（Nicholas 2026-08-25 澄清后口径）：**A股、加密
+  各自独立**达到备选考核因子 150 个。汇总计数与冻结口径见 ladder doc
+  「因子与策略库记分板」节；本文件只管逐条明细与状态流转，两处数字必须对账
+  一致。
+- research_only / not_promotion_evidence。加密侧加严条款：历史回填无 PIT 证明
+  的读数一律非证据身份，判定只能走 receipt-bound 滚动评估。
 
 ## 状态机与升格规则（冻结）
 
@@ -57,7 +59,22 @@ deleverage×shrink 联合格(n30)、expansion×mid 联合格(n66)、reserve20
 调度微调（#16 sweep 唯一正增量）。队列评估标准见 #536 冻结条款，
 禁止逐案即时追认。
 
+## 加密线在册条目（K 系列，8 条，2026-08-25 午建账）
+
+| ID | 名称 | 数据源 | 状态 | 入口锚点 | 下一步 |
+|---|---|---|---|---|---|
+| K01 | TS 动量入场滚动冠军扭亏评估 | 40 币观察器回执 | testing | rolling-evaluation entry-001→003 | MVP-2 回合累积；downweight 趋势确认则机械降权 |
+| K02 | CS 相对强弱留观格（l576_k5_h288 等） | 40 币 5m 网格 | seeded | cross-sectional-prescreen | 只经 receipt-bound 滚动裁决，不以回填为据 |
+| K03 | funding carry 结构性风险溢价转策略 | perp funding | seeded | 08-18 forty-symbol 预筛 | maker 假设判定→PIT 数据面→滚动验证 |
+| K04 | basis carry / cash-and-carry 转策略 | 期现 basis | seeded | 08-18 预筛+maker 判定节 | 同上 |
+| K05 | OI 三族正式路径复算 | open_interest 5m | seeded | 08-16 OI prescreen | 18083 release 门禁恢复后走 catalog/query 重跑 |
+| K06 | CS 离散度门控族重评 | 40 币 5m 网格 | parked | 门控从未激活（登记缺陷） | 新预登记修正阈值语义后方可重评 |
+| K07 | sentiment 四端点 ×币价 | TD#320 情绪源 | seeded | tradingdatas issue #320 | lane 冻结解除后立项 |
+| K08 | exit shadow 读数面 | delayed_paper_exit_shadow | seeded | Crypto/delayed_paper_exit_shadow.py | 接入滚动读出 |
+
 ## 变更日志
 
-- 2026-08-25：建账 23 条（testing 7 / preregistered 3 / seeded 10 /
-  parked 3），对账记分板「备选考核因子 23」。
+- 2026-08-25：建账 A股 C 系列 23 条（testing 7 / preregistered 3 / seeded 10 /
+  parked 3）；同日午间双轨化修订——目标改为 A股/加密各自 150，新增加密
+  K 系列 8 条（testing 1 / seeded 5 / parked 1 / infra-seeded 计入 seeded），
+  对账记分板「备选考核因子 A股 23 / 加密 8」。
