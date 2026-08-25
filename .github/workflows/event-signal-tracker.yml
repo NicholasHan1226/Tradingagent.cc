@@ -132,6 +132,22 @@ jobs:
             --signals lockup,earnings_pos,earnings_neg \
             --expanded
 
+      - name: Persist partial research data on early exit
+        # Every data sub-step writes incrementally to the cache dirs and is
+        # idempotent on rerun (freshness gates, dedupe keys, skip-existing),
+        # so the only way progress can be lost is a timeout killing the job
+        # before actions/cache's post step — which runs on success only.
+        # This explicit save snapshots whatever reached disk at cancel time
+        # under a distinct key; restore-keys prefix matching picks it up on
+        # the next run, turning a cold-start timeout into a resumable one.
+        if: ${{ failure() || cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/ashare_event_research
+            /tmp/ashare_tracker_state
+          key: ashare-event-research-${{ github.run_id }}-partial
+
       - name: Archive tracker report and state
         if: always()
         uses: actions/upload-artifact@v4
