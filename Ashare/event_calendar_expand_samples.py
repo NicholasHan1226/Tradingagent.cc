@@ -120,10 +120,22 @@ def series_is_fresh(
     return last >= _shift_date(today, -max_age_days)
 
 
+def series_window_end() -> str:
+    """December 31 of the current year — never expires mid-stream.
+
+    A hardcoded year-end bound would silently cap every full-history
+    re-pull once that year passes (same failure class as the frozen
+    fetch windows fixed alongside).
+    """
+
+    return f"{time.strftime('%Y')}1231"
+
+
 def fetch_symbol_series(cache: Path, ts_code: str) -> None:
     """Pull daily + adj_factor for one symbol into per-symbol cache files."""
 
     stem = ts_code.replace(".", "")
+    end = series_window_end()
     for api, name, start in (
         ("daily", f"daily_{stem}", "20180101"),
         ("adj_factor", f"adjfactor_{stem}", "20180101"),
@@ -131,8 +143,8 @@ def fetch_symbol_series(cache: Path, ts_code: str) -> None:
         fields_out: list[str] | None = None
         rows_out: list[list] = []
         cursor = start
-        while cursor <= "20261231":
-            fields, rows = call_api(api, {"ts_code": ts_code, "start_date": cursor, "end_date": "20261231"})
+        while cursor <= end:
+            fields, rows = call_api(api, {"ts_code": ts_code, "start_date": cursor, "end_date": end})
             if fields_out is None:
                 fields_out = fields
             rows_out.extend(rows)

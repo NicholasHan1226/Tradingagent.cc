@@ -34,7 +34,10 @@ MAX_RETRIES = 6
 
 INDEX_CODES = ("000001.SH", "000300.SH")
 STUDY_START = "20180101"
-STUDY_END = "20260822"
+# Run-time today: a frozen end silently stops the disclosure calendar (and
+# every window bounded by it) from ever seeing appointments past the day it
+# was written — the rolling tracker's forward windows would starve.
+STUDY_END = time.strftime("%Y%m%d")
 # Sample eligibility: the endpoint's date window filters report periods, so
 # the earliest observable pre_date is 2019 (2018 annual reports).  Requiring
 # a pre_date within 2019 therefore selects companies listed before 2019.
