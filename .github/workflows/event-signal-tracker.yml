@@ -15,9 +15,13 @@ on:
         description: "Track events on/after this date (YYYYMMDD)"
         default: "20260401"
   schedule:
-    # Weekly Monday 13:23 UTC = 21:23 Beijing, after the evening
+    # Every weekday 13:23 UTC = 21:23 Beijing, after the evening
     # announcement window; off-minute to avoid shared-hour load spikes.
-    - cron: "23 13 * * 1"
+    # Weekday-daily matches the governance loop (ladder doc 循环机制):
+    # the evening reading shift digests same-day tracker output; a
+    # Monday-only cadence left Tue-Fri shifts with nothing to read and
+    # slowed forward-gate sample accumulation ~5x.
+    - cron: "23 13 * * 1-5"
 
 permissions:
   contents: read
