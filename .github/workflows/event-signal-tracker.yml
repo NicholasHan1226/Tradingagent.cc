@@ -76,7 +76,8 @@ jobs:
           # re-pulls every ranked symbol's share_float history into the
           # single lockup table (dedupe by batch identity), then
           # refresh_share_float backstops codes outside the ranked list,
-          # and dailybasic fills missing per-symbol label shards.  The
+          # and dailybasic refreshes missing or stale (>6 days) per-symbol
+          # label shards so valuation labels never age past a week.  The
           # first run after a universe expansion backfills everything;
           # steady-state weekly runs cost ~15-25min.
           python3 Ashare/event_calendar_expand_samples.py --limit 1000

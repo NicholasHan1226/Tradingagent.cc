@@ -51,7 +51,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 DEFAULT_START = "20180101"
-DEFAULT_END = "20260824"
+DEFAULT_END = time.strftime("%Y%m%d")
+# Run-time today: a frozen end date silently stops the
+# window from ingesting new sessions.
 # (tushare endpoint, output subdirectory, day-filter param).  Verified live
 # 2026-08-24: ``stk_holdertrade`` filtered by ``trade_date`` returns a
 # 3000-row CAPPED page whose rows carry foreign ann_dates — only

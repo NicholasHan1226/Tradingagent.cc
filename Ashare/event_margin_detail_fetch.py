@@ -35,7 +35,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 DEFAULT_START = "20180101"
-DEFAULT_END = "20260822"  # T-day balance publishes T+1 morning
+DEFAULT_END = time.strftime("%Y%m%d")  # T-day balance publishes T+1 morning; end=today is harmless
+# Run-time today: a frozen end date silently stops the
+# window from ingesting new sessions.
 DETAIL_DIRNAME = "margin_detail_daily"
 MIN_FREE_BYTES = 2 * 1024**3  # abort below 2 GiB free on the cache volume
 
