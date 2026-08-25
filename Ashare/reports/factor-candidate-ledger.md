@@ -44,7 +44,7 @@ seeded → preregistered → testing → concluded(KEEP/FAIL)
 | C16 | cb_share 公告流条件层 | cb_share | seeded | 观察项 | 可行性探针 |
 | C17 | major_news resource_budget 条件层 | major_news | seeded | 观察项 | 可行性探针 |
 | C18 | crypto 情绪四端点 ×加密模拟盘 | crypto lane | seeded | #320 | lane 冻结解除后立项 |
-| C19 | pb 轴估值分位 | dailybasic(pb) | seeded | #17 工程注记（2 缺失 vs pe 90） | 覆盖率测定→独立预注册 |
+| C19 | pb 轴估值分位 | dailybasic(pb) | seeded | #17 工程注记；全缓存健康度✓缺失 0.36%（中位 2.04，p25/p75=1.31/3.35） | 独立预注册 |
 | C20 | 宏观前瞻日历 forward_capable | 宏观日历 | seeded | 信号库存快照 | 生产探针判定后决定立项 |
 | C21 | top_inst 净卖确认层 | top_inst | parked | #36 FAIL 反向 | 重预注册方可反向使用 |
 | C22 | rise_dev 投机热度毒性回避 | top_list | parked | #35 全场最差桶 −182.1 | 同上 |
@@ -58,11 +58,11 @@ seeded → preregistered → testing → concluded(KEEP/FAIL)
 
 | ID | 名称 | 数据源 | 状态 | 入口锚点 | 下一步 |
 |---|---|---|---|---|---|
-| C24 | 事前量比水平桶（volume_ratio） | daily_basic 缓存 | seeded | 面板 #24 只用 turnover_rate，量比是独立信息轴 | 覆盖率测定→预注册 |
+| C24 | 事前量比水平桶（volume_ratio） | daily_basic 缓存 | seeded | 面板 #24 只用 turnover_rate；健康度✓缺失 0.01%（中位 0.92） | 边界冻结→预注册 |
 | C25 | cyq_chips 成本结构桶（低位成本占比等分布矩） | cyq_chips 已在产 | seeded | #25 只用了 cyq_perf 面 | 字段契约探针→覆盖率→预注册 |
 | C26 | 连板高度阶梯 ×解禁入场 | limit_step（待采集） | seeded | 与 #7 涨停真实性线协同 | 排队采集服务稳定窗口 |
 | C27 | 事前新高冲击史 | stk_high_shock（待采集） | seeded | registry on_demand 名单 | 同上 |
-| C28 | 市场口径股息率分位（dv_ttm） | daily_basic 缓存 | seeded | #14 用公告流姿态，此为市场口径独立轴 | 覆盖率测定→预注册 |
+| C28 | 市场口径股息率分位（dv_ttm） | daily_basic 缓存 | seeded | #14 公告流姿态的市场口径独立轴；缺失 25.25%=无分红事实，预注册须定义为 no_div 桶而非错误 | 边界冻结（含 no_div 语义）→预注册 |
 
 ### Parked 队列补充（不占上表编号，重启需独立预注册）
 
@@ -97,4 +97,5 @@ deleverage×shrink 联合格(n30)、expansion×mid 联合格(n66)、reserve20
   K 系列 8 条；同日午班第二批补充：C24–C28（volume_ratio/cyq_chips/
   limit_step/stk_high_shock/dv_ttm，字段可用性离线核验）与 K09–K12
   （funding 极端分位/vol 门控/结算时刻效应/basis 动量）。当前对账：
-  **A股备选 28、加密备选 12**。
+  **A股备选 28、加密备选 12**。同日午班字段健康度探针：volume_ratio
+  缺失 0.01%/pb 0.36%/dv_ttm 25.25%（结构性=无分红，须作桶语义）。
