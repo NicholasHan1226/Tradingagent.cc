@@ -168,5 +168,6 @@ jobs:
           name: tracker-report-${{ github.run_number }}
           path: |
             /tmp/ashare_tracker_state/
+            /tmp/ashare_event_research/signal_tracker_state.json
           retention-days: 90
           if-no-files-found: warn
