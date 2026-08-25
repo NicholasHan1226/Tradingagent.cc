@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import tempfile
 import time
@@ -10,6 +11,7 @@ import unittest.mock
 from pathlib import Path
 
 from Ashare import event_dailybasic_fetch as fetch
+from Ashare.event_calendar_fetch import PAGE_LIMIT, _shift_date
 
 
 def _write_csv(path: Path, fields: list[str], rows: list[list]) -> None:
@@ -204,6 +206,145 @@ class FreshnessRefreshTest(unittest.TestCase):
             ):
                 summary = fetch.fetch_dailybasic(cache, end="20260101")
             self.assertEqual(summary["empty_symbols"], ["000001SZ"])
+
+
+
+
+
+class TopupTest(unittest.TestCase):
+    """Recently stale shards refresh via whole-market session pulls.
+
+    One ``daily_basic`` trade_date call covers every cached symbol for one
+    session, so a weekly gap costs one call per missing session instead of
+    one per symbol (#560 follow-up to the #543 freshness gate).  Patches
+    BOTH call_api bindings the sweep touches: the fetcher's function-local
+    import (event_calendar_fetch) and trading_days' module global
+    (event_calendar_expand_samples) — missing either silently reaches the
+    real network.
+    """
+
+    def _seed_recent_stale(self, cache: Path) -> str:
+        # Beyond the 6-day freshness ceiling, inside the 30-day top-up
+        # window.
+        last = _shift_date(TODAY, -10)
+        _write_csv(cache / "daily_000001SZ.csv",
+                   ["trade_date", "close"], [[last, 10.0]])
+        _write_csv(cache / "dailybasic_000001SZ.csv", FIELDS,
+                   [["000001.SZ", last] + [1.0] * 11])
+        return last
+
+    @staticmethod
+    def _fake_call(last: str, fail_days=()):
+        d1 = _shift_date(last, 1)
+        d2 = _shift_date(last, 3)
+        sessions = [(d1, "1"), (d2, "1"), (TODAY, "1")]
+        calls: list[tuple] = []
+
+        def fake(api: str, params: dict):
+            calls.append((api, dict(params)))
+            if api == "trade_cal":
+                return ["cal_date", "is_open"], [list(s) for s in sessions]
+            assert api == "daily_basic"
+            day = params["trade_date"]
+            if day in fail_days:
+                raise RuntimeError("network down")
+            return FIELDS, [
+                ["999999.SZ", day] + [9.0] * 11,   # unknown symbol ignored
+                ["000001.SZ", day] + [2.0] * 11,
+            ]
+        return fake, calls
+
+    def test_topup_projects_market_rows_newest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            last = self._seed_recent_stale(cache)
+            fake, _calls = self._fake_call(last)
+            with \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_fetch.call_api",
+                    side_effect=fake,
+                ), \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_expand_samples.call_api",
+                    side_effect=fake,
+                ):
+                summary = fetch.fetch_dailybasic(cache)
+            with (cache / "dailybasic_000001SZ.csv").open(
+                encoding="utf-8"
+            ) as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(rows[0], FIELDS)
+            dates = [r[1] for r in rows[1:]]
+            expected = [TODAY, _shift_date(last, 3), _shift_date(last, 1),
+                        last]
+            self.assertEqual(dates, expected)
+            self.assertEqual(summary["topup_projected"], 1)
+            self.assertEqual(summary["refresh_todo"], 1)
+            self.assertEqual(summary["failed_dates"], [])
+            self.assertEqual(summary["failed_symbols"], [])
+            # Rerun hits no network at all: the shard is current.
+            fake2, calls2 = self._fake_call(last)
+            with \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_fetch.call_api",
+                    side_effect=fake2,
+                ), \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_expand_samples.call_api",
+                    side_effect=fake2,
+                ):
+                again = fetch.fetch_dailybasic(cache)
+            data_calls = [c for c in calls2 if c[0] != "trade_cal"]
+            self.assertEqual(data_calls, [])
+            self.assertEqual(again["skipped_existing"], 1)
+
+    def test_failed_session_recorded_not_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            last = self._seed_recent_stale(cache)
+            d1 = _shift_date(last, 1)
+            fake, _calls = self._fake_call(last, fail_days=(d1,))
+            with \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_fetch.call_api",
+                    side_effect=fake,
+                ), \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_expand_samples.call_api",
+                    side_effect=fake,
+                ):
+                summary = fetch.fetch_dailybasic(cache)
+            self.assertEqual(summary["failed_dates"], [d1])
+            self.assertEqual(summary["topup_projected"], 1)
+            # The exit rule treats a failed session like a failed symbol.
+            failed = bool(summary["failed_symbols"]) or \
+                bool(summary["failed_dates"])
+            self.assertTrue(failed)
+
+    def test_cap_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            self._seed_recent_stale(cache)
+            capped_rows = [["999999.SZ", "20260821"] + [1.0] * 11] * \
+                PAGE_LIMIT
+
+            def fake(api: str, params: dict):
+                if api == "trade_cal":
+                    return ["cal_date", "is_open"], [["20260821", "1"]]
+                return FIELDS, capped_rows
+
+            with \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_fetch.call_api",
+                    side_effect=fake,
+                ), \
+                unittest.mock.patch(
+                    "Ashare.event_calendar_expand_samples.call_api",
+                    side_effect=fake,
+                ):
+                with self.assertRaisesRegex(fetch.DailybasicFetchError,
+                                            "date_capped"):
+                    fetch.fetch_dailybasic(cache)
 
 
 if __name__ == "__main__":
