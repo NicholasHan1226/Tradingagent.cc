@@ -37,3 +37,9 @@ def test_event_signal_tracker_schedule_is_bounded_weekly() -> None:
     assert "event_calendar_expand_samples.py" in workflow
     assert "refresh_share_float" in workflow
     assert "event_dailybasic_fetch.py" in workflow
+
+    # A timeout must not discard the backfill: actions/cache's post step is
+    # success-only, so an explicit cancel-safe save persists whatever reached
+    # disk (all sub-steps are resumable) for the next run's restore-keys.
+    assert "actions/cache/save@v4" in workflow
+    assert "if: ${{ failure() || cancelled() }}" in workflow
