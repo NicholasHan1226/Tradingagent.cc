@@ -186,6 +186,10 @@ def _disclosure_period_ends(start: str, end: str) -> list[str]:
 # Appointments are published weeks ahead of each period's disclosure season;
 # a ~13-month horizon keeps next year's Q1/Q2 schedules reachable.
 DISCLOSURE_HORIZON_DAYS = 400
+# Season gaps can legitimately quiet announcements for weeks (between a
+# quarter's disclosure season and the next season's schedule publication),
+# so the staleness sentinel warns far above that instead of failing closed.
+DISCLOSURE_STALE_WARN_DAYS = 60
 
 
 def refresh_disclosure(force: bool = False) -> tuple[list[str], list[list]]:
@@ -245,6 +249,27 @@ def refresh_disclosure(force: bool = False) -> tuple[list[str], list[list]]:
     if canonical is None:
         raise FetchError("disclosure_empty_sweep")
     out_rows = list(merged.values())
+    a_i = canonical.index("ann_date")
+    p_i = canonical.index("pre_date")
+    ann_max = max((r[a_i] for r in out_rows if r[a_i]), default="")
+    pre_max = max((r[p_i] for r in out_rows if r[p_i]), default="")
+    print(
+        f"disclosure_freshness rows={len(out_rows)} periods={len(periods)} "
+        f"ann_max={ann_max} pre_max={pre_max}",
+        flush=True,
+    )
+    # The endpoint's parameter semantics already drifted once and silently
+    # emptied refetches; a wall-clock sentinel on the freshest announcement
+    # is the cheapest tripwire.  Warning only: a season-boundary lull must
+    # not abort the whole tracker run.
+    if ann_max and ann_max < _shift_date(today, -DISCLOSURE_STALE_WARN_DAYS):
+        print(
+            f"DISCLOSURE_STALE_WARNING newest announcement {ann_max} is older "
+            f"than {DISCLOSURE_STALE_WARN_DAYS} days — the calendar feed may "
+            f"have stalled or its contract drifted again; earnings forward "
+            f"windows will starve silently.",
+            flush=True,
+        )
     print(
         f"disclosure_date repulled periods={len(periods)} rows={len(out_rows)} "
         f"-> {save_csv('disclosure', canonical, out_rows)}"
