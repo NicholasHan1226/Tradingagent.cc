@@ -50,6 +50,20 @@ seeded → preregistered → testing → concluded(KEEP/FAIL)
 | C22 | rise_dev 投机热度毒性回避 | top_list | parked | #35 全场最差桶 −182.1 | 同上 |
 | C23 | 大宗深折价回避屏 | blocktrade | parked | n=16 覆盖 4% | 覆盖不足；重预注册+扩样 |
 
+## A股线在册条目·第二批补充（2026-08-25 午班，开盘时段零 API 成本立项）
+
+字段可用性已离线核验：volume_ratio/pb/dv_ttm 均在本地 dailybasic 缓存
+（1000 分片）；limit_step/stk_high_shock 为 registry on_demand 未产数据集，
+采集排队在采集服务稳定后。
+
+| ID | 名称 | 数据源 | 状态 | 入口锚点 | 下一步 |
+|---|---|---|---|---|---|
+| C24 | 事前量比水平桶（volume_ratio） | daily_basic 缓存 | seeded | 面板 #24 只用 turnover_rate，量比是独立信息轴 | 覆盖率测定→预注册 |
+| C25 | cyq_chips 成本结构桶（低位成本占比等分布矩） | cyq_chips 已在产 | seeded | #25 只用了 cyq_perf 面 | 字段契约探针→覆盖率→预注册 |
+| C26 | 连板高度阶梯 ×解禁入场 | limit_step（待采集） | seeded | 与 #7 涨停真实性线协同 | 排队采集服务稳定窗口 |
+| C27 | 事前新高冲击史 | stk_high_shock（待采集） | seeded | registry on_demand 名单 | 同上 |
+| C28 | 市场口径股息率分位（dv_ttm） | daily_basic 缓存 | seeded | #14 用公告流姿态，此为市场口径独立轴 | 覆盖率测定→预注册 |
+
 ### Parked 队列补充（不占上表编号，重启需独立预注册）
 
 deep_dd 中期反转（#15 均值腿仅 +4.9bps）、insider 年份结构修正后再审
@@ -71,10 +85,16 @@ deleverage×shrink 联合格(n30)、expansion×mid 联合格(n66)、reserve20
 | K06 | CS 离散度门控族重评 | 40 币 5m 网格 | parked | 门控从未激活（登记缺陷） | 新预登记修正阈值语义后方可重评 |
 | K07 | sentiment 四端点 ×币价 | TD#320 情绪源 | seeded | tradingdatas issue #320 | lane 冻结解除后立项 |
 | K08 | exit shadow 读数面 | delayed_paper_exit_shadow | seeded | Crypto/delayed_paper_exit_shadow.py | 接入滚动读出 |
+| K09 | 单币 funding 极端分位条件层 | perp funding | seeded | carry 预筛测结构溢价；单币极端值作收益预测子是新假设 | PIT 数据面后登记冻结网格 |
+| K10 | realized vol 门控动量入场 | 40 币 5m | seeded | CS 门控测的是离散度，个股已实现波动门控未测 | 新预登记网格 |
+| K11 | funding 结算时刻效应（8h 结算前后收益季节性） | perp funding 时间戳 | seeded | 结算机制性资金行为，与 carry 水平正交 | PIT 数据面 |
+| K12 | basis 变化率（收敛速度）vs 水平 | 期现 basis | seeded | carry 预筛只用水平值 | 同上 |
 
 ## 变更日志
 
 - 2026-08-25：建账 A股 C 系列 23 条（testing 7 / preregistered 3 / seeded 10 /
   parked 3）；同日午间双轨化修订——目标改为 A股/加密各自 150，新增加密
-  K 系列 8 条（testing 1 / seeded 5 / parked 1 / infra-seeded 计入 seeded），
-  对账记分板「备选考核因子 A股 23 / 加密 8」。
+  K 系列 8 条；同日午班第二批补充：C24–C28（volume_ratio/cyq_chips/
+  limit_step/stk_high_shock/dv_ttm，字段可用性离线核验）与 K09–K12
+  （funding 极端分位/vol 门控/结算时刻效应/basis 动量）。当前对账：
+  **A股备选 28、加密备选 12**。
