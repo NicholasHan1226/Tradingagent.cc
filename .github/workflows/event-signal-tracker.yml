@@ -71,12 +71,14 @@ jobs:
           TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
         run: |
           # The tracker runs on the top-1000 mainboard expansion universe.
-          # Each sub-step is idempotent and resumable over the persisted
-          # cache: bars/adjfactor/lockup rows for uncovered symbols, then
-          # share_float rows for priced symbols missing from the merged
-          # unlock table, then per-symbol daily_basic shards (the valuation
-          # label side table).  The first run after a universe expansion
-          # costs tens of minutes; steady-state weekly runs are no-ops.
+          # Each sub-step is idempotent over the persisted cache:
+          # expand_samples refreshes stale bar/adjfactor shards (>6 days),
+          # re-pulls every ranked symbol's share_float history into the
+          # single lockup table (dedupe by batch identity), then
+          # refresh_share_float backstops codes outside the ranked list,
+          # and dailybasic fills missing per-symbol label shards.  The
+          # first run after a universe expansion backfills everything;
+          # steady-state weekly runs cost ~15-25min.
           python3 Ashare/event_calendar_expand_samples.py --limit 1000
           python3 -c "
           import sys

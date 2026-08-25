@@ -2,15 +2,18 @@
 
 Research-only.  Reuses the existing research cache and fetch helpers: ranks
 mainboard symbols by disclosure count in the cached full-market
-``disclosure.csv``, keeps the top ``--limit`` (default 1000), and pulls
-daily bars, adjustment factors and lockup records for every symbol the
-cache does not already cover.  Existing files are never rewritten, so the
-expansion is idempotent and resumable.
+``disclosure.csv``, keeps the top ``--limit`` (default 1000), then
 
-Usage::
+* refreshes daily bars + adjustment factors for symbols whose shards are
+  missing or staler than ``--max-age-days`` (full-history re-pull,
+  idempotent by overwrite);
+* merges every ranked symbol's full ``share_float`` batch history into
+  ``share_float.csv`` — the tracker's single lockup table — deduplicating
+  on batch identity so repeated pulls never duplicate rows;
+* rewrites ``sample_symbols_expanded.csv`` with the ranked universe.
 
-    python3 Ashare/event_calendar_expand_samples.py [--limit 1000]
-        [--cache /tmp/ashare_event_research] [--eligibility 20191231]
+The first run after a universe expansion backfills everything; steady-state
+runs only pay the per-symbol lockup re-pull plus any stale bar shards.
 """
 
 from __future__ import annotations
@@ -71,11 +74,46 @@ def pick_expansion_symbols(
 
 
 def symbol_has_full_data(cache: Path, ts_code: str) -> bool:
+    """Existence check kept for callers that only ask "is this covered"."""
+
     stem = ts_code.replace(".", "")
     return all(
         (cache / f"{prefix}_{stem}.csv").exists()
         for prefix in ("daily", "adjfactor")
     )
+
+
+def series_max_day(cache: Path, ts_code: str) -> str | None:
+    """Last ``trade_date`` stored in the symbol's daily bars shard."""
+
+    path = cache / f"daily_{ts_code.replace('.', '')}.csv"
+    if not path.exists():
+        return None
+    last: str | None = None
+    with path.open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            day = row.get("trade_date") or ""
+            if day > (last or ""):
+                last = day
+    return last
+
+
+def series_is_fresh(
+    cache: Path, ts_code: str, today: str, max_age_days: int
+) -> bool:
+    """True when the shard exists and its last session is recent enough.
+
+    Under the tracker's weekly cadence a 6-day ceiling means every
+    scheduled run refreshes (gap 7d > 6) while repeated same-week runs
+    skip; missing shards are never fresh.
+    """
+
+    from Ashare.event_calendar_fetch import _shift_date
+
+    last = series_max_day(cache, ts_code)
+    if last is None:
+        return False
+    return last >= _shift_date(today, -max_age_days)
 
 
 def fetch_symbol_series(cache: Path, ts_code: str) -> None:
@@ -108,24 +146,26 @@ def fetch_symbol_series(cache: Path, ts_code: str) -> None:
 
 
 def fetch_symbol_lockups(cache: Path, ts_code: str) -> int:
-    """Append one symbol's lockup rows to the merged share_float cache.
+    """Merge one symbol's full lockup history into ``share_float.csv``.
 
-    The existing share_float.csv covers the original 200 samples; new
-    symbol rows are merged in and duplicates on
-    (ts_code, ann_date, float_date, holder_name, share_type) are dropped.
-    Returns the number of rows added for this symbol.
+    The tracker's event stream reads ``share_float.csv``, so that file is
+    the single lockup table: new unlock announcements must land here or
+    they never reach the rolling gate.  Duplicates on
+    (ts_code, ann_date, float_date, holder_name, share_type) are dropped,
+    making repeated full-history pulls idempotent.  Returns the number of
+    API rows seen for this symbol.
     """
 
     fields, rows = call_api("share_float", {"ts_code": ts_code})
     time.sleep(REQUEST_INTERVAL_SECONDS)
     if not rows:
         return 0
-    merged_path = cache / "share_float_expanded.csv"
+    merged_path = cache / "share_float.csv"
     seen: set[tuple] = set()
     out_fields: list[str] = fields
     out_rows: list[list] = []
     if merged_path.exists():
-        old_fields, old_rows = _read_cache(cache, "share_float_expanded")
+        old_fields, old_rows = _read_cache(cache, "share_float")
         out_fields = old_fields
         key_idx = [old_fields.index(k) for k in ("ts_code", "ann_date", "float_date", "holder_name", "share_type")]
         for row in old_rows:
@@ -146,7 +186,7 @@ def fetch_symbol_lockups(cache: Path, ts_code: str) -> int:
         if key not in seen:
             seen.add(key)
             out_rows.append(projected)
-    _save_csv(cache, "share_float_expanded", out_fields, out_rows)
+    _save_csv(cache, "share_float", out_fields, out_rows)
     return len(rows)
 
 
@@ -159,19 +199,43 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=1000)
     parser.add_argument("--cache", type=Path, default=Path("/tmp/ashare_event_research"))
     parser.add_argument("--eligibility", default="20191231")
+    parser.add_argument(
+        "--max-age-days",
+        type=int,
+        # Weekly cadence: a 7-day gap trips the refresh; same-week reruns skip.
+        default=6,
+    )
     args = parser.parse_args()
 
     ranked = pick_expansion_symbols(args.cache, args.limit, args.eligibility)
     print(f"ranked_symbols={len(ranked)}", flush=True)
 
-    todo = [c for c in ranked if not symbol_has_full_data(args.cache, c)]
-    print(f"symbols_to_fetch={len(todo)}", flush=True)
-
+    today = time.strftime("%Y%m%d")
+    todo = [
+        c for c in ranked
+        if not series_is_fresh(args.cache, c, today, args.max_age_days)
+    ]
+    print(
+        f"series_to_refresh={len(todo)} "
+        f"(max_age_days={args.max_age_days})",
+        flush=True,
+    )
     for i, code in enumerate(todo, 1):
         fetch_symbol_series(args.cache, code)
-        added = fetch_symbol_lockups(args.cache, code)
         if i % 25 == 0 or i == len(todo):
-            print(f"progress={i}/{len(todo)} last={code} lockups={added}", flush=True)
+            print(f"series_progress={i}/{len(todo)} last={code}", flush=True)
+
+    # Unlock announcements arrive continuously and are keyed by symbol, not
+    # by bar staleness: re-pull every ranked symbol's batch history each run
+    # so new float dates reach the tracker's event stream within one cycle.
+    rows_seen = 0
+    for i, code in enumerate(ranked, 1):
+        rows_seen += fetch_symbol_lockups(args.cache, code)
+        if i % 50 == 0 or i == len(ranked):
+            print(
+                f"lockups_progress={i}/{len(ranked)} rows_seen={rows_seen}",
+                flush=True,
+            )
 
     write_sample_symbols(args.cache, ranked)
     print(f"done sample_symbols_expanded={len(ranked)}", flush=True)
