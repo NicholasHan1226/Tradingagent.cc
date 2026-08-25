@@ -180,6 +180,65 @@ def _load_cached_csv(name: str) -> tuple[list[str], list[list]] | None:
         return fields, [row for row in reader]
 
 
+SHARE_FLOAT_KEY = ("ts_code", "ann_date", "float_date", "holder_name",
+                   "share_type")
+
+
+def merge_share_float_rows(
+    fields: list[str], rows: list[list]
+) -> tuple[list[str], list[list]]:
+    """Merge this run's per-symbol share_float rows into the cached table.
+
+    A blind overwrite truncates every symbol outside this run's sample list
+    (the top-1000 expansion universe lives in the same file, so each top-200
+    refetch would silently erase ~765 symbols' unlock history); dedupe on
+    the batch identity key keeps repeated full-history pulls idempotent.
+    """
+    import csv
+
+    path = CACHE_DIR / "share_float.csv"
+    out_fields: list[str] = fields
+    existing: list[list] = []
+    if path.exists():
+        with path.open(encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            old_fields = next(reader, None)
+            if old_fields:
+                out_fields = old_fields
+                existing = [row for row in reader]
+    key_names = [k for k in SHARE_FLOAT_KEY if k in out_fields]
+    key_idx = [out_fields.index(k) for k in key_names]
+
+    def _key(row: list[str]) -> tuple:
+        return tuple(row[i] if i < len(row) else "" for i in key_idx)
+
+    seen: set[tuple] = set()
+    merged: list[list] = []
+    for row in existing:
+        key = _key(row)
+        if key not in seen:
+            seen.add(key)
+            merged.append(row)
+    incoming_idx = {name: i for i, name in enumerate(fields)}
+    added = 0
+    for row in rows:
+        projected = [
+            row[incoming_idx[name]] if name in incoming_idx else ""
+            for name in out_fields
+        ]
+        key = _key(projected)
+        if key not in seen:
+            seen.add(key)
+            merged.append(projected)
+            added += 1
+    print(
+        f"share_float merge: {len(existing)} cached + {added} new "
+        f"= {len(merged)} rows",
+        flush=True,
+    )
+    return out_fields, merged
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-samples", type=int, default=200)
@@ -274,9 +333,12 @@ def main() -> int:
 
     if lockup_fields is None:
         raise FetchError("share_float_empty")
+    merged_fields, merged_rows = merge_share_float_rows(
+        lockup_fields, lockup_rows
+    )
     print(
-        f"share_float rows={len(lockup_rows)} -> "
-        f"{save_csv('share_float', lockup_fields, lockup_rows)}"
+        f"share_float rows={len(merged_rows)} -> "
+        f"{save_csv('share_float', merged_fields, merged_rows)}"
     )
 
     print(f"DONE symbols={len(samples)} elapsed={int(time.time() - started)}s")
