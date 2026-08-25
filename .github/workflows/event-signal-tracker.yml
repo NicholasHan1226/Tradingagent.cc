@@ -91,14 +91,17 @@ jobs:
           "
           python3 Ashare/event_dailybasic_fetch.py
 
-      - name: Ensure earnings-forecast cache (incremental over universe)
+      - name: Ensure earnings-forecast cache (freshness-aware over universe)
         env:
           TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
         run: |
           # forecast.csv (earliest pre-disclosure forecast per report period)
           # drives the earnings signals' direction mapping;
-          # ensure_forecast_cache fetches only symbols missing from the file
-          # and is persisted by the actions/cache step above.
+          # ensure_forecast_cache fetches symbols missing from the file and
+          # full-history re-pulls everything when the stored newest
+          # announcement goes stale (>6 days), so forecasts a covered symbol
+          # publishes later still reach their disclosure events.  Persisted
+          # by the actions/cache step above.
           python3 -c "
           import csv, sys
           sys.path.insert(0, '.')
