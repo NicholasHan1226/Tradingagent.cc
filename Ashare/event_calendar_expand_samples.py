@@ -83,10 +83,10 @@ def symbol_has_full_data(cache: Path, ts_code: str) -> bool:
     )
 
 
-def series_max_day(cache: Path, ts_code: str) -> str | None:
-    """Last ``trade_date`` stored in the symbol's daily bars shard."""
+def series_max_day(cache: Path, ts_code: str, prefix: str = "daily") -> str | None:
+    """Last ``trade_date`` stored in a per-symbol ``<prefix>_<stem>`` shard."""
 
-    path = cache / f"daily_{ts_code.replace('.', '')}.csv"
+    path = cache / f"{prefix}_{ts_code.replace('.', '')}.csv"
     if not path.exists():
         return None
     last: str | None = None
@@ -99,7 +99,11 @@ def series_max_day(cache: Path, ts_code: str) -> str | None:
 
 
 def series_is_fresh(
-    cache: Path, ts_code: str, today: str, max_age_days: int
+    cache: Path,
+    ts_code: str,
+    today: str,
+    max_age_days: int,
+    prefix: str = "daily",
 ) -> bool:
     """True when the shard exists and its last session is recent enough.
 
@@ -110,7 +114,7 @@ def series_is_fresh(
 
     from Ashare.event_calendar_fetch import _shift_date
 
-    last = series_max_day(cache, ts_code)
+    last = series_max_day(cache, ts_code, prefix=prefix)
     if last is None:
         return False
     return last >= _shift_date(today, -max_age_days)

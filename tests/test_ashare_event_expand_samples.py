@@ -54,6 +54,25 @@ class TestSeriesFreshness:
             tmp_path, "600001.SH", "20260812", max_age_days=6
         )
 
+    def test_prefix_targets_other_shard_families(self, tmp_path):
+        # The dailybasic fetcher reuses these helpers for its own shard
+        # family (#543): same stem layout, different file prefix.
+        _write_csv(
+            tmp_path / "dailybasic_600001SH.csv",
+            ["ts_code", "trade_date", "pe_ttm"],
+            [["600001.SH", "20260824", "9.5"]],
+        )
+        assert expand.series_max_day(
+            tmp_path, "600001.SH", prefix="dailybasic"
+        ) == "20260824"
+        assert expand.series_is_fresh(
+            tmp_path, "600001.SH", "20260825", max_age_days=6,
+            prefix="dailybasic",
+        )
+        assert not expand.series_is_fresh(
+            tmp_path, "600001.SH", "20260825", max_age_days=6, prefix="pe"
+        )
+
 
 class TestLockupMergeIntoSingleTable:
     def test_merges_into_share_float_csv_without_duplicates(

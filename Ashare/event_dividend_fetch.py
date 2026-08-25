@@ -45,7 +45,9 @@ if str(_REPO_ROOT) not in sys.path:
 # one 30-natural-day conditioning window so earliest entries see full
 # announcement coverage.
 DEFAULT_START = "20171101"
-DEFAULT_END = "20260825"
+DEFAULT_END = time.strftime("%Y%m%d")
+# Run-time today: a frozen end date silently stops the
+# window from ingesting new sessions.
 DIVIDEND_DIRNAME = "dividend_daily"
 MIN_FREE_BYTES = 2 * 1024**3  # abort below 2 GiB free on the cache volume
 FIELDS = [

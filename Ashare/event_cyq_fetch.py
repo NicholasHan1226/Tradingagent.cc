@@ -39,7 +39,9 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 DEFAULT_START = "20180101"
-DEFAULT_END = "20260824"
+DEFAULT_END = time.strftime("%Y%m%d")
+# Run-time today: a frozen end date silently stops the
+# window from ingesting new sessions.
 MIN_FREE_BYTES = 2 * 1024**3  # abort below 2 GiB free on the cache volume
 
 
