@@ -29,7 +29,10 @@ concurrency:
 jobs:
   track:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 90min absorbs the one-time top-1000 backfill (~800 new symbols across
+    # four data surfaces); steady-state weekly runs finish in ~15min.  Still
+    # a bounded weekly job (schedule contract test pins this ceiling).
+    timeout-minutes: 90
     env:
       RESEARCH_CACHE: /tmp/ashare_event_research
       RUNTIME_STATE: /tmp/ashare_tracker_state
@@ -63,23 +66,48 @@ jobs:
           # matching RESEARCH_CACHE above, and reuses cached files when present.
           python3 Ashare/event_calendar_fetch.py
 
-      - name: Ensure earnings-forecast cache (once, then reused)
+      - name: Backfill tracked-universe data (idempotent)
+        env:
+          TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
+        run: |
+          # The tracker runs on the top-1000 mainboard expansion universe.
+          # Each sub-step is idempotent and resumable over the persisted
+          # cache: bars/adjfactor/lockup rows for uncovered symbols, then
+          # share_float rows for priced symbols missing from the merged
+          # unlock table, then per-symbol daily_basic shards (the valuation
+          # label side table).  The first run after a universe expansion
+          # costs tens of minutes; steady-state weekly runs are no-ops.
+          python3 Ashare/event_calendar_expand_samples.py --limit 1000
+          python3 -c "
+          import sys
+          sys.path.insert(0, '.')
+          from pathlib import Path
+          from Ashare.event_paper_baseline_sim import refresh_share_float
+          n = refresh_share_float(Path('$RESEARCH_CACHE'))
+          print(f'share_float refreshed for {n} symbols')
+          "
+          python3 Ashare/event_dailybasic_fetch.py
+
+      - name: Ensure earnings-forecast cache (incremental over universe)
         env:
           TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
         run: |
           # forecast.csv (earliest pre-disclosure forecast per report period)
-          # is needed for the earnings signals; ensure_forecast_cache fetches
-          # per symbol only when the file is absent and is persisted by the
-          # actions/cache step above.
+          # drives the earnings signals' direction mapping;
+          # ensure_forecast_cache fetches only symbols missing from the file
+          # and is persisted by the actions/cache step above.
           python3 -c "
           import csv, sys
           sys.path.insert(0, '.')
           from pathlib import Path
           from Ashare.event_calendar_earnings_groups import ensure_forecast_cache
           cache = Path('$RESEARCH_CACHE')
-          with (cache / 'sample_symbols.csv').open(encoding='utf-8') as handle:
+          name = 'sample_symbols_expanded'
+          if not (cache / f'{name}.csv').exists():
+              name = 'sample_symbols'
+          with (cache / f'{name}.csv').open(encoding='utf-8') as handle:
               samples = {row['ts_code'] for row in csv.DictReader(handle)}
-          print(f'samples={len(samples)}')
+          print(f'universe={name} samples={len(samples)}')
           path = ensure_forecast_cache(cache, samples)
           print(f'forecast cache ready -> {path}')
           "
@@ -91,7 +119,8 @@ jobs:
             --cache "$RESEARCH_CACHE" \
             --journal "$RUNTIME_STATE/sample_journal.jsonl" \
             --since "${{ inputs.since || '20260401' }}" \
-            --signals lockup,earnings_pos,earnings_neg
+            --signals lockup,earnings_pos,earnings_neg \
+            --expanded
 
       - name: Archive tracker report and state
         if: always()

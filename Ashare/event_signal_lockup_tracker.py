@@ -420,6 +420,12 @@ class TrackerView:
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
     appended_records: list[dict] = field(default_factory=list)
+    # Universe self-description (audit trail): which symbol list the pass
+    # filtered on and how many symbols it held.  Every state JSON records
+    # both so rolling readouts taken across a universe change stay
+    # attributable to their composition.
+    samples_file: str = "sample_symbols"
+    universe_size: int = 0
 
 
 def build_tracker_view(
@@ -576,10 +582,18 @@ def run_tracker(
     as_of: datetime,
     signals: tuple[str, ...] = (LOCKUP_SIGNAL,),
     dry_run: bool = False,
+    samples_file: str = "sample_symbols",
 ) -> TrackerView:
-    """One full tracker pass; returns the view for reporting."""
+    """One full tracker pass; returns the view for reporting.
 
-    _fields, sym_rows = _read_csv(cache, "sample_symbols")
+    ``samples_file`` names the tracked universe inside ``cache``
+    (``sample_symbols`` = study baseline top-200; ``sample_symbols_expanded``
+    = top-1000 expansion written by ``event_calendar_expand_samples.py``).
+    Gate semantics are composition-invariant — every rolling comparison is
+    a bucket subset against the unfiltered baseline *within this universe*.
+    """
+
+    _fields, sym_rows = _read_csv(cache, samples_file)
     samples = {r["ts_code"] for r in sym_rows}
     entries: list = []
     ratio_by_event: dict[str, str] = {}
@@ -666,6 +680,8 @@ def run_tracker(
         journal, journal_path.parent / LEDGER_FILENAME, records
     )
     view.appended_records.extend(appended)
+    view.samples_file = samples_file
+    view.universe_size = len(samples)
     return view
 
 
@@ -2016,6 +2032,12 @@ def main() -> int:
     since_raw = _arg_value("--since") if "--since" in sys.argv else DEFAULT_SINCE
     signals_raw = _arg_value("--signals") if "--signals" in sys.argv else LOCKUP_SIGNAL
     dry_run = "--dry-run" in sys.argv
+    # --expanded tracks the top-1000 expansion universe instead of the
+    # study-baseline top-200 (same family switch as
+    # event_calendar_earnings_groups.py).
+    samples_file = (
+        "sample_symbols_expanded" if "--expanded" in sys.argv else "sample_symbols"
+    )
     as_of = datetime.now(timezone.utc)
     signals = parse_signals(signals_raw)
 
@@ -2026,6 +2048,7 @@ def main() -> int:
         as_of=as_of,
         signals=signals,
         dry_run=dry_run,
+        samples_file=samples_file,
     )
     print(render_report(view, since=_parse_day(since_raw), as_of=as_of, dry_run=dry_run))
     state_path = cache / "signal_tracker_state.json"
@@ -2035,6 +2058,8 @@ def main() -> int:
                 "research_only": True,
                 "batch_receipt_sha256": view.batch.batch_receipt_sha256,
                 "signals": list(view.signals),
+                "samples_file": view.samples_file,
+                "universe_size": view.universe_size,
                 "status_counts": view.status_counts,
                 "active": {k: len(b.active) for k, b in view.buckets.items()},
                 "labeled": {k: len(b.labeled) for k, b in view.buckets.items()},

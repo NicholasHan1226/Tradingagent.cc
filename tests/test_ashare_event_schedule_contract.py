@@ -26,6 +26,14 @@ def test_event_signal_tracker_schedule_is_bounded_weekly() -> None:
     assert '\n    - cron: "23 13 * * 1"' in workflow
     # Scheduled runs serialize; no overlapping provider sessions.
     assert "cancel-in-progress: false" in workflow
-    # Least privilege and a hard runtime ceiling.
+    # Least privilege and a hard runtime ceiling (90min absorbs the one-time
+    # top-1000 universe backfill; steady-state runs finish in ~15min).
     assert "permissions:\n  contents: read" in workflow
-    assert "timeout-minutes: 45" in workflow
+    assert "timeout-minutes: 90" in workflow
+
+    # The scheduled run tracks the expanded universe and its warm-up steps
+    # are all idempotent over the persisted cache.
+    assert "--expanded" in workflow
+    assert "event_calendar_expand_samples.py" in workflow
+    assert "refresh_share_float" in workflow
+    assert "event_dailybasic_fetch.py" in workflow
