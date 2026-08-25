@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import threading
+from time import monotonic as _monotonic
 from time import sleep as _sleep
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -60,6 +61,12 @@ MAX_MINUTE_FANOUT_WORKERS = 4
 # collector holds the SQLite authority lock. Keep this bounded so a stale
 # observation cannot be promoted by waiting indefinitely.
 MINUTE_QUERY_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0, 20.0)
+# Aggregate wall-clock budget for one sharded snapshot load (first read plus
+# replay across every shard).  Healthy loads finish in seconds; on a degraded
+# server the per-shard retry chains used to multiply past the systemd unit
+# budget and get killed mid-round (#297), so shards now stop starting new
+# read phases once this budget is gone and degrade to typed fanout failures.
+MINUTE_SNAPSHOT_LOAD_BUDGET_SECONDS = 180.0
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -80,11 +87,16 @@ class MinuteDataContractError(ValueError):
         self.failure_class = failure_class
 
 
+class MinuteSnapshotLoadBudgetExhausted(MinuteDataContractError):
+    """Raised when one snapshot load exceeds its wall-clock read budget."""
+
+
 _FAILURE_CLASSES = frozenset(
     {
         "CatalogContractError",
         "ContractViolation",
         "HTTPStatusError",
+        "MinuteSnapshotLoadBudgetExhausted",
         "PaginationContractError",
         "RuntimeGateConfigurationError",
         "SharedSignalsV1Error",
@@ -166,11 +178,18 @@ def _collect_minute_query_pages_with_retry(
     identity_fields: tuple[str, ...],
     max_pages: int,
     max_rows: int,
+    deadline: float | None = None,
 ) -> PagedQueryRun:
     """Read one query with bounded retry for transient TD API failures."""
 
     delays = (0.0, *MINUTE_QUERY_RETRY_DELAYS_SECONDS)
     for attempt, delay in enumerate(delays):
+        if deadline is not None and _monotonic() >= deadline:
+            raise MinuteSnapshotLoadBudgetExhausted(
+                "minute_snapshot_load_budget_exhausted",
+                failure_stage="query_request",
+                failure_class="MinuteSnapshotLoadBudgetExhausted",
+            )
         if delay:
             _sleep(delay)
         try:
@@ -1778,11 +1797,15 @@ class TradingDatasMinuteMarketDataPort:
         envelope_validator: Callable[[Any], object] | None,
         audit_ledger: MinuteEvidenceAuditLedger,
         allow_symbol_rejections: bool,
+        load_budget_seconds: float | None = None,
     ) -> MinuteBarSnapshot:
         """Read bounded shards in parallel and retain successful subsets."""
 
         if envelope_validator is not None:
             raise MinuteDataContractError("minute_fanout_receipt_proof_unsupported")
+        if load_budget_seconds is None:
+            load_budget_seconds = MINUTE_SNAPSHOT_LOAD_BUDGET_SECONDS
+        load_deadline = _monotonic() + load_budget_seconds
 
         # The production bearer transport is deliberately single-flight per
         # client. Keep the bounded fanout parallel, but give each executor
@@ -1834,6 +1857,7 @@ class TradingDatasMinuteMarketDataPort:
                     identity_fields=profile.identity_fields,
                     max_pages=shard_pages,
                     max_rows=len(symbols),
+                    deadline=load_deadline,
                 )
                 replay = _collect_minute_query_pages_with_retry(
                     client=shard_client,
@@ -1841,10 +1865,23 @@ class TradingDatasMinuteMarketDataPort:
                     identity_fields=profile.identity_fields,
                     max_pages=shard_pages,
                     max_rows=len(symbols),
+                    deadline=load_deadline,
                 )
                 return index, first, replay, None
             except PaginationContractError:
                 raise
+            except MinuteSnapshotLoadBudgetExhausted as exc:
+                # A spent load budget degrades the shard exactly like a
+                # failed request: partial snapshots keep their successful
+                # subsets and an all-exhausted load surfaces this typed
+                # reason instead of burning the unit's systemd budget.
+                return index, None, None, {
+                    "shard_index": index,
+                    "symbol_count": len(symbols),
+                    "reason_code": exc.reason_code,
+                    "failure_stage": exc.failure_stage,
+                    "failure_class": exc.failure_class,
+                }
             except (SharedSignalsV1Error, OSError) as exc:
                 marked = _marked_request_failure(exc, phase="query")
                 return index, None, None, {
@@ -1995,6 +2032,7 @@ class TradingDatasMinuteMarketDataPort:
         include_receipt_proofs: bool = False,
         envelope_validator: Callable[[Any], object] | None = None,
         allow_symbol_rejections: bool = False,
+        load_budget_seconds: float | None = None,
     ) -> MinuteBarSnapshot:
         audit_count_before = len(audit_ledger.records())
         runtime_catalog_version = "unobserved"
@@ -2054,6 +2092,7 @@ class TradingDatasMinuteMarketDataPort:
                     envelope_validator=envelope_validator,
                     audit_ledger=audit_ledger,
                     allow_symbol_rejections=allow_symbol_rejections,
+                    load_budget_seconds=load_budget_seconds,
                 )
             request = QueryRequest(
                 dataset_id=profile.dataset_id,

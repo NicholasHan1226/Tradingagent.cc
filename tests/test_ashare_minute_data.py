@@ -1749,3 +1749,117 @@ def test_provider_native_quicksync_shape_requires_matching_reference_fact() -> N
         )
 
     assert audit.records()[0].reason_code == "minute_reference_fact_missing"
+
+
+def test_minute_port_shard_load_budget_stops_reads_before_requests() -> None:
+    """A spent load budget fails typed before any provider request (#297).
+
+    On a degraded server the per-shard retry chains used to multiply past
+    the systemd unit budget; the aggregate budget now stops shards from
+    starting new read phases and degrades them into typed fanout failures.
+    A zero budget makes the deadline deterministically expired before the
+    first attempt, so no query may reach the transport at all.
+    """
+
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    transport = _Transport(catalog_row=catalog_row)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+
+    with pytest.raises(
+        MinuteDataContractError,
+        match="minute_snapshot_load_budget_exhausted",
+    ):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={
+                "ts_code": {"in": list(symbols)},
+                "bar_time": {"eq": "20260727 09:40:00"},
+            },
+            decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=MinuteEvidenceAuditLedger(),
+            evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+            load_budget_seconds=0.0,
+        )
+
+    assert all(call["method"] == "GET" for call in transport.calls)
+
+
+def test_minute_port_partial_budget_failure_keeps_typed_reason() -> None:
+    """An exhausted shard degrades like a failed request, not a crash."""
+
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class BudgetSplitTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            if requested and requested[0] != "000001.SZ":
+                return HTTPResponse(
+                    503,
+                    {"error": {"code": "service_unavailable"}},
+                )
+            rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"budget-split-{len(self.calls)}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = BudgetSplitTransport(catalog_row=catalog_row)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    original_collect = minute_data_module._collect_minute_query_pages_with_retry
+
+    def budget_limited_collect(**kwargs: Any):
+        if kwargs.get("deadline") is not None and kwargs["request"].filters[
+            "ts_code"
+        ]["in"][0] != "000001.SZ":
+            raise minute_data_module.MinuteSnapshotLoadBudgetExhausted(
+                "minute_snapshot_load_budget_exhausted",
+                failure_stage="query_request",
+                failure_class="MinuteSnapshotLoadBudgetExhausted",
+            )
+        return original_collect(**kwargs)
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            minute_data_module,
+            "_collect_minute_query_pages_with_retry",
+            budget_limited_collect,
+        )
+        snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+            profile=profile,
+            filters={
+                "ts_code": {"in": list(symbols)},
+                "bar_time": {"eq": "20260727 09:40:00"},
+            },
+            decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+            trading_dates=frozenset({date(2026, 7, 27)}),
+            audit_ledger=MinuteEvidenceAuditLedger(),
+            evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+            load_budget_seconds=180.0,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert snapshot.row_count == 100
+    assert snapshot.fanout_failures[0]["reason_code"] == (
+        "minute_snapshot_load_budget_exhausted"
+    )
+    assert snapshot.fanout_failures[0]["failure_class"] == (
+        "MinuteSnapshotLoadBudgetExhausted"
+    )
