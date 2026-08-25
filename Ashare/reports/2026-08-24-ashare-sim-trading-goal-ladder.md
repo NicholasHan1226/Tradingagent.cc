@@ -846,6 +846,90 @@ rule 149/69/45/69/25），探针→引擎零漂移再次成立；边界含闭用
 
 **扩容后续修复（同日，#540 合入后审计发现两个 CI 生产面正确性漏洞）**：① `event_calendar_fetch.py` 每次运行把 `share_float.csv` **盲覆写**成本轮 top-200 样本的解禁行——定时档每周跑一次意味着扩容宇宙 ~800 只的解禁历史会被静默截断（#423 记忆里「曾只含 191 只」正是同一机制的历史显形）；② 扩样脚本「已存在文件永不重写」语义使扩容符号的 bars/dailybasic 首拉后永久冻结，前瞻窗口结局无法闭合。修复：fetch 末段改为按批次身份键 (ts_code, ann_date, float_date, holder_name, share_type) **合并去重**写入；扩样脚本加新鲜度门（分片缺失或最后会话早于 `--max-age-days`（默认 6，周节律下每次定时档都刷新、同周重复运行跳过）即全量重拉），且每轮对全部 ranked 符号重拉解禁全史合并入库（新解锁公告按符号到达、与 bar 陈旧无关）；`share_float.csv` 定为唯一解禁表（tracker 实际读取面），`share_float_expanded.csv` 停写退役。验证：新增单测 5 条（新鲜度门×2、解禁合并×2、fetch 防截断×1）共 110 全绿；实弹探针在真实表副本上确认重复键吸收与新行追加，顺带发现并将在下次真实运行中清除历史双写残留的 14 行重复。回滚：revert 单 PR。
 
+## 因子与策略库记分板（2026-08-25 晨立，对照扩充目标）
+
+Nicholas 目标（2026-08-25）：A股+加密实际模拟策略 5–8 个、因子 40–60 个、
+备选考核因子 150 个，且因子和策略有效且正收益。本节是该目标的唯一汇总记账
+入口，逐条明细台账见 `reports/factor-candidate-ledger.md`（状态机与升格规则
+在台账头部）。
+
+### 计数口径（冻结，防注水）
+
+- **已考核因子**：一个具名条件标签桶——有数据来源、冻结边界、n≥30 的净收益
+  读数已入档。同桶 all/rule 两臂视图计 1；纯缺席参照桶（no_records 等）不计，
+  例外：面板判定实质依赖它时计入（holdertrade no_records=排除屏本体）。
+- **正收益因子**：已考核因子中历史净均值>0 且胜率>0.5 者。in-sample 描述性
+  身份，不等于部署资格；FAIL/毒性桶计入已考核但不计正收益。
+- **备选考核因子**：已立项未终局者——预注册冻结待读数、观察名单滚动验证中、
+  反向候选队列待独立预注册、数据面就绪待立项假设。逐条登记台账。
+- **有效正收益策略**：槽位制纸面口径月均净>0 且风险形态不劣于基线的组合级
+  规则形态。FAIL 出局的形态保留记录不计达标数。
+- 一切数字 research_only / not_promotion_evidence；「正收益」指历史或滚动净
+  读数，非实盘承诺。
+
+### 当前计数（2026-08-25 晨）
+
+| 维度 | 现状 | 目标 | 判定 |
+|---|---|---|---|
+| 已考核因子 | **51**（另有 n≥30 联合单元格 3 项记描述性） | 40–60 | **区间内达标** |
+| 其中正收益 | ≈41 | —— | 数量足，全部 in-sample 描述性身份 |
+| 备选考核因子 | 23 | 150 | 缺口 ≈127 → 台账生成管道逐班 ≥5 条填充 |
+| 有效正收益策略 | **1**（lockup rule 臂形态） | 5–8 | **最大缺口**，路径见下 |
+
+### 已考核因子清单（51 项按族，净 bps/胜率为信号层代表读数）
+
+**A. 解禁供给核心层（7）**：float_ratio 三分位 底 +21.2 / 中 / 顶 +119.6；
+supply_over_float small +69.7(n742) / mid +63.7(n128) / large +87.2(n165)
+（#28 FAIL 替代变量，读数在档）；弱市 regime 二态（rule 臂系统读数）。
+
+**B. 事前市场微观结构层（11）**：turnover shrink +99.9 / normal +71.7；
+chips underwater +49.8(n807) / mid +152.4(n195)；margin 自身扩张 +107 /
+中性 +85 / 去杠杆 +37；moneyflow outflow +43 / balanced +101 / inflow +93；
+blocktrade 无打印 +82.8。
+
+**C. 公告流条件层面板家族（33）**：holdertrade net_sell −131.1(n62) /
+no_records +84.7(n953)［排除屏本体例外计入］；repurchase active +55.9(n193)
+/ done +64.5(n65) / no_records +76.3(n777)；pledge high +39.7(n180) /
+mid +104.2(n307) / low −7.6(n257) / no_snapshot +127.3(n291)；toplist
+sell_dev +70.3(n90) / rise_dev −182.1(n37) / no_listing +82.8(n904)；
+top_inst inst_netbuy −115.6(n34) / inst_netsell +193.2(n46) /
+listed_no_inst −130.9(n50) / no_listing +83.8(n905)；holdernum contract
++68.2(n262) / stable +92.1(n435) / expand +48.2(n338)；dividend cash_only
++49.7 / no_dist +93.5；r63 runup_pos(胜率 .452 全场最差) / drift_down /
+deep_dd +143.0(.563 全场最佳)；share_type placement +87.6(.535) / insider
++38.0(.455) / incentive(rule +189.4/.623 n151)；valuation low_le25
++131.1(.549) / mid +28.8(.493) / high_ge75 +13.8(.474)；macro ante
++180.1(.562 n121) / same_day +2.0(.434 n106) / outside +71.9(.521 n752)。
+
+联合单元格（描述性，不占因子数）：deleverage×shrink +325.4(n30)、
+expansion×mid +334.8(n66)、expansion×underwater −110.3(n187)。
+
+### 策略账本
+
+1. **lockup rule（弱市×非3–5%带，槽位制）**：月均 +0.49%/回撤 −10.6%/胜率
+   .584，L1 在跟——唯一有效正收益形态。
+2. lockup all（after 口径 +0.67%）：测量尺参照；裸信号胜率 .512 不可裸交易。
+3. earnings_neg 单族：组合口径不可部署（回撤 −24%），历史超额读数不迁移。
+4. 双族 naive 合并：总净 +2.9pp 回撤翻倍，分散未证实。
+5. 调度变体 9 形态：无一优于基线（reserve20 微调候选在册）。
+
+### 缺口路径（通往 5–8 策略 / 150 候选）
+
+1. **前瞻门两桶**（valuation low_le25、holdertype incentive，entry≥20260822）
+   滚动 n≥30 首读→转换线（+20bps/+1pp 对同期未滤滚动基线）达标即产生第
+   2/3 个可部署形态候选；跟踪宇宙已扩容 1000 提速进水 ≈5×。
+2. **观察名单 6 项滚动裁决**（absorption balanced、macro ante、pledge high、
+   holdernum expand、repurchase active、holdertrade 排除屏）→ 各自独立预注册
+   后可作过滤/倾斜/叠加形态。
+3. **面板 #18 register 读数**（预注册 #541 审查中、引擎就绪）→ 第 18 因子族
+   四桶入账。
+4. **数据面新轴立项**：limit_list_d 日内结构（封板时长/open_times）、cyq
+   winner_rate 分布、cb_share 公告流、major_news resource_budget、crypto
+   情绪端点（lane 冻结解除后）——逐条在台账 seeded 行排队。
+5. **候选生成规则**（防注水三源）：每班从 (a) 既有面板降级行/联合单元格升格
+   评估 (b) 新数据轴探针 (c) 滚动面接线扩展 补 ≥5 条 seeded；同信息再参数化
+   不计新条目；无判定路径不入册（北向/停牌判例）。
+
 ## 边界
 
 LLM 与本程序无候选、排名、仓位、风险、订单或账户 authority；晋级模拟盘另走
