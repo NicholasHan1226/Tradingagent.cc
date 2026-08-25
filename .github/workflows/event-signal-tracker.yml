@@ -63,8 +63,12 @@ jobs:
           TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
         run: |
           # event_calendar_fetch writes CACHE_DIR=/tmp/ashare_event_research,
-          # matching RESEARCH_CACHE above, and reuses cached files when present.
-          python3 Ashare/event_calendar_fetch.py
+          # matching RESEARCH_CACHE above.  --refresh-disclosure sweeps every
+          # quarter/year report period exactly (~40 calls): reuse-if-present
+          # would freeze forward earnings windows at the week the cache was
+          # built, and year-sliced range pulls silently capture ONLY annual
+          # periods on this endpoint — both starve the earnings signals.
+          python3 Ashare/event_calendar_fetch.py --refresh-disclosure
 
       - name: Backfill tracked-universe data (idempotent)
         env:

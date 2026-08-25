@@ -12,7 +12,7 @@ never written to disk, logs, or the cache.
 
 Usage::
 
-    python3 Ashare/event_calendar_fetch.py [--max-samples 200]
+    python3 Ashare/event_calendar_fetch.py [--max-samples 200] [--refresh-disclosure]
 """
 
 from __future__ import annotations
@@ -171,6 +171,87 @@ def is_mainboard(ts_code: str) -> bool:
     )
 
 
+def _disclosure_period_ends(start: str, end: str) -> list[str]:
+    """Report-period end dates (YYYYMMDD quarter/year closes) in [start, end]."""
+
+    out: list[str] = []
+    for year in range(int(start[:4]), int(end[:4]) + 1):
+        for tail in ("0331", "0630", "0930", "1231"):
+            day = f"{year}{tail}"
+            if start <= day <= end:
+                out.append(day)
+    return out
+
+
+# Appointments are published weeks ahead of each period's disclosure season;
+# a ~13-month horizon keeps next year's Q1/Q2 schedules reachable.
+DISCLOSURE_HORIZON_DAYS = 400
+
+
+def refresh_disclosure(force: bool = False) -> tuple[list[str], list[list]]:
+    """Load — or rebuild — the full-market disclosure calendar, overwriting.
+
+    Two silent starvation modes make naive paths unusable here:
+
+    * Reuse-if-present under weekly CI freezes the calendar at whatever week
+      actions/cache last saved it — new appointments and reschedules stop
+      landing while the tracker keeps reading stale windows.
+    * ``fetch_ranged``'s year slicing silently captures ONLY annual-report
+      periods on this endpoint: the API matches the report period itself,
+      and a [Y0101..Y1231] slice never asks for Q1/H1/Q3 closes.  Months of
+      "successful" pulls produced an annual-only calendar whose next inflow
+      was a year away.
+
+    So ``force=True`` sweeps EVERY quarter/year period end from STUDY_START
+    through a ~13-month future horizon with exact ``end_date`` queries
+    (empirically the only shape this endpoint honours), then upserts on
+    (ts_code, end_date): a newer announcement — including a rescheduled
+    appointment — replaces the stored row; cached rows outside the sweep
+    survive untouched.
+    """
+
+    if not force:
+        cached = _load_cached_csv("disclosure")
+        if cached is not None:
+            print(f"disclosure_date reused rows={len(cached[1])}")
+            return cached
+
+    today = time.strftime("%Y%m%d")
+    horizon = _shift_date(today, DISCLOSURE_HORIZON_DAYS)
+    periods = _disclosure_period_ends(STUDY_START, horizon)
+    canonical: list[str] | None = None
+    merged: dict[tuple[str, str], list] = {}
+    seeded = _load_cached_csv("disclosure")
+    if seeded is not None:
+        canonical, rows = seeded
+        t_i, e_i = canonical.index("ts_code"), canonical.index("end_date")
+        for row in rows:
+            merged[(row[t_i], row[e_i])] = row
+    for period in periods:
+        fields, rows = call_api("disclosure_date", {"end_date": period})
+        time.sleep(REQUEST_INTERVAL_SECONDS)
+        if canonical is None:
+            canonical = fields
+        elif fields != canonical:
+            raise FetchError("disclosure_schema_drift")
+        t_i = canonical.index("ts_code")
+        e_i = canonical.index("end_date")
+        a_i = canonical.index("ann_date")
+        for row in rows:
+            key = (row[t_i], row[e_i])
+            old = merged.get(key)
+            if old is None or row[a_i] >= old[a_i]:
+                merged[key] = row
+    if canonical is None:
+        raise FetchError("disclosure_empty_sweep")
+    out_rows = list(merged.values())
+    print(
+        f"disclosure_date repulled periods={len(periods)} rows={len(out_rows)} "
+        f"-> {save_csv('disclosure', canonical, out_rows)}"
+    )
+    return canonical, out_rows
+
+
 def _load_cached_csv(name: str) -> tuple[list[str], list[list]] | None:
     path = CACHE_DIR / f"{name}.csv"
     if not path.exists():
@@ -245,6 +326,11 @@ def merge_share_float_rows(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-samples", type=int, default=200)
+    parser.add_argument(
+        "--refresh-disclosure",
+        action="store_true",
+        help="Re-pull the disclosure calendar even when a cached copy exists.",
+    )
     args = parser.parse_args()
 
     started = time.time()
@@ -276,14 +362,8 @@ def main() -> int:
     # 3. Earnings disclosure appointments (hard dates, full history).
     #    The endpoint's date window filters the report period (end_date),
     #    so ann_date values sit near each period's disclosure season, not
-    #    at the window start.  Reuse a previous fetch when present.
-    cached = _load_cached_csv("disclosure")
-    if cached is not None:
-        fields, rows = cached
-        print(f"disclosure_date reused rows={len(rows)}")
-    else:
-        fields, rows = fetch_ranged("disclosure_date", STUDY_START, STUDY_END)
-        print(f"disclosure_date rows={len(rows)} -> {save_csv('disclosure', fields, rows)}")
+    #    at the window start.  Reuse a previous fetch unless --refresh-disclosure.
+    fields, rows = refresh_disclosure(force=args.refresh_disclosure)
     time.sleep(REQUEST_INTERVAL_SECONDS)
 
     # 4. Pick mainboard sample symbols from disclosure history.
