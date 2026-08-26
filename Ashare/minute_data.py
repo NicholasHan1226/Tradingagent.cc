@@ -67,6 +67,16 @@ MINUTE_QUERY_RETRY_DELAYS_SECONDS = (2.0, 5.0, 10.0, 20.0)
 # budget and get killed mid-round (#297), so shards now stop starting new
 # read phases once this budget is gone and degrade to typed fanout failures.
 MINUTE_SNAPSHOT_LOAD_BUDGET_SECONDS = 180.0
+# Active read-model writes (receipt commits, bar appends) legitimately land
+# between the two bounded reads of a same-observation pair during trading
+# hours (#589): rt_min receipts commit continuously, so a single naive pair
+# is near-deterministically mismatched intraday. Re-collect the pair until
+# both reads agree; an unconverged shard degrades through the typed fanout
+# failure lane instead of failing the whole snapshot. The accepted pair
+# satisfies the identical same-observation contract - fail-closed semantics
+# unchanged.
+MINUTE_STABLE_PAIR_ATTEMPTS = 4
+MINUTE_STABLE_PAIR_RETRY_DELAYS_SECONDS = (0.5, 1.5, 3.0)
 
 _SHA256_HEX = frozenset("0123456789abcdef")
 
@@ -204,6 +214,59 @@ def _collect_minute_query_pages_with_retry(
             if attempt == len(delays) - 1 or not _is_retryable_minute_query_error(exc):
                 raise
     raise AssertionError("minute query retry loop exhausted without a result")
+
+
+def _collect_stable_minute_pair(
+    *,
+    client: SharedSignalsV1Client,
+    request: QueryRequest,
+    identity_fields: tuple[str, ...],
+    max_pages: int,
+    max_rows: int,
+    deadline: float | None = None,
+) -> tuple[PagedQueryRun, PagedQueryRun]:
+    """Collect a read pair whose two bounded reads agree semantically.
+
+    Active read-model writes land between the two reads of a pair during
+    trading hours (#589), so a naive first+replay collection is
+    near-deterministically mismatched intraday even though each read is
+    individually consistent. Re-collecting the pair bounds the wait for a
+    stable observation; an unconverged read surfaces through the typed
+    budget-exhausted lane and degrades like any other failed shard. The
+    accepted pair satisfies exactly the same same-observation contract as
+    before - fail-closed semantics unchanged.
+    """
+
+    delays = (0.0, *MINUTE_STABLE_PAIR_RETRY_DELAYS_SECONDS)
+    for attempt, delay in enumerate(delays[:MINUTE_STABLE_PAIR_ATTEMPTS]):
+        if delay:
+            _sleep(delay)
+        first = _collect_minute_query_pages_with_retry(
+            client=client,
+            request=request,
+            identity_fields=identity_fields,
+            max_pages=max_pages,
+            max_rows=max_rows,
+            deadline=deadline,
+        )
+        replay = _collect_minute_query_pages_with_retry(
+            client=client,
+            request=request,
+            identity_fields=identity_fields,
+            max_pages=max_pages,
+            max_rows=max_rows,
+            deadline=deadline,
+        )
+        if (
+            first.semantic_sha256 == replay.semantic_sha256
+            and first.semantic_trace_sha256 == replay.semantic_trace_sha256
+        ):
+            return first, replay
+    raise MinuteSnapshotLoadBudgetExhausted(
+        "minute_stable_pair_unconverged",
+        failure_stage="query_request",
+        failure_class="MinuteSnapshotLoadBudgetExhausted",
+    )
 
 
 def _delayed_paper_latency_limit() -> timedelta:
@@ -1851,15 +1914,7 @@ class TradingDatasMinuteMarketDataPort:
                 include_receipt_proofs=False,
             )
             try:
-                first = _collect_minute_query_pages_with_retry(
-                    client=shard_client,
-                    request=request,
-                    identity_fields=profile.identity_fields,
-                    max_pages=shard_pages,
-                    max_rows=len(symbols),
-                    deadline=load_deadline,
-                )
-                replay = _collect_minute_query_pages_with_retry(
+                first, replay = _collect_stable_minute_pair(
                     client=shard_client,
                     request=request,
                     identity_fields=profile.identity_fields,
@@ -2104,14 +2159,7 @@ class TradingDatasMinuteMarketDataPort:
                 include_receipt_proofs=include_receipt_proofs,
             )
             try:
-                first = _collect_minute_query_pages_with_retry(
-                    client=self._client,
-                    request=request,
-                    identity_fields=profile.identity_fields,
-                    max_pages=profile.max_pages,
-                    max_rows=profile.max_rows,
-                )
-                replay = _collect_minute_query_pages_with_retry(
+                first, replay = _collect_stable_minute_pair(
                     client=self._client,
                     request=request,
                     identity_fields=profile.identity_fields,

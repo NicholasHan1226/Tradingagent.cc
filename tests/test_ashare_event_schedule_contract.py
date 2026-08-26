@@ -37,6 +37,23 @@ def test_event_signal_tracker_schedule_is_bounded_weekly() -> None:
     assert "event_calendar_expand_samples.py" in workflow
     assert "refresh_share_float" in workflow
     assert "event_dailybasic_fetch.py" in workflow
+    # macro + holdernumber keep two already-wired label families from
+    # silently going unlabeled on CI (their cache files were previously
+    # only built by local one-off sweeps).
+    assert "event_macro_fetch.py" in workflow
+    assert "event_holdernumber_fetch.py" in workflow
+    # The expensive label-family backfills (market rosters incl.
+    # holdertrade, pledge, repurchase) must stay dispatch-only so a
+    # first-ever sweep can't starve the scheduled tracker of its runtime.
+    assert "Deep-backfill label-family data" in workflow
+    deep = workflow.split("Deep-backfill label-family data")[1]
+    for marker in (
+        "if: github.event_name == 'workflow_dispatch'",
+        "event_market_lists_fetch.py",
+        "event_pledge_fetch.py",
+        "event_repurchase_fetch.py",
+    ):
+        assert marker in deep
 
     # A timeout must not discard the backfill: actions/cache's post step is
     # success-only, so an explicit cancel-safe save persists whatever reached

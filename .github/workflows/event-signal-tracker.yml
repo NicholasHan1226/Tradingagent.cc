@@ -94,6 +94,28 @@ jobs:
           print(f'share_float refreshed for {n} symbols')
           "
           python3 Ashare/event_dailybasic_fetch.py
+          python3 Ashare/event_macro_fetch.py --refresh
+          python3 Ashare/event_holdernumber_fetch.py
+
+      - name: Deep-backfill label-family data (dispatch-only)
+        # The pledge, holdertrade(+suspend+limitlist) and repurchase label
+        # families are wired into the tracker but their cache files were
+        # only ever built by local one-off sweeps, so those rolling
+        # readouts never accumulated on CI.  A first full sweep is far too
+        # expensive for the weekly schedule (~7k calls: per-day all-market
+        # rosters since 2018 + per-symbol pledge history + 104 monthly
+        # repurchase pulls), so this step only runs on manual
+        # workflow_dispatch: repeated dispatches converge via
+        # skip-if-present resume (the explicit cancel-safe cache save below
+        # keeps partial progress), while the scheduled run stays light.
+        # Steady state costs near zero — new days/symbols/months only.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
+        run: |
+          python3 Ashare/event_market_lists_fetch.py --delay 0.2
+          python3 Ashare/event_pledge_fetch.py --delay 0.2
+          python3 Ashare/event_repurchase_fetch.py
 
       - name: Ensure earnings-forecast cache (freshness-aware over universe)
         env:
