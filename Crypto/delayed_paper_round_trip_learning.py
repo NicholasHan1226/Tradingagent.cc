@@ -40,7 +40,13 @@ ROUND_TRIP_LEARNING_CHECKPOINT_CONTRACT = (
     "tradingagent.crypto.round_trip_learning_checkpoint.v1"
 )
 ROUND_TRIP_LEARNING_SCRUB_CONTRACT = "tradingagent.crypto.round_trip_learning_scrub.v1"
+ROUND_TRIP_LEARNING_INVENTORY_CACHE_CONTRACT = (
+    "tradingagent.crypto.round_trip_learning_inventory_cache.v1"
+)
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+# The suffix cache stays well below _MAX_FILE_BYTES; past this size the full
+# scan fallback simply runs without caching instead of risking parse limits.
+_INVENTORY_CACHE_MAX_IDS = 30000
 _SYMBOLS = ("BTCUSDT", "ETHUSDT")
 ROUND_TRIP_LEARNING_FULL_SCRUB_MAX_SECONDS = 90.0
 # The production incremental oneshot has a 45 second systemd start timeout.
@@ -426,6 +432,105 @@ def _completion_inventory(
     return ids
 
 
+def _inventory_cache_path(evolution: Path) -> Path:
+    return evolution / "inventory_cache.json"
+
+
+def _load_inventory_cache_ids(evolution: Path) -> list[str] | None:
+    """Return the persisted ordered id cache, or ``None`` when unusable.
+
+    The cache is a pure accelerator: every caller must treat ``None`` as
+    "run the full scan", so correctness never depends on this file.
+    """
+
+    path = _inventory_cache_path(evolution)
+    if not path.exists() or path.is_symlink():
+        return None
+    try:
+        row = _parse_canonical(path, reason="round_trip_learning_state_invalid")
+    except CryptoRoundTripLearningError:
+        return None
+    material = dict(row)
+    claimed = material.pop("inventory_cache_sha256", None)
+    ids = row.get("inventory_ids")
+    if (
+        claimed != _sha256(material)
+        or row.get("contract") != ROUND_TRIP_LEARNING_INVENTORY_CACHE_CONTRACT
+        or not isinstance(ids, list)
+        or any(not isinstance(item, str) or not item for item in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        return None
+    return ids
+
+
+def _store_inventory_cache(evolution: Path, ids: list[str]) -> None:
+    """Persist the ordered id list; a cache write failure is never fatal."""
+
+    if len(ids) > _INVENTORY_CACHE_MAX_IDS:
+        return
+    payload: dict[str, Any] = {
+        "contract": ROUND_TRIP_LEARNING_INVENTORY_CACHE_CONTRACT,
+        "inventory_ids": list(ids),
+    }
+    payload["inventory_cache_sha256"] = _sha256(payload)
+    try:
+        _write_state(_inventory_cache_path(evolution), payload)
+    except CryptoRoundTripLearningError:
+        return
+
+
+def _completion_inventory_cached(
+    store: CryptoDelayedPaperObservationStore,
+    checkpoint: Mapping[str, Any],
+    core_state: Mapping[str, Any],
+    *,
+    evolution: Path,
+    deadline: float,
+) -> list[str] | None:
+    """Ordered completion ids via the suffix cache when possible.
+
+    Steady state appends one completion per five-minute slot, so re-reading
+    every historical record each run made the incremental cost O(history)
+    while processing O(new) records.  The cache shortens that to loading
+    only the appended suffix; any structural surprise (missing cache,
+    shrinkage, out-of-order arrival) falls back to the full-scan inventory,
+    which rebuilds the cache.
+    """
+
+    try:
+        names = {path.stem for path in store.completions_dir.glob("*.json")}
+        cached = _load_inventory_cache_ids(evolution)
+        if cached and len(cached) < len(names) and set(cached) <= names:
+            appended: list[tuple[Any, str]] = []
+            for stem in sorted(names - set(cached)):
+                if monotonic() >= deadline:
+                    return None
+                source = _source_record(store, stem, strict_ledger_membership=True)
+                appended.append(
+                    (_market_slot(source["observation"].get("market_slot")), stem)
+                )
+            appended.sort()
+            tail_source = _source_record(
+                store, cached[-1], strict_ledger_membership=True
+            )
+            tail_slot = _market_slot(tail_source["observation"].get("market_slot"))
+            if appended[0][0] >= tail_slot:
+                ids = [*cached, *(stem for _, stem in appended)]
+                if (
+                    len(ids) == int(checkpoint.get("completion_count") or -1)
+                    and checkpoint.get("completion_count")
+                    == checkpoint.get("observation_count")
+                    and ids[-1] == core_state.get("latest_observation_id")
+                ):
+                    return ids
+    except (AttributeError, OSError, CryptoRoundTripLearningError):
+        # The cache is advisory; any surprise falls through to the enforced
+        # full-scan inventory below.
+        pass
+    return _completion_inventory(store, checkpoint, core_state, deadline=deadline)
+
+
 def _projection(
     source: Mapping[str, Any], *, legacy_manual_gate: bool = False
 ) -> dict[str, dict[str, Any]]:
@@ -796,8 +901,8 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
                     "projected_completion_count": projected,
                 },
             )
-        completed = _completion_inventory(
-            store, checkpoint, core_state, deadline=deadline
+        completed = _completion_inventory_cached(
+            store, checkpoint, core_state, evolution=evolution, deadline=deadline
         )
         if completed is None:
             return _result(
@@ -808,6 +913,7 @@ def run_crypto_delayed_paper_round_trip_learning_incremental(
                     "projected_completion_count": projected,
                 },
             )
+        _store_inventory_cache(evolution, completed)
         if completed[-1] != latest_observation_id:
             raise CryptoRoundTripLearningError("round_trip_learning_core_inventory_invalid")
         # Incremental work trusts the already-validated checkpoint chain and
@@ -957,6 +1063,8 @@ def run_crypto_delayed_paper_round_trip_learning_full_scrub(
             recovered.append(observation_id)
         state = _state_payload(checkpoints, scrubbed_count=len(checkpoints))
         _write_state(evolution / "worker_state.json", state)
+        # The verified scrub inventory doubles as the suffix cache seed.
+        _store_inventory_cache(evolution, list(completed))
         scrub = {
             "contract": ROUND_TRIP_LEARNING_SCRUB_CONTRACT,
             "completion_count": len(completed),
