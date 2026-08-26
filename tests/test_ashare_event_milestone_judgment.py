@@ -7,6 +7,7 @@ import unittest
 from Ashare.event_milestone_judgment import (
     MilestoneJudgmentError,
     dedupe_samples,
+    descriptive_profile,
     judge,
     rule_arm_sample,
     samples_for_preset,
@@ -159,6 +160,21 @@ class DedupeSamplesTest(unittest.TestCase):
         self.assertEqual(len(picked), 2)
         result = judge(picked, gate_n=2, cost_bps=15.0)
         self.assertEqual(result["n"], 2)
+
+
+class DescriptiveProfileTest(unittest.TestCase):
+    def test_month_cells_sorted_and_netted(self) -> None:
+        rows = [
+            _sample("2026-04-02", 115.0),   # net +100
+            _sample("2026-04-20", 215.0),   # net +200
+            _sample("2026-07-06", -85.0),   # net -100
+        ]
+        cells = descriptive_profile(rows, cost_bps=15.0)
+        self.assertEqual([c["month"] for c in cells], ["2026-04", "2026-07"])
+        self.assertEqual(cells[0], {"month": "2026-04", "n": 2,
+                                    "mean_net_bps": 150.0, "win_net": 1.0})
+        self.assertEqual(cells[1]["mean_net_bps"], -100.0)
+        self.assertEqual(cells[1]["win_net"], 0.0)
 
 
 class SamplesForPresetTest(unittest.TestCase):
