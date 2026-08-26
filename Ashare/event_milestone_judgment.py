@@ -115,6 +115,35 @@ def dedupe_samples(samples: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+def descriptive_profile(
+    samples: list[dict], cost_bps: float = 15.0
+) -> list[dict]:
+    """Month-bucket descriptive cells over the (unique) sample series.
+
+    Interpretation aid for the frozen-criteria verdicts (#583 matrix:
+    e.g. a KEEP verdict on earnings_pos should be checked for early-year
+    concentration before being read as live drift).  Strictly
+    non-gating: nothing here enters keep/fail/gray, and month cells are
+    never promoted to decision inputs.
+    """
+
+    buckets: dict[str, list[float]] = {}
+    for s in sorted(samples, key=lambda x: str(x.get("event_date", ""))):
+        month = str(s.get("event_date", ""))[:7]
+        buckets.setdefault(month, []).append(
+            float(s["post_return_bps"]) - cost_bps
+        )
+    return [
+        {
+            "month": m,
+            "n": len(v),
+            "mean_net_bps": round(statistics.fmean(v), 1),
+            "win_net": round(sum(1 for x in v if x > 0) / len(v), 3),
+        }
+        for m, v in sorted(buckets.items())
+    ]
+
+
 def _half_stats(net: list[float]) -> dict:
     if not net:
         return {"n": 0, "mean_net_bps": None}
@@ -234,6 +263,11 @@ def main() -> int:
     )
     parser.add_argument("--gate-n", type=int, default=None)
     parser.add_argument("--cost-bps", type=float, default=15.0)
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="append descriptive month-bucket cells (non-gating aid)",
+    )
     args = parser.parse_args()
 
     state = json.loads(args.state.read_text(encoding="utf-8"))
@@ -265,6 +299,13 @@ def main() -> int:
         f"近段 n={sh['n']} {s_txt}bps 一致={result['halves_consistent']}"
     )
     print(json.dumps(result, ensure_ascii=False))
+    if args.profile:
+        print("- 月度画像（描述性解读辅助，不参与判定；#583 矩阵）:")
+        for cell in descriptive_profile(samples, cost_bps=args.cost_bps):
+            print(
+                f"  · {cell['month']} n={cell['n']:>3} "
+                f"净均 {cell['mean_net_bps']:+7.1f}bps 胜率 {cell['win_net']:.3f}"
+            )
     return 0
 
 
