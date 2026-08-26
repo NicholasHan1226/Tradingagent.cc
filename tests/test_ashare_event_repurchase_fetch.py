@@ -117,7 +117,10 @@ class FetchRepurchaseTest(unittest.TestCase):
             self.assertEqual(len(stats["errors"]), 1)  # type: ignore[arg-type]
             self.assertEqual(stats["files_written"], 1)
 
-    def test_disk_guard_and_token_fail_closed(self) -> None:
+    def test_disk_guard_fail_closed(self) -> None:
+        # Token fail-closed lives in the shared event_calendar_fetch.call_api
+        # the default path now resolves to; this module only owns the disk
+        # guard.
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp)
             with unittest.mock.patch.object(
@@ -130,13 +133,29 @@ class FetchRepurchaseTest(unittest.TestCase):
                     fetch.fetch_repurchase(
                         cache, call=_fake_call({}), delay=0
                     )
-        with unittest.mock.patch.dict(
-            "os.environ", {"TUSHARE_MCP_TOKEN": ""}, clear=True
-        ):
-            with self.assertRaisesRegex(
-                fetch.RepurchaseFetchError, "token_missing"
+
+    def test_default_path_uses_shared_urllib_helper(self) -> None:
+        # SDK-free contract: production must resolve the shared helper (the
+        # tushare SDK is deliberately absent from this repo's deps).
+        calls: list[tuple[str, dict]] = []
+
+        def fake_call_api(api_name: str, params: dict | None = None):
+            calls.append((api_name, params or {}))
+            return ["ann_date", "ts_code"], [["20260701", "600000.SH"]]
+
+        import Ashare.event_calendar_fetch as calendar_fetch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(
+                calendar_fetch, "call_api", fake_call_api
             ):
-                fetch._token()
+                stats = fetch.fetch_repurchase(  # type: ignore[arg-type]
+                    Path(tmp), start="20260701", end="20260731", delay=0
+                )
+        self.assertEqual(calls[0], ("repurchase",
+                                    {"start_date": "20260701",
+                                     "end_date": "20260731"}))
+        self.assertEqual(stats["files_written"], 1)  # type: ignore[index]
 
 
 if __name__ == "__main__":

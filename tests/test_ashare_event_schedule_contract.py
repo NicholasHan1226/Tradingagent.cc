@@ -43,14 +43,15 @@ def test_event_signal_tracker_schedule_is_bounded_weekly() -> None:
     assert "event_macro_fetch.py" in workflow
     assert "event_holdernumber_fetch.py" in workflow
     # The expensive label-family backfills (market rosters incl.
-    # holdertrade, pledge) must stay dispatch-only so a first-ever sweep
-    # can't starve the scheduled tracker of its runtime.
+    # holdertrade, pledge, repurchase) must stay dispatch-only so a
+    # first-ever sweep can't starve the scheduled tracker of its runtime.
     assert "Deep-backfill label-family data" in workflow
     deep = workflow.split("Deep-backfill label-family data")[1]
     for marker in (
         "if: github.event_name == 'workflow_dispatch'",
         "event_market_lists_fetch.py",
         "event_pledge_fetch.py",
+        "event_repurchase_fetch.py",
     ):
         assert marker in deep
 
