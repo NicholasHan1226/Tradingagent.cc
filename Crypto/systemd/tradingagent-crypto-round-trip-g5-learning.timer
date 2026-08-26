@@ -2,7 +2,11 @@
 Description=TradingAgent Crypto g5 detached round-trip learning timer
 
 [Timer]
-OnCalendar=*-*-* *:3/5:20
+# 10-minute cadence: one incremental run costs ~30s CPU scanning epoch state
+# while steady-state appends only one completion per five-minute slot; at the
+# 45s start timeout the former five-minute cadence lost ~40% of runs to
+# timeouts under load (119 failures in 24h on 2026-08-25).
+OnCalendar=*-*-* *:3/10:20
 AccuracySec=1s
 RandomizedDelaySec=3s
 Persistent=false
