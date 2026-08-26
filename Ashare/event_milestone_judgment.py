@@ -169,13 +169,21 @@ def rule_arm_event(records: list[dict]) -> bool:
 
 
 def aggregate_rule_arm_events(rows: list[dict]) -> list[dict]:
-    """Collapse unique lockup records to economic events (symbol × day).
+    """Collapse lockup export rows to economic events (symbol × day).
+
+    Takes the RAW export rows — not pre-deduped records — deliberately:
+    the event-level predicate must see every distinct attribute profile
+    of the event.  Rediscovery duplicates carry identical values (#586)
+    so they can neither flip the predicate nor inflate the count, while
+    contradictory attribute profiles (e.g. one holder listed with two
+    different ratio bands) are correctly caught by the veto instead of
+    being silently collapsed away first.
 
     Event identity comes from the stable key's symbol segment plus
     ``event_date`` (verified identical to the id-embedded unlock day).
     The representative record carries a synthesized ``event_id``
     (``event:<symbol>:<day>``) so :func:`judge` and reporting work
-    unchanged.  Order-preserving by first appearance after dedupe.
+    unchanged.  Order-preserving by first appearance.
     """
 
     by_event: dict[tuple, list[dict]] = {}
@@ -285,8 +293,9 @@ def samples_for_preset(state: dict, preset: str) -> list[dict]:
         picked = [r for r in rows if rule_arm_sample(r)]
     elif preset == "lockup_rule_events":
         # Sample-unit decision (#588): economic-event granularity,
-        # intersection semantics over the event's tagged records.
-        rows = dedupe_samples(labeled.get(LOCKUP_SIGNAL) or [])
+        # intersection semantics over the event's raw records (see
+        # aggregate_rule_arm_events for why dedupe must not run first).
+        rows = labeled.get(LOCKUP_SIGNAL) or []
         picked = aggregate_rule_arm_events(rows)
     elif preset == EARNINGS_POS_SIGNAL:
         picked = list(labeled.get(EARNINGS_POS_SIGNAL) or [])

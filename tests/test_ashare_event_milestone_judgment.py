@@ -184,11 +184,11 @@ class RuleArmEventTest(unittest.TestCase):
 
     @staticmethod
     def _rec(sym, day, ratio="lt3", regime="weak", bps=100.0,
-             seq=1) -> dict:
+             seq=1, holder="甲") -> dict:
         return {
             "event_id": (
                 f"lockup:cn.dataset.share_float:tracker-{seq:06d}:"
-                f"{sym}:{day}:某持有人:股权激励限售流通"
+                f"{sym}:{day}:{holder}:股权激励限售流通"
             ),
             "event_date": day,
             "post_return_bps": bps,
@@ -230,11 +230,13 @@ class RuleArmEventTest(unittest.TestCase):
         state = {"labeled_outcomes": {"lockup": [
             # event E1: two holders, both in arm (plus a rediscovery dup)
             self._rec("E1.SH", "2026-01-05", bps=200.0),
-            self._rec("E1.SH", "2026-01-05", ratio="1-3%", bps=200.0, seq=2),
+            self._rec("E1.SH", "2026-01-05", ratio="1-3%", bps=200.0,
+                      seq=2, holder="乙"),
             self._rec("E1.SH", "2026-01-05", bps=200.0, seq=77),
             # event E2: vetoed by one band tranche
             self._rec("E2.SH", "2026-02-06", bps=-50.0),
-            self._rec("E2.SH", "2026-02-06", ratio="3-5%", bps=-50.0, seq=2),
+            self._rec("E2.SH", "2026-02-06", ratio="3-5%", bps=-50.0,
+                      seq=2, holder="乙"),
             # event E3: clean pass
             self._rec("E3.SH", "2026-03-06", bps=100.0),
         ]}}
@@ -246,6 +248,16 @@ class RuleArmEventTest(unittest.TestCase):
         result = judge(picked, gate_n=2)
         self.assertEqual(result["verdict"], "keep")
         self.assertEqual(result["n"], 2)
+
+    def test_contradictory_same_holder_profiles_still_veto(self) -> None:
+        # same holder identity listed twice with conflicting ratio bands —
+        # record-level dedupe first would hide the band profile; the
+        # raw-row predicate must catch it (#588 review fix)
+        rows = [
+            self._rec("F.SH", "2026-04-02"),
+            self._rec("F.SH", "2026-04-02", ratio="3-5%", seq=9),
+        ]
+        self.assertEqual(aggregate_rule_arm_events(rows), [])
 
 
 class SamplesForPresetTest(unittest.TestCase):
