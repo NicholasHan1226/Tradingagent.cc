@@ -10,7 +10,11 @@ one tested evaluator over the tracker's per-sample state export (#570):
 - ``lockup_rule``   : labeled_outcomes[lockup] filtered to the practice
   rule arm (regime == ``weak`` AND ratio tagged outside the avoided
   ``3-5%`` band) — identical predicate to the tracker's
-  ``rule_subset_breakdown``.
+  ``rule_subset_breakdown``.  Row-level continuity preset; see the
+  sample-unit decision doc for why it is no longer the canonical basis.
+- ``lockup_rule_events`` : canonical lockup basis (#588) — unique
+  records collapsed to economic events (symbol × unlock day),
+  intersection rule predicate over each event's tagged records.
 - ``earnings_*``    : labeled_outcomes[signal] post-event gross bps
   (#582 fix; ``prewindow_samples`` is descriptive-only).
 - ``raw``           : labeled_outcomes[key] unfiltered.
@@ -144,6 +148,65 @@ def descriptive_profile(
     ]
 
 
+def rule_arm_event(records: list[dict]) -> bool:
+    """Event-level practice-rule predicate (intersection semantics).
+
+    Frozen in the sample-unit decision doc: an economic event qualifies
+    only when every tagged disclosure record of the symbol×day carries
+    the rule regime AND none of them falls in the excluded ratio band.
+    Untagged records neither veto nor qualify; a fully untagged event is
+    out.  Intersection (rather than any-record-passes) mirrors the
+    avoidance reading of the band and biases against passing gates —
+    the same conservative direction as duplicate removal.
+    """
+
+    tagged = [r for r in records if r.get("ratio_bucket") is not None]
+    if not tagged:
+        return False
+    if any(r.get("regime") != RULE_REGIME for r in tagged):
+        return False
+    return all(r.get("ratio_bucket") != RULE_EXCLUDED_RATIO_BAND for r in tagged)
+
+
+def aggregate_rule_arm_events(rows: list[dict]) -> list[dict]:
+    """Collapse lockup export rows to economic events (symbol × day).
+
+    Takes the RAW export rows — not pre-deduped records — deliberately:
+    the event-level predicate must see every distinct attribute profile
+    of the event.  Rediscovery duplicates carry identical values (#586)
+    so they can neither flip the predicate nor inflate the count, while
+    contradictory attribute profiles (e.g. one holder listed with two
+    different ratio bands) are correctly caught by the veto instead of
+    being silently collapsed away first.
+
+    Event identity comes from the stable key's symbol segment plus
+    ``event_date`` (verified identical to the id-embedded unlock day).
+    The representative record carries a synthesized ``event_id``
+    (``event:<symbol>:<day>``) so :func:`judge` and reporting work
+    unchanged.  Order-preserving by first appearance.
+    """
+
+    by_event: dict[tuple, list[dict]] = {}
+    order: list[tuple] = []
+    for r in rows:
+        key = stable_event_key(r.get("event_id", ""))
+        sym = key[2] if len(key) >= 4 else str(key)
+        ident = (sym, str(r.get("event_date")))
+        if ident not in by_event:
+            by_event[ident] = []
+            order.append(ident)
+        by_event[ident].append(r)
+
+    picked = []
+    for ident in order:
+        grp = by_event[ident]
+        if rule_arm_event(grp):
+            rep = dict(grp[0])
+            rep["event_id"] = f"event:{ident[0]}:{ident[1]}"
+            picked.append(rep)
+    return picked
+
+
 def _half_stats(net: list[float]) -> dict:
     if not net:
         return {"n": 0, "mean_net_bps": None}
@@ -228,6 +291,12 @@ def samples_for_preset(state: dict, preset: str) -> list[dict]:
     if preset == "lockup_rule":
         rows = labeled.get(LOCKUP_SIGNAL) or []
         picked = [r for r in rows if rule_arm_sample(r)]
+    elif preset == "lockup_rule_events":
+        # Sample-unit decision (#588): economic-event granularity,
+        # intersection semantics over the event's raw records (see
+        # aggregate_rule_arm_events for why dedupe must not run first).
+        rows = labeled.get(LOCKUP_SIGNAL) or []
+        picked = aggregate_rule_arm_events(rows)
     elif preset == EARNINGS_POS_SIGNAL:
         picked = list(labeled.get(EARNINGS_POS_SIGNAL) or [])
     elif preset == EARNINGS_NEG_SIGNAL:
@@ -244,7 +313,7 @@ def samples_for_preset(state: dict, preset: str) -> list[dict]:
 def _preset_raw_keys(preset: str) -> list[str]:
     """Labeled-export keys a preset reads, for raw-vs-unique reporting."""
 
-    if preset == "lockup_rule":
+    if preset in ("lockup_rule", "lockup_rule_events"):
         return [LOCKUP_SIGNAL]
     if preset in (EARNINGS_POS_SIGNAL, EARNINGS_NEG_SIGNAL):
         return [preset]
@@ -259,7 +328,10 @@ def main() -> int:
     parser.add_argument(
         "--preset",
         required=True,
-        help="lockup_rule | earnings_pos | earnings_neg | raw:<bucket_key>",
+        help=(
+            "lockup_rule | lockup_rule_events | earnings_pos | "
+            "earnings_neg | raw:<bucket_key>"
+        ),
     )
     parser.add_argument("--gate-n", type=int, default=None)
     parser.add_argument("--cost-bps", type=float, default=15.0)
@@ -273,7 +345,7 @@ def main() -> int:
     state = json.loads(args.state.read_text(encoding="utf-8"))
     samples = samples_for_preset(state, args.preset)
     gate_n = args.gate_n if args.gate_n is not None else (
-        30 if args.preset == "lockup_rule" else 50
+        30 if args.preset.startswith("lockup_rule") else 50
     )
     result = judge(samples, gate_n=gate_n, cost_bps=args.cost_bps)
 
@@ -283,10 +355,19 @@ def main() -> int:
     )
     print("## 里程碑判定（离线复算，冻结家族标准；research_only 非晋级证据）")
     print(f"- preset={args.preset} 门柱 n≥{gate_n} 成本 {args.cost_bps}bps 往返")
-    print(
-        f"- 样本 {n_raw} 行 → 独立事件 {len(samples)}"
-        f"（剔除跨运行重发现重复 {n_raw - len(samples)} 行；#586）"
-    )
+    if args.preset == "lockup_rule_events":
+        n_records = len(dedupe_samples(
+            state.get("labeled_outcomes", {}).get(LOCKUP_SIGNAL) or []
+        ))
+        print(
+            f"- 样本 {n_raw} 行 → 披露记录 {n_records} 条 → "
+            f"经济事件 {len(samples)} 个（#586/#588 口径）"
+        )
+    else:
+        print(
+            f"- 样本 {n_raw} 行 → 独立事件 {len(samples)}"
+            f"（剔除跨运行重发现重复 {n_raw - len(samples)} 行；#586）"
+        )
     print(
         f"- 判定 **{result['verdict'].upper()}**：n={result['n']} "
         f"净均值 {result['mean_net_bps']:+.1f}bps 净胜率 {result['win_net']:.3f}"
