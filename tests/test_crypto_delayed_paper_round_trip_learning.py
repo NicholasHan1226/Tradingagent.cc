@@ -1525,5 +1525,3 @@ def test_inventory_cache_guard_falls_back_when_suffix_predates_tail(
         deadline=float("inf"),
     )
     assert result == [older_id]
-
-
