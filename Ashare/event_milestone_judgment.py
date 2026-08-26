@@ -7,12 +7,18 @@ judgment toward ~200 weak samples, earnings_pos/neg first judgments off
 the Aug 31 export), so this module replaces the throwaway pattern with
 one tested evaluator over the tracker's per-sample state export (#570):
 
-- ``lockup_rule``   : labeled_outcomes[lockup_expiry] filtered to the
-  practice rule arm (regime == ``weak`` AND ratio tagged outside the
-  avoided ``3-5%`` band) — identical predicate to the tracker's
+- ``lockup_rule``   : labeled_outcomes[lockup] filtered to the practice
+  rule arm (regime == ``weak`` AND ratio tagged outside the avoided
+  ``3-5%`` band) — identical predicate to the tracker's
   ``rule_subset_breakdown``.
-- ``earnings_*``    : prewindow_samples[signal] as exported.
+- ``earnings_*``    : labeled_outcomes[signal] post-event gross bps
+  (#582 fix; ``prewindow_samples`` is descriptive-only).
 - ``raw``           : labeled_outcomes[key] unfiltered.
+
+All presets collapse to one row per unique event before judging
+(:func:`dedupe_samples`, #586): lockup event ids embed a per-run
+discovery sequence, so exports re-carry already-seen events under fresh
+ids and raw row counts overstate the sample.
 
 Net series deducts one round trip at the cost model (default 15 bps),
 matching the tracker's net columns.  Verdicts are descriptive of the
@@ -30,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -60,6 +67,52 @@ def rule_arm_sample(sample: dict) -> bool:
         and sample.get("ratio_bucket") is not None
         and sample.get("ratio_bucket") != RULE_EXCLUDED_RATIO_BAND
     )
+
+
+_TRACKER_SEQ_SEGMENT = re.compile(r"tracker-\d+")
+
+
+def stable_event_key(event_id: str) -> tuple:
+    """Identity of an event with volatile discovery-sequence segments stripped.
+
+    The lockup family's ``event_id`` embeds a per-run ``tracker-NNNNNN``
+    discovery sequence, so the same underlying disclosure event is
+    re-numbered on every tracker run — and the per-run export itself
+    carries one row per rediscovery (#586 finding: the rehearsal export's
+    197 lockup rows are 138 unique events; its 100-row rule arm is 69).
+    Stripping every ``tracker-<digits>`` segment recovers the stable
+    identity (dataset/symbol/date/holder/type).  Collapsing only ever
+    shrinks n, so any mis-merge biases against passing gates (safe side).
+    """
+
+    return tuple(
+        p for p in str(event_id).split(":") if not _TRACKER_SEQ_SEGMENT.fullmatch(p)
+    )
+
+
+def dedupe_samples(samples: list[dict]) -> list[dict]:
+    """Collapse re-discovered duplicate events, keeping the first row.
+
+    Duplicate rows carry identical values (verified across the full rule
+    arm in #586), so one row per stable key preserves each observation
+    exactly once while removing the cross-run rediscovery artifact.
+    Scope note (#586): this does NOT resolve holder-granularity
+    multiplicity — several disclosure records of one company unlocking
+    on one day stay separate rows even though they share one price path.
+    That sample-unit question is a frozen-methodology decision recorded
+    separately, not silently folded here.  Order-preserving,
+    deterministic; rows without an ``event_id`` are never merged.
+    """
+
+    seen: dict[tuple, dict] = {}
+    for s in samples:
+        eid = s.get("event_id")
+        if eid:
+            key = stable_event_key(eid)
+        else:  # pragma: no cover - exercised via tests below
+            key = ("no-event-id", id(s))
+        seen.setdefault(key, s)
+    return list(seen.values())
 
 
 def _half_stats(net: list[float]) -> dict:
@@ -137,6 +190,9 @@ def samples_for_preset(state: dict, preset: str) -> list[dict]:
     input.  Rehearsal note (#582): wiring the earnings presets to it
     produced rows without ``post_return_bps`` and an empty ``earnings_neg``
     arm (the tracker fills prewindow for the positive signal only).
+
+    Every preset passes through :func:`dedupe_samples` — the judgment
+    input is one row per unique event (#586).
     """
 
     labeled = state.get("labeled_outcomes") or {}
@@ -153,7 +209,19 @@ def samples_for_preset(state: dict, preset: str) -> list[dict]:
         raise MilestoneJudgmentError(f"unknown_preset {preset}")
     if not picked:
         raise MilestoneJudgmentError(f"samples_empty {preset}")
-    return picked
+    return dedupe_samples(picked)
+
+
+def _preset_raw_keys(preset: str) -> list[str]:
+    """Labeled-export keys a preset reads, for raw-vs-unique reporting."""
+
+    if preset == "lockup_rule":
+        return [LOCKUP_SIGNAL]
+    if preset in (EARNINGS_POS_SIGNAL, EARNINGS_NEG_SIGNAL):
+        return [preset]
+    if preset.startswith("raw:"):
+        return [preset.split(":", 1)[1]]
+    return []
 
 
 def main() -> int:
@@ -175,8 +243,16 @@ def main() -> int:
     )
     result = judge(samples, gate_n=gate_n, cost_bps=args.cost_bps)
 
+    n_raw = sum(
+        len(state.get("labeled_outcomes", {}).get(key) or [])
+        for key in _preset_raw_keys(args.preset)
+    )
     print("## 里程碑判定（离线复算，冻结家族标准；research_only 非晋级证据）")
     print(f"- preset={args.preset} 门柱 n≥{gate_n} 成本 {args.cost_bps}bps 往返")
+    print(
+        f"- 样本 {n_raw} 行 → 独立事件 {len(samples)}"
+        f"（剔除跨运行重发现重复 {n_raw - len(samples)} 行；#586）"
+    )
     print(
         f"- 判定 **{result['verdict'].upper()}**：n={result['n']} "
         f"净均值 {result['mean_net_bps']:+.1f}bps 净胜率 {result['win_net']:.3f}"

@@ -6,9 +6,11 @@ import unittest
 
 from Ashare.event_milestone_judgment import (
     MilestoneJudgmentError,
+    dedupe_samples,
     judge,
     rule_arm_sample,
     samples_for_preset,
+    stable_event_key,
 )
 
 
@@ -95,6 +97,68 @@ class JudgeTest(unittest.TestCase):
         # gross +15 every trade -> net exactly 0 -> fail via mean <= 0
         self.assertEqual(result["mean_net_bps"], 0.0)
         self.assertEqual(result["verdict"], "fail")
+
+
+class DedupeSamplesTest(unittest.TestCase):
+    """#586: lockup ids embed a per-run tracker sequence, so the same
+    disclosure event re-appears under fresh ids across runs — and the
+    per-run export itself carries one row per rediscovery.  Judgment
+    input must be one row per unique event."""
+
+    @staticmethod
+    def _eid(seq: int, symbol: str = "600426.SH",
+             day: str = "2026-04-01") -> str:
+        return (
+            "lockup:cn.dataset.share_float:"
+            f"tracker-{seq:06d}:{symbol}:{day}:其他激励对象:股权激励限售流通"
+        )
+
+    @staticmethod
+    def _row(event_id: str, bps: float = 100.0,
+             date: str = "2026-04-01", symbol: str = "600426.SH") -> dict:
+        return {
+            "event_id": event_id,
+            "event_date": date,
+            "post_return_bps": bps,
+            "regime": "weak",
+            "ratio_bucket": "lt3",
+        }
+
+    def test_rows_without_event_id_are_never_merged(self) -> None:
+        rows = [{"event_date": "2026-04-01", "post_return_bps": 100.0},
+                {"event_date": "2026-04-02", "post_return_bps": -30.0}]
+        self.assertEqual(len(dedupe_samples(rows)), 2)
+
+    def test_same_event_across_run_sequences_collapses(self) -> None:
+        rows = [self._row(self._eid(577)), self._row(self._eid(1644))]
+        self.assertEqual(stable_event_key(rows[0]["event_id"]),
+                         stable_event_key(rows[1]["event_id"]))
+        self.assertEqual(len(dedupe_samples(rows)), 1)
+
+    def test_distinct_events_survive(self) -> None:
+        rows = [
+            self._row(self._eid(1)),
+            self._row(self._eid(2, symbol="600050.SH"),
+                      symbol="600050.SH"),
+            self._row(
+                self._eid(3, day="2026-07-06"), date="2026-07-06",
+            ),
+        ]
+        deduped = dedupe_samples(rows)
+        self.assertEqual(len(deduped), 3)
+
+    def test_lockup_rule_preset_judges_unique_events(self) -> None:
+        state = {"labeled_outcomes": {"lockup": [
+            self._row(self._eid(1), 200.0),
+            # rediscovery of the same event under a fresh sequence number
+            self._row(self._eid(999), 200.0),
+            self._row(self._eid(2, day="2026-02-05"), -50.0,
+                      date="2026-02-05"),
+        ]}}
+        picked = samples_for_preset(state, "lockup_rule")
+        self.assertEqual(len(picked), 2)
+        result = judge(picked, gate_n=2, cost_bps=15.0)
+        self.assertEqual(result["n"], 2)
 
 
 class SamplesForPresetTest(unittest.TestCase):
