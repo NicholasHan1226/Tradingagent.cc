@@ -1,0 +1,88 @@
+{
+ "probe": "panel21-register-label-probe",
+ "research_only": true,
+ "top10_files": 1000,
+ "vocabulary_total_rows": 381474,
+ "known_vocab_rows": 239112,
+ "unknown_values": {
+  "一般企业": 95226,
+  "投资公司": 19738,
+  "投资、咨询公司": 13442,
+  "风险投资公司": 9843,
+  "职工工会": 21,
+  "国资局": 2582,
+  "院校—研究院": 1406,
+  "": 27,
+  "院校—高校": 77
+ },
+ "snapshot_pairs_total": 49345,
+ "late_disclosure_pairs": 48590,
+ "truncation_vs_fullscan_diffs": 962,
+ "signals_total": 1035,
+ "bucket_distribution": {
+  "mixed_other": 788,
+  "natural_heavy": 184,
+  "fin_inst_heavy": 63
+ },
+ "no_match_reasons": {
+  "no_file": 0,
+  "no_early_snapshot": 0
+ },
+ "uncovered_symbols": 0,
+ "year_x_bucket": {
+  "2018": {
+   "natural_heavy": 36,
+   "fin_inst_heavy": 14,
+   "mixed_other": 118,
+   "no_match": 0
+  },
+  "2019": {
+   "natural_heavy": 34,
+   "fin_inst_heavy": 2,
+   "mixed_other": 76,
+   "no_match": 0
+  },
+  "2020": {
+   "natural_heavy": 34,
+   "fin_inst_heavy": 2,
+   "mixed_other": 115,
+   "no_match": 0
+  },
+  "2021": {
+   "natural_heavy": 17,
+   "fin_inst_heavy": 8,
+   "mixed_other": 124,
+   "no_match": 0
+  },
+  "2022": {
+   "natural_heavy": 21,
+   "fin_inst_heavy": 6,
+   "mixed_other": 119,
+   "no_match": 0
+  },
+  "2023": {
+   "natural_heavy": 20,
+   "fin_inst_heavy": 10,
+   "mixed_other": 84,
+   "no_match": 0
+  },
+  "2024": {
+   "natural_heavy": 14,
+   "fin_inst_heavy": 13,
+   "mixed_other": 89,
+   "no_match": 0
+  },
+  "2025": {
+   "natural_heavy": 6,
+   "fin_inst_heavy": 4,
+   "mixed_other": 38,
+   "no_match": 0
+  },
+  "2026": {
+   "natural_heavy": 2,
+   "fin_inst_heavy": 4,
+   "mixed_other": 25,
+   "no_match": 0
+  }
+ }
+}
