@@ -13,9 +13,11 @@
 ## 执行（单条命令）
 
 ```bash
-python3 Ashare/event_td_coverage_probe.py \
-  --token-file /etc/tradingagent/tradingdatas-read.token \
-  --out-dir /tmp/td_coverage_probe_$(date +%Y%m%d_%H%M) --lookback-days 30
+# 08-26 实测修正：受信密钥根是 /run/secrets/tradingagent（/etc 路径会报
+# service_root_required）；且必须以 tradingagent 身份运行——token 属主校验
+# 要求 uid∈{0,euid}（auth 模块 tradingdatas_token_owner_invalid），root 直接跑会失败。
+OUT=/tmp/td_coverage_probe_$(date +%Y%m%d_%H%M)
+su tradingagent -s /bin/sh -c "cd <服务器上的探针树> && python3 Ashare/event_td_coverage_probe.py --token-file /run/secrets/tradingagent/tradingdatas-read.token --out-dir $OUT --lookback-days 30"
 ```
 
 - 脚本行为：GET `/v1/catalog` 校验 7 个数据集 → 钉死 catalog_version → 事件集按
@@ -74,3 +76,25 @@ python3 Ashare/event_td_coverage_probe.py \
 - **2026-08-24（周一）09:45 CST 后，15 分钟内**：Nicholas 批准窗口与一次性 root 例外；
   与 nicholashan-5a 早盘预检（约 09:42–09:45 结束）衔接，无并发冲突。执行后在本节回填
   实际执行时间、catalog_version 与 `forward_capable` 判定结果。
+
+## 2026-08-26 夜间执行记录（Nicholas 批准重跑；回执被数据面锁风暴阻塞）
+
+- **鉴权门两处实测修正**（详见上方命令块）：受信密钥根 `/run/secrets/tradingagent/`；
+  探针须以 `tradingagent` 身份运行（`su tradingagent -s /bin/sh`），root 会撞
+  `tradingdatas_token_owner_invalid`。08-24 的「受限账号读不到 /etc token」前提作废——
+  正确路径下 tradingagent 身份可直接运行。
+- **读接口可用性语义（实测确认）**：`/v1/query` 在写方持权威锁期间 fail-closed 返回
+  503（快照打开要拿共享 flock＋epoch 校验，10s×5 次即放弃）；catalog 端点不受影响。
+  采集器定时器每 5 分钟触发一轮、单轮常跑 2.5–4 分钟 → 查询窗口只在每轮结束后的
+  空闲段（当晚约相位 240–300s/300s）。探针发射须守候「服务 inactive 且距下个
+  触发点足够远」，否则必撞锁。
+- **生产异常观察（移交维护窗口议程）**：20:10–20:35 观测到采集器单元 25 分钟启动
+  5 次、且出现新旧实例并存（旧进程持锁未退出、下一轮又起），伴生间歇性
+  exit-code 失败；该重叠使空闲窗缩到秒级，是当晚探针无法落回执的直接原因。
+  另：`cn.news.flash` 自锁当日仍未解除（09:00 起统计 108 轮
+  `invalid_receipt_authority / data_through_in_future` vs 仅 2 轮 success，
+  至 20:30 最新轮仍被拒排）。
+- **本次落地**：探针自身确定性缺陷修复（事件分区计数改注册表主键身份，同分支）；
+  过夜守候脚本部署在发布主机 `/tmp/td_overnight.sh`（仅凌晨 01:30–05:00 低谷期
+  发射、只读、写 `--out-dir` 后自退），回执预期次晨取回归档。lookback 用 7 天
+  （足以回答消费端取数与 forward 判定，缩短锁窗内暴露时间）。
