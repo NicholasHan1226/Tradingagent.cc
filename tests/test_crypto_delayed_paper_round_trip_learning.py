@@ -1378,3 +1378,152 @@ def test_worker_cli_treats_budget_deferred_as_controlled_output(
     captured = capsys.readouterr()
     assert json.loads(captured.out)["status"] == "deferred_time_budget"
     assert captured.err == ""
+
+
+def _completed_shifted_round_trip(root: Path, *, minutes: int) -> None:
+    """Append one later (or earlier) completed slot to an existing epoch."""
+
+    from tests.test_crypto_delayed_paper_runner import _shifted_runner_inputs
+
+    port, shifted_profile, request, _ = _shifted_runner_inputs(minutes)
+    result = run_crypto_delayed_paper_round_trip_once(
+        port=port,
+        profile=shifted_profile,
+        request=request,
+        output_root=root,
+    )
+    assert result["status"] == "completed"
+
+
+def _write_cache(root: Path, ids: list[str]) -> None:
+    path = (
+        root
+        / "evolution"
+        / "round_trip_learning"
+        / "inventory_cache.json"
+    )
+    payload = {
+        "contract": learning_module.ROUND_TRIP_LEARNING_INVENTORY_CACHE_CONTRACT,
+        "inventory_ids": ids,
+    }
+    payload["inventory_cache_sha256"] = learning_module._sha256(payload)
+    learning_module._write_state(path, payload)
+
+
+def test_incremental_suffix_cache_avoids_full_rescan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _completed_round_trip(tmp_path)
+    assert (
+        run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)[
+            "status"
+        ]
+        == "recovered"
+    )
+    cache_path = (
+        tmp_path / "evolution" / "round_trip_learning" / "inventory_cache.json"
+    )
+    assert cache_path.is_file()
+    assert len(json.loads(cache_path.read_text(encoding="utf-8"))["inventory_ids"]) == 1
+
+    # A later completed slot arrives; steady state appends exactly one record.
+    _completed_shifted_round_trip(tmp_path, minutes=5)
+
+    calls: list[int] = []
+    real_inventory = learning_module._completion_inventory
+
+    def spy(*args: object, **kwargs: object) -> list[str]:
+        calls.append(1)
+        return real_inventory(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(learning_module, "_completion_inventory", spy)
+    result = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+    assert result["status"] == "projected"
+    assert result["processed_count"] == 1
+    assert calls == []
+    assert len(json.loads(cache_path.read_text(encoding="utf-8"))["inventory_ids"]) == 2
+
+
+def test_incremental_rebuilds_suffix_cache_after_corruption(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+    cache_path = (
+        tmp_path / "evolution" / "round_trip_learning" / "inventory_cache.json"
+    )
+    _completed_shifted_round_trip(tmp_path, minutes=5)
+
+    cache_path.write_text("{corrupt\n", encoding="utf-8")
+    result = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+    assert result["status"] == "projected"
+    assert result["processed_count"] == 1
+    assert len(json.loads(cache_path.read_text(encoding="utf-8"))["inventory_ids"]) == 2
+
+
+def test_incremental_falls_back_when_cache_lists_unknown_ids(tmp_path: Path) -> None:
+    _completed_round_trip(tmp_path)
+    run_crypto_delayed_paper_round_trip_learning_full_scrub(output_root=tmp_path)
+    cache_path = (
+        tmp_path / "evolution" / "round_trip_learning" / "inventory_cache.json"
+    )
+    _completed_shifted_round_trip(tmp_path, minutes=5)
+
+    bogus = "crypto-delayed-observation-0000000000000000000000000000"
+    _write_cache(tmp_path, [bogus])
+    result = run_crypto_delayed_paper_round_trip_learning_incremental(
+        output_root=tmp_path
+    )
+    assert result["status"] == "projected"
+    assert result["processed_count"] == 1
+    ids = json.loads(cache_path.read_text(encoding="utf-8"))["inventory_ids"]
+    assert len(ids) == 2
+    assert bogus not in ids
+
+
+def test_inventory_cache_guard_falls_back_when_suffix_predates_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store forbids non-monotonic slots outright (production writes can
+    never trigger this); the guard stays as defense-in-depth so a hand-edited
+    or hostile store can never get a misordered id list past the fast path."""
+
+    evolution = tmp_path / "evolution" / "round_trip_learning"
+    evolution.mkdir(parents=True)
+    completions = tmp_path / "delayed_paper" / "completions"
+    completions.mkdir(parents=True)
+    older_id = "crypto-delayed-observation-aaaa"
+    newer_id = "crypto-delayed-observation-bbbb"
+    for observation_id in (older_id, newer_id):
+        (completions / f"{observation_id}.json").write_text("{}\n", encoding="utf-8")
+    slots = {older_id: "2026-08-26T09:00:00+00:00", newer_id: "2026-08-25T09:00:00+00:00"}
+
+    def fake_source_record(_store: object, stem: str, **_kwargs: object) -> object:
+        return {"observation": {"market_slot": slots[stem]}}
+
+    monkeypatch.setattr(learning_module, "_source_record", fake_source_record)
+    monkeypatch.setattr(
+        learning_module,
+        "_completion_inventory",
+        lambda *args, **kwargs: [older_id],
+    )
+    checkpoint = {
+        "completion_count": 1,
+        "observation_count": 1,
+    }
+    core_state = {"latest_observation_id": older_id}
+    # Cached tail is the NEWER slot while the only suffix candidate is OLDER;
+    # the guard must refuse the append and fall back to the enforced scan.
+    _write_cache(tmp_path, [newer_id])
+    result = learning_module._completion_inventory_cached(
+        SimpleNamespace(completions_dir=completions),
+        checkpoint,
+        core_state,
+        evolution=evolution,
+        deadline=float("inf"),
+    )
+    assert result == [older_id]
+
+
