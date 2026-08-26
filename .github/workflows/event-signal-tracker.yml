@@ -94,8 +94,8 @@ jobs:
           print(f'share_float refreshed for {n} symbols')
           "
           python3 Ashare/event_dailybasic_fetch.py
-           python3 Ashare/event_macro_fetch.py --refresh
-           python3 Ashare/event_holdernumber_fetch.py
+          python3 Ashare/event_macro_fetch.py --refresh
+          python3 Ashare/event_holdernumber_fetch.py
 
       - name: Deep-backfill label-family data (dispatch-only)
         # The pledge, holdertrade(+suspend+limitlist) and repurchase label
@@ -113,9 +113,9 @@ jobs:
         env:
           TUSHARE_MCP_TOKEN: ${{ secrets.TUSHARE_MCP_TOKEN }}
         run: |
-           python3 Ashare/event_market_lists_fetch.py --delay 0.2
-           python3 Ashare/event_pledge_fetch.py --delay 0.2
-           python3 Ashare/event_repurchase_fetch.py
+          python3 Ashare/event_market_lists_fetch.py --delay 0.2
+          python3 Ashare/event_pledge_fetch.py --delay 0.2
+          python3 Ashare/event_repurchase_fetch.py
 
       - name: Ensure earnings-forecast cache (freshness-aware over universe)
         env:
