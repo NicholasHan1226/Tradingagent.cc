@@ -128,17 +128,25 @@ def judge(
 
 
 def samples_for_preset(state: dict, preset: str) -> list[dict]:
-    """Pull the sample list for a frozen preset out of a state export."""
+    """Pull the sample list for a frozen preset out of a state export.
+
+    All presets read ``labeled_outcomes`` (post-event gross bps — the
+    series the frozen family criteria and the cost deduction are defined
+    on).  ``prewindow_samples`` is the tracker's separate descriptive
+    anticipation-window export (``pre_return_bps``); it is NOT judgment
+    input.  Rehearsal note (#582): wiring the earnings presets to it
+    produced rows without ``post_return_bps`` and an empty ``earnings_neg``
+    arm (the tracker fills prewindow for the positive signal only).
+    """
 
     labeled = state.get("labeled_outcomes") or {}
-    prewindow = state.get("prewindow_samples") or {}
     if preset == "lockup_rule":
         rows = labeled.get(LOCKUP_SIGNAL) or []
         picked = [r for r in rows if rule_arm_sample(r)]
     elif preset == EARNINGS_POS_SIGNAL:
-        picked = list(prewindow.get(EARNINGS_POS_SIGNAL) or [])
+        picked = list(labeled.get(EARNINGS_POS_SIGNAL) or [])
     elif preset == EARNINGS_NEG_SIGNAL:
-        picked = list(prewindow.get(EARNINGS_NEG_SIGNAL) or [])
+        picked = list(labeled.get(EARNINGS_NEG_SIGNAL) or [])
     elif preset.startswith("raw:"):
         picked = list(labeled.get(preset.split(":", 1)[1]) or [])
     else:

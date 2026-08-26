@@ -119,13 +119,38 @@ class SamplesForPresetTest(unittest.TestCase):
         raw = samples_for_preset(state, "raw:other_bucket")
         self.assertEqual(len(raw), 1)
 
-    def test_earnings_reads_prewindow_series(self) -> None:
-        state = {"prewindow_samples": {
-            "earnings_neg": [{"event_date": "2026-08-05",
-                              "pre_return_bps": -12.0}],
-        }}
+    def test_earnings_read_labeled_outcomes(self) -> None:
+        # Earnings presets judge on post-event outcomes; the tracker's
+        # prewindow export (pre_return_bps, positive signal only) is
+        # descriptive and must never be the judgment source.
+        state = {
+            "labeled_outcomes": {
+                "earnings_pos": [_sample("2026-08-05", 30.0)],
+                "earnings_neg": [_sample("2026-08-06", -12.0)],
+            },
+        }
+        self.assertEqual(
+            samples_for_preset(state, "earnings_neg")[0]["post_return_bps"],
+            -12.0,
+        )
+        self.assertEqual(
+            samples_for_preset(state, "earnings_pos")[0]["post_return_bps"],
+            30.0,
+        )
+
+    def test_earnings_judge_works_without_prewindow_export(self) -> None:
+        # Rehearsal regression (#582): real exports carry prewindow rows for
+        # earnings_pos only, so judgment must not depend on that key at all.
+        state = {
+            "labeled_outcomes": {
+                "earnings_neg": [
+                    _sample(f"2026-08-{d:02d}", 60.0) for d in range(1, 13)
+                ],
+            },
+        }
         picked = samples_for_preset(state, "earnings_neg")
-        self.assertEqual(picked[0]["pre_return_bps"], -12.0)
+        result = judge(picked, gate_n=10, cost_bps=15.0)
+        self.assertEqual(result["verdict"], "keep")
 
     def test_empty_and_unknown_fail_closed(self) -> None:
         with self.assertRaises(MilestoneJudgmentError):
