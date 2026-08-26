@@ -6,9 +6,11 @@ import unittest
 
 from Ashare.event_milestone_judgment import (
     MilestoneJudgmentError,
+    aggregate_rule_arm_events,
     dedupe_samples,
     descriptive_profile,
     judge,
+    rule_arm_event,
     rule_arm_sample,
     samples_for_preset,
     stable_event_key,
@@ -175,6 +177,75 @@ class DescriptiveProfileTest(unittest.TestCase):
                                     "mean_net_bps": 150.0, "win_net": 1.0})
         self.assertEqual(cells[1]["mean_net_bps"], -100.0)
         self.assertEqual(cells[1]["win_net"], 0.0)
+
+
+class RuleArmEventTest(unittest.TestCase):
+    """#588: economic-event granularity, intersection semantics."""
+
+    @staticmethod
+    def _rec(sym, day, ratio="lt3", regime="weak", bps=100.0,
+             seq=1) -> dict:
+        return {
+            "event_id": (
+                f"lockup:cn.dataset.share_float:tracker-{seq:06d}:"
+                f"{sym}:{day}:某持有人:股权激励限售流通"
+            ),
+            "event_date": day,
+            "post_return_bps": bps,
+            "regime": regime,
+            "ratio_bucket": ratio,
+        }
+
+    def test_multi_holder_records_collapse_to_one_event(self) -> None:
+        rows = [
+            self._rec("600050.SH", "2026-04-02", seq=1),
+            self._rec("600050.SH", "2026-04-02", ratio="1-3%", seq=2),
+        ]
+        events = aggregate_rule_arm_events(rows)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_id"], "event:600050.SH:2026-04-02")
+
+    def test_tagged_band_tranche_vetoes_whole_event(self) -> None:
+        # intersection: one 3-5% tranche among passing tranches kills it
+        rows = [
+            self._rec("A.SH", "2026-04-02"),
+            self._rec("A.SH", "2026-04-02", ratio="3-5%", seq=2),
+        ]
+        self.assertFalse(rule_arm_event(rows))
+
+    def test_untagged_does_not_veto_but_cannot_qualify_alone(self) -> None:
+        mixed = [self._rec("B.SH", "2026-04-02"),
+                 self._rec("B.SH", "2026-04-02", ratio=None, seq=2)]
+        self.assertTrue(rule_arm_event(mixed))
+        self.assertFalse(rule_arm_event(
+            [self._rec("C.SH", "2026-04-02", ratio=None)]))
+
+    def test_off_regime_record_vetoes_event(self) -> None:
+        rows = [self._rec("D.SH", "2026-04-02"),
+                self._rec("D.SH", "2026-04-02", regime="strong", seq=2)]
+        self.assertFalse(rule_arm_event(rows))
+        self.assertEqual(aggregate_rule_arm_events(rows), [])
+
+    def test_preset_end_to_end_with_rediscovery_noise(self) -> None:
+        state = {"labeled_outcomes": {"lockup": [
+            # event E1: two holders, both in arm (plus a rediscovery dup)
+            self._rec("E1.SH", "2026-01-05", bps=200.0),
+            self._rec("E1.SH", "2026-01-05", ratio="1-3%", bps=200.0, seq=2),
+            self._rec("E1.SH", "2026-01-05", bps=200.0, seq=77),
+            # event E2: vetoed by one band tranche
+            self._rec("E2.SH", "2026-02-06", bps=-50.0),
+            self._rec("E2.SH", "2026-02-06", ratio="3-5%", bps=-50.0, seq=2),
+            # event E3: clean pass
+            self._rec("E3.SH", "2026-03-06", bps=100.0),
+        ]}}
+        picked = samples_for_preset(state, "lockup_rule_events")
+        self.assertEqual(
+            [p["event_id"] for p in picked],
+            ["event:E1.SH:2026-01-05", "event:E3.SH:2026-03-06"],
+        )
+        result = judge(picked, gate_n=2)
+        self.assertEqual(result["verdict"], "keep")
+        self.assertEqual(result["n"], 2)
 
 
 class SamplesForPresetTest(unittest.TestCase):
