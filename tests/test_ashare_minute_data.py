@@ -1479,14 +1479,20 @@ def test_delayed_paper_allows_one_cadence_plus_shared_jitter_only() -> None:
     changed_client = _client(_Transport(replay_change=True))
     changed_profile = _profile(changed_client)
     changed_audit = MinuteEvidenceAuditLedger()
-    with pytest.raises(MinuteDataContractError, match="same_observation"):
-        TradingDatasMinuteMarketDataPort(changed_client).load_snapshot(
-            profile=changed_profile,
-            filters={},
-            decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
-            trading_dates=frozenset({date(2026, 7, 27)}),
-            audit_ledger=changed_audit,
-        )
+    # (#589) A write landing between the two reads no longer fails the
+    # load: the stable-pair collector retries until the observation
+    # settles, so a transient replay change converges on the next attempt.
+    # Persistent divergence keeps failing closed through the typed lane
+    # (covered by the dedicated stable-pair shard tests).
+    changed_snapshot = TradingDatasMinuteMarketDataPort(changed_client).load_snapshot(
+        profile=changed_profile,
+        filters={},
+        decision_time=datetime.fromisoformat("2026-07-27T09:40:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=changed_audit,
+    )
+    assert changed_snapshot.same_observation is True
+    assert changed_audit.records() == ()
 
 
 def test_cursor_cycle_and_duplicate_cross_page_identity_are_rejected() -> None:
@@ -1863,3 +1869,150 @@ def test_minute_port_partial_budget_failure_keeps_typed_reason() -> None:
     assert snapshot.fanout_failures[0]["failure_class"] == (
         "MinuteSnapshotLoadBudgetExhausted"
     )
+
+
+def _stable_pair_load_kwargs(symbols: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "profile": None,
+        "filters": {
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        "decision_time": datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        "trading_dates": frozenset({date(2026, 7, 27)}),
+        "audit_ledger": MinuteEvidenceAuditLedger(),
+        "evidence_use": MinuteEvidenceUse.DELAYED_PAPER,
+        "load_budget_seconds": 180.0,
+    }
+
+
+def _patch_stable_pair_collect(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    diverge_call: str = "never",
+) -> dict[str, int]:
+    """Wrap page collection, optionally diverging every pair deterministically.
+
+    ``diverge_call="always"`` tampers only the replay-side collect of each
+    per-request pair, keyed by the shard's first symbol so worker-thread
+    interleaving cannot forge a converging pair (two forged halves would
+    hash equal and trip downstream integrity checks instead).
+    """
+
+    original = minute_data_module._collect_minute_query_pages_with_retry
+    state = {"n": 0}
+    per_request: dict[str, int] = {}
+    lock = threading.Lock()
+
+    def counting_collect(**kwargs: Any):
+        with lock:
+            state["n"] += 1
+        run = original(**kwargs)
+        if diverge_call == "always":
+            key = str(kwargs["request"].filters["ts_code"]["in"][0])
+            with lock:
+                index = per_request.get(key, 0) + 1
+                per_request[key] = index
+            if index % 2 == 0:
+                return replace(run, semantic_sha256="0" * 64)
+        return run
+
+    monkeypatch.setattr(
+        minute_data_module,
+        "_collect_minute_query_pages_with_retry",
+        counting_collect,
+    )
+    return state
+
+
+def test_minute_stable_pair_retries_once_then_accepts_converged_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A write landing inside one double-read no longer fails the slot (#589).
+
+    The transport's ``replay_change`` flag mutates rows served to the second
+    collect of the first attempt - the exact active-write shape that made
+    intraday slots noop near-deterministically. The stable-pair collector
+    must retry once and accept the converged second attempt.
+    """
+
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    transport = _Transport(catalog_row=catalog_row, replay_change=True)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=4, page_limit=2)
+    kwargs = _stable_pair_load_kwargs(("000001.SZ",))
+    kwargs["profile"] = profile
+
+    state = _patch_stable_pair_collect(monkeypatch, diverge_call="never")
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(**kwargs)
+
+    assert snapshot.row_count == 2
+    # Attempt one diverged via replay_change; attempt two converged.
+    assert state["n"] == 4
+    assert snapshot.same_observation is True
+
+
+def test_minute_stable_pair_quiescent_observation_costs_one_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stable observation accepts on the first pair without extra reads."""
+
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    transport = _Transport(catalog_row=catalog_row)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=4, page_limit=2)
+    kwargs = _stable_pair_load_kwargs(("000001.SZ",))
+    kwargs["profile"] = profile
+
+    state = _patch_stable_pair_collect(monkeypatch, diverge_call="never")
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(**kwargs)
+
+    assert snapshot.row_count == 2
+    assert state["n"] == 2
+
+
+def test_minute_shard_never_converging_degrades_typed_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An observation that never stabilizes degrades through the typed lane."""
+
+    monkeypatch.setattr(
+        minute_data_module, "MINUTE_STABLE_PAIR_RETRY_DELAYS_SECONDS", ()
+    )
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class SinglePageShardTransport(_Transport):
+        # Sharded loads grant one page per shard collect; serve every
+        # requested symbol in a single page so the pair logic is exercised.
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            rows = [_row(symbol, "20260727 09:40:00") for symbol in requested]
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"stable-pair-{len(self.calls)}",
+                    rows=rows,
+                    next_cursor=None,
+                ),
+            )
+
+    transport = SinglePageShardTransport(catalog_row=catalog_row)
+    client = _client(transport, max_limit=100)
+    profile = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    kwargs = _stable_pair_load_kwargs(symbols)
+    kwargs["profile"] = profile
+
+    _patch_stable_pair_collect(monkeypatch, diverge_call="always")
+    with pytest.raises(
+        MinuteDataContractError,
+        match="minute_stable_pair_unconverged",
+    ):
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(**kwargs)
