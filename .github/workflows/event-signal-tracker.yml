@@ -84,6 +84,16 @@ jobs:
           # label shards so valuation labels never age past a week.  The
           # first run after a universe expansion backfills everything;
           # steady-state weekly runs cost ~15-25min.
+          #
+          # macro + holdernumber feed two tracker label families that are
+          # already wired (macro_by_event / holdernums_by_event) but were
+          # silently unlabeled on CI: their cache files were only ever built
+          # by local one-off sweeps, so the rolling readouts for the macro-ante
+          # and holdernum-expand watchlist items never accumulated here.
+          # macro_fetch is 4 whole-endpoint calls; holdernumber is ~1 call per
+          # cached symbol, skip-if-present (first run ~8min, then near-zero).
+          # Both run AFTER expand_samples so the daily shards they derive
+          # their symbol lists from already exist.
           python3 Ashare/event_calendar_expand_samples.py --limit 1000
           python3 -c "
           import sys
@@ -94,6 +104,8 @@ jobs:
           print(f'share_float refreshed for {n} symbols')
           "
           python3 Ashare/event_dailybasic_fetch.py
+          python3 Ashare/event_macro_fetch.py --refresh
+          python3 Ashare/event_holdernumber_fetch.py
 
       - name: Ensure earnings-forecast cache (freshness-aware over universe)
         env:

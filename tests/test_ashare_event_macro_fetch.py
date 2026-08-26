@@ -89,6 +89,37 @@ class FetchSweepTest(unittest.TestCase):
             self.assertEqual(summary["failed_endpoints"],
                              ["ppi:empty_response"])
 
+    def test_refresh_republishes_existing_files(self) -> None:
+        # Macro series keep being published after the first sweep; a
+        # skip-if-present-only pass would freeze the release calendar at
+        # the week the cache was first built.
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            first = self._fetch(cache)
+            self.assertEqual(first["fetched"], 3)
+
+            responses = self._responses()
+            responses["cn_cpi"] = (
+                CPI_FIELDS,
+                [["202607", 100.5, 0.5], ["202608", 100.4, 0.4]],
+            )
+            calls: list[str] = []
+
+            def counting_call(api: str, params: dict):
+                calls.append(api)
+                return responses[api]
+
+            with unittest.mock.patch(
+                "Ashare.event_calendar_fetch.call_api", counting_call
+            ):
+                summary = fetch.fetch_macro(
+                    cache, delay_seconds=0.0, refresh=True
+                )
+            self.assertEqual(summary["skipped_existing"], 0)
+            self.assertEqual(summary["fetched"], 3)
+            rows = _read_rows(cache / "macro_cpi.csv")
+            self.assertEqual(rows[-1][0], "202608")  # new month landed
+
     def test_endpoint_exception_recorded_without_aborting(self) -> None:
         def flaky_call(api: str, params: dict):
             if api == "cn_cpi":

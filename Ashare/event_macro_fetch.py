@@ -86,11 +86,18 @@ def fetch_macro(
     cache: Path,
     delay_seconds: float = 0.12,
     call=None,
+    refresh: bool = False,
 ) -> dict[str, object]:
     """Fetch full macro-indicator history per endpoint; idempotent/resumable.
 
     ``call(api_name, params) -> (fields, rows)`` is injectable for offline
     tests; the default resolves the shared authenticated helper lazily.
+    With ``refresh=True`` existing files are re-pulled wholesale (4 whole-
+    history calls): macro series keep being published after the first
+    sweep, so a skip-if-present-only pass would freeze the release
+    calendar at whatever week the cache was first built — the same
+    starvation class the dailybasic/forecast fetchers already guard
+    against.
     """
     if call is None:
         from Ashare.event_calendar_fetch import call_api
@@ -104,7 +111,7 @@ def fetch_macro(
     fields_out: dict[str, list[str]] = {}
     for idx, (stem, api_name) in enumerate(MACRO_ENDPOINTS):
         target = cache / f"macro_{stem}.csv"
-        if target.exists():
+        if target.exists() and not refresh:
             skipped_existing += 1
             continue
         free = shutil.disk_usage(cache).free
@@ -162,11 +169,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache", type=Path, default=None)
     parser.add_argument("--delay", type=float, default=0.12)
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-pull existing macro_*.csv files wholesale (4 calls)",
+    )
     args = parser.parse_args()
     from Ashare.event_calendar_fetch import CACHE_DIR
 
     cache = args.cache if args.cache is not None else CACHE_DIR
-    summary = fetch_macro(cache, delay_seconds=args.delay)
+    summary = fetch_macro(cache, delay_seconds=args.delay, refresh=args.refresh)
     return 1 if summary["failed_endpoints"] else 0
 
 

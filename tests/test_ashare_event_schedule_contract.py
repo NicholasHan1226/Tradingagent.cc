@@ -37,6 +37,11 @@ def test_event_signal_tracker_schedule_is_bounded_weekly() -> None:
     assert "event_calendar_expand_samples.py" in workflow
     assert "refresh_share_float" in workflow
     assert "event_dailybasic_fetch.py" in workflow
+    # macro + holdernumber keep two already-wired label families from
+    # silently going unlabeled on CI (their cache files were previously
+    # only built by local one-off sweeps).
+    assert "event_macro_fetch.py" in workflow
+    assert "event_holdernumber_fetch.py" in workflow
 
     # A timeout must not discard the backfill: actions/cache's post step is
     # success-only, so an explicit cancel-safe save persists whatever reached
