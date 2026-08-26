@@ -419,6 +419,11 @@ class TrackerView:
     # signal key -> pre-disclosure trade-window stats (report-only readout,
     # computed for earnings_pos; never journaled).
     prewindow_stats: dict[str, dict] = field(default_factory=dict)
+    # signal key -> per-sample pre-disclosure window rows ({event_id,
+    # event_date, pre_return_bps}); exported in the state JSON so milestone
+    # evaluations (net mean, net win rate, two-half consistency) can be
+    # recomputed offline exactly as the tracker saw them.
+    prewindow_samples: dict[str, tuple[dict, ...]] = field(default_factory=dict)
     appended_records: list[dict] = field(default_factory=list)
     # Universe self-description (audit trail): which symbol list the pass
     # filtered on and how many symbols it held.  Every state JSON records
@@ -666,8 +671,19 @@ def run_tracker(
             cache, batch.observations
         )
     if EARNINGS_POS_SIGNAL in signals:
-        view.prewindow_stats[EARNINGS_POS_SIGNAL] = prewindow_breakdown(
+        rows = prewindow_rows(
             view.buckets[EARNINGS_POS_SIGNAL].labeled, ann_by_event, bars_by_symbol
+        )
+        view.prewindow_stats[EARNINGS_POS_SIGNAL] = _post_return_stats(
+            [ret for _, ret in rows]
+        )
+        view.prewindow_samples[EARNINGS_POS_SIGNAL] = tuple(
+            {
+                "event_id": obs.event_id,
+                "event_date": obs.scheduled_date.isoformat(),
+                "pre_return_bps": round(ret * 1e4, 2),
+            }
+            for obs, ret in rows
         )
 
     from shared.review.sample_journal import SampleJournal
@@ -1648,19 +1664,19 @@ def prewindow_return(
     return bars[exit_j].close / bars[entry_i].close - 1.0
 
 
-def prewindow_breakdown(
+def prewindow_rows(
     observations: tuple[CatalystShadowObservation, ...],
     ann_by_event: dict[str, date],
     bars_by_symbol: dict[str, list[DailyBar]],
-) -> dict:
-    """Aggregate the pre-disclosure trade-window returns for one signal.
+) -> list[tuple[CatalystShadowObservation, float]]:
+    """Per-observation pre-disclosure trade-window returns for one signal.
 
-    Report-only readout of the studied trade; observations without a known
-    forecast announcement date or unobservable endpoints are skipped rather
-    than guessed.
+    Shared by the aggregate readout in ``run_tracker`` and the state-JSON
+    sample export; observations without a known forecast announcement date
+    or unobservable endpoints are skipped rather than guessed.
     """
 
-    values: list[float] = []
+    rows: list[tuple[CatalystShadowObservation, float]] = []
     for obs in observations:
         ann_day = ann_by_event.get(obs.event_id)
         if ann_day is None:
@@ -1669,8 +1685,8 @@ def prewindow_breakdown(
             bars_by_symbol.get(obs.symbol or "", []), ann_day, obs.scheduled_date
         )
         if ret is not None:
-            values.append(ret)
-    return _post_return_stats(values)
+            rows.append((obs, ret))
+    return rows
 
 
 def render_report(
@@ -2216,6 +2232,31 @@ def main() -> int:
                     k: v
                     for k, v in view.prewindow_stats.items()
                     if v.get("n")
+                },
+                # Per-sample labelled outcomes so milestone evaluations
+                # (net mean, net win rate, two-half consistency) recompute
+                # offline exactly as the tracker saw them; research-only.
+                # lockup's formal gate reads the weak-regime rows outside
+                # the avoided ratio band; earnings_pos's gate reads
+                # prewindow_samples below instead of post returns.
+                "labeled_outcomes": {
+                    k: [
+                        {
+                            "event_id": obs.event_id,
+                            "event_date": obs.scheduled_date.isoformat(),
+                            "regime": view.regime_by_date.get(
+                                obs.scheduled_date.isoformat(), "unknown"
+                            ),
+                            "ratio_bucket": view.ratio_by_event.get(obs.event_id),
+                            "post_return_bps": round(float(obs.post_return) * 1e4, 2),
+                        }
+                        for obs in b.labeled
+                        if obs.post_return is not None
+                    ]
+                    for k, b in view.buckets.items()
+                },
+                "prewindow_samples": {
+                    k: list(v) for k, v in view.prewindow_samples.items() if v
                 },
                 "appended": len(view.appended_records),
                 "dry_run": dry_run,

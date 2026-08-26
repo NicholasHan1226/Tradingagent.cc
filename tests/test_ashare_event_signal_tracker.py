@@ -1756,6 +1756,13 @@ class TestRunTracker:
         assert pre["n"] == 1
         assert pre["mean_bps"] == pytest.approx(-476.2, abs=0.2)
         assert EARNINGS_NEG_SIGNAL not in view.prewindow_stats
+        # Per-sample rows mirror the aggregate and feed the state-JSON
+        # milestone export (net mean / win rate / two-half consistency).
+        samples = view.prewindow_samples[EARNINGS_POS_SIGNAL]
+        assert len(samples) == 1
+        assert samples[0]["event_date"] == "2026-08-05"
+        assert samples[0]["pre_return_bps"] == pytest.approx(-476.2, abs=0.2)
+        assert EARNINGS_NEG_SIGNAL not in view.prewindow_samples
         rows = SampleJournal(journal_path).read_events()
         assert [r["record_type"] for r in rows] == ["shadow_research"] * 3
 
