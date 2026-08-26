@@ -98,15 +98,6 @@ def _last_day(year: int, month: int) -> int:
     return 29 if leap else 28
 
 
-def _token() -> str:
-    import os
-
-    token = os.environ.get("TUSHARE_MCP_TOKEN", "").strip().strip('"').strip("'")
-    if not token:
-        raise RepurchaseFetchError("token_missing")
-    return token
-
-
 def fetch_repurchase(
     cache: Path,
     start: str = DEFAULT_START,
@@ -117,7 +108,9 @@ def fetch_repurchase(
     """Fetch announcements month by month into per-ann_date CSV files.
 
     ``call(start_date, end_date)`` returns the raw month payload as a list
-    of row dicts (tests inject fakes; production wraps tushare).
+    of row dicts (tests inject fakes; production resolves the shared
+    urllib :func:`event_calendar_fetch.call_api` — same single-page
+    semantics the tushare SDK path had, no pagination on either side).
     """
     folder = cache / REPURCHASE_DIRNAME
     if shutil.disk_usage(cache).free < MIN_FREE_BYTES:
@@ -133,13 +126,13 @@ def fetch_repurchase(
         "errors": [],
     }
     if call is None:
-        import tushare
-
-        pro = tushare.pro_api(_token())
+        from Ashare.event_calendar_fetch import call_api
 
         def call(start_date: str, end_date: str):  # noqa: E306
-            frame = pro.repurchase(start_date=start_date, end_date=end_date)
-            return [] if frame is None else frame.to_dict("records")
+            fields, items = call_api(
+                "repurchase", {"start_date": start_date, "end_date": end_date}
+            )
+            return [dict(zip(fields, row)) for row in items]
 
     for win_start, win_end in month_windows(start, end):
         stats["months"] += 1
