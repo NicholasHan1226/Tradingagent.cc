@@ -99,9 +99,12 @@ class _Transport:
         *,
         catalog_rows: list[dict[str, Any]] | None = None,
         macro_rows_by_month: dict[str, dict[str, list[dict[str, Any]]]] | None = None,
+        event_rows_by_partition: dict[str, dict[str, list[dict[str, Any]]]]
+        | None = None,
     ) -> None:
         self.catalog_rows = catalog_rows or _default_catalog_rows()
         self.macro = macro_rows_by_month or {}
+        self.event_partitions = event_rows_by_partition or {}
         self.query_bodies: list[dict[str, Any]] = []
 
     def __call__(self, **kwargs: Any):
@@ -122,6 +125,8 @@ class _Transport:
         value = next(iter(filters.values()), {}).get("eq")
         field = next(iter(filters))
         source = self.macro.get(dataset_id, {}).get(value, [])
+        if dataset_id in self.event_partitions:
+            source = self.event_partitions[dataset_id].get(value, [])
         all_rows = [row for row in source if row.get(field) == value]
         cursor = body.get("cursor")
         index = int(cursor.split(":", 1)[1]) if cursor else 0
@@ -222,6 +227,53 @@ class TestRunProbe(unittest.TestCase):
                 (out_dir / "coverage_receipt.json").read_text(encoding="utf-8")
             )
             self.assertTrue(doc["research_only"])
+
+    def test_multirow_event_partition_counts_without_identity_collision(
+        self,
+    ) -> None:
+        # Regression: the probe used to project only the partition field
+        # and declare it as the pagination identity, so every row inside a
+        # single-day partition shared one identity and the first multi-row
+        # day failed with pagination_duplicate_row_identity.
+        def _day(day: str) -> list[dict[str, str]]:
+            return [
+                {"ann_date": day, "end_date": "20260814", "ts_code": code}
+                for code in ("000001.SZ", "000002.SZ", "000003.SZ")
+            ]
+
+        # Cover the whole month so the assertion does not depend on which
+        # two lookback days the host timezone selects; every scanned day
+        # must therefore come back with exactly three distinct rows.
+        transport = _Transport(
+            macro_rows_by_month=_macro_fixture(),
+            event_rows_by_partition={
+                DISCLOSURE_DATE_DATASET_ID: {
+                    f"202608{dd:02d}": _day(f"202608{dd:02d}")
+                    for dd in range(1, 32)
+                },
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt = _run(Path(tmp) / "p", transport)
+
+            disclosure = receipt["event_datasets"][DISCLOSURE_DATE_DATASET_ID]
+            self.assertEqual(disclosure["days_scanned"], 2)
+            self.assertEqual(disclosure["rows_total"], 6)
+            self.assertEqual(disclosure["empty_days"], 0)
+            self.assertEqual(set(disclosure["daily_counts"].values()), {3})
+
+            # The fix's semantics: partition queries project exactly the
+            # registry primary key columns and nothing else.
+            disclosure_queries = [
+                body
+                for body in transport.query_bodies
+                if body["dataset_id"] == DISCLOSURE_DATE_DATASET_ID
+            ]
+            self.assertGreaterEqual(len(disclosure_queries), 2)
+            for body in disclosure_queries:
+                self.assertEqual(
+                    sorted(body["fields"]), ["ann_date", "end_date", "ts_code"]
+                )
 
     def test_inactive_event_dataset_fails_closed(self) -> None:
         transport = _Transport(catalog_rows=_default_catalog_rows(active_event=False))

@@ -220,18 +220,23 @@ def probe_event_dataset(
 
     daily_counts: dict[str, int] = {}
     total = 0
+    # Registry primary key as both projection and pagination identity:
+    # every row inside one ann_date partition shares the partition field
+    # value, so a partition-only projection would collide on the very
+    # first multi-row page (pagination_duplicate_row_identity).
+    identity = tuple(spec["identity_fields"])
     for day in days:
         request = QueryRequest(
             dataset_id=dataset_id,
             schema_major=schema_major,
-            fields=(spec["partition_field"],),
+            fields=identity,
             filters={spec["partition_field"]: {"eq": f"{day:%Y%m%d}"}},
             limit=min(page_size, 1000),
         )
         paged = collect_query_pages(
             client=client,
             request=request,
-            identity_fields=(spec["partition_field"],),
+            identity_fields=identity,
             max_pages=200,
             max_rows=200_000,
         )
