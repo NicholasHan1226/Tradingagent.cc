@@ -67,15 +67,11 @@ from Ashare.event_paper_baseline_sim import (  # noqa: E402
     run_portfolio,
 )
 from Ashare.event_pledge_portfolio_overlay import _arm_stats  # noqa: E402
-from Ashare.event_unlock_holdertype_study import (  # noqa: E402
-    holdertype_buckets_for_entries,
+from Ashare.event_pursue_labels import (  # noqa: E402
+    PURSUE_HOLDERTYPE,
+    PURSUE_VALUATION,
+    attach_pursue_labels,
 )
-from Ashare.event_valuation_prelockup_study import (  # noqa: E402
-    valuation_buckets_for_entries,
-)
-
-PURSUE_VALUATION = "low_le25"
-PURSUE_HOLDERTYPE = "incentive"
 
 
 class TiltOverlayError(RuntimeError):
@@ -123,13 +119,7 @@ def run_overlay(
     if not signals:
         raise TiltOverlayError("signals_empty")
 
-    entries = [(str(s["ts_code"]), str(s["float_date"])) for s in signals]
-    val_labels = valuation_buckets_for_entries(cache, entries)
-    hold_labels = holdertype_buckets_for_entries(cache, entries)
-    for s in signals:
-        key = (str(s["ts_code"]), str(s["float_date"]))
-        s["valuation_bucket"] = val_labels.get(key, "unlabeled")
-        s["holdertype_bucket"] = hold_labels.get(key, "unlabeled")
+    attach_pursue_labels(signals, cache)
 
     rule_signals = [s for s in signals if rule_arm_filter(s)]
     tilted = tilt_order(rule_signals)
