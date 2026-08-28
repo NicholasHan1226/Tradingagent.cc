@@ -1316,8 +1316,97 @@ class RoundTripCapitalLedger:
         if previous != expected_checksum:
             raise CryptoRoundTripError("round_trip_runtime_state_fork")
 
+    def _repair_runtime_state_single_tail(
+        self,
+        *,
+        runtime: Mapping[str, Any],
+        head: Mapping[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, dict[str, Any]]]:
+        """Advance a trusted snapshot across exactly one durable ledger event.
+
+        This is deliberately narrower than ``runtime_state_payload_for_rebuild``:
+        it never scans or replays history.  It is only safe after the writer
+        committed one canonical tail event and its matching head, then crashed
+        before atomically replacing the adjacent runtime snapshot.
+        """
+
+        old_fingerprint = tuple(runtime["events_fingerprint"])
+        current_fingerprint = self._events_fingerprint()
+        if (
+            current_fingerprint is None
+            or current_fingerprint[:2] != old_fingerprint[:2]
+            or old_fingerprint[2] != runtime["events_size"]
+            or current_fingerprint[2] <= old_fingerprint[2]
+        ):
+            raise CryptoRoundTripError("round_trip_runtime_state_stale")
+        try:
+            with self.events_path.open("rb") as stream:
+                stream.seek(old_fingerprint[2])
+                tail_bytes = stream.read()
+            if (
+                tail_bytes.count(b"\n") != 1
+                or not tail_bytes.endswith(b"\n")
+                or not tail_bytes[:-1]
+            ):
+                raise ValueError
+            tail = json.loads(tail_bytes[:-1].decode("utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+            raise CryptoRoundTripError("round_trip_runtime_state_stale") from exc
+        if not isinstance(tail, Mapping) or _canonical_json(tail).encode() + b"\n" != tail_bytes:
+            raise CryptoRoundTripError("round_trip_runtime_state_stale")
+
+        old_sequence = runtime["sequence"]
+        old_checksum = runtime["checksum"]
+        if (
+            head["sequence"] != old_sequence + 1
+            or head["checksum"] != tail.get("checksum")
+        ):
+            raise CryptoRoundTripError("round_trip_runtime_state_stale")
+        event_index = {
+            str(reference_id): dict(item)
+            for reference_id, item in runtime["event_index"].items()
+        }
+        reference_id = tail.get("reference_id")
+        if not isinstance(reference_id, str) or reference_id in event_index:
+            raise CryptoRoundTripError("round_trip_runtime_state_stale")
+        state = self._writer_state_restore(runtime["writer_state"])
+        next_sequence = old_sequence + 1
+        try:
+            self._validate_event(
+                state,
+                tail,
+                sequence=next_sequence,
+                previous_checksum=old_checksum,
+            )
+        except CryptoRoundTripError as exc:
+            raise CryptoRoundTripError("round_trip_runtime_state_stale") from exc
+
+        rows = [
+            dict(item["event"])
+            for item in sorted(event_index.values(), key=lambda value: value["sequence"])
+        ]
+        next_rows = [*rows, dict(tail)]
+        next_event_index = self._event_index_payload(
+            next_rows,
+            final_sequence=next_sequence,
+            final_checksum=str(tail["checksum"]),
+        )
+        if self._events_fingerprint() != current_fingerprint:
+            raise CryptoRoundTripError("round_trip_runtime_state_stale")
+        self._write_runtime_state(
+            sequence=next_sequence,
+            checksum=str(tail["checksum"]),
+            state=state,
+            events_size=current_fingerprint[2],
+            rows=next_rows,
+            event_index=next_event_index,
+        )
+        return next_rows, state, str(tail["checksum"]), next_event_index
+
     def _writer_runtime_context(
         self,
+        *,
+        allow_single_tail_repair: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any], str, dict[str, dict[str, Any]]]:
         if not self.runtime_state_path.exists():
             if (
@@ -1345,11 +1434,25 @@ class RoundTripCapitalLedger:
             )
         ):
             raise CryptoRoundTripError("round_trip_head_mismatch")
+        if (
+            not isinstance(runtime, Mapping)
+            or not isinstance(runtime.get("sequence"), int)
+            or isinstance(runtime.get("sequence"), bool)
+            or not isinstance(runtime.get("checksum"), str)
+        ):
+            raise CryptoRoundTripError("round_trip_runtime_state_invalid")
         runtime = self._validate_runtime_state(
             runtime,
-            expected_sequence=head["sequence"],
-            expected_checksum=head["checksum"],
+            expected_sequence=runtime["sequence"],
+            expected_checksum=runtime["checksum"],
         )
+        if (
+            runtime["sequence"] != head["sequence"]
+            or runtime["checksum"] != head["checksum"]
+        ):
+            if not allow_single_tail_repair:
+                raise CryptoRoundTripError("round_trip_runtime_state_stale")
+            return self._repair_runtime_state_single_tail(runtime=runtime, head=head)
         if tuple(runtime["events_fingerprint"]) != self._events_fingerprint():
             raise CryptoRoundTripError("round_trip_runtime_state_stale")
         event_index = {
@@ -1499,7 +1602,9 @@ class RoundTripCapitalLedger:
                 sequence = self._cycle_sequence_cache
                 event_index = self._cycle_event_index
             else:
-                rows, state, checksum, event_index = self._writer_runtime_context()
+                rows, state, checksum, event_index = self._writer_runtime_context(
+                    allow_single_tail_repair=True
+                )
                 sequence = len(rows)
             self._cache_cycle_replay(
                 rows,
@@ -1646,7 +1751,9 @@ class RoundTripCapitalLedger:
             and self._cycle_events_fingerprint == self._events_fingerprint()
         ):
             return self._cycle_state_cache
-        rows, state, checksum, event_index = self._writer_runtime_context()
+        rows, state, checksum, event_index = self._writer_runtime_context(
+            allow_single_tail_repair=self._cycle_lock_held
+        )
         self._cache_cycle_replay(
             rows,
             state,
@@ -1669,7 +1776,9 @@ class RoundTripCapitalLedger:
         ):
             event_index = self._cycle_event_index
         else:
-            rows, state, checksum, event_index = self._writer_runtime_context()
+            rows, state, checksum, event_index = self._writer_runtime_context(
+                allow_single_tail_repair=self._cycle_lock_held
+            )
             self._cache_cycle_replay(
                 rows,
                 state,
