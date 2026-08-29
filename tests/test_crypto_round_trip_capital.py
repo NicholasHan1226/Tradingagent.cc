@@ -540,7 +540,7 @@ def test_legacy_reader_ignores_adjacent_runtime_state(tmp_path: Path) -> None:
     assert state["initialized"] is True
 
 
-def test_crash_after_events_and_head_before_runtime_state_fails_closed(
+def test_crash_after_events_and_head_before_runtime_state_self_repairs_on_writer_retry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     run_round_trip_fixture_cycle(
@@ -563,6 +563,37 @@ def test_crash_after_events_and_head_before_runtime_state_fails_closed(
     ):
         RoundTripCapitalLedger(tmp_path / "round_trip_capital").state_read_only()
     monkeypatch.setattr(RoundTripCapitalLedger, "_write_runtime_state", original)
+    retry = run_round_trip_fixture_cycle(
+        _direct_payload(
+            fixture_id="crash-before-state-2",
+            slot="2026-07-30T00:05:00Z",
+        ),
+        output_root=tmp_path,
+    )
+    assert retry["idempotent_replay"] is True
+    repaired = RoundTripCapitalLedger(tmp_path / "round_trip_capital").state_read_only()
+    assert repaired["head_sequence"] == 3
+
+
+def test_writer_refuses_multi_event_runtime_snapshot_gap(tmp_path: Path) -> None:
+    first = _direct_payload(fixture_id="snapshot-gap-1", slot="2026-07-30T00:00:00Z")
+    second = _direct_payload(fixture_id="snapshot-gap-2", slot="2026-07-30T00:05:00Z")
+    third = _direct_payload(fixture_id="snapshot-gap-3", slot="2026-07-30T00:10:00Z")
+    run_round_trip_fixture_cycle(first, output_root=tmp_path)
+    runtime_path = tmp_path / "round_trip_capital" / "runtime_state.json"
+    first_runtime = runtime_path.read_bytes()
+    run_round_trip_fixture_cycle(second, output_root=tmp_path)
+    run_round_trip_fixture_cycle(third, output_root=tmp_path)
+    runtime_path.write_bytes(first_runtime)
+    before = _capital_bytes(tmp_path)
+    writer = RoundTripCapitalLedger(
+        tmp_path / "round_trip_capital", _capability=capital_module._WRITE_CAPABILITY
+    )
+    with writer.cycle(), pytest.raises(
+        CryptoRoundTripError, match="runtime_state_stale"
+    ):
+        writer.state_for_writer()
+    assert _capital_bytes(tmp_path) == before
 
 
 def test_writer_cycle_invalidates_cache_after_external_ledger_change(
