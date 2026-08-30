@@ -366,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-late-start",
         action="store_true",
         help=(
-            "Manually start an initialized sim-only day after 09:35 without "
+            "Recover an initialized sim-only day after 09:35 without "
             "claiming full-session or learning eligibility"
         ),
     )

@@ -15,7 +15,7 @@ WorkingDirectory=/opt/investment/releases/tradingagent/current
 EnvironmentFile=/etc/tradingagent/ashare-minute-paper.env
 Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
-ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_auto_runner --state-root ${ASHARE_MINUTE_PAPER_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_auto_runner --state-root ${ASHARE_MINUTE_PAPER_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token --allow-late-start
 TimeoutStartSec=90s
 UMask=0077
 StateDirectory=tradingagent/ashare-minute-paper

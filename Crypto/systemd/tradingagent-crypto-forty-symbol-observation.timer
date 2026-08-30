@@ -2,8 +2,8 @@
 Description=TradingAgent Crypto forty-symbol closed-5m observation accumulator timer
 
 [Timer]
-# Run after the frozen ten-symbol observer while keeping the 5-minute cadence.
-OnCalendar=*-*-* *:3/5:45
+# Run at close +285s, after the forty-symbol +270s receipt settle boundary.
+OnCalendar=*-*-* *:4/5:45
 AccuracySec=1s
 RandomizedDelaySec=3s
 Persistent=false

@@ -250,8 +250,10 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 `127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
 
-同一现役发布助手还负责收口五个 G5 round-trip unit 与
-`tradingagent-ashare-minute-paper.service` 的 release 绑定。切换前这些 one-shot
+同一现役发布助手还负责收口五个 G5 round-trip unit 与四个 A股 unit
+（minute-session、minute-paper、minute-scale500-session、minute-scale500-paper）
+的 release 绑定。初始化和消费必须使用同一不可变版本，不能仅绑定基线 paper。
+切换前这些 one-shot
 unit 必须全部已停止：正常状态为 `inactive`；上一轮失败遗留的 `failed` 仅在
 `MainPID=0` 且 `ControlPID=0` 时允许切换，并保留失败事实，不执行 `reset-failed` 或手工
 启动。助手保存现有有效 `TimeoutStartUSec`，只备份并移除
@@ -827,6 +829,23 @@ Scale500 session timer 在 09:18、09:24、09:30、09:36 设置开盘前重试�
 执行 rollback service。初始化发现旧分区 gate 与当前 effective hash/count 不一致时，
 会先保留为 `.stale*.json` 历史证据，再创建当前分区的 pending gate。
 
+滚动模式的首批合格股票即可激活积累，不以固定 cohort 的开盘两根连续 PASS
+作为运行门禁；该两根验收仍保留给固定 cohort 模式。双读不一致仍拒绝本次所有
+不可信输入、不给失败槽写成功回执，但不锁死以后独立的当前槽。运行中恢复缺口
+必须带 `minute_session_gap_detected`、紧邻当前槽的缺失列表、
+`full_session_complete=false` 和 `learning_eligible=false`；不得跨缺口补造历史 PIT。
+认证拒绝、状态/账户损坏与真实交易开关不在可恢复分类中。
+特别是 `minute_paper_state_invalid`、状态落盘失败和 universe 内容漂移，不能被
+宽泛的 `minute_paper_*` 前缀误判为可恢复。可重试失败仍退出非零并输出
+`retry_next_slot=true / selected_mode=rolling_eligible`，不得假报已锁存 rollback30。
+
+30 股票基线服务显式启用 `--allow-late-start`：开盘读取失败后可在下一个当前槽
+启动，保留缺口且不宣称全天完整或可学习。若现场有覆盖 `ExecStart` 的 event-aux
+试验 drop-in，部署时必须保留 `--event-aux` 并同时加入恢复参数，不能只更新被遮蔽
+的基础 unit。scale paper 的 180 秒查询预算外保留处理余量，service 总超时为
+240 秒，小于 300 秒触发周期；现场旧 480 秒临时覆盖需备份后收口，不能被发布助手
+的“保留有效 timeout”逻辑永久继承。任何现场调整都需核对有效配置并保留精确回退副本。
+
 启动该模式的候选命令是在现有隔离服务参数上增加
 `Ashare.minute_scale500_runtime initialize/run --rolling-eligible`。该开关保持
 `REAL_TRADING_ENABLED=false`，不创建真实订单、资本 authority 或 live authority；
@@ -841,9 +860,8 @@ deploy/systemd/tradingagent-ashare-minute-paper.timer
 ```
 
 timer 只在工作日48根可处理K线的延迟到达窗口触发：上午
-`09:40–11:35`、下午`13:10–15:05`。每次计划触发在目标 bar end 后5分钟，
-含最多10秒随机延迟仍在 source 规定的5–5.5分钟窗口。生产读回证明上游在自然K线边界仍晚一根，
-因此策略固定等待一根完整5分钟K线后再触发。
+`09:42–11:37`、下午`13:12–15:07`。每次计划触发在目标 bar end 后420秒，
+含最多10秒随机延迟；实际 PIT/新鲜度仍由消费者逐批校验，调晚 timer 不会让过期数据合格。
 午休后段和收盘后不再重复触发，因此已知
 缺口只保留一次失败关闭证据，不会在无新K线时制造重复失败日志。启用前必须依次
 通过：不可变 release/manifest 校验、

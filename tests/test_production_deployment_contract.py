@@ -3,9 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ASHARE_RELEASE_UNITS = (
+    "tradingagent-ashare-minute-session.service",
+    "tradingagent-ashare-minute-paper.service",
+    "tradingagent-ashare-minute-scale500-session.service",
+    "tradingagent-ashare-minute-scale500-paper.service",
+)
 
 
 def _read(path: str) -> str:
@@ -124,9 +133,11 @@ def test_root_release_helper_reconciles_runtime_release_dropins_atomically() -> 
         "tradingagent-crypto-round-trip-g5-health.service",
         "tradingagent-crypto-round-trip-g5-learning.service",
         "tradingagent-crypto-round-trip-g5-learning-scrub.service",
-        "tradingagent-ashare-minute-paper.service",
+        *ASHARE_RELEASE_UNITS,
     ):
         assert unit in helper
+    for unit in ASHARE_RELEASE_UNITS:
+        assert f"/etc/systemd/system/{unit}.d/20-ashare-release.conf" in helper
     assert 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")' in helper
     assert "20-ashare-release.conf" in helper
     assert "g5_dropin_name=99-tradingagent-release.conf" in helper
@@ -150,6 +161,218 @@ def test_root_release_helper_reconciles_runtime_release_dropins_atomically() -> 
     assert helper.index("restore_g5_release_dropins") < helper.index(
         'systemctl restart "$front_unit"'
     )
+
+
+def _release_transaction_fixture(
+    tmp_path: Path, fault: str = "", fault_unit: str = ""
+) -> tuple[subprocess.CompletedProcess[str], Path, dict[str, bytes], dict[str, str]]:
+    """Run the actual reconciler/cutover/EXIT rollback against isolated unit files.
+
+    Only systemd and privileged/platform-specific filesystem calls are stubbed;
+    the managed-file parser, stopped guards, backup, writes and restore run.
+    No installed helper, real systemd, credentials or runtime data are accessed.
+    """
+    helper = _read("deploy/release.sh")
+    systemd = tmp_path / "systemd"
+    release_root = tmp_path / "releases"
+    for name in ("old", "new"):
+        (release_root / name).mkdir(parents=True)
+    (release_root / "new" / ".deployed-sha").write_text("new\n")
+    (release_root / "current").symlink_to(release_root / "old")
+    crypto_units = tuple(
+        f"tradingagent-crypto-round-trip-g5-{name}.service"
+        for name in ("acceptance", "delayed-paper", "health", "learning", "learning-scrub")
+    )
+    units = (*crypto_units, *ASHARE_RELEASE_UNITS)
+    timeouts = dict(zip(units, ("1min 30s", "45min", "infinity") * 3))
+    canonical_name = "99-tradingagent-release.conf"
+    for index, unit in enumerate(units):
+        unit_dir = systemd / f"{unit}.d"
+        unit_dir.mkdir(parents=True)
+        (unit_dir / "10-sim-only.conf").write_text(
+            "[Service]\nEnvironment=REAL_TRADING_ENABLED=false\n"
+        )
+        (unit_dir / "90-timeout.conf").write_text(
+            f"[Service]\nTimeoutStartSec={timeouts[unit]}\n"
+        )
+        if index % 2:
+            (unit_dir / canonical_name).write_text(
+                f"[Service]\nWorkingDirectory={release_root}/old\n"
+                f"Environment=PYTHONPATH={release_root}/old\n"
+                f"TimeoutStartSec={timeouts[unit]}\n"
+            )
+    crypto_legacy = re.search(r"g5_legacy_dropins=\(\n(.*?)\n\)", helper, re.S)
+    assert crypto_legacy is not None
+    legacy_paths = [
+        path.removeprefix("/etc/systemd/system/")
+        for path in crypto_legacy.group(1).split()
+    ] + [f"{unit}.d/20-ashare-release.conf" for unit in ASHARE_RELEASE_UNITS]
+    for path in legacy_paths:
+        (systemd / path).write_text(
+            f"[Service]\nWorkingDirectory={release_root}/old\n"
+            f"Environment=PYTHONPATH={release_root}/old\nTimeoutStartSec=1s\n"
+        )
+    if fault == "unsafe-legacy":
+        (systemd / f"{fault_unit}.d/20-ashare-release.conf").write_text(
+            f"[Service]\nWorkingDirectory={release_root}/old\nExecStart=/bin/false\n"
+        )
+    before = {str(p.relative_to(systemd)): p.read_bytes() for p in systemd.rglob("*.conf")}
+    definitions = helper[helper.index("g5_units=("):helper.index('[[ "$EUID"')]
+    definitions = definitions.replace("/etc/systemd/system", str(systemd)).replace(
+        "/var/tmp/tradingagent-g5-dropins.XXXXXX", str(tmp_path / "backup.XXXXXX")
+    )
+    rollback = helper[helper.index("rollback_release() {"):helper.index('cp -- "$archive"')]
+    cutover = helper[
+        helper.index("prepare_g5_release_reconciliation\n\nlink_tmp="):
+        helper.index('\nif [[ "$front_state_before" == active ]]; then\n  systemctl restart')
+    ]
+    # All real writes are redirected into tmp_path. Unexpected systemctl calls fail.
+    harness = r'''
+set -euo pipefail
+release_root="$TEST_ROOT/releases"
+current_link="$release_root/current"
+previous_release="$release_root/old"
+release_dir="$release_root/new"
+sha=new
+front_state_before=inactive
+g5_dropin_backup_dir=''
+g5_dropins_changed=0
+switched=0
+committed=0
+link_tmp=''
+staging_dir=''
+root_archive="$TEST_ROOT/unused-archive"
+stat() {
+  case "$2" in
+    %U:%G) printf 'root:root\n' ;;
+    %h) printf '1\n' ;;
+    %a)
+      if [[ "$FAULT" == unsafe-directory && "${@: -1}" == "$TEST_ROOT/systemd/$FAULT_UNIT.d" ]]; then
+        printf '777\n'
+      else printf '755\n'; fi ;;
+    *) return 98 ;;
+  esac
+}
+chown() { :; }
+install() {
+  [[ "$1 $2 $3 $4 $5 $6 $7" == '-D -o root -g root -m 0644' ]] || return 98
+  mkdir -p -- "$(dirname -- "$9")"
+  cp -- "$8" "$9"
+  chmod 0644 "$9"
+}
+mv() {
+  # os.replace supplies Linux mv -T semantics on macOS as well.
+  python3 -c 'import os, sys; os.replace(sys.argv[-2], sys.argv[-1])' "$@"
+}
+readlink() {
+  python3 -c 'import os, sys; print(os.path.realpath(sys.argv[-1]))' "$@"
+}
+systemctl() {
+  printf '%s\n' "$*" >> "$TEST_ROOT/systemctl.log"
+  local unit="${@: -1}" path
+  case "$1" in
+    cat)
+      [[ "$FAULT" != absent || "$unit" != "$FAULT_UNIT" ]] ;;
+    is-active)
+      if [[ "$unit" == "$FAULT_UNIT" ]] && {
+        [[ "$FAULT" == active-preflight ]] ||
+        [[ "$FAULT" == active-cutover && "$g5_dropins_changed" == 1 ]];
+      }; then printf 'active\n'; else printf 'inactive\n'; fi ;;
+    daemon-reload) : ;;
+    show)
+      path="$TEST_ROOT/systemd/$unit.d/99-tradingagent-release.conf"
+      case "$3" in
+        TimeoutStartUSec)
+          sed -n 's/^TimeoutStartSec=//p' "$TEST_ROOT/systemd/$unit.d/90-timeout.conf" ;;
+        WorkingDirectory)
+          if [[ "$FAULT" == readback && "$unit" == "$FAULT_UNIT" ]]; then
+            printf '%s/old\n' "$release_root"
+          else sed -n 's/^WorkingDirectory=//p' "$path"; fi ;;
+        Environment) sed -n 's/^Environment=//p' "$path" ;;
+        DropInPaths) printf '%s ' "$TEST_ROOT/systemd/$unit.d/"*.conf ;;
+        *) return 98 ;;
+      esac ;;
+    *) return 98 ;;
+  esac
+}
+'''
+    completed = subprocess.run(
+        ["bash", "-c", harness + definitions + rollback + cutover + "\ncommitted=1\n"],
+        env={
+            "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
+            "TEST_ROOT": str(tmp_path),
+            "FAULT": fault,
+            "FAULT_UNIT": fault_unit,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return completed, systemd, before, timeouts
+
+
+def test_release_transaction_binds_all_four_ashare_units_and_preserves_overrides(
+    tmp_path: Path,
+) -> None:
+    completed, systemd, before, timeouts = _release_transaction_fixture(tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    release = tmp_path / "releases/new"
+    assert (tmp_path / "releases/current").resolve() == release
+    calls = (tmp_path / "systemctl.log").read_text().splitlines()
+    assert calls.count("daemon-reload") == 1
+    for unit, timeout in timeouts.items():
+        unit_dir = systemd / f"{unit}.d"
+        assert (unit_dir / "99-tradingagent-release.conf").read_text() == (
+            f"[Service]\nWorkingDirectory={release}\nEnvironment=PYTHONPATH={release}\n"
+            f"ReadOnlyPaths={release}\nTimeoutStartSec={timeout}\n"
+        )
+        assert f"cat {unit}" in calls
+        assert calls.count(f"is-active {unit}") == 2
+        for property_name in ("WorkingDirectory", "Environment", "DropInPaths"):
+            assert f"show -p {property_name} --value {unit}" in calls
+    for relative, content in before.items():
+        path = systemd / relative
+        if path.name in ("10-sim-only.conf", "90-timeout.conf"):
+            assert path.read_bytes() == content
+        elif path.name != "99-tradingagent-release.conf":
+            assert not path.exists()
+    assert not list(tmp_path.glob("backup.*"))
+
+
+@pytest.mark.parametrize("unit", ASHARE_RELEASE_UNITS)
+@pytest.mark.parametrize(
+    "fault",
+    ("readback", "active-cutover", "unsafe-directory", "absent", "active-preflight", "unsafe-legacy"),
+)
+def test_each_ashare_unit_participates_in_preflight_and_transaction_rollback(
+    tmp_path: Path, unit: str, fault: str,
+) -> None:
+    completed, systemd, before, _ = _release_transaction_fixture(tmp_path, fault, unit)
+    assert completed.returncode != 0
+    assert (tmp_path / "releases/current").resolve() == tmp_path / "releases/old"
+    after = {str(p.relative_to(systemd)): p.read_bytes() for p in systemd.rglob("*.conf")}
+    assert after == before  # Includes G5, both old/absent canonical files and unrelated overrides.
+    calls = (tmp_path / "systemctl.log").read_text().splitlines()
+    if fault in ("readback", "active-cutover", "unsafe-directory"):
+        assert "rolling current back" in completed.stderr
+        # Unsafe directories interrupt canonical writes before the first reload.
+        assert calls.count("daemon-reload") == (1 if fault == "unsafe-directory" else 2)
+        assert unit in completed.stderr
+    else:
+        # Missing units are mandatory: fail before current or any drop-in changes.
+        assert "rolling current back" not in completed.stderr
+        assert "daemon-reload" not in calls
+    if fault == "unsafe-legacy":
+        assert "unsupported directive" in completed.stderr
+    if fault == "unsafe-directory":
+        assert "directory is group/other writable" in completed.stderr
+    if fault == "absent":
+        assert calls[-1] == f"cat {unit}"
+    if fault == "active-preflight":
+        assert f"must be stopped during release preflight: {unit}" in completed.stderr
+    assert not list(tmp_path.glob("backup.*"))
 
 
 def test_g5_release_cutover_accepts_only_stopped_units() -> None:

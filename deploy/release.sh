@@ -19,7 +19,10 @@ g5_units=(
   tradingagent-crypto-round-trip-g5-learning-scrub.service
 )
 ashare_release_units=(
+  tradingagent-ashare-minute-session.service
   tradingagent-ashare-minute-paper.service
+  tradingagent-ashare-minute-scale500-session.service
+  tradingagent-ashare-minute-scale500-paper.service
 )
 release_units=("${g5_units[@]}" "${ashare_release_units[@]}")
 g5_legacy_dropins=(
@@ -32,7 +35,10 @@ g5_legacy_dropins=(
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning-scrub.service.d/20-immutable-release.conf
 )
 ashare_legacy_dropins=(
+  /etc/systemd/system/tradingagent-ashare-minute-session.service.d/20-ashare-release.conf
   /etc/systemd/system/tradingagent-ashare-minute-paper.service.d/20-ashare-release.conf
+  /etc/systemd/system/tradingagent-ashare-minute-scale500-session.service.d/20-ashare-release.conf
+  /etc/systemd/system/tradingagent-ashare-minute-scale500-paper.service.d/20-ashare-release.conf
 )
 release_legacy_dropins=("${g5_legacy_dropins[@]}" "${ashare_legacy_dropins[@]}")
 g5_dropin_name=99-tradingagent-release.conf

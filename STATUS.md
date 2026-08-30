@@ -1,180 +1,97 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T17:40:00+08:00
+Observed at: 2026-08-30T13:47:30+08:00
 
-This file is a replaceable current summary. It separates source, release, runtime,
-market evidence, and authority. Historical chronology remains in Git history and
-dated `docs/reports/`; it is never a substitute for a fresh readback.
+This replaceable snapshot separates source, installed configuration, runtime and
+market receipts. Historical research/results remain in Git and dated reports;
+none of these observations grants capital, orders, live trading or promotion.
 
 ## Source and release layers
 
-| Layer | Current observation | Claim boundary |
+| Layer | Fresh observation | Boundary |
 |---|---|---|
-| 本地主线 | Kimi/user A-share lane, intentionally not acting as canonical main | resolve with `git rev-parse HEAD origin/main`; preserve and do not reset or repurpose |
-| GitHub 主线 | branch CI passed and exact-main validation ran green for the latest research/docs merges at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
-| Ordinary server source | `1d58efe`, behind GitHub and containing untracked operational files | not synchronized; do not clean or fast-forward over unknown files |
-| Effective release | immutable release `e64e20dca7ac992a5ce2e2839dd1204a8d8e8ee6` | deployed code layer, cut over 2026-08-23 with green exact-main and front health; the forty-symbol observer service drop-in and its systemd timer were rebound to it after cutover (+270 s settle margin, five-minute fires at wall-clock :x4:45) |
-| Runtime authority | all observed A-share/Crypto receipts reported real trading, execution, capital, production promotion, and automatic risk expansion disabled | simulation/read-only only |
+| Local canonical checkout | user/Kimi branch `feat/k10-vol-momentum-preregistration`, clean at `5350500` | preserved, not switched or called current main |
+| GitHub main | `80966e9` at this readback | later main movement requires a fresh check |
+| Ordinary server source | clean at `5cd9649` in `/opt/investment/tradingagent` | behind GitHub; not the active release, no three-end-sync claim |
+| Immutable current release | `580b453bf724d27931e3493f9bf01a138fa825b8` | code release, not market success |
+| Front read API | `127.0.0.1:8787/healthz` returned `ok=true` | minute fixture receipts are a separate read model |
+| Repair candidate | rolling continuity and complete A-share release binding under review | not yet a deployment at this timestamp |
 
-An effective immutable release can be valid while the ordinary source checkout is
-dirty or behind. These are separate layers; neither state is described as “all
-three ends synchronized.”
+## A-share: actual coverage, not a timer-only claim
 
-## A-share track
+The latest natural trading session is **2026-08-28** (today is Sunday).
 
-Latest applicable natural market evidence is from 2026-08-21:
+- Baseline initializer published 30 symbols. Scale initializer published 3,188
+  active symbols from 3,193 source identities: two recent listings pending and
+  three missing previous closes excluded. These exclusions are local, not a
+  whole-universe entry gate.
+- Root-authorized readback of
+  `/var/lib/tradingagent/ashare-minute-paper-scale500/20260828/coverage-receipts/094500.json`
+  proves **1,197 accepted / 3,188 active**, 1,991 missing, three row rejections,
+  and 20 budget-exhausted shards. This is a valid partial coverage receipt, not
+  zero activity and not 1,197 positions or fills.
+- The day's gate retains that 09:45 accepted bar, then records
+  `fallback30_selected / minute_same_observation_mismatch`. Later scale
+  invocations were no-ops; the baseline remained blocked by
+  `minute_auto_initial_bar_missing` after its first read failed.
+- The Aug-26 `86fd04c` release lacks `_collect_stable_minute_pair`; current
+  `580b453` includes it. Friday's failure is not evidence that the newly
+  deployed stable-pair implementation itself failed a natural session.
+- All four existing A-share session/paper timers are enabled and active.
+  Next initializer: Aug-31 09:18; next first delayed bar: Aug-31 09:42.
+  These scheduling facts do not prove Monday's data or consumer success.
 
-- the 30-symbol session initializer completed successfully with 30 active
-  partitions, no pending listings, and all trading/capital authority false, but
-  catalog-version drift left `rolling_eligible=false`;
-- the rolling scale session completed successfully with 3,186 eligible symbols,
-  five previous-close exclusions, two newly listed pending symbols, and
-  `rolling_eligible=true`;
-- the scale paper unit completed as a safe `noop`, selecting the preserved
-  rollback-30 state because of `minute_scale500_unclassified_urlerror`;
-- the scale session and paper timers are enabled/waiting; the legacy 30-symbol
-  paper timer is disabled. Timer state proves scheduling only.
+Confirmed repairs in this candidate:
 
-Therefore the broad rolling cohort is available for a named coverage claim, but
-the latest paper cycle did not create a new simulation fill/outcome. The exact
-next product evidence is one natural 2026-08-24 closed-bar cycle that consumes a
-safe eligible subset, records a receipt-bound simulated decision or explicit
-abstention, and later resolves its fixed-horizon outcome after declared costs. The
-3,186-symbol count is not a global gate and the five/two local exclusions do not
-block the safe subset.
+1. Rolling mode admits the first validated subset, without the fixed-cohort
+   two-opening-bar availability gate.
+2. A mismatched observation still fails closed for that read, but does not
+   poison future independent slots. Gap recovery must retain missing-slot
+   evidence and keep full-session/learning eligibility false.
+3. The 30-symbol service explicitly permits gap-marked late starts.
+4. All four A-share units join immutable release reconciliation and rollback.
+   The scale-paper template allows 240 seconds (180-second read budget plus
+   processing headroom), below the five-minute cadence.
+5. Deployment must reconcile the installed 480-second temporary override and
+   preserve the existing event-aux option when enabling baseline late start.
 
-## Crypto track
+The fixture accumulator is `non_production_fixture`, not the canonical 50,000
+CNY capital-backed execution loop. Coverage is not a resolved outcome or PnL.
 
-Data plane (verified this batch against the production read-model store,
-read-only):
+## Crypto: independent runtime evidence
 
-- the six crypto collection timers were resumed and subsequently observed
-  collecting with success receipts and zero lock contention;
-- spot 5m bars are complete for all 40 datasets (the known 2,560-bar hole was
-  closed by backfill); premium-index daily dumps are complete for all 40
-  symbols over the 198-day acceptance horizon;
-- open interest: the 198-day official daily-dump backfill is accepted; 422
-  partially-ingested days (1–287 surviving slots) were repaired through the
-  idempotent append-only re-collection path with zero failures. `2026-08-12`
-  is a permanent provider-side hole across all 40 symbols — Binance's own
-  daily zips for that day contain 285/288 rows, which the complete-grid store
-  contract correctly rejects. A residual single-slot ARBUSDT seam at
-  `2026-07-04/05` is a grid-phase boundary artifact of the provider's
-  unfrozen phase convention, not missing data;
-- pre-existing duplicate-timestamp rows (same bucket under different payload
-  versions) remain in some OI datasets; read-only research consumers dedupe
-  deterministically per slot. No rows were rewritten or erased.
+- G5 learning completed at 13:43:42 and delayed paper at 13:47:13, both exit 0
+  on `580b453`. Earlier same-batch delayed-paper output reported
+  `data_incomplete=false`; this does not alone prove a newly resolved label.
+- Ten-symbol observation remains separately pinned to `5d33501`, with a
+  successful observation in the readback batch.
+- Forty-symbol observation remains pinned to `e64e20d`. Its 13:45 batch
+  rejected the old Aug-29 19:35Z slot with `query_shape_invalid`, then rejected
+  the current Aug-30 05:40Z slot with `watermark_invalid`.
+  Systemd exit 0 therefore **does not mean usable data**; `data_incomplete=true`.
+  This issue is separate from A-share and does not justify relaxing PIT checks.
+- A bounded repair candidate removes 20/45-second shape retry sleeps for a
+  historical window only, preserving current-window retry and every watermark
+  check. Its timer template is aligned with the already installed +285-second
+  override. This is not a claim that upstream receipt timing is fixed.
+- Research artifacts and rolling evaluations are not summarized as current
+  profitability here; use their dated receipts and the independent Crypto task.
 
-Research plane (sealed `research_only` / `not_promotion_evidence` /
-historical-backfill-without-PIT; archived under `Crypto/reports/`):
+## Lessons and next evidence
 
-- the momentum entry event study on current main measured the frozen champion
-  entry over ~204 days × 40 symbols (~109k non-overlapping samples in the
-  largest cell): every threshold × horizon cell is net-negative with
-  |t(net)| ≥ 3.9 under round-trip taker costs, and per-trip net loss equals
-  the ~0.24% cost line. Shadow-only conclusion: no parameter change is
-  justified; frequency/threshold tuning cannot rescue this signal family;
-- the exit-cost counterfactual on the same frozen champion simulated full
-  round trips at path level over the identical window (non-overlapping strides,
-  stop-loss checked before take-profit inside each bar, 6,208–7,423 trips per
-  cell): mean gross return is ≈ 0 in every threshold cell (best +0.008%),
-  momentum-reversal exits dominate at 94–96% of trips while take-profit is hit
-  only 3–5%, mean favorable excursion never approaches the +3% target, and even
-  the maker-exit upper bound (assumes touch equals fill) leaves every cell
-  net-negative at about −0.139% to −0.167% per trip versus −0.239% to −0.267%
-  under taker exits — the maker delta is pure fee arithmetic (+0.0998%). This
-  closes execution-cost reduction as a lever: the per-trip loss is structural,
-  not an artifact of exit fees or slippage;
-- the first receipt-bound rolling evaluation entry (2026-08-23, entry 001)
-  consumed a hash-chain-verified gap-free nine-slot segment from the recovered
-  forty-symbol observer: 22 champion trips with 7 resolved (all
-  momentum-reversal exits), 0 take-profits, mean net ≈ −0.63% per trip versus a
-  buy-and-hold baseline of ≈ −0.09%, shadow-only recommendation
-  `continue_accumulation` (below the 30-resolved-trip threshold for any
-  retain/downweight/disable call); accumulation continues;
-- the pre-registered forty-symbol cross-sectional prescreen (20 frozen
-  candidates over a ~186-day common grid: long-top relative strength /
-  long-bottom reversal × lookback 288/576 × K=5/10 × horizon 48/288 plus
-  dispersion-gated variants, replaced-weight taker costing, always-invested
-  equal-weight baseline) found the reversal family net-negative in all cells
-  (worst ≈ −28bp per window) and the relative-strength family directionally
-  positive only in the 24-hour-hold cells, best +43bp/window at t=1.47 — not
-  significant, median near zero. Verdict: no statistically significant usable
-  signal in the pre-registered grid; no grid widening or retuning. The
-  dispersion-gated variants were structurally inert on this window (gate
-  threshold unit defect reported as-is, not repaired post hoc);
-- the 2026-08-18 funding/basis carry research modules and reports landed on
-  current main as archived assets.
+Do not infer missing receipts from permission-denied/empty directory reads.
+Do not infer collector/consumer health from timer state, HTTP 200 or exit 0.
+Separate an invalid batch from future recovery, and audit both service templates
+and overriding drop-ins. Source fixes need effective-version and next-natural-slot
+readback; a weekend fixture test cannot replace that market evidence.
 
-Runtime plane:
+After candidate CI, independent review and authorized release: verify all four
+effective A-share bindings, baseline recovery option, scale timeout, unchanged
+historical receipt hashes and front health. The next natural session must prove
+continued receipt accumulation across valid subsets and explicit gaps.
+Authentication, state integrity, real trading and cross-market capital guards
+remain closed.
 
-- the delayed-exit shadow reversal threshold now matches the champion exit
-  rule on current main;
-- the forty-symbol observer runs on two hardening changes cut over on
-  2026-08-23 (release `e64e20d…`, service drop-in rebind plus timer retime).
-  First, the PIT cutoff settle margin moved from +225 s to +270 s (inside the
-  <300 s family cap): collector-write latency bursts were producing receipts
-  whose intrinsic `observed_at` timestamps could never pass the watermark gate
-  on any later re-read, so widening the margin is the primary lever and pure
-  retry cannot rescue those slots. Second, a bounded same-invocation retry now
-  covers only `crypto_observation_query_shape_invalid` transients (delays
-  20 s/45 s, invocation-budget guarded; the frozen ten-symbol family stays
-  pinned single-attempt). Live verification after cutover shows the new
-  arithmetic (`observation_cutoff == window_end + 270 s`) and the restored
-  five-minute fire cadence; the identity isolation readback (inherited
-  ten-prefix events stop at 2026-08-22T11:20:55Z) remains verified;
-- interim data-plane boundary: since ~17:00 CST on 2026-08-23 a concurrent
-  TradingDatas-side release has kept the crypto collection timers stopped, so
-  both observers emit honest fail-closed rejects instead of observations until
-  collection resumes and any resulting bar gap is backfilled. No fabricated or
-  partial observation enters the chain during the interruption;
-- the G5 delayed-paper service completed successfully with
-  `data_incomplete=false` in its latest applicable readback; this batch did
-  not re-observe it, and service completion alone does not prove a new
-  resolved label, fee-after baseline comparison, or shadow recommendation;
-- the 40-symbol timer remains disabled. No provider call or runtime activation
-  is inferred from source presence.
-
-Crypto may use any complete gap-bounded segment for deterministic delayed-paper or
-factor/strategy evaluation. Labels never cross a gap. Full 40-symbol coverage and
-a latest continuous 288-bar segment constrain coverage/runtime maturity and later
-promotion/risk claims; they do not block safe-segment simulation.
-
-## Copilot and paused scopes
-
-- TradingCopilot remains a transitional A-share-only observation and manual
-  takeover surface. No fresh Copilot runtime/consumer readback was taken in this
-  observation batch, so no current health claim is made and no Copilot field blocks
-  A-share or Crypto TA.
-- CNFutures and prediction markets remain paused. U.S. equities and A-share
-  options remain future isolated scopes.
-
-## Factor/Strategy MVP evidence
-
-For each active market, MVP-1 requires one real receipt-bound resolved outcome,
-declared fees/slippage, one existing factor or strategy, a simple baseline,
-deterministic artifact, and a shadow-only retain/downweight/disable/parameter
-recommendation. This observation proves runtime/data plumbing but does not yet
-prove a new MVP-1 outcome for either market. Pending labels, service/timer health,
-coverage counts, and generated projections are not called learning.
-
-## Next acceptance points
-
-1. Keep the recovered forty-symbol observer under natural readback and keep
-   feeding receipt-bound segments into rolling evaluation entries (first entry
-   recorded 2026-08-23 with `continue_accumulation`); a retain/downweight/
-   disable recommendation becomes eligible only at ≥30 resolved trips.
-2. On the next A-share market window, prove the first safe-subset simulation
-   decision/outcome without waiting for exact500 or every rolling symbol.
-3. Historical-grid scanning is exhausted for the crypto book: threshold/horizon
-   scanning of the momentum entry, maker-exit execution variants, and now the
-   cross-sectional family have all been screened under taker costs without a
-   significant positive survivor. No further historical scanning of any family
-   is justified; learning continues only through receipt-bound rolling
-   accumulation of resolved outcomes on live segments.
-4. For both markets, bind the next resolved outcome to fees/slippage, baseline,
-   factor/strategy version, deterministic replay, exclusions, and a shadow-only
-   recommendation.
-5. Replace this file after the next material readback. Do not append incident logs
-   or copy these SHAs, counts, timer states, or maturity claims into durable
-   architecture and policy documents.
+TradingCopilot has no fresh UI/consumer acceptance in this batch. CNFutures and
+prediction markets stay paused; no credentials, account state or ledgers were
+changed by this audit. No new monitoring task is implied.
