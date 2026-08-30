@@ -562,7 +562,10 @@ omit `VITE_TRADING_AGENT_SNAPSHOT_URL` and use the same-origin
 
 ## Nginx Shape
 
-Example route shape for the production server:
+Local-only fallback when a single-user remote boundary has not been verified.
+The tracked location is [tradingagent-snapshot-local-only.conf](../../deploy/nginx/tradingagent-snapshot-local-only.conf).
+Replace only the existing snapshot location; preserve the site's listener,
+static root, health route and other sites. Do not add a broad `/api/` proxy.
 
 ```nginx
 server {
@@ -576,20 +579,35 @@ server {
     try_files $uri /index.html;
   }
 
-  location /api/trading-agent/snapshot {
+  location = /api/trading-agent/snapshot {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
     proxy_pass http://127.0.0.1:8787/api/trading-agent/snapshot;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header Authorization "Bearer server-only-token";
+    proxy_set_header X-Real-IP $remote_addr;
   }
 }
 ```
 
-If the internal API is bound to `127.0.0.1` and only reachable through the same
-server Nginx process, the token can be omitted by leaving
-`TRADING_AGENT_SNAPSHOT_API_TOKEN` unset. If the token is set, Nginx must inject
-the `Authorization` header as shown above.
+A loopback backend does **not** secure a public reverse proxy. A proxy-injected
+Bearer token authenticates the proxy, not the browser user; CORS is not access
+control. Omit the optional backend token only when every reachable ingress is
+independently restricted. Never place a token in a tracked Nginx example.
+
+Before applying the local-only location, inspect `nginx -T` for other snapshot
+proxies, `real_ip_header` and `set_real_ip_from`; a forwarded header must not turn
+an external peer into localhost. Validate with `nginx -t`, then require 200 from
+localhost and Nginx 403 from a real non-loopback connection for all three TA
+host aliases, including forged forwarding headers and normalized path variants.
+Unmatched SPA HTML is not snapshot JSON. An edge/ICP 403 is not origin denial
+proof. Direct Node access must remain bound to loopback. IPv6 is tested only if
+an IPv6 listener already exists; do not open one for this check.
+
+This closes the named Nginx route only, not any unverified historical Pages or
+Tunnel ingress. Remote API use remains unavailable until separately authorized
+single-user access is installed and verified. Roll back an observation-reader
+change by restoring its unit, not by reopening an anonymous API route.
 
 ## Production Service Shape
 

@@ -21,6 +21,35 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def test_snapshot_nginx_local_only_contract() -> None:
+    template = _read("deploy/nginx/tradingagent-snapshot-local-only.conf")
+    directives = [
+        line.strip() for line in template.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert directives == [
+        "location = /api/trading-agent/snapshot {",
+        "allow 127.0.0.1;",
+        "allow ::1;",
+        "deny all;",
+        "limit_req zone=api burst=20 nodelay;",
+        "proxy_pass http://127.0.0.1:8787/api/trading-agent/snapshot;",
+        "proxy_set_header Host $host;",
+        "proxy_set_header X-Real-IP $remote_addr;",
+        "proxy_read_timeout 15s;",
+        "}",
+    ]
+
+
+def test_snapshot_ingress_documentation_does_not_treat_proxy_as_user_auth() -> None:
+    documentation = _read("front/docs/integration.md")
+    assert 'proxy_set_header Authorization "Bearer server-only-token"' not in documentation
+    assert "CORS is not access" in documentation
+    assert "real_ip_header" in documentation and "set_real_ip_from" in documentation
+    assert "edge/ICP 403 is not origin denial" in documentation
+    assert "location = /api/trading-agent/snapshot" in documentation
+
+
 def test_production_deployment_shell_scripts_parse() -> None:
     for relative in ("deploy/release.sh", "deploy/bootstrap-production-server.sh"):
         subprocess.run(
