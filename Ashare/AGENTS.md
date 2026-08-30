@@ -46,7 +46,7 @@
 - 样本 authority：`shared/review/ashare/sample_journal.jsonl`。
 - 投影：`sample_kpi_latest.json`、`evolution_decision_latest.json`、`market_maturity_latest.json`；可重建，不能反写事实。
 - SampleJournal/KPI 是唯一演化 authority。旧 review/portfolio 文件不得触发自动生命周期或风险晋级。
-- 第 5、10 个交易日只标记人工复核到期。首 1–2 周保持 sim-only；成熟度通过也不自动实盘。
+- 第 5、10 个交易日仅是自动证据/报告检查点，不是人工晋级或模拟接入门禁；缺少成熟度证据不能阻止数据合格股票继续积累模拟样本。全程保持 sim-only，成熟度通过也不自动实盘。
 - 未来 20%–30% 人工试运行必须由 Nicholas 另行明确确认。邮件/同花顺路由未实现，不属于本模块当前入口。
 
 运行、验收和回滚见 [../docs/operations.md](../docs/operations.md)，字段见 [../docs/data_contract.md](../docs/data_contract.md)。

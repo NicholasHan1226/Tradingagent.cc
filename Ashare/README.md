@@ -544,7 +544,7 @@ review eligibility signal, not `training_eligible`: shared SampleJournal,
 training, calibration and promotion authority remain false.
 
 `minute_session_initializer.py` closes that pre-open preparation gap without
-adding a provider route. At 09:20 it reads the current TradingDatas catalog,
+adding a provider route. At the configured pre-open start it reads the current TradingDatas catalog,
 proves the target date is open, obtains `pretrade_date`, and fetches only the
 reviewed universe's prior-session `daily.close` rows through `/v1/query`. It
 revalidates the current `rt_min` catalog contract, copies the already-reviewed
@@ -561,10 +561,13 @@ For a reviewed scale transition, the initializer accepts an explicit absolute
 the canonical universe SHA into the published manifest. Minute `ts_code in`
 filters are capped at 100 values by the V1 contract, so larger artifacts use
 100-symbol shards and replayed shard aggregation; a 500-symbol artifact is not
-silently truncated to the preceding 30-symbol canary. The supplied artifact must still
-pass the main-board, listing-age and risk checks, have complete prior-close
-coverage, and match every exact minute snapshot before any simulated step can
-proceed. The same absolute path can be supplied to the scheduled initializer as
+silently truncated to the preceding 30-symbol canary. Fixed-cohort mode requires
+complete prior-close and exact minute coverage for its reviewed cohort.
+`rolling_eligible` instead publishes the eligible partition: recent listings
+remain pending, missing prior closes are excluded by symbol, and validated
+minute subsets can continue independently. Mainboard, risk, identity and source
+proof checks still apply; a changing source universe does not reset the age of
+already-eligible stocks. The same absolute path can be supplied to the scheduled initializer as
 `ASHARE_MINUTE_UNIVERSE_SOURCE`; when absent, the prior reviewed session
 universe remains the default.
 
@@ -578,8 +581,8 @@ twice and merged only after identity and same-observation checks. Daily
 references still use five 100-symbol batches for a 500-symbol Universe even
 when catalog `max_page_size=500`.
 Every batch is independently read twice, allows at most five cursor pages, and
-has a row budget exactly equal to its requested symbol set. Returned
-`(ts_code, trade_date)` identities must exactly match that set; missing, extra,
+has a row budget exactly equal to its requested symbol set. In fixed-cohort
+mode, returned `(ts_code, trade_date)` identities must exactly match that set; missing, extra,
 duplicate, over-budget or non-terminating cursor chains, replay-changing,
 catalog-drifting, 413, stale or degraded evidence fails closed. The TA API
 adapter may retry only transient 429/503, timeout and transport failures with
@@ -621,10 +624,11 @@ snapshot/window boundary.
 
 ### Isolated scale-500 runtime candidate
 
-`minute_scale500_runtime.py` is the AShare-owned selector for a direct,
-simulation-only 500-symbol transition. It requires an absolute, regular,
-single-link, non-writable frozen Universe artifact with exactly 500 unique
-reviewed symbols and an explicit canonical SHA256. The runtime candidate is
+`minute_scale500_runtime.py` retains its historical scale-500 name. The fixed
+experiment uses the configured complete frozen Universe, not a hard-coded
+500-symbol admission rule. It requires an absolute, regular, single-link,
+non-writable artifact with the configured unique reviewed identities and an
+explicit canonical SHA256. The runtime candidate is
 fixed to `http://127.0.0.1:18082`, `cn.dataset.rt_min`, and the existing
 catalog/query clients; it never reads a provider database directly and does not
 add a provider route, fallback, broker, or historical-minute fallback. Bounded
@@ -639,33 +643,38 @@ publishes no state bundle. Post-close minute rows and a prior 30-symbol bundle
 are forbidden as opening evidence.
 
 For a Controller-held next-window transition, `initialize` may additionally
-receive one explicit `--target-bar-end` and exactly five repeated
+receive one explicit `--target-bar-end` and the complete configured set of
 `--scale500-cohort-receipt` arguments. Each receipt must be an existing
-`minute_canary` observation-only, delayed-paper result for one deterministic
-100-symbol slice of the frozen 500 set. The initializer normalizes the canary's
-timezone-bearing ISO `bar_end`, requires all five receipts and all 500 embedded
+`minute_canary` observation-only, delayed-paper result for its deterministic
+slice of the frozen set. The initializer normalizes the canary's
+timezone-bearing ISO `bar_end`, requires all cohort receipts and all embedded
 bars to bind the same formal session slot, and records only their secret-free
 symbol, receipt, lineage, snapshot, and replay bindings in
 `minute-manifest.json` (never provider rows). Mixed slots, later-bar
 selection, overlap, missing/extra/duplicate identities, incomplete lineage,
-replay drift, a non-500 `max_rows`, or any partial cohort fails closed. This is
-session preparation only. The two adjacent exact 500/500 gate still controls
-delayed-paper activation, but it is not an admission gate for the recurring
-observation timer.
+replay drift, a `max_rows` inconsistent with the configured Universe, or any
+partial reference cohort fails closed. This is session preparation only.
+The two adjacent complete-cohort gate controls fixed-experiment activation,
+not `rolling_eligible` delayed-paper admission. It is not a promise that the
+fixed runner is called only after the second bar; gate and loop progress are
+separate evidence.
 
-Normally, the first accepted scale observations must be the adjacent 09:35 and
-09:40 500/500 bars. For `--rolling-eligible`, if a retryable incident leaves the
+In fixed-cohort mode, the first accepted scale observations must be the adjacent
+09:35 and 09:40 complete-cohort bars. In `--rolling-eligible`, the first validated
+current subset activates the day; there is no two-opening-bar or 99%-coverage
+entry gate. If a retryable incident leaves the
 day gate pending with no state bundle after the opening slot, the recurring
-paper path may start a new partial session from the next current complete formal
+paper path may start a new partial session from the next current formal
 bar. It never backfills skipped bars, and records `late_start=true`,
-`full_session_complete=false` and `learning_eligible=false`; later bars continue
-observation only. This automatic recovery is intentionally narrower than a
+`full_session_complete=false` and `learning_eligible=false`; valid later subsets
+continue the existing fixture simulation. This does not grant canonical capital
+or execution authority. This automatic recovery is intentionally narrower than a
 manual full-universe start. A one-time, manual `run --allow-late-start` remains
 the only exception for the fixed 3193 full-universe path: it can start only from
 the runner's exact current completed formal bar after an independently verified
-500/500 production canary. The static late-start candidate requires its
+full-cohort production canary. The static late-start candidate requires its
 secret-free canary receipt and verifies the same trading date, exact bar,
-delayed-paper tier, 500 canonical identities, same-observation replay,
+delayed-paper tier, exact frozen identities, same-observation replay,
 receipt/lineage proof and frozen Universe digest before it invokes the runner. It never
 queries or backfills earlier bars, cannot use mixed/failed observations, and is
 not accepted by `initialize` or either recurring systemd unit. The tracked
@@ -682,23 +691,32 @@ the normal-path timer continues the 48-slot session. Any missing, partial, mixed
 degraded, identity, lineage, fanout, continuity, authority, or persistence
 failure remains fail-closed for delayed-paper.
 
-The full 500/500 cohort remains mandatory before fixed `scale500`
-`delayed-paper` can run. In `rolling_eligible` mode, a separate pure receipt
+The complete frozen cohort remains mandatory before fixed `scale500`
+`delayed-paper` can run. For that fixed-cohort experiment, a separate pure receipt
 builder may describe a 99%-or-higher partial cohort only
 when the exact missing identity set is explicit and no replacement identity is
 present. That receipt is deterministic, zero-notional and shadow-only: it has
 no candidate, capital, execution, training or promotion authority and cannot
-be routed through the delayed-paper runner. The recurring Scale500 path now
+be routed through the delayed-paper runner. The fixed-cohort Scale500 path
 wires the same builder before any state-bundle mutation: a proof- and
-lineage-complete 495--499 subset is persisted as
+lineage-complete subset meeting the configured 99% threshold is persisted as
 `quality_status=usable_degraded` under the isolated scale day root, while the
-exact 500/500 snapshot alone continues into the existing runner. An unsafe
+complete frozen-cohort snapshot alone continues into the existing loop. An unsafe
 identity, time, key, proof, or lineage result fails only that cohort and leaves
 the Scale500 gate selected so the next cadence can observe again; it never
 grants execution, training, promotion, capital, or real-trading authority.
+This shadow-only branch is not the rolling admission rule: `rolling_eligible`
+passes `partial_observation_minimum=None` and validates the runner's accepted
+subset with `allow_partial=True` and `allow_gap_recovery=True`. Valid stock bars
+enter the fixture loop while missing/rejected stocks and gaps stay explicit.
 
-The runtime records `fallback30_selected` and its stable failure reason in the
-isolated scale gate before it exits non-zero. The tracked rollback unit only
+Failures entering the fixed-cohort/non-retryable exception branch record
+`fallback30_selected` and their stable reason before exiting non-zero.
+The partial-cohort validation branch instead returns its explicit failure
+without latching fallback, preserving the selected scale gate.
+Retryable rolling failures instead keep the selected rolling lane for the next
+slot (`retry_next_slot=true`); they do not latch independent future slots out.
+The tracked rollback unit only
 disables the two scale timers and stops the two scale services; it never changes
 TA `current`, starts or enables the 30-symbol units, or deletes or rewrites either
 state root. The preserved rollback-30 state therefore remains evidence for a
