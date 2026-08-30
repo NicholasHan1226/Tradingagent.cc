@@ -342,7 +342,7 @@ _DATASET_SPECS: Mapping[str, _DatasetSpec] = MappingProxyType(
             source_candidates=("source", "org_name"),
         ),
         "cn.dataset.broker_recommend": _DatasetSpec(
-            identity_candidates=_GENERIC_IDENTITY + (("month", "broker", "ts_code"),),
+            identity_candidates=_GENERIC_IDENTITY + (("month", "broker", "ts_code"), ("month", "broker", "ts_code", "name")),
             event_time_candidates=("event_time", "month"),
             title_candidates=("title", "name"),
             source_candidates=("source", "broker"),
@@ -511,6 +511,8 @@ class EvidenceDatasetProfile:
             raise AshareEvidenceContractError(
                 "ashare_evidence_catalog_schema_major_invalid"
             )
+        if dataset_id == "cn.dataset.broker_recommend" and schema_major not in {1, 2}:
+            raise AshareEvidenceContractError("ashare_evidence_catalog_schema_major_invalid")
         default_fields = _strings(
             row.get("default_fields"),
             "ashare_evidence_catalog_default_fields_invalid",
@@ -526,6 +528,10 @@ class EvidenceDatasetProfile:
             "ashare_evidence_catalog_identity_fields_invalid",
         )
         event_time_field = _first_field(fields, spec.event_time_candidates)
+        if dataset_id == "cn.dataset.broker_recommend" and schema_major == 2:
+            native_identity = ("month", "broker", "ts_code", "name")
+            if default_fields != native_identity or identity_fields != native_identity:
+                raise AshareEvidenceContractError("ashare_evidence_broker_major2_shape_invalid")
         if identity_fields not in spec.identity_candidates:
             raise AshareEvidenceContractError(
                 "ashare_evidence_catalog_identity_mismatch"
@@ -906,6 +912,7 @@ class EventEvidenceSnapshot:
         parsed_event_time, parsed_precision, parsed_known_time = _event_time(
             self.event_time,
             available_at=self.available_at,
+            allow_month=self.dataset_id == "cn.dataset.broker_recommend",
         )
         if (
             parsed_event_time != self.event_time
@@ -1330,8 +1337,18 @@ def _event_time(
     raw: object,
     *,
     available_at: datetime,
+    allow_month: bool = False,
 ) -> tuple[str, str, bool]:
     text = _text(raw, "ashare_evidence_event_time_missing")
+    if allow_month and len(text) == 6 and text.isascii() and text.isdigit():
+        year, month = int(text[:4]), int(text[4:])
+        if not 1 <= year <= 9999 or not 1 <= month <= 12:
+            raise AshareEvidenceContractError("ashare_evidence_event_time_invalid")
+        local_available = available_at.astimezone(SHANGHAI)
+        if (year, month) > (local_available.year, local_available.month):
+            raise AshareEvidenceContractError("ashare_evidence_event_time_after_availability")
+        # A reporting month is neither a publication instant nor historical knowledge.
+        return text, "month", False
     if len(text) == 8 and text.isdigit():
         try:
             parsed_date = datetime.strptime(text, "%Y%m%d").date()
@@ -1477,12 +1494,17 @@ def _map_run(
                 symbol = eligibility.normalized_symbol
             elif allowed_symbols is not None:
                 continue
+        if profile.dataset_id == "cn.dataset.broker_recommend" and profile.schema_major == 2:
+            native_month = row.get("month")
+            if not isinstance(native_month, str) or len(native_month) != 6 or not native_month.isascii() or not native_month.isdigit():
+                raise AshareEvidenceContractError("ashare_evidence_broker_month_invalid")
         event_time, precision, known_time_proven = _event_time(
             _normalize_provider_event_time(
                 row.get(profile.event_time_field),
                 profile=profile,
             ),
             available_at=observed,
+            allow_month=profile.dataset_id == "cn.dataset.broker_recommend",
         )
         raw_entity = (
             row.get(profile.entity_field) if profile.entity_field is not None else None
