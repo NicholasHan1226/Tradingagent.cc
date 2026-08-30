@@ -10,6 +10,7 @@ ASHARE_DATA_UNITS = (
     ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-paper.service",
     ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-session.service",
     ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-late-start.service",
+    ROOT / "Ashare/systemd/tradingagent-ashare-capital-backed-paper.service",
 )
 
 BOOTSTRAP = ROOT / "deploy/systemd/tradingagent-ashare-minute-bootstrap.service"
