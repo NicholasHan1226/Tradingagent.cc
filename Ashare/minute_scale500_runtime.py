@@ -327,7 +327,10 @@ def _validated_universe(
     source: Path,
     *,
     expected_sha256: str,
+    rolling_eligible: bool = False,
 ) -> tuple[list[Mapping[str, Any]], str]:
+    """Bind a reviewed source; only rolling permits a non-fixed source count."""
+
     if (
         not _SHA256_PATTERN.fullmatch(expected_sha256)
         or source.is_symlink()
@@ -343,7 +346,11 @@ def _validated_universe(
     if stat.st_nlink != 1 or stat.st_mode & 0o022 or os.access(source, os.W_OK):
         raise MinuteScale500RuntimeError("minute_scale500_universe_source_invalid")
     raw = _load_json(source, "minute_scale500_universe_invalid")
-    if not isinstance(raw, list) or len(raw) != EXPECTED_UNIVERSE_COUNT:
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or (not rolling_eligible and len(raw) != EXPECTED_UNIVERSE_COUNT)
+    ):
         raise MinuteScale500RuntimeError("minute_scale500_universe_count_mismatch")
     rows: list[Mapping[str, Any]] = []
     symbols: list[str] = []
@@ -355,7 +362,7 @@ def _validated_universe(
             raise MinuteScale500RuntimeError("minute_scale500_universe_invalid")
         rows.append(item)
         symbols.append(symbol)
-    if len(set(symbols)) != EXPECTED_UNIVERSE_COUNT:
+    if len(set(symbols)) != len(symbols):
         raise MinuteScale500RuntimeError("minute_scale500_universe_duplicate")
     actual_sha256 = hashlib.sha256(_canonical_json(raw)).hexdigest()
     if actual_sha256 != expected_sha256:
@@ -366,7 +373,7 @@ def _validated_universe(
         raise MinuteScale500RuntimeError(
             "minute_scale500_universe_policy_invalid"
         ) from exc
-    if len(universe.instruments) != EXPECTED_UNIVERSE_COUNT:
+    if len(universe.instruments) != len(rows):
         raise MinuteScale500RuntimeError("minute_scale500_universe_count_mismatch")
     return rows, actual_sha256
 
@@ -968,6 +975,7 @@ def initialize_scale500_session(
     source_rows, source_universe_sha256 = _validated_universe(
         universe_path,
         expected_sha256=expected_universe_sha256,
+        rolling_eligible=rolling_eligible,
     )
     trading_date = now.astimezone(SHANGHAI).date().isoformat()
     mode = "rolling_eligible" if rolling_eligible else "scale500"
@@ -1439,6 +1447,7 @@ def run_scale500_once(
     universe_rows, source_universe_sha256 = _validated_universe(
         universe_path,
         expected_sha256=expected_universe_sha256,
+        rolling_eligible=rolling_eligible,
     )
     mode = "rolling_eligible" if rolling_eligible else "scale500"
     target = expected_available_bar_end(now)

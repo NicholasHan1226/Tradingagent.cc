@@ -1,9 +1,15 @@
 # TradingAgent current status
 
-Observed at: 2026-08-30T16:29:02+08:00
+Observed at: 2026-08-30T20:49:33+08:00
 
 This replaceable snapshot separates source, configuration, runtime and market
 receipts. It grants no capital, orders, live trading or promotion.
+
+GitHub HTTPS and SSH readback recovered by 20:38 without changing proxy, SSH,
+cloud, account or credential settings. The earlier connection failures were
+transient observations; their root cause is not proven. Documentation-only
+PR 614's exact-main validation run 33302141919 completed successfully. It did
+not deploy a new runtime.
 
 ## Source and release layers
 
@@ -32,6 +38,31 @@ service-user imports of five affected modules also resolve to it.
 ## A-share: coverage and actual fills
 
 The latest natural trading session is **2026-08-28**; today is Sunday.
+
+**Next-session preparation, not natural-market proof:** at 20:42:13 and
+20:44:04, the actual service user and current immutable code prepared Aug-31
+inputs through authenticated catalog/query in a private temporary root.
+Both reads proved Aug-31 open and Aug-28 as the previous session. Results:
+**3,193 source / 3,191 age-eligible / 3,187 with usable prior closes**;
+two listings remain pending and four missing closes are excluded by symbol.
+Those four are `000635.SZ`, `000711.SZ`, `002274.SZ`, `002586.SZ`.
+The runs took 34.369 and 41.450 seconds. Replay reported `reused=true` and all
+three file hashes stayed identical. No state bundle, orders, capital facts,
+tracking projection or production Aug-31 directory was created.
+
+Evidence root: `/var/tmp/ta-preopen-20260830.krB29l/scale/20260831`.
+Manifest/reference/universe SHA256 respectively:
+`8e9a4110f5059473f29faeca954b8fba4e11ee56f29e730764a9087b5af8552f`,
+`8d77d7816dff6ee4adf5fc9c874472380c6c9126a5f52981bfa6fea5f7a4374e`,
+`4bd2c888abbcdde4e3434d4f3807e0231bc85af75ca6c1d1dcf7a5ebcd875abe`.
+The injected target date was for isolated preparation only; it is not a
+future observation timestamp or a successful natural timer invocation.
+
+The separate 30-stock baseline preparation also passed at 20:49:32 in
+9.191 seconds, with 30/30 prior closes and no exclusions. Its inputs are under
+`/var/tmp/ta-preopen-20260830.krB29l/baseline/20260831`, not the production root.
+
+**Last natural session (Aug-28):**
 
 - Scale initializer published **3,188 active / 3,193 source identities**:
   two recent listings pending, three missing prior closes excluded by stock.
@@ -91,18 +122,13 @@ This is bounded `observed` evidence, not stable consumption or historical PIT.
 
 G5 delayed-paper service and forty-symbol observation are now bound to
 `7eb0e62`; ten-symbol observation stays separately pinned to `5d33501`.
-G5's first natural new-release invocation ran 16:25:55–16:27:35 and completed
-the 08:20Z window with `status=completed`, `data_incomplete=false`,
-`requested_window_consumed=true`, execution/live false. This is one successful
-window, not continuous-health or profitability proof. Forty-symbol's first
-new-release invocation ran 16:24:47–16:29:00 and also completed the 08:20Z
-window: `data_incomplete=false`, `requested_window_consumed=true`,
-`budget_deferred=false`, execution/live false. Its head advanced to 2,101 events
-and 1,278 accepted observations, retaining 557 data rejects and 266 gaps.
-The 159,446-byte primary bars sidecar was saved at 16:27:20, before optional
-work and final completion; the original 08:24:30Z cutoff was retained.
-Earlier 07:55Z receipts had G5 incomplete and forty-symbol watermark rejection.
-Service exit 0 alone is not data acceptance.
+At 20:40, service journals since 20:00 prove eight consecutive requested
+windows per lane, from 11:55Z through 12:30Z inclusive, with
+`status=completed`, `requested_window_consumed=true`, `data_incomplete=false`
+and execution/live false. Forty-symbol also reports `budget_deferred=false`
+for each. This is bounded natural-window consumer evidence, not whole-history
+continuity, actual fills or profitability. Earlier gaps/rejections remain
+historical facts; service exit 0 alone is not data acceptance.
 
 The deployed repair saves validated bars before optional spread work and
 preserves an uninterrupted pending locator across invocation/crash recovery.
@@ -126,8 +152,16 @@ runtime release, natural-window acceptance or current profitability claims.
 - Separate coverage, candidates, pending orders, actual fills and reconciliation.
   Timer state, HTTP 200, CI and process exit alone do not prove business success.
 - Day-5/day-10 are automatic evidence/report checkpoints, not manual admission gates.
+- Audit every admission layer, not only the minute reader: the initialization
+  query loop and source-count checks can silently reintroduce global blockers.
+  A transient batch failure must not erase independent verified batches; a
+  fixed experimental count must not become rolling admission policy.
+- Validate the first read before attempting replay, so a later network outage
+  cannot hide an already-known identity or source-evidence violation.
+- Deployment instructions must match the explicit accepted-SHA dispatch and
+  actual release/helper service bindings, not an obsolete automatic-push model.
 
-Root-only rollback backup: `/var/tmp/ta-sim-release-20260830.742c1b`.
+Prior PR 613 root-only rollback backup: `/var/tmp/ta-sim-release-20260830.742c1b`.
 Rollback restores verified code/configuration and prior timer state, never old
 ledger contents. All ten originally active/enabled timers were restored at
 16:24:47 after a 77-second pause; in-flight learning finished naturally, no

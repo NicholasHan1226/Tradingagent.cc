@@ -136,15 +136,16 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 `full_acceptance --profile quick` 只聚合当前网络关闭的合同/退役回归测试；`--profile prod` 的轻量 TradingDatas runtime gate 只证明 catalog/auth/单次 dataset 启动 smoke，不能替代 integration probe 的 bounded pagination、same-observation 双跑和 research snapshot 验收。配置缺失时必须失败。`sharedsignals_evidence_contract`、`market_health`、`opening_acceptance` 与 `cn_futures_live_check` 已是 fail-closed 退役/法证墓碑，不是 TradingDatas 验收入口。`full_acceptance` 的 capital-growth profile 仍是历史综合回归工具，不是单一生产就绪事实；缺证据必须失败或明确 warning，不能用“样本不足”静默通过。
 
 
-## 自动部署
+## 验收后的部署
 
-项目已配置 GitHub Actions 自动部署流水线：
+项目复用 GitHub Actions 的测试与不可变 release 部署流水线。合入主线或 CI 通过本身不会切换生产。
 
 ### 部署流程
 
-1. **推送代码到 main**：直接 push 或 PR 合并
-2. **自动测试**：GitHub Actions 运行完整测试套件（约 6 分钟）
-3. **自动部署**：测试通过后，自动部署到生产服务器（约 30 秒）
+1. **候选验收并合并 PR**：核对精确 head、范围、测试、独立复审与回退方式；不得以直接推送主线绕过验收。
+2. **精确主线测试与打包**：`TradingAgent Tests` 的 `push` run 必须在待部署 SHA 上成功，产物的 source SHA 和校验和须匹配。
+3. **显式请求部署**：发布负责人接受该 SHA 后，通过既有 `controller-accepted-deploy` 事件传入 SHA 和测试 run ID；工作流再次核对当前 main，再由现有 release helper 切换。
+4. **运行读回**：分别确认 current、服务实际版本、健康状态与消费者回执。工作流成功或被跳过均不能替代运行证据。仅文档/测试的 M0 通道不触发生产部署。
 
 ### 配置要求
 
@@ -155,7 +156,7 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 - `DEPLOY_KNOWN_HOSTS`：服务器主机指纹
 
 **Repository Variables**：
-- `DEPLOY_ENABLED`：`true`（启用自动部署）
+- `DEPLOY_ENABLED`：`true`（允许处理已验收的显式部署请求）
 - `DEPLOY_PORT`：`22`（SSH 端口）
 
 ### 查看部署状态
@@ -165,9 +166,7 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 
 ### 回滚
 
-如果新版本有问题，可以：
-1. 推送修复 commit 到 main
-2. 或手动在服务器上切换 `/opt/investment/current` 符号链接
+如果新版本有问题，按 [运行、验收与回滚](docs/operations.md) 使用本批回退证据：先暂停相关任务的新调度并等待正在写入的任务结束，再恢复已验证的 release 和对应服务配置，最后恢复原有调度并读回。实际 current 为 `/opt/investment/releases/tradingagent/current`；不能只切 symlink 而遗漏服务的版本绑定，也不能恢复或覆盖旧账本。修复代码仍通过候选、合并和精确主线测试发布。
 ## 文档入口
 
 - [系统架构](docs/architecture.md)
@@ -179,7 +178,7 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 - [冻结范围后的 Backlog](docs/BACKLOG.md)
 - [当前分市场状态](STATUS.md)
 
-本地通过、候选远端分支、远端主线、服务器旁路、生产文件、生产 runtime、cron 生效和真实市场样本是不同层级；任何一层都不能替代其它层。Nicholas 已授予正常代码发布 standing authorization：范围明确且 release gate 通过后，主助手默认继续完成 commit、普通 PR/merge、push、版本化 loopback-only sidecar 和逐层读回。该默认不包含 force-push/历史重写、删除或覆盖运行数据、密钥/账号/权限、破坏性数据库迁移、现役源码或入口切换、安装/启用 cron/service、真实模型网络、邮件/GUI、broker 或真实交易；这些高风险动作必须由当期任务明确包含并通过专用门禁。
+本地通过、候选远端分支、远端主线、服务器旁路、生产文件、生产 runtime、定时任务生效和真实市场样本是不同层级；任何一层都不能替代其它层。正常发布的 standing authorization 和例外以 [项目规则](AGENTS.md#验收与发布边界) 为准：范围明确、测试/审计、preflight、回退与新鲜读回路径成立后，主助手继续完成提交、PR/合并、不可变 release 及既有内部 sim-only localhost 服务/定时任务的安装、启用或切换。该授权不包含历史重写、删除或覆盖数据、密钥/账号/权限、破坏性迁移、公开入口、未经当期任务包含的外部模型网络、邮件/GUI 外部写入、自动风险扩张、broker 或真实交易。
 
 生产版本核验使用 `tools/effective_runtime_release.py`，同时绑定 `current`、systemd
 effective configuration 和运行进程；它只读且不查询 Environment/secret。只看仓库

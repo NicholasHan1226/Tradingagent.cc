@@ -56,6 +56,12 @@ def _universe(path: Path, *, count: int = EXPECTED_UNIVERSE_COUNT) -> str:
     rows = []
     for index in range(count):
         symbol = f"{index + 1:06d}.SZ"
+        if index >= 3999:
+            # Keep capacity-boundary fixtures inside the actual mainboard
+            # prefixes; an invalid 004xxx code would test scope, not capacity.
+            offset = index - 3999
+            prefix = ("600", "601", "603")[offset // 1000]
+            symbol = f"{prefix}{offset % 1000:03d}.SH"
         rows.append(
             {
                 "symbol": symbol,
@@ -121,7 +127,9 @@ def _published_session(
     )
 
 
-def _paths(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
+def _paths(
+    tmp_path: Path, *, count: int = EXPECTED_UNIVERSE_COUNT
+) -> tuple[Path, Path, Path, Path, str]:
     scale_root = tmp_path / "scale500"
     rollback_root = tmp_path / "rollback30"
     rollback_root.mkdir()
@@ -129,7 +137,7 @@ def _paths(tmp_path: Path) -> tuple[Path, Path, Path, Path, str]:
     token_file.write_text("not-read-by-test", encoding="utf-8")
     token_file.chmod(0o600)
     universe_source = tmp_path / "universe.json"
-    digest = _universe(universe_source)
+    digest = _universe(universe_source, count=count)
     return scale_root, rollback_root, token_file, universe_source, digest
 
 
@@ -381,6 +389,162 @@ def _receipt(bar_end: str) -> dict[str, object]:
         "execution_authority": False,
         "real_trading_enabled": False,
     }
+
+
+@pytest.mark.parametrize("count", [1, 3192, 3193, 3194, 6000])
+def test_rolling_dynamic_source_count_initializes_and_runs(
+    tmp_path: Path, count: int
+) -> None:
+    scale, rollback, token, source, digest = _paths(tmp_path, count=count)
+    common = dict(
+        scale_state_root=scale,
+        rollback30_state_root=rollback,
+        token_file=token,
+        universe_source=source,
+        expected_universe_sha256=digest,
+        rolling_eligible=True,
+    )
+
+    def initializer(**kwargs: object) -> dict[str, object]:
+        assert kwargs["allow_pending_recent_listings"] is True
+        return {
+            **_initializer(**kwargs),
+            "symbol_count": count,
+            "rolling_eligible": True,
+        }
+
+    initialized = initialize_scale500_session(
+        **common, now=_at("2026-07-31T09:18:00"), initializer=initializer
+    )
+    gate_path = scale / ".scale500-gates" / "20260731.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert initialized["symbol_count"] == count
+    assert gate["expected_universe_count"] == count
+    assert gate["universe_sha256"] == digest
+    assert gate["selected_mode"] == "rolling_eligible"
+
+    calls = []
+
+    def runner(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        assert kwargs["pin_universe_filter"] is True
+        assert kwargs["partial_observation_minimum"] is None
+        return {**_receipt("2026-07-31 09:35:00"), "row_count": count}
+
+    result = run_scale500_once(
+        **common, now=_at("2026-07-31T09:42:00"), runner=runner
+    )
+    assert len(calls) == 1
+    assert result["status"] == "pass"
+    assert result["row_count"] == count
+    assert result["selected_mode"] == "rolling_eligible"
+    assert result["scale500_acceptance_status"] == "active"
+    assert result["execution_eligible"] is False
+    assert result["training_eligible"] is False
+    assert result["promotion_authorized"] is False
+    assert result["real_trading_enabled"] is False
+    assert list(rollback.iterdir()) == []
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["expected_universe_count"] == count
+    assert gate["universe_sha256"] == digest
+    assert gate["status"] == "active"
+    coverage = json.loads(Path(result["coverage_receipt"]).read_text(encoding="utf-8"))
+    assert coverage["source_count"] == count
+    assert coverage["active_count"] == count
+    assert coverage["accepted_count"] == count
+    assert coverage["source_universe_sha256"] == digest
+    assert coverage["universe_sha256"] == digest
+
+
+@pytest.mark.parametrize("entrypoint", ["initialize", "run"])
+@pytest.mark.parametrize(
+    ("rolling", "count"),
+    [(False, 0), (False, 1), (False, 3192), (False, 3194), (True, 0)],
+)
+def test_source_count_rejects_empty_and_fixed_nonexact_before_delegation(
+    tmp_path: Path, entrypoint: str, rolling: bool, count: int
+) -> None:
+    scale, rollback, token, source, digest = _paths(tmp_path, count=count)
+
+    def forbidden(**_: object) -> dict[str, object]:
+        pytest.fail("invalid source count must fail before delegation")
+
+    invoke = (
+        initialize_scale500_session if entrypoint == "initialize" else run_scale500_once
+    )
+    hook = "initializer" if entrypoint == "initialize" else "runner"
+    with pytest.raises(MinuteScale500RuntimeError, match="universe_count_mismatch"):
+        invoke(
+            scale_state_root=scale,
+            rollback30_state_root=rollback,
+            token_file=token,
+            universe_source=source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T09:42:00"),
+            rolling_eligible=rolling,
+            **{hook: forbidden},
+        )
+    assert not scale.exists()
+    assert list(rollback.iterdir()) == []
+
+
+@pytest.mark.parametrize("entrypoint", ["initialize", "run"])
+@pytest.mark.parametrize(
+    ("fault", "reason"),
+    [
+        ("duplicate", "universe_duplicate"),
+        ("digest", "universe_digest_mismatch"),
+        ("symlink", "universe_source_invalid"),
+        ("hardlink", "universe_source_invalid"),
+        ("writable", "universe_source_invalid"),
+        ("policy", "universe_policy_invalid"),
+        ("capacity", "universe_policy_invalid"),
+    ],
+)
+def test_rolling_dynamic_source_keeps_integrity_guards(
+    tmp_path: Path, entrypoint: str, fault: str, reason: str
+) -> None:
+    scale, rollback, token, source, digest = _paths(
+        tmp_path, count=6001 if fault == "capacity" else 3
+    )
+    if fault in {"duplicate", "policy"}:
+        rows = json.loads(source.read_text(encoding="utf-8"))
+        rows[0]["symbol"] = rows[1]["symbol"] if fault == "duplicate" else "300001.SZ"
+        source.chmod(0o600)
+        source.write_text(json.dumps(rows), encoding="utf-8")
+        source.chmod(0o440)
+        digest = canonical_universe_sha256(source)
+    elif fault == "digest":
+        digest = "0" * 64
+    elif fault == "symlink":
+        alias = tmp_path / "source-link.json"
+        alias.symlink_to(source)
+        source = alias
+    elif fault == "hardlink":
+        os.link(source, tmp_path / "source-alias.json")
+    elif fault == "writable":
+        source.chmod(0o640)
+
+    def forbidden(**_: object) -> dict[str, object]:
+        pytest.fail("unsafe reviewed source must fail before delegation")
+
+    invoke = (
+        initialize_scale500_session if entrypoint == "initialize" else run_scale500_once
+    )
+    hook = "initializer" if entrypoint == "initialize" else "runner"
+    with pytest.raises(MinuteScale500RuntimeError, match=reason):
+        invoke(
+            scale_state_root=scale,
+            rollback30_state_root=rollback,
+            token_file=token,
+            universe_source=source,
+            expected_universe_sha256=digest,
+            now=_at("2026-07-31T09:42:00"),
+            rolling_eligible=True,
+            **{hook: forbidden},
+        )
+    assert not scale.exists()
+    assert list(rollback.iterdir()) == []
 
 
 def test_runtime_receipt_accepts_row_quality_audit_without_batch_rejection() -> None:

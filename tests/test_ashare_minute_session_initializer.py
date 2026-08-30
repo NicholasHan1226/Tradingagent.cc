@@ -1330,6 +1330,180 @@ def test_rolling_incomplete_daily_universe_excludes_only_missing_symbols(
     assert [row["symbol"] for row in references] == ["000001.SZ"]
 
 
+@pytest.mark.parametrize("failure", ["503", "429", "timeout"])
+@pytest.mark.parametrize("fail_on_replay", [False, True])
+def test_rolling_daily_batch_failure_preserves_other_batches_and_exact_replay(
+    tmp_path: Path, failure: str, fail_on_replay: bool,
+) -> None:
+    _template(tmp_path)
+    universe, daily = _large_universe(201)
+    source = tmp_path / "reviewed-universe-201.json"
+    source.write_text(json.dumps(universe) + "\n", encoding="utf-8")
+    middle = {row["symbol"] for row in universe[100:200]}
+
+    class SelectiveFailureTransport(FixtureTransport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            payload = kwargs.get("json_body") or {}
+            selected = (
+                payload.get("dataset_id") == "cn.equity.daily"
+                and bool(middle.intersection(payload["filters"]["ts_code"]["in"]))
+            )
+            prior = sum(
+                bool(middle.intersection(request["filters"]["ts_code"]["in"]))
+                for request in _daily_requests(self)
+            )
+            fail = selected and (not fail_on_replay or prior == 1)
+            self.daily_http_status = int(failure) if fail and failure != "timeout" else None
+            self.daily_timeout = fail and failure == "timeout"
+            return super().__call__(**kwargs)
+
+    def run() -> tuple[dict[str, object], SelectiveFailureTransport]:
+        transport = SelectiveFailureTransport(daily_rows=daily)
+        result = initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            universe_source=source,
+            allow_pending_recent_listings=True,
+            transport_factory=_factory(transport),
+        )
+        return result, transport
+
+    result, transport = run()
+    assert result["status"] == "pass"
+    assert result["symbol_count"] == 101
+    assert result["active_partition_count"] == 201
+    assert result["profile_max_rows"] == 101
+    assert result["daily_data_excluded"] == [
+        {"symbol": symbol, "reason": "previous_close_batch_unavailable", "trade_date": "20260728"}
+        for symbol in sorted(middle)
+    ]
+    requests = _daily_requests(transport)
+    assert len(requests) == (6 if fail_on_replay else 5)
+    day = tmp_path / "20260729"
+    before = {path.name: path.read_bytes() for path in day.iterdir()}
+    references = json.loads(before["reference-facts.json"])
+    assert {row["symbol"] for row in references} == {row["symbol"] for row in universe} - middle
+    assert not (day / "state-bundle.json").exists()
+    replay, _ = run()
+    assert replay["reused"] is True
+    assert {path.name: path.read_bytes() for path in day.iterdir()} == before
+
+
+@pytest.mark.parametrize("close", [0, -1, True, "invalid"])
+def test_rolling_invalid_previous_close_excludes_only_affected_symbol(
+    tmp_path: Path, close: object,
+) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_rows=[
+        {"ts_code": "000001.SZ", "trade_date": "20260728", "close": 11.11},
+        {"ts_code": "600000.SH", "trade_date": "20260728", "close": close},
+    ])
+    result = initialize_minute_session(
+        state_root=tmp_path,
+        token_file=Path("/run/private/token"),
+        now=_now(),
+        allow_pending_recent_listings=True,
+        transport_factory=_factory(transport),
+    )
+    assert result["symbol_count"] == 1
+    assert result["daily_data_excluded"] == [
+        {"symbol": "600000.SH", "reason": "previous_close_invalid", "trade_date": "20260728"}
+    ]
+
+
+@pytest.mark.parametrize("close", [float("inf"), float("nan")])
+def test_rolling_noncanonical_daily_payload_still_blocks(tmp_path: Path, close: float) -> None:
+    _template(tmp_path)
+    with pytest.raises(SharedSignalsV1Error, match="canonical JSON values"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            allow_pending_recent_listings=True,
+            transport_factory=_factory(FixtureTransport(daily_rows=[
+                {"ts_code": "000001.SZ", "trade_date": "20260728", "close": 11.11},
+                {"ts_code": "600000.SH", "trade_date": "20260728", "close": close},
+            ])),
+        )
+    assert not (tmp_path / "20260729").exists()
+
+
+def test_rolling_all_daily_batches_unavailable_does_not_publish_empty_session(
+    tmp_path: Path,
+) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_timeout=True)
+    with pytest.raises(MinuteSessionInitializerError, match="minute_session_rolling_universe_empty"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            allow_pending_recent_listings=True,
+            transport_factory=_factory(transport),
+        )
+    assert len(_daily_requests(transport)) == 1
+    assert not (tmp_path / "20260729").exists()
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404, 500])
+def test_rolling_daily_nonretryable_http_failure_still_blocks(
+    tmp_path: Path, status_code: int,
+) -> None:
+    _template(tmp_path)
+    transport = FixtureTransport(daily_http_status=status_code)
+    with pytest.raises(SharedSignalsV1Error, match=f"HTTP {status_code}"):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            allow_pending_recent_listings=True,
+            transport_factory=_factory(transport),
+        )
+    assert len(_daily_requests(transport)) == 1
+    assert not (tmp_path / "20260729").exists()
+
+
+@pytest.mark.parametrize(
+    "failure", ["daily_degraded", "daily_replay_change", "daily_wrong_trade_date", "daily_catalog_drift"],
+)
+def test_rolling_daily_evidence_failure_still_blocks(tmp_path: Path, failure: str) -> None:
+    _template(tmp_path)
+    with pytest.raises((MinuteSessionInitializerError, SharedSignalsV1Error)):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            allow_pending_recent_listings=True,
+            transport_factory=_factory(FixtureTransport(**{failure: True})),
+        )
+    assert not (tmp_path / "20260729").exists()
+
+
+@pytest.mark.parametrize("failure", ["daily_degraded", "daily_wrong_trade_date"])
+def test_rolling_first_read_hard_failure_is_not_masked_by_replay_outage(
+    tmp_path: Path, failure: str,
+) -> None:
+    _template(tmp_path)
+
+    class BadFirstReadThenOutage(FixtureTransport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            self.daily_http_status = 503 if self.daily_base_query_count else None
+            return super().__call__(**kwargs)
+
+    transport = BadFirstReadThenOutage(**{failure: True})
+    with pytest.raises(MinuteSessionInitializerError):
+        initialize_minute_session(
+            state_root=tmp_path,
+            token_file=Path("/run/private/token"),
+            now=_now(),
+            allow_pending_recent_listings=True,
+            transport_factory=_factory(transport),
+        )
+    assert len(_daily_requests(transport)) == 1
+    assert not (tmp_path / "20260729").exists()
+
+
 def test_duplicate_daily_identity_fails_closed_without_publishing(
     tmp_path: Path,
 ) -> None:
@@ -1372,7 +1546,8 @@ def test_wrong_daily_trade_date_fails_exact_identity_check(tmp_path: Path) -> No
             transport_factory=_factory(transport),
         )
 
-    assert len(_daily_requests(transport)) == 2
+    # Reject the first invalid identity before a replay outage can mask it.
+    assert len(_daily_requests(transport)) == 1
     assert not (tmp_path / "20260729").exists()
 
 
