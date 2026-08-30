@@ -10,8 +10,8 @@ none of these observations grants capital, orders, live trading or promotion.
 
 | Layer | Fresh observation | Boundary |
 |---|---|---|
-| Local canonical checkout | user/Kimi branch `feat/k10-vol-momentum-preregistration`, clean at `5350500` | preserved, not switched or called current main |
-| GitHub main | `80966e9` at this readback | later main movement requires a fresh check |
+| 本地主线 | clean user/Kimi research branch, preserved without switching | resolve with `git rev-parse HEAD origin/main`; not current main |
+| GitHub 主线 | use the current remote ref and its matching CI evidence | resolve with `git rev-parse HEAD origin/main`; never pin a self-invalidating main SHA in this row |
 | Ordinary server source | clean at `5cd9649` in `/opt/investment/tradingagent` | behind GitHub; not the active release, no three-end-sync claim |
 | Immutable current release | `580b453bf724d27931e3493f9bf01a138fa825b8` | code release, not market success |
 | Front read API | `127.0.0.1:8787/healthz` returned `ok=true` | minute fixture receipts are a separate read model |
@@ -58,9 +58,10 @@ Confirmed repairs in this candidate:
 The fixture accumulator is `non_production_fixture`, not the canonical 50,000
 CNY capital-backed execution loop. Coverage is not a resolved outcome or PnL.
 
-## Crypto: independent runtime evidence
+## Crypto track
 
-- G5 learning completed at 13:43:42 and delayed paper at 13:47:13, both exit 0
+- G5 delayed-paper service completed successfully at 13:47:13; G5 learning
+  completed at 13:43:42, both exit 0
   on `580b453`. Earlier same-batch delayed-paper output reported
   `data_incomplete=false`; this does not alone prove a newly resolved label.
 - Ten-symbol observation remains separately pinned to `5d33501`, with a
@@ -77,6 +78,9 @@ CNY capital-backed execution loop. Coverage is not a resolved outcome or PnL.
 - Research artifacts and rolling evaluations are not summarized as current
   profitability here; use their dated receipts and the independent Crypto task.
 
+Full forty-symbol coverage and a latest continuous 288-bar segment constrain
+runtime maturity and later authority claims; they do not block safe-segment simulation.
+
 ## Lessons and next evidence
 
 Do not infer missing receipts from permission-denied/empty directory reads.
@@ -91,6 +95,8 @@ historical receipt hashes and front health. The next natural session must prove
 continued receipt accumulation across valid subsets and explicit gaps.
 Authentication, state integrity, real trading and cross-market capital guards
 remain closed.
+
+## Copilot and paused scopes
 
 TradingCopilot has no fresh UI/consumer acceptance in this batch. CNFutures and
 prediction markets stay paused; no credentials, account state or ledgers were

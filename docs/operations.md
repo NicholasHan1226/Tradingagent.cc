@@ -73,6 +73,10 @@ git -C /Users/nicholashan/Projects/Finance/Tradingagent.cc rev-parse HEAD origin
 `npm test/lint/build:all`；同一前端矩阵仍必须在本地与服务器旁路分别复验。只有当主工作树
 `HEAD == origin/main == PR merge commit`、现有未跟踪资产未受影响时，才能进入旁路验收。
 
+重写 `STATUS.md` 时保留既有导航章节与主线实时查询入口，并补跑
+`python -m pytest -q tests/test_architecture_contract_guards.py`。
+Markdown 渲染和局部运行测试不能代替这些文档/架构契约检查。
+
 ## 1.2 服务器旁路候选部署
 
 服务器旁路部署只用于回答“冻结候选能否在目标服务器环境安装、测试、构建和运行”。它不改变现役代码、服务、定时任务、网页、路由或任何authority。它是正常发布后的默认非权威服务器验收路径，但每次仍必须使用精确提交SHA、新的版本化目录、隔离环境、完整receipt和现役未变读回；任何条件不满足都停止，不得切换现役。
