@@ -56,7 +56,8 @@ REVIEW_REPORT_CONTRACT = "tradingagent.crypto.ten_symbol_research_loop_review.v2
 LOOP_CHECKPOINT_CONTRACT = (
     "tradingagent.crypto.ten_symbol_research_loop_checkpoint.v2"
 )
-CHECKPOINT_FILENAME = "research_loop_checkpoint.json"
+LOOP_DIRECTORY_NAME = "ten_symbol_research_loop.v2"
+CHECKPOINT_FILENAME = "research_loop_checkpoint.v2.json"
 LOOP_STAGE = "stage_1_registered_hypothesis_automatic_reevaluation"
 REGISTERED_CANDIDATE_IDS = (
     "xs_rs",
@@ -134,12 +135,16 @@ def _validate_horizon_bars(value: Any) -> tuple[int, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Artifact namespace: <store_root>/evolution/ten_symbol_research_loop/
+# Artifact namespace: <store_root>/evolution/ten_symbol_research_loop.v2/
+#
+# Versioned on purpose: v1 used the unversioned directory and compact
+# checkpoint filename.  Reusing either would turn otherwise valid v1
+# evidence into a v2 validation failure before the new loop can evaluate it.
 # ---------------------------------------------------------------------------
 
 
 def _loop_root(root: Path) -> Path:
-    return root / "evolution" / "ten_symbol_research_loop"
+    return root / "evolution" / LOOP_DIRECTORY_NAME
 
 
 def _ensure_root(root: Path) -> Path:
@@ -877,6 +882,7 @@ if __name__ == "__main__":
 __all__ = [
     "CHECKPOINT_FILENAME",
     "DEFAULT_HORIZON_BARS",
+    "LOOP_DIRECTORY_NAME",
     "LOOP_CHECKPOINT_CONTRACT",
     "LOOP_STAGE",
     "REGISTERED_CANDIDATE_IDS",

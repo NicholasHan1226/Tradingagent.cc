@@ -16,6 +16,7 @@ from Crypto.ten_symbol_observation_store import CryptoTenSymbolObservationStore
 from Crypto.ten_symbol_research_loop import (
     CHECKPOINT_FILENAME,
     LOOP_CHECKPOINT_CONTRACT,
+    LOOP_DIRECTORY_NAME,
     LOOP_STAGE,
     REGISTERED_CANDIDATE_IDS,
     REVIEW_REPORT_CONTRACT,
@@ -90,7 +91,7 @@ def _accumulate(
 
 
 def _loop_dir(root: Path) -> Path:
-    return root / "evolution" / "ten_symbol_research_loop"
+    return root / "evolution" / LOOP_DIRECTORY_NAME
 
 
 def _report_path(root: Path, report_sha256: str) -> Path:
@@ -226,6 +227,29 @@ def test_research_loop_rerun_is_byte_identical(
     assert report_path.read_bytes() == first_bytes
     assert checkpoint_path.read_bytes() == checkpoint_bytes
     assert len(list((_loop_dir(root) / "reports").glob("*.json"))) == 1
+
+
+def test_research_loop_v2_preserves_unversioned_v1_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    legacy_root = root / "evolution" / "ten_symbol_research_loop"
+    legacy_reports = legacy_root / "reports"
+    legacy_reports.mkdir(parents=True)
+    legacy_checkpoint = legacy_root / "research_loop_checkpoint.json"
+    legacy_report = legacy_reports / ("1" * 64 + ".json")
+    legacy_checkpoint.write_bytes(b'{"contract":"v1-evidence"}\n')
+    legacy_report.write_bytes(b'{"contract":"v1-report"}\n')
+    checkpoint_before = legacy_checkpoint.read_bytes()
+    report_before = legacy_report.read_bytes()
+
+    result = run_ten_symbol_research_loop_once(store_root=root)
+
+    assert result["status"] == "report_written"
+    assert (_loop_dir(root) / CHECKPOINT_FILENAME).is_file()
+    assert legacy_checkpoint.read_bytes() == checkpoint_before
+    assert legacy_report.read_bytes() == report_before
 
 
 def test_research_loop_diff_against_previous_report(
