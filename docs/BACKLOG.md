@@ -22,6 +22,10 @@
 A股已经拥有 SampleJournal/KPI 科学证据、Challenger producer 和 simulation-only 自动 Champion promotion；当前重点不是再造一套 promotion framework，而是让它在真实模拟运行中形成可重复证据。
 
 1. 连续证明 `SampleJournal → KPI → scientific gate → Challenger → registry promotion receipt` 的自然运行轮。
+   - 先补齐现役分钟 fixture 模拟的连续 bar → candidate → 实际 fill/reject →
+     cash/positions reconcile 证据；canonical capital-backed composition 仍仅
+     test-only，真实 quote/calendar/Champion authority 与生产入口未接线，不能
+     把 fixture 股票覆盖率当作其完成证明。该接线不阻断已合格股票继续模拟。
 2. 为 promotion 同等级补齐 demotion、retirement 与 deterministic rollback 证据。
 3. 保留**所有** Challenger/trial 的身份、参数、数据窗口、结果与淘汰原因，不能只保留赢家。
 4. 扩展不同交易日/决策 cluster/regime/费用环境覆盖，避免单一短窗口驱动晋级。

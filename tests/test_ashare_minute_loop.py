@@ -409,7 +409,8 @@ def test_skipped_execution_bar_is_nonfill_not_same_bar_or_late_fill() -> None:
     assert loop.counterfactual_books["baseline"].positions == {}
 
 
-def test_unaffordable_top_symbol_abstains_instead_of_failing_the_bar() -> None:
+@pytest.mark.parametrize("all_unaffordable", [False, True])
+def test_unaffordable_symbol_does_not_starve_other_candidates(all_unaffordable) -> None:
     loop = MinuteFixtureClosedLoop(universe=_universe())
     manifest = _sha("c")
     loop.process_snapshot(
@@ -427,7 +428,7 @@ def test_unaffordable_top_symbol_abstains_instead_of_failing_the_bar() -> None:
     normal = _bar(
         "2026-07-27T09:40:00+08:00",
         symbol="000001.SZ",
-        close=10.0,
+        close=90.0 if all_unaffordable else 10.0,
         volume=110_000,
     )
     snapshot = MinuteBarSnapshot(
@@ -444,17 +445,21 @@ def test_unaffordable_top_symbol_abstains_instead_of_failing_the_bar() -> None:
     step = loop.process_snapshot(snapshot=snapshot, manifest_sha256=manifest)
 
     for sleeve_step in step.sleeves:
-        assert sleeve_step.scheduled_order is None
+        if not all_unaffordable and sleeve_step.sleeve_id in {"baseline", "dynamic_position"}:
+            assert sleeve_step.scheduled_order.symbol == "000001.SZ"
+            assert sleeve_step.scheduled_order.requested_quantity % 100 == 0
+            assert sleeve_step.scheduled_order.requested_notional_cny <= 7500
+        else:
+            assert sleeve_step.scheduled_order is None
     for sleeve_id in ("baseline", "dynamic_position"):
         rejections = loop.ledgers[sleeve_id].by_disposition(
             ExposureDisposition.REJECTED
         )
-        assert any(
-            record.rejection_reason == "minute_symbol_too_expensive_for_account"
-            for record in rejections
-        )
+        assert len([record for record in rejections
+                    if record.rejection_reason == "minute_symbol_too_expensive_for_account"
+                    ]) == (2 if all_unaffordable else 1)
     assert loop.counterfactual_books["baseline"].positions == {}
-    assert not loop.pending
+    assert set(loop.pending) == (set() if all_unaffordable else {"baseline", "dynamic_position"})
 
 
 def test_data_failure_records_every_trade_symbol_and_adds_no_risk() -> None:

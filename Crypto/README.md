@@ -710,6 +710,13 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 
 ### slot / backlog / gap 语义
 
+完整行情校验通过后，先保存不可变 bars sidecar，再采样可选 spread。
+可选 catalog/book-ticker 耗尽预算仍返回 `backlog_pending`，不伪造完成；
+已有 bars 与原 pending 定位保留，同槽或下一槽重启可零网络恢复原槽。
+缺 spread sidecar 明确记录 `crypto_spread_sidecar_missing`，不回补采样。
+跨 gap 恢复还须绑定原始 rejection、profile 与 cutoff，保留 skipped range；
+行情自身超时、PIT 不合格或损坏 sidecar 不能借此绕过校验。
+
 40 币独立配置的补充：cutoff 固定为 bar close +270 秒，timer 在 +285 秒
 （`*:4/5:45`，另有最多3秒 jitter）触发；10 币配置不变。40 币当前槽的
 query-shape 瞬时错误仍允许预算内 20/45 秒重试；严格早于本次冻结 current window

@@ -1677,6 +1677,27 @@ def test_native_broker_rejects_unknown_major_and_changed_profile_before_query():
     assert all(call["method"] == "GET" for call in transport.calls)
 
 
+def test_single_broker_profile_consumes_without_unrelated_primary_datasets():
+    from Ashare.event_evidence import EvidenceDatasetProfile
+    _, _, transport = _native_broker_port()
+    dataset_id = "cn.dataset.broker_recommend"
+    transport.catalog_rows = [row for row in transport.catalog_rows if row["dataset_id"] == dataset_id]
+    client = _client(transport, configured_ids=frozenset({dataset_id}))
+    catalog = client.get_catalog()
+    profile = EvidenceDatasetProfile.from_catalog_row(
+        catalog, catalog.data[0], expected_catalog_version=CATALOG
+    )
+    audit = AshareEvidenceAuditLedger()
+    result = TradingDatasAshareEvidencePort(client).load_event_snapshot(
+        profile=profile, filters={"ts_code": {"eq": "600000.SH"}},
+        decision_time=DECISION_TIME, audit_ledger=audit, allowed_symbols=("600000.SH",),
+    )
+    assert result.row_count == 1
+    assert result.same_observation is True
+    assert result.execution_eligible is False
+    assert not audit.records()
+
+
 @pytest.mark.parametrize("month", ["2026-07-01", "20260731", "202613", "202608", None])
 def test_major2_broker_rejects_non_native_or_future_month(month):
     port, audit, transport = _native_broker_port()
