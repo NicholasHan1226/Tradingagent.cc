@@ -571,6 +571,15 @@ already-eligible stocks. The same absolute path can be supplied to the scheduled
 `ASHARE_MINUTE_UNIVERSE_SOURCE`; when absent, the prior reviewed session
 universe remains the default.
 
+In rolling mode, a prior-close batch with a transport failure or HTTP 429/503
+is excluded as `previous_close_batch_unavailable`; later independent batches
+continue and previously verified batches are retained. A failed second read
+discards that whole batch, never admits its first read alone, and never retries
+the failed batch in this initializer invocation. Authentication, catalog,
+identity, pagination and source-evidence failures still fail closed. An empty
+effective partition is not a successful session. Fixed-cohort initialization
+keeps its complete-cohort requirement.
+
 Prior-session daily references use the same bounded catalog contract instead
 of a fixed 10-symbol batch. The initializer derives each batch from the
 reviewed Universe size, the daily dataset's current `max_page_size`, and the
@@ -634,6 +643,12 @@ catalog/query clients; it never reads a provider database directly and does not
 add a provider route, fallback, broker, or historical-minute fallback. Bounded
 API retry and bounded shard fanout belong to the injected data adapter; the
 runtime gate still validates the resulting receipt and coverage independently.
+
+Only the fixed-cohort experiment requires exactly 3,193 source identities.
+`--rolling-eligible` accepts a non-empty, reviewed source of variable size and
+binds its actual count and canonical hash; a reviewed listing/delisting update
+does not reset or block unrelated eligible stocks. Source safety, uniqueness,
+scope checks and per-session partition identity remain required.
 
 The scale state root and rollback-30 state root must be disjoint. The selector
 can write only the scale root. The rollback root is mounted read-only and is

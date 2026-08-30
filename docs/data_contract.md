@@ -656,6 +656,15 @@ Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的
 
 ### A股5分钟 fixture research contract
 
+滚动会话初始化按实际审核过的非空 source 集合核对唯一身份与 canonical SHA，
+不以固定 3,193 数量阻断上市/退市后的审核快照；固定 cohort 实验仍保留精确总数。
+前收盘价独立批次遇到与分钟读取相同的可恢复 transport/HTTP 429/503 错误时，
+`daily_data_excluded` 为该批每只股票保留 `symbol`、
+`reason=previous_close_batch_unavailable`、`trade_date`；不封存原始异常或响应。
+首读成功但重读失败时整批排除，不能使用半验证行。其他双读通过的批次仍可发布；
+认证、catalog、身份、分页与来源证据错误不降级，全部无可用股票时不发布空成功。
+该输入准备、覆盖率与 fixture 成交仍不能替代 canonical capital-backed runtime。
+
 ### `rt_min_daily` receipt-bound current-observation contract
 
 `Ashare.rt_min_daily_pit.build_rt_min_daily_pit_feature_contract` consumes a
