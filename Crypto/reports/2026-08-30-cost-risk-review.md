@@ -84,7 +84,7 @@ catalog `v1-c3011487473156b0`，50 页 receipt 记录，仅正式 catalog/query 
   不删状态、不自动修复损坏账本、不调用 strategy evaluation/资本写入。
 - 当前生产 worker 没有接入此新入口；本地幂等不等于定时自动运行或策略自动优化已上线。
 
-TA 任务另行报告 40-symbol observer 在 14:29/14:34 的新周期仍有 budget_deferred / 
+TA 任务另行报告 40-symbol observer 在 14:29/14:34 的新周期仍有 budget_deferred /
 watermark_invalid；可选 spread 耗尽预算丢失尚未保存 bars 的情形已有独立内存复现，
 但线上根因尚未确认。该问题由 TA 的 #607/P0 队列处理，本批不修改 observer。
 上述 2048 窗口是 ten-symbol 历史副本，不是 40-symbol 当前消费成功的证据。
@@ -131,7 +131,9 @@ REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest -q -p 
   tests/test_crypto_delayed_paper_round_trip_health.py
 ```
 
-`git diff --check` 通过。报告 JSON 通过解析；原生 report manifest/snapshot 验证与渲染调用成功。
+最终完整 patch 的 `git diff --check` 通过。新模块复测 36 passed（1.97s）；
+报告 JSON 解析、实际执行的可视化 SQL 与 snapshot 一致性检查通过。
+原生 report manifest/snapshot 验证与渲染调用成功。
 未运行整个仓库回归、生产新入口自然周期、真实交易执行、逐 5 分钟风险路径验收；
 候选 CI 与最终合入验收分开核对。恢复方式是停止调用新研究入口并切回前一候选代码，
 保留所有旧/新研究产物；没有生产切换需要回滚，也不删除账本或历史 evidence。
