@@ -1,0 +1,30 @@
+{
+  "as_of": "2026-08-30T07:54:59Z",
+  "authority": "none",
+  "automatic_champion_replacement": false,
+  "automatic_risk_expansion_enabled": false,
+  "capital_write_eligible": false,
+  "clean_holdout": false,
+  "contract": "tradingagent.crypto.confirmation_forward_research.v1",
+  "data_collection_installed": false,
+  "execution_authority": false,
+  "execution_eligible": false,
+  "historical_backfill_no_pit": true,
+  "model_network_used": false,
+  "not_promotion_evidence": true,
+  "plan_sha256": "05c09709ec11b5662f2887dc3c1cc21626f30651ad38e97cbd83e18ced1668ac",
+  "production_eligible": false,
+  "promotion_authorized": false,
+  "real_trading_enabled": false,
+  "registration_sha256": "33028f6306b89d0f411fdd5e58f2403f3d6c53201c0a0923c226f39d7ee49e21",
+  "report_sha256": "9e5a29927a5f5604db20265d916aea06bc6973be7bcd4de5555a91abfe0fc83f",
+  "research_only": true,
+  "results": null,
+  "runtime_installed": false,
+  "status": "registered_not_started",
+  "window": {
+    "days": 90,
+    "end_exclusive": "2026-11-30T00:00:00Z",
+    "start": "2026-09-01T00:00:00Z"
+  }
+}

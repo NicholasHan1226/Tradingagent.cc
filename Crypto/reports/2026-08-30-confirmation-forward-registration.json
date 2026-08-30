@@ -1,0 +1,82 @@
+{
+  "calculation_sources": {
+    "Crypto/capital_policy.py": "ad058b80bf6a471ad84198599b82d8aad4a38f0caf6f7b27187528426f9cd5f8",
+    "Crypto/confirmation_forward_research.py": "efb3c80cd63a816adac57bae52c4d0c5b3d50f4113fc94f7e4ddbee54bf912a9",
+    "Crypto/cost_aware_trend_research.py": "68f992cafc45d25d81693a09d2542b898156ffe8848334a30b447b9be3aee204",
+    "Crypto/market_observation.py": "a78bf13ca1130738c05fff08cd69840d01dae7dc6885dc08ff37d06bb220f899",
+    "Crypto/research_accounting.py": "b9fc3d7c22816f22b09a59a6d7b4261cb69badf83c4ca7f1ff52cdcca8d56db2",
+    "Crypto/slow_trend_research.py": "b4178d79d0e0cbdf45b0617b86dc95b5e6e0a9e26cbb4dc1cc7a8571c8a0d61d",
+    "Crypto/slow_trend_risk_replay.py": "4f1e34b2b059b0d208ec71c3162641539afb003d0b1f382beb87419065a07167",
+    "Crypto/ten_symbol_factor_prescreen.py": "b2874ab039ad22960a66ebf76ffc63ed6b3fb202ae5923961d8b8eb194e3af4e",
+    "shared/capital/market_policy.py": "2b0f0d8f6ceec0eef54d1d6d69de2ce737d5f614b1ac8d2de6e23b4ce458b0f2"
+  },
+  "contract": "tradingagent.crypto.confirmation_forward_research.v1",
+  "plan": {
+    "authority": "none",
+    "btc_context": "not_risk_matched; not_the_acceptance_threshold",
+    "candidate_count": 1,
+    "candidate_id": "slow_trend_confirmation2_forward_v1",
+    "comparison": "positive_net_and_excess_vs_baseline_risk_at_both_costs; descriptive_only",
+    "confirmation_days": 2,
+    "controls": [
+      "baseline_risk",
+      "cash",
+      "btc_original_signal_budget_cash"
+    ],
+    "cost_multipliers": [
+      "1",
+      "2"
+    ],
+    "coverage": "all_10_symbols_all_61_warmup_and_90_window_days; no_skip_or_extension",
+    "data_revisions": "retain_all_input_hashes_and_readouts; no_best_revision_selection",
+    "days": 90,
+    "decimal_context": "Context(prec=28), ROUND_HALF_EVEN",
+    "end_exclusive": "2026-11-30T00:00:00Z",
+    "historical_selection_trial_cells": 12,
+    "initial_state": "cash_only; unadmitted; no_warmup_trades; fresh_research_risk_latch",
+    "parameter_search": false,
+    "parent_candidate_commit": "6a798cad199b0889ee524634b10fba7759fd1494",
+    "prices": "actual_0005_open_and_2355_bar_close; no_intraday_interpolation",
+    "promotion_authorized": false,
+    "readout": "no_input_read_or_returns_before_end; no_parameter_search_or_deadline_extension",
+    "risk": "daily_sampled; sticky_pauses_no_resume; not_a_7pct_loss_guarantee",
+    "risk_definition_sha256": "4f1d0a82fd8e44a7c9d84e9e97553f72c280618372738249838d8e4a757adb34",
+    "signal": {
+      "annual_vol_ceiling": "0.40",
+      "fast_days": 20,
+      "fee_each_side": "0.001",
+      "fee_source": "assumed_not_account_fee_tier",
+      "max_symbol_weight": "0.10",
+      "rebalance_relative_band": "0.25",
+      "slippage_each_side": "0.0002",
+      "slow_days": 60,
+      "starting_research_cash": "10000",
+      "symbols": [
+        "ADAUSDT",
+        "AVAXUSDT",
+        "BNBUSDT",
+        "BTCUSDT",
+        "DOGEUSDT",
+        "ETHUSDT",
+        "LINKUSDT",
+        "SOLUSDT",
+        "TRXUSDT",
+        "XRPUSDT"
+      ],
+      "vol_days": 20
+    },
+    "signal_definition_sha256": "c08c42a22f092ee11aa250c83c1eff995de6d9c2c2ef1c95a6d4d016e49bf0be",
+    "source_semantics": "normalized_formal_TD_inputs; no_first_seen_or_PIT_proof",
+    "start": "2026-09-01T00:00:00Z",
+    "terminal": "last_day_close_liquidation_with_costs",
+    "variant": "confirmation_only",
+    "warmup_days": 61,
+    "warmup_start": "2026-07-02T00:00:00Z"
+  },
+  "plan_sha256": "05c09709ec11b5662f2887dc3c1cc21626f30651ad38e97cbd83e18ced1668ac",
+  "registered_at": "2026-08-30T07:54:59Z",
+  "registration_sha256": "33028f6306b89d0f411fdd5e58f2403f3d6c53201c0a0923c226f39d7ee49e21",
+  "research_only": true,
+  "runtime_installed": false,
+  "timestamp_authority": "local_clock_only; verify_remote_commit_before_start_separately"
+}
