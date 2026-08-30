@@ -122,7 +122,8 @@ for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
     if key == "Environment" and value and not value.startswith("PYTHONPATH="):
         raise SystemExit(f"unsupported environment at {path}:{number}")
     if key == "TimeoutStartSec" and not re.fullmatch(
-        r"(?:[0-9]+(?:us|ms|s|min|h|d|w|month|y)?|infinity)", value
+        r"(?:[0-9]+(?:us|ms|s|min|h|d|w|month|y)?)(?:\s+[0-9]+(?:us|ms|s|min|h|d|w|month|y)?)*|infinity",
+        value,
     ):
         raise SystemExit(f"invalid timeout at {path}:{number}")
     if release_root in value:

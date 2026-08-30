@@ -241,6 +241,18 @@ timeout="$1"
         assert completed.returncode == expected_code, (value, completed.stderr)
 
 
+def test_release_helper_accepts_systemd_normalized_compound_timeout_values() -> None:
+    helper = _read("deploy/release.sh")
+
+    # `systemctl show` normalizes a compound duration such as 90 seconds to
+    # "1min 30s".  The release helper writes that value into the managed
+    # drop-in, so its validation must accept the same safe grammar.
+    assert (
+        'r"(?:[0-9]+(?:us|ms|s|min|h|d|w|month|y)?)(?:\\s+[0-9]+'
+        '(?:us|ms|s|min|h|d|w|month|y)?)*|infinity"'
+    ) in helper
+
+
 def test_server_bootstrap_grants_only_the_fixed_release_helper() -> None:
     bootstrap = _read("deploy/bootstrap-production-server.sh")
 
