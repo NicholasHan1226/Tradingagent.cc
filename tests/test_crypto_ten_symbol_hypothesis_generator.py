@@ -20,6 +20,7 @@ from Crypto.ten_symbol_hypothesis_generator import (
     GENERATION_CONFIG,
     GENERATION_CONFIG_ID,
     GENERATOR_CHECKPOINT_CONTRACT,
+    GENERATOR_DIRECTORY_NAME,
     GENERATOR_STAGE,
     PLANES,
     PROPOSAL_CONTRACT,
@@ -41,7 +42,7 @@ from tests.test_crypto_ten_symbol_research_loop import _accumulate
 
 
 def _generator_dir(root: Path) -> Path:
-    return root / "evolution" / "ten_symbol_hypothesis_generator"
+    return root / "evolution" / GENERATOR_DIRECTORY_NAME
 
 
 def _proposal_path(root: Path, proposal_sha256: str) -> Path:
@@ -72,6 +73,21 @@ def _available(sample_count: int) -> dict[str, Any]:
     }
 
 
+def test_v3_preserves_legacy_proposals_and_never_registers(monkeypatch, tmp_path):
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    legacy = root / "evolution" / "ten_symbol_hypothesis_generator"
+    legacy.mkdir(parents=True)
+    old = legacy / CHECKPOINT_FILENAME
+    old.write_text('{"contract":"historical.v2","automatic_registration":true}\n')
+    before = old.read_bytes()
+    result = run_ten_symbol_hypothesis_generation_once(store_root=root)
+    assert result["contract"].endswith(".v3")
+    assert GENERATOR_DIRECTORY_NAME.endswith(".v3")
+    assert result["automatic_registration"] is False
+    assert old.read_bytes() == before
+    assert ten_symbol_hypothesis_generator_exit_code({**result, "automatic_registration": True}) == 2
+
+
 # ---------------------------------------------------------------------------
 # Deterministic expansion and frozen-config drift
 # ---------------------------------------------------------------------------
@@ -92,7 +108,7 @@ def test_expansion_is_deterministic_and_proposal_only() -> None:
     families: dict[str, int] = {}
     for candidate in first:
         families[candidate["family"]] = families.get(candidate["family"], 0) + 1
-        assert candidate["registration_status"] == REGISTRATION_STATUS
+        assert candidate["registration_status"] == "not_checked"
         assert candidate["registered_into_prescreen"] is False
         assert candidate["registered_into_evaluation"] is False
         assert candidate["evaluation_horizon_bars"] == [12, 48, 144, 288]
@@ -289,7 +305,7 @@ def test_feasibility_boundaries() -> None:
         bars=37,
         planes={"open_interest_5m": {"status": "available", "sample_count": 10000}},
     )
-    assert boundary["status"] == "feasible_for_auto_registration"
+    assert boundary["status"] == "feasible_for_proposal"
     assert all(check["ok"] for check in boundary["checks"])
 
     one_bar_short = _feasibility(
@@ -338,7 +354,7 @@ def test_feasibility_boundaries() -> None:
         bars=25,
         planes={"realized_spreads": {"status": "available", "sample_count": 12}},
     )
-    assert spread_ok["status"] == "feasible_for_auto_registration"
+    assert spread_ok["status"] == "feasible_for_proposal"
     spread_short = _feasibility(
         "spread_regime__t1p0_narrow",
         bars=25,
@@ -410,7 +426,7 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
     assert result["terminal_slot_count"] == 30
     assert result["eligible_slot_count"] == 30
     assert result["loop_stage"] == GENERATOR_STAGE
-    assert result["automatic_registration"] is True
+    assert result["automatic_registration"] is False
     assert ten_symbol_hypothesis_generator_exit_code(result) == 0
     _assert_recursive_non_authority(result)
 
@@ -420,11 +436,11 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
     assert proposal["loop_stage"] == GENERATOR_STAGE
     assert proposal["generation_config_id"] == GENERATION_CONFIG_ID
     assert proposal["stage_boundaries"]["registration"] == (
-        "auto_register_feasible"
+        "proposal_only_no_registry_write"
     )
     assert proposal["stage_boundaries"]["evaluation"] == "not_run_by_generator"
     assert proposal["stage_boundaries"]["scheduler"] == "detached_one_shot_no_systemd"
-    assert proposal["stage_boundaries"]["promotion"] == "automatic_sim_domain"
+    assert proposal["stage_boundaries"]["promotion"] == "disabled_research_only"
     assert proposal["candidate_count"] == 23
     assert proposal["source"]["data_plane_manifest_sha256"] is None
     assert proposal["source"]["plane_states"]["ohlcv_bars"] == {
@@ -440,8 +456,8 @@ def test_generator_writes_proposal_and_rerun_byte_identical(
         assert candidate["registered_into_evaluation"] is False
         # Without a data-plane manifest every B-class candidate is blocked.
         assert candidate["feasibility"]["status"] == "blocked"
-    assert proposal["review"]["recommendation"] == "automatic_registration"
-    assert proposal["review"]["registration"] == "auto_registered_feasible"
+    assert proposal["review"]["recommendation"] == "proposal_classification_complete"
+    assert proposal["review"]["registration"] == "not_registered"
     assert set(proposal["review"]["per_candidate"]) == {
         candidate["candidate_id"] for candidate in proposal["candidates"]
     }
@@ -512,7 +528,7 @@ def test_generator_manifest_controls_b_class_feasibility(
     assert {
         candidate_id
         for candidate_id, status in feasibility.items()
-        if status == "feasible_for_auto_registration"
+        if status == "feasible_for_proposal"
     } == expected_feasible
     assert result["feasible_candidate_count"] == len(expected_feasible)
     registration = {
@@ -522,8 +538,8 @@ def test_generator_manifest_controls_b_class_feasibility(
     for candidate_id in expected_feasible:
         entry = registration[candidate_id]
         assert entry["registration_status"] == REGISTRATION_STATUS
-        assert entry["registered_into_prescreen"] is True
-        assert entry["registered_into_evaluation"] is True
+        assert entry["registered_into_prescreen"] is False
+        assert entry["registered_into_evaluation"] is False
     for candidate_id, entry in registration.items():
         if candidate_id not in expected_feasible:
             assert entry["registration_status"] == BLOCKED_REGISTRATION_STATUS

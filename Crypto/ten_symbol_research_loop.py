@@ -65,6 +65,7 @@ REGISTERED_CANDIDATE_IDS = (
     "momentum_vol_regime",
 )
 DEFAULT_HORIZON_BARS = prescreen.ALLOWED_HORIZON_BARS
+CYCLE_CONTRACT = "tradingagent.crypto.ten_symbol_research_cycle.v1"
 _SYMBOLS = OBSERVATION_SYMBOLS
 
 
@@ -840,6 +841,104 @@ def ten_symbol_research_loop_exit_code(result: Mapping[str, Any]) -> int:
     )
 
 
+def run_ten_symbol_research_cycle_once(
+    *,
+    store_root: Path | str,
+    horizon_bars: Sequence[int] | None = None,
+    data_plane_manifest: Path | str | None = None,
+) -> dict[str, Any]:
+    """Explicit proposal -> classification -> A-class reevaluation, no scheduler.
+
+    Each stage owns its existing immutable artifacts/checkpoint. An interrupted
+    run safely revalidates and reuses completed stages; integrity failures
+    propagate and are never deleted, relabelled as transient, or auto-rebuilt.
+    The unified receipt is returned, not persisted as a second checkpoint.
+    """
+
+    # The generator reuses this module's history helpers; import after module
+    # initialization rather than introduce a circular module-level dependency.
+    from Crypto import ten_symbol_hypothesis_generator as generator
+
+    _assert_simulation_only()
+    horizons = _validate_horizon_bars(horizon_bars)
+    root = Path(store_root)
+    generated = generator.run_ten_symbol_hypothesis_generation_once(
+        store_root=root, data_plane_manifest=data_plane_manifest
+    )
+    if generator.ten_symbol_hypothesis_generator_exit_code(generated):
+        raise CryptoTenSymbolResearchLoopError("research_cycle_generator_invalid")
+    receipt: dict[str, Any] = {
+        "contract": CYCLE_CONTRACT,
+        "status": "deferred",
+        "scheduler": "explicit_one_shot_not_installed",
+        "automatic_registration": False,
+        "strategy_evaluation_invoked": False,
+        "hypothesis_generation": generated,
+        "candidate_classification": [],
+        "registered_candidate_reevaluation": {"status": "not_run"},
+        **projection._non_authority_fields(),
+    }
+    if generated["status"] not in {"proposal_written", "no_new_input"}:
+        return receipt
+    proposal = generator._load_proposal(
+        generator._generator_root(root), generated["proposal_sha256"]
+    )
+    for candidate in proposal["candidates"]:
+        checks = candidate["feasibility"]["checks"]
+        feasible = candidate["feasibility"]["status"] == "feasible_for_proposal"
+        oi_family = candidate["family"] in {
+            "oi_change_rate", "price_oi_divergence", "oi_weighted_momentum"
+        }
+        receipt["candidate_classification"].append({
+            "candidate_id": candidate["candidate_id"],
+            "family": candidate["family"],
+            "definition_sha256": _sha256({
+                key: candidate[key] for key in (
+                    "candidate_id", "family", "parameters", "evaluation_horizon_bars"
+                )
+            }),
+            "feasibility": candidate["feasibility"]["status"],
+            "data_plane_checks": checks,
+            "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+            "evaluation_inputs_verified": False,
+            "available_executor": (
+                "Crypto.ten_symbol_oi_prescreen.analyze" if oi_family else None
+            ),
+            "executor_connected": False,
+            "evaluation_status": "pending" if feasible else "blocked",
+            "reason": (
+                "verified_inputs_and_executor_binding_required" if feasible
+                else "required_data_unavailable_or_insufficient"
+            ),
+            "blocking_reasons": [check["reason"] for check in checks if not check["ok"]],
+            "registered_into_prescreen": False,
+            "registered_into_evaluation": False,
+            "evaluated": False,
+            "evaluation_artifact_sha256": None,
+        })
+    evaluated = run_ten_symbol_research_loop_once(
+        store_root=root, horizon_bars=horizons
+    )
+    if ten_symbol_research_loop_exit_code(evaluated):
+        raise CryptoTenSymbolResearchLoopError("research_cycle_reevaluation_invalid")
+    receipt["registered_candidate_reevaluation"] = evaluated
+    if evaluated["status"] in {"report_written", "no_new_input"}:
+        report = _load_report(root / "evolution" / LOOP_DIRECTORY_NAME, evaluated["report_sha256"])
+        same_head = (
+            proposal["source"]["store_head_checksum"]
+            == report["source"]["store_head_checksum"]
+        )
+        receipt.update({
+            "status": "cycle_completed" if same_head else "input_advanced_between_stages",
+            "same_store_head": same_head,
+            "reevaluated_candidate_ids": list(REGISTERED_CANDIDATE_IDS),
+            "generated_candidates_evaluated_count": 0,
+            "candidate_report_sha256": evaluated["report_sha256"],
+            "proposal_sha256": generated["proposal_sha256"],
+        })
+    return receipt
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -848,6 +947,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     parser.add_argument("--store-root", type=Path, required=True)
+    parser.add_argument(
+        "--include-proposals", action="store_true",
+        help="Explicit one-shot proposal/classification plus existing A-class reevaluation",
+    )
+    parser.add_argument("--data-plane-manifest", type=Path, default=None)
     parser.add_argument(
         "--horizon-bars",
         type=str,
@@ -860,13 +964,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         horizons = tuple(int(token) for token in str(args.horizon_bars).split(","))
-        result = run_ten_symbol_research_loop_once(
-            store_root=args.store_root, horizon_bars=horizons
-        )
+        if args.data_plane_manifest is not None and not args.include_proposals:
+            raise CryptoTenSymbolResearchLoopError("research_cycle_proposals_required")
+        if args.include_proposals:
+            result = run_ten_symbol_research_cycle_once(
+                store_root=args.store_root, horizon_bars=horizons,
+                data_plane_manifest=args.data_plane_manifest,
+            )
+        else:
+            result = run_ten_symbol_research_loop_once(
+                store_root=args.store_root, horizon_bars=horizons
+            )
     except Exception:
         print("crypto ten-symbol research loop failed closed", file=sys.stderr)
         return 2
-    if ten_symbol_research_loop_exit_code(result):
+    if not args.include_proposals and ten_symbol_research_loop_exit_code(result):
         print("crypto ten-symbol research loop failed closed", file=sys.stderr)
         return 2
     print(
@@ -896,5 +1008,6 @@ __all__ = [
     "CryptoTenSymbolResearchLoopError",
     "main",
     "run_ten_symbol_research_loop_once",
+    "run_ten_symbol_research_cycle_once",
     "ten_symbol_research_loop_exit_code",
 ]

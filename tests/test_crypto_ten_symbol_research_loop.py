@@ -23,6 +23,7 @@ from Crypto.ten_symbol_research_loop import (
     CryptoTenSymbolResearchLoopError,
     main,
     run_ten_symbol_research_loop_once,
+    run_ten_symbol_research_cycle_once,
     ten_symbol_research_loop_exit_code,
 )
 from tests.test_crypto_ten_symbol_factor_strategy_evaluation import (
@@ -419,3 +420,112 @@ def test_research_loop_empty_store_defers(
     assert result["status"] == "deferred_core_pending"
     assert ten_symbol_research_loop_exit_code(result) == 0
     _assert_recursive_non_authority(result)
+
+
+def test_research_cycle_classifies_without_false_registration_and_replays(monkeypatch, tmp_path):
+    import Crypto.ten_symbol_factor_strategy_evaluation as evaluation
+
+    def forbidden(**kwargs):
+        pytest.fail("research cycle must not invoke promotion-capable evaluation")
+
+    monkeypatch.setattr(evaluation, "run_ten_symbol_factor_strategy_evaluation", forbidden)
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    first = run_ten_symbol_research_cycle_once(store_root=root, horizon_bars=(12,))
+    assert first["status"] == "cycle_completed"
+    assert first["strategy_evaluation_invoked"] is False
+    assert first["reevaluated_candidate_ids"] == list(REGISTERED_CANDIDATE_IDS)
+    assert first["generated_candidates_evaluated_count"] == 0
+    candidates = first["candidate_classification"]
+    assert len(candidates) == 23
+    assert all(row["evaluation_status"] == "blocked" for row in candidates)
+    assert all(not row["evaluated"] and not row["registered_into_prescreen"] for row in candidates)
+    assert not set(first["reevaluated_candidate_ids"]) & {row["candidate_id"] for row in candidates}
+    _assert_recursive_non_authority(first)
+    before = {str(path): path.read_bytes() for path in (root / "evolution").rglob("*.json")}
+    second = run_ten_symbol_research_cycle_once(store_root=root, horizon_bars=(12,))
+    assert second["hypothesis_generation"]["status"] == "no_new_input"
+    assert second["registered_candidate_reevaluation"]["status"] == "no_new_input"
+    assert second["candidate_classification"] == candidates
+    assert before == {str(path): path.read_bytes() for path in (root / "evolution").rglob("*.json")}
+
+
+def test_research_cycle_declared_data_is_not_verified_or_evaluated(monkeypatch, tmp_path):
+    from Crypto.ten_symbol_hypothesis_generator import DATA_PLANE_MANIFEST_CONTRACT
+
+    root = _accumulate(monkeypatch, tmp_path, 30)
+    manifest = tmp_path / "declared.json"
+    manifest.write_text(json.dumps({
+        "contract": DATA_PLANE_MANIFEST_CONTRACT,
+        "planes": {"open_interest_5m": {"status": "available", "sample_count": 50000}},
+    }) + "\n")
+    result = run_ten_symbol_research_cycle_once(
+        store_root=root, horizon_bars=(12,), data_plane_manifest=manifest
+    )
+    row = next(row for row in result["candidate_classification"] if row["candidate_id"] == "oi_change_rate__l12_t0p005")
+    assert row["evaluation_status"] == "pending"
+    assert row["available_executor"] == "Crypto.ten_symbol_oi_prescreen.analyze"
+    assert row["evaluation_inputs_verified"] is False
+    assert row["executor_connected"] is False
+    assert row["evaluation_artifact_sha256"] is None
+    assert row["registered_into_evaluation"] is False
+    assert row["evaluated"] is False
+
+
+def test_research_cycle_resumes_after_interrupted_downstream_without_rewriting_proposal(monkeypatch, tmp_path):
+    import Crypto.ten_symbol_research_loop as loop
+    from Crypto.ten_symbol_hypothesis_generator import GENERATOR_DIRECTORY_NAME
+
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    original = loop.run_ten_symbol_research_loop_once
+
+    def interrupted(**kwargs):
+        raise OSError("test interruption")
+
+    monkeypatch.setattr(loop, "run_ten_symbol_research_loop_once", interrupted)
+    with pytest.raises(OSError, match="test interruption"):
+        run_ten_symbol_research_cycle_once(store_root=root, horizon_bars=(12,))
+    proposal_root = root / "evolution" / GENERATOR_DIRECTORY_NAME
+    before = {str(path): path.read_bytes() for path in proposal_root.rglob("*.json")}
+    monkeypatch.setattr(loop, "run_ten_symbol_research_loop_once", original)
+    result = run_ten_symbol_research_cycle_once(store_root=root, horizon_bars=(12,))
+    assert result["status"] == "cycle_completed"
+    assert result["hypothesis_generation"]["status"] == "no_new_input"
+    assert before == {str(path): path.read_bytes() for path in proposal_root.rglob("*.json")}
+
+
+def test_research_cycle_integrity_error_is_not_retried_or_rebuilt(monkeypatch, tmp_path):
+    import Crypto.ten_symbol_research_loop as loop
+    from Crypto.ten_symbol_hypothesis_generator import (
+        CHECKPOINT_FILENAME as GENERATOR_CHECKPOINT,
+        GENERATOR_DIRECTORY_NAME, CryptoTenSymbolHypothesisGeneratorError,
+    )
+
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    run_ten_symbol_research_cycle_once(store_root=root, horizon_bars=(12,))
+    checkpoint = root / "evolution" / GENERATOR_DIRECTORY_NAME / GENERATOR_CHECKPOINT
+    checkpoint.write_text("corrupted\n")
+    calls = []
+    monkeypatch.setattr(loop, "run_ten_symbol_research_loop_once", lambda **kwargs: calls.append(kwargs))
+    for _ in range(2):
+        with pytest.raises(CryptoTenSymbolHypothesisGeneratorError):
+            run_ten_symbol_research_cycle_once(store_root=root, horizon_bars=(12,))
+    assert calls == []
+    assert checkpoint.read_text() == "corrupted\n"
+
+
+def test_research_cycle_cli_is_explicit_and_empty_store_defers(monkeypatch, tmp_path, capsys):
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    assert main(["--store-root", str(root), "--horizon-bars", "12", "--include-proposals"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "cycle_completed"
+    assert main(["--store-root", str(root), "--data-plane-manifest", "not-read.json"]) == 2
+    capsys.readouterr()
+    fresh = tmp_path / "empty"
+    fresh.mkdir()
+    monkeypatch.undo()
+    _, output_root = _runtime_paths(monkeypatch, fresh)
+    CryptoTenSymbolObservationStore(output_root)
+    deferred = run_ten_symbol_research_cycle_once(store_root=output_root)
+    assert deferred["status"] == "deferred"
+    assert deferred["registered_candidate_reevaluation"]["status"] == "not_run"
+    assert not (output_root / "evolution").exists()

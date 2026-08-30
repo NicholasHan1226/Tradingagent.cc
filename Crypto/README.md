@@ -1084,8 +1084,8 @@ v3 保留四个旧候选的描述性重估，增加一个固定的低换手趋�
 改变。`positive_in_sample_only` 不得路由到资本、Champion 或订单。
 
 - **假设生成器（第二阶段）**：B 类候选通过可行性检查后自动标记
-  `registration_status=auto_registered` 并写入 `registered_into_prescreen/
-  registered_into_evaluation=true`；blocked 候选保持未注册。
+  `registration_status=proposal_ready`；`registered_into_prescreen/
+  registered_into_evaluation=false`。可行性提案不是注册或实际评估。
 - **自动晋级只在模拟域**：研究/评估/Champion/模拟资金全部自动，但绝不授予
   自动风险扩张、执行或真实交易 authority；`REAL_TRADING_ENABLED=false`
   继续作为独立硬闸，任何 `REAL_TRADING_ENABLED=true` 都 fail closed。
@@ -1141,11 +1141,11 @@ head/index、绝不写任何 store 文件；任一损坏或合同漂移 fail clo
 只读、detached 的假设生成器。它把仓内冻结、版本化的生成配置
 （`crypto-ten-symbol-hypothesis-generation-v1`：因子族 × 参数网格 ×
 horizon）确定性展开为候选假设集，对每个候选做轻量可行性检查（所需数据面
-可用性与样本量下限），产出一份 immutable 注册提案 artifact。第二阶段对通过
-可行性检查的候选**自动注册**（`registration_status=auto_registered`、
-`registered_into_prescreen/registered_into_evaluation=true`），blocked 候选
-保持未注册（预筛与一阶段注册集合漂移仍 fail closed）；**不运行任何
-预筛/评估**、不接 systemd；晋级在模拟域内自动，实盘仍由
+可用性与样本量下限），产出一份 immutable 注册提案 artifact。v3 对通过
+可行性检查的候选仅标记 `registration_status=proposal_ready`，
+`registered_into_prescreen/registered_into_evaluation=false`；blocked 候选
+保持未注册。旧v1/v2产物不读取、不迁移、不覆盖。生成器**不运行任何
+预筛/评估**、不接 systemd，也无模拟资金或晋级权限；实盘仍由
 `REAL_TRADING_ENABLED=false` 硬闸。
 
 ### 生成配置与因子族
@@ -1182,24 +1182,24 @@ horizon）确定性展开为候选假设集，对每个候选做轻量可行性�
   `tradingagent.crypto.ten_symbol_hypothesis_generator_data_planes.v1`，严格
   shape 校验、available 必须带 sample_count、禁止声明 ohlcv_bars）声明；
   未声明 plane 一律 `unavailable`，`accumulating` 不算 available。
-- 逐候选 `feasibility.status ∈ {feasible_for_auto_registration, blocked}`
-  附逐 plane 检查（observed vs min、reason code）；可行性决定候选是否
-  自动注册进预筛集合（feasible 才 `auto_registered`）。
+- 逐候选 `feasibility.status ∈ {feasible_for_proposal, blocked}`
+  附逐 plane 检查（observed vs min、reason code）。外部plane的available/sample_count
+  只是调用方声明，不证明序列已加载或校验，不能据此注册或生成收益。
 
 ### Artifact 合约
 
 - 提案（contract
-  `tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v2`）
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v3`）
   immutable 写入
-  `<store_root>/evolution/ten_symbol_hypothesis_generator/proposals/{proposal_sha256}.json`，
+  `<store_root>/evolution/ten_symbol_hypothesis_generator.v3/proposals/{proposal_sha256}.json`，
   自含 `proposal_sha256`；内容包括：冻结配置全文与其 sha、store 链绑定
   （event 计数、head checksum、逐槽 terminal_units 聚合 sha、数据窗口）、
   数据面 manifest sha 与 plane 状态、逐候选定义（假设文本、依据、所需证据、
   参数、horizon、可行性、注册状态）以及自动
-  `review.recommendation`（feasible 为 `auto_register`，blocked 为
+  `review.recommendation`（feasible 为 `await_verified_inputs_and_executor`，blocked 为
   `blocked`）。
 - compact `hypothesis_generator_checkpoint.json`（contract
-  `tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v2`，原子
+  `tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v3`，原子
   覆写）绑定 `last_input_digest` 与 `proposal_sha256`。input digest 覆盖
   配置 sha、manifest sha、store 链 head 与逐槽资格材料：同输入重跑先重验
   checkpoint 与其绑定提案，返回 `no_new_input` 且字节不变（幂等）；
@@ -1207,7 +1207,7 @@ horizon）确定性展开为候选假设集，对每个候选做轻量可行性�
   `deferred_core_pending`，全部槽 ineligible 返回
   `insufficient_eligible_slots`（非错误）；退出码经
   `ten_symbol_hypothesis_generator_exit_code`（authority 字段或
-  `automatic_registration` 不符即 2）。
+  `automatic_registration=false` 不符即 2）。
 - 一次性 CLI：`python3 -m Crypto.ten_symbol_hypothesis_generator
   --store-root <path> [--data-plane-manifest <path>]`；无 worker、无
   systemd unit。测试：
@@ -1315,3 +1315,55 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 复用原有研究循环时 v3 会自动附带基准、封存窗口覆盖和试验计数，但不会新增
 timer/service；代码接入不等于自动调度已生效。回滚停止调用新研究入口，保留
 v3 与旧 v1/v2 产物，切回原代码即可；不回写原始数据、账户、K10 或历史结论。
+
+## 亏损归因与带风控研究复算
+
+`paper_loss_attribution.py` 只读一个 round-trip epoch 的既有资本快照，在现有
+共享锁下复用 runtime/head/fingerprint 校验，独立按全部成交重算现金、费用、
+持仓成本与已实现损益。不刷新mark、不创建锁/账户、不全量扫描事件、不修复
+损坏快照。不存在有效快照、快照漂移或重要对账残差时拒绝出结论。
+报价中点价格损益减去模型点差、模型滑点与取整、手续费，必须等于净损益。
+订单的 `reference_price` 已包含模拟滑点，不能拿它作滑点前基准。
+输出记录原始估值时间；旧mark不能写成实时收益，所有结果仍是模拟账本证据。
+
+`slow_trend_risk_replay.py` 是独立的历史诊断版本，复用原趋势信号，只评估
+2026-08-30 UTC之前数据，不改原冻结计划或读取其前向收益。它只读复用既有
+CANONICAL风险数值：日亏3%、连亏3批和回撤7%触发只减不增，回撤5%将目标
+倍率永久收紧到0.75。日亏计量基线按UTC日重置，但暂停锁不自动恢复买入；
+连亏按同一时刻完全退出的持仓周期净损益批次计数，部分退出先累计。
+这些是明确声明的研究适配语义，不声称与现役G5状态机完全相同。
+
+日采样只在已观察的开盘、成交后、收盘检查；收盘触发要等下一已观察开盘
+才能退出，每笔买入后重新检查风险。`daily_sampled_not_intraday` 不能证明5分钟
+风控、真实撮合或7%最大回撤上限。返回日收盘/全部采样两种回撤，禁止混比。
+对照含原趋势、带风控趋势、BTC+现金（采用当时可知的原趋势总目标敞口）、
+全仓BTC与现金；不使用全样本事后敞口匹配，不声称风险已严格相等或证明alpha。
+
+```bash
+REAL_TRADING_ENABLED=false python3 -m Crypto.paper_loss_attribution \
+  --capital-root /absolute/existing-epoch/round_trip_capital
+
+# 新研究编排只能写隔离研究副本；不对生产观测root执行此命令。
+REAL_TRADING_ENABLED=false python3 -m Crypto.ten_symbol_research_loop \
+  --store-root /absolute/isolated-observation-copy --include-proposals
+
+REAL_TRADING_ENABLED=false python3 -m pytest -q \
+  tests/test_crypto_paper_loss_attribution.py \
+  tests/test_crypto_slow_trend_risk_replay.py \
+  tests/test_crypto_ten_symbol_hypothesis_generator.py \
+  tests/test_crypto_ten_symbol_research_loop.py
+```
+
+`--include-proposals` 显式编排生成提案→分类→原四候选重评，统一状态只返回stdout；
+各阶段复用自身immutable artifact/checkpoint，不新建控制表或timer。两阶段水位
+不一致明确 `input_advanced_between_stages`，不冒充同快照。B类23项未加载真实
+输入/绑定执行器时保持pending/blocked，不进入原四候选集合，不调用策略晋级。
+中断后重跑可验证并复用已完成阶段；完整性错误不删除重建、不重标为瞬时失败。
+一次性链通过不等于生产自动调度通过；现有worker只连接因子投影及独立旧评估，
+其systemd写权限不涵盖本批新namespace，本批不修改该权限或安装调度。
+
+回滚停止调用新入口并保留所有诊断与v3提案，恢复此前已验证代码；不覆盖旧
+提案、冻结结果、账户与观察历史。套息缺失数据的正式交付仍由TradingDatas负责。
+
+本批真实输入、成本归因、未通过结果和交接边界见
+[2026-08-30 研究验收记录](reports/2026-08-30-cost-risk-review.md)。

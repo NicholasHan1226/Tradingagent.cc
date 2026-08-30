@@ -1,0 +1,1921 @@
+{
+  "first": {
+    "authority": "none",
+    "automatic_champion_replacement": false,
+    "automatic_registration": false,
+    "automatic_risk_expansion_enabled": false,
+    "candidate_classification": [
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l12_t0p005",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "f70fde0dd0d7da37282ea55b5cfb8d445e7b768fb1c188c9187b48387d8b8d57",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l12_t0p01",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "2cdbaf3d37f63c8bb4c29bbb17a49734e81d0db74e9e116bab89ff91b1146cc3",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l48_t0p01",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "351dde7125198acf76c2015efb857cfb1de1774d601d0ccdce3570d811750d32",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l144_t0p02",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 169,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "e829c32b5bb7426242ab17941fa8e238ef0a7bbed83625b5d985ba6c8c7e0996",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l288_t0p02",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "567940ba45c3849621f7859b3acf359e911246acaaf72153172715b461092cca",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l12_fade",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "91cd1611ed495e96eb13a6f26687c8522f8320eb81e5eeb8df6f328a738e287b",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l12_follow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "059287d7b68ea5134220ce97bacca2b291ddff045a455d51c7b80c4e726506ae",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l48_fade",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "629ffe5f14edf1db7ce3cc9d9acdfd320e257d0cab8c7b993d7bf3aabb89ce8e",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l48_follow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "e3d8571f3c48f4dc3150ae020e85393aeb090bea0b42a960383501ae3f2b67e9",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l288_fade",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "d037b3ff83a4aec5d848b7af3e8e88b9ac7f9d5f76e7d7e00fc3fa875369bea0",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m12_o12_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "501986d70fa2ceeafc129e6822c01648c6ba17116ff826f38f75c6c3f75a4bfb",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m12_o48_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "6af5e488c2cd6848e05647e31d6e7c3202236f83be0c4e9c772bb053903979a2",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m48_o48_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "0488bcd4753209c500c9576b03ce7b78a740b776f81f33b5254130324aa22d17",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m48_o48_k3",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "5d62804bbd36d6dc3fcd2ec2a9f857de1b77191f2ce838d448fca92add115593",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m288_o288_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "26ff4903f0119d631c93ac7be19956e118e978fefbedbc511cc8368b5458e93a",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t1p0_narrow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "f02c9965290431ae1c19b28d97fb039cc4dcec9fa1725324a725d7767edab993",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t1p5_narrow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "147d8da2748fdae4a035000fa4cf5b881626e7cade0796c36e853e2b73458f7d",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t2p0_narrow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "02dac646258f17df33645d2e3fbef3f196a23355c0331427716c0090959079c0",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t1p5_wide",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "917c213895645a2da4f19cba77a9b38a92024673e45ebcbf9d43f9cfaa7ed722",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l12_t0p0005",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "f75c022bf5b92fa52341a1318ef502487519f5316f0052fbfc85aec4815dbaf0",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l48_t0p001",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "aeeb3813e4ec038c0c89d940fe8f068a173db233054ad5598cef79a48c122f93",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l288_t0p002",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "19ae5724540f48d6fd5554375f4ac4f61753020a1eeb727ddc466b0a9ba6b117",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l48_tm0p001",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "d4e044550a75911c66bbb7256312432e19523b63cc1d92fbfff07c440eedbe88",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      }
+    ],
+    "candidate_report_sha256": "c393133c41832dedd3c2fa3f8a08b533ec6a93b8005a3d6d540723d4b5d9fb0c",
+    "capital_commit_id": null,
+    "contract": "tradingagent.crypto.ten_symbol_research_cycle.v1",
+    "durable_execution_receipt": false,
+    "execution_authority": false,
+    "execution_eligible": false,
+    "generated_candidates_evaluated_count": 0,
+    "hypothesis_generation": {
+      "authority": "none",
+      "automatic_champion_replacement": false,
+      "automatic_registration": false,
+      "automatic_risk_expansion_enabled": false,
+      "candidate_count": 23,
+      "capital_commit_id": null,
+      "contract": "tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v3",
+      "durable_execution_receipt": false,
+      "eligible_slot_count": 2048,
+      "execution_authority": false,
+      "execution_eligible": false,
+      "feasible_candidate_count": 0,
+      "ineligible_slot_count": 17,
+      "input_digest": "fd5c2aac79f562069ec77199aec72b1176a7b2fbf1a44749da45df73eefc31c6",
+      "last_eligible_slot": "2026-08-30T06:20:00Z",
+      "learning_authority": false,
+      "learning_mode": "detached_offline_worker",
+      "live_broker_used": false,
+      "loop_stage": "stage_2_hypothesis_generation_proposal_only",
+      "model_network_used": false,
+      "network_used": false,
+      "outbox_id": null,
+      "production_eligible": false,
+      "promotion_authorized": false,
+      "proposal_path": "/tmp/crypto-research-copy-20260830.x3Brp0/evolution/ten_symbol_hypothesis_generator.v3/proposals/71cb9387c1a1a3aa799eebeb1445f61d5ef5fbae9d434ca5b5a209e3685a7470.json",
+      "proposal_sha256": "71cb9387c1a1a3aa799eebeb1445f61d5ef5fbae9d434ca5b5a209e3685a7470",
+      "real_trading_enabled": false,
+      "research_only": true,
+      "status": "proposal_written",
+      "terminal_slot_count": 2065,
+      "testnet_used": false
+    },
+    "learning_authority": false,
+    "live_broker_used": false,
+    "model_network_used": false,
+    "network_used": false,
+    "outbox_id": null,
+    "production_eligible": false,
+    "promotion_authorized": false,
+    "proposal_sha256": "71cb9387c1a1a3aa799eebeb1445f61d5ef5fbae9d434ca5b5a209e3685a7470",
+    "real_trading_enabled": false,
+    "reevaluated_candidate_ids": [
+      "xs_rs",
+      "short_reversal",
+      "amihud_illiquidity",
+      "momentum_vol_regime"
+    ],
+    "registered_candidate_reevaluation": {
+      "authority": "none",
+      "automatic_champion_replacement": false,
+      "automatic_reevaluation": true,
+      "automatic_risk_expansion_enabled": false,
+      "capital_commit_id": null,
+      "contract": "tradingagent.crypto.ten_symbol_research_loop_review.v3",
+      "durable_execution_receipt": false,
+      "eligible_slot_count": 2048,
+      "execution_authority": false,
+      "execution_eligible": false,
+      "horizon_bars": [
+        12,
+        48,
+        144,
+        288
+      ],
+      "ineligible_slot_count": 17,
+      "input_digest": "e305ad573cf70b957b4947f54b6db077740f86b6d118d7aac56336a4f7914d20",
+      "last_eligible_slot": "2026-08-30T06:20:00Z",
+      "learning_authority": false,
+      "learning_mode": "detached_offline_worker",
+      "live_broker_used": false,
+      "loop_stage": "stage_1_registered_hypothesis_automatic_reevaluation",
+      "model_network_used": false,
+      "network_used": false,
+      "outbox_id": null,
+      "production_eligible": false,
+      "promotion_authorized": false,
+      "real_trading_enabled": false,
+      "report_path": "/tmp/crypto-research-copy-20260830.x3Brp0/evolution/ten_symbol_research_loop.v3/reports/c393133c41832dedd3c2fa3f8a08b533ec6a93b8005a3d6d540723d4b5d9fb0c.json",
+      "report_sha256": "c393133c41832dedd3c2fa3f8a08b533ec6a93b8005a3d6d540723d4b5d9fb0c",
+      "research_only": true,
+      "status": "report_written",
+      "terminal_slot_count": 2065,
+      "testnet_used": false
+    },
+    "research_only": true,
+    "same_store_head": true,
+    "scheduler": "explicit_one_shot_not_installed",
+    "status": "cycle_completed",
+    "strategy_evaluation_invoked": false,
+    "testnet_used": false
+  },
+  "second": {
+    "authority": "none",
+    "automatic_champion_replacement": false,
+    "automatic_registration": false,
+    "automatic_risk_expansion_enabled": false,
+    "candidate_classification": [
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l12_t0p005",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "f70fde0dd0d7da37282ea55b5cfb8d445e7b768fb1c188c9187b48387d8b8d57",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l12_t0p01",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "2cdbaf3d37f63c8bb4c29bbb17a49734e81d0db74e9e116bab89ff91b1146cc3",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l48_t0p01",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "351dde7125198acf76c2015efb857cfb1de1774d601d0ccdce3570d811750d32",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l144_t0p02",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 169,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "e829c32b5bb7426242ab17941fa8e238ef0a7bbed83625b5d985ba6c8c7e0996",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_change_rate__l288_t0p02",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "567940ba45c3849621f7859b3acf359e911246acaaf72153172715b461092cca",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_change_rate",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l12_fade",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "91cd1611ed495e96eb13a6f26687c8522f8320eb81e5eeb8df6f328a738e287b",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l12_follow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "059287d7b68ea5134220ce97bacca2b291ddff045a455d51c7b80c4e726506ae",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l48_fade",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "629ffe5f14edf1db7ce3cc9d9acdfd320e257d0cab8c7b993d7bf3aabb89ce8e",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l48_follow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "e3d8571f3c48f4dc3150ae020e85393aeb090bea0b42a960383501ae3f2b67e9",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "price_oi_divergence__l288_fade",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "d037b3ff83a4aec5d848b7af3e8e88b9ac7f9d5f76e7d7e00fc3fa875369bea0",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "price_oi_divergence",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m12_o12_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "501986d70fa2ceeafc129e6822c01648c6ba17116ff826f38f75c6c3f75a4bfb",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m12_o48_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "6af5e488c2cd6848e05647e31d6e7c3202236f83be0c4e9c772bb053903979a2",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m48_o48_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "0488bcd4753209c500c9576b03ce7b78a740b776f81f33b5254130324aa22d17",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m48_o48_k3",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "5d62804bbd36d6dc3fcd2ec2a9f857de1b77191f2ce838d448fca92add115593",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": "Crypto.ten_symbol_oi_prescreen.analyze",
+        "blocking_reasons": [
+          "open_interest_5m_unavailable"
+        ],
+        "candidate_id": "oi_weighted_momentum__m288_o288_k2",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 10000,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "open_interest_5m",
+            "reason": "open_interest_5m_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "26ff4903f0119d631c93ac7be19956e118e978fefbedbc511cc8368b5458e93a",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "oi_weighted_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t1p0_narrow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "f02c9965290431ae1c19b28d97fb039cc4dcec9fa1725324a725d7767edab993",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t1p5_narrow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "147d8da2748fdae4a035000fa4cf5b881626e7cade0796c36e853e2b73458f7d",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t2p0_narrow",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "02dac646258f17df33645d2e3fbef3f196a23355c0331427716c0090959079c0",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "realized_spreads_unavailable"
+        ],
+        "candidate_id": "spread_regime__t1p5_wide",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 25,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 12,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "realized_spreads",
+            "reason": "realized_spreads_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "917c213895645a2da4f19cba77a9b38a92024673e45ebcbf9d43f9cfaa7ed722",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "spread_regime",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l12_t0p0005",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 37,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "f75c022bf5b92fa52341a1318ef502487519f5316f0052fbfc85aec4815dbaf0",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l48_t0p001",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "aeeb3813e4ec038c0c89d940fe8f068a173db233054ad5598cef79a48c122f93",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l288_t0p002",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 313,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "19ae5724540f48d6fd5554375f4ac4f61753020a1eeb727ddc466b0a9ba6b117",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      },
+      {
+        "available_executor": null,
+        "blocking_reasons": [
+          "premium_index_unavailable"
+        ],
+        "candidate_id": "premium_momentum__l48_tm0p001",
+        "data_plane_checks": [
+          {
+            "min_sample_count": 73,
+            "observed_sample_count": 3332,
+            "observed_status": "available",
+            "ok": true,
+            "plane": "ohlcv_bars",
+            "reason": null
+          },
+          {
+            "min_sample_count": 200,
+            "observed_sample_count": null,
+            "observed_status": "unavailable",
+            "ok": false,
+            "plane": "premium_index",
+            "reason": "premium_index_unavailable"
+          }
+        ],
+        "data_plane_evidence_kind": "caller_declaration_not_verified_series",
+        "definition_sha256": "d4e044550a75911c66bbb7256312432e19523b63cc1d92fbfff07c440eedbe88",
+        "evaluated": false,
+        "evaluation_artifact_sha256": null,
+        "evaluation_inputs_verified": false,
+        "evaluation_status": "blocked",
+        "executor_connected": false,
+        "family": "premium_momentum",
+        "feasibility": "blocked",
+        "reason": "required_data_unavailable_or_insufficient",
+        "registered_into_evaluation": false,
+        "registered_into_prescreen": false
+      }
+    ],
+    "candidate_report_sha256": "c393133c41832dedd3c2fa3f8a08b533ec6a93b8005a3d6d540723d4b5d9fb0c",
+    "capital_commit_id": null,
+    "contract": "tradingagent.crypto.ten_symbol_research_cycle.v1",
+    "durable_execution_receipt": false,
+    "execution_authority": false,
+    "execution_eligible": false,
+    "generated_candidates_evaluated_count": 0,
+    "hypothesis_generation": {
+      "authority": "none",
+      "automatic_champion_replacement": false,
+      "automatic_registration": false,
+      "automatic_risk_expansion_enabled": false,
+      "capital_commit_id": null,
+      "contract": "tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v3",
+      "durable_execution_receipt": false,
+      "eligible_slot_count": 2048,
+      "execution_authority": false,
+      "execution_eligible": false,
+      "ineligible_slot_count": 17,
+      "input_digest": "fd5c2aac79f562069ec77199aec72b1176a7b2fbf1a44749da45df73eefc31c6",
+      "learning_authority": false,
+      "learning_mode": "detached_offline_worker",
+      "live_broker_used": false,
+      "loop_stage": "stage_2_hypothesis_generation_proposal_only",
+      "model_network_used": false,
+      "network_used": false,
+      "outbox_id": null,
+      "production_eligible": false,
+      "promotion_authorized": false,
+      "proposal_path": "/tmp/crypto-research-copy-20260830.x3Brp0/evolution/ten_symbol_hypothesis_generator.v3/proposals/71cb9387c1a1a3aa799eebeb1445f61d5ef5fbae9d434ca5b5a209e3685a7470.json",
+      "proposal_sha256": "71cb9387c1a1a3aa799eebeb1445f61d5ef5fbae9d434ca5b5a209e3685a7470",
+      "real_trading_enabled": false,
+      "research_only": true,
+      "status": "no_new_input",
+      "terminal_slot_count": 2065,
+      "testnet_used": false
+    },
+    "learning_authority": false,
+    "live_broker_used": false,
+    "model_network_used": false,
+    "network_used": false,
+    "outbox_id": null,
+    "production_eligible": false,
+    "promotion_authorized": false,
+    "proposal_sha256": "71cb9387c1a1a3aa799eebeb1445f61d5ef5fbae9d434ca5b5a209e3685a7470",
+    "real_trading_enabled": false,
+    "reevaluated_candidate_ids": [
+      "xs_rs",
+      "short_reversal",
+      "amihud_illiquidity",
+      "momentum_vol_regime"
+    ],
+    "registered_candidate_reevaluation": {
+      "authority": "none",
+      "automatic_champion_replacement": false,
+      "automatic_reevaluation": true,
+      "automatic_risk_expansion_enabled": false,
+      "capital_commit_id": null,
+      "contract": "tradingagent.crypto.ten_symbol_research_loop_review.v3",
+      "durable_execution_receipt": false,
+      "eligible_slot_count": 2048,
+      "execution_authority": false,
+      "execution_eligible": false,
+      "horizon_bars": [
+        12,
+        48,
+        144,
+        288
+      ],
+      "ineligible_slot_count": 17,
+      "input_digest": "e305ad573cf70b957b4947f54b6db077740f86b6d118d7aac56336a4f7914d20",
+      "learning_authority": false,
+      "learning_mode": "detached_offline_worker",
+      "live_broker_used": false,
+      "loop_stage": "stage_1_registered_hypothesis_automatic_reevaluation",
+      "model_network_used": false,
+      "network_used": false,
+      "outbox_id": null,
+      "production_eligible": false,
+      "promotion_authorized": false,
+      "real_trading_enabled": false,
+      "report_path": "/tmp/crypto-research-copy-20260830.x3Brp0/evolution/ten_symbol_research_loop.v3/reports/c393133c41832dedd3c2fa3f8a08b533ec6a93b8005a3d6d540723d4b5d9fb0c.json",
+      "report_sha256": "c393133c41832dedd3c2fa3f8a08b533ec6a93b8005a3d6d540723d4b5d9fb0c",
+      "research_only": true,
+      "status": "no_new_input",
+      "terminal_slot_count": 2065,
+      "testnet_used": false
+    },
+    "research_only": true,
+    "same_store_head": true,
+    "scheduler": "explicit_one_shot_not_installed",
+    "status": "cycle_completed",
+    "strategy_evaluation_invoked": false,
+    "testnet_used": false
+  },
+  "source": {
+    "copied_files": 6176,
+    "copied_files_digest": "535fdceb6e5c4e869f20581cb2ae6f846177c562f135d7a1cb399fc5f16b1c71",
+    "copy_root": "/tmp/crypto-research-copy-20260830.x3Brp0",
+    "kind": "local_isolated_copy_of_TA_observation_store",
+    "original": "/var/lib/tradingagent/crypto-ten-symbol-observation",
+    "original_copy_unchanged": true,
+    "second_run_artifact_bytes_identical": true
+  }
+}
