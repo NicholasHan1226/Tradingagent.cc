@@ -1367,3 +1367,38 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 本批真实输入、成本归因、未通过结果和交接边界见
 [2026-08-30 研究验收记录](reports/2026-08-30-cost-risk-review.md)。
+
+### 固定成本过滤与信号消融诊断
+
+`cost_aware_trend_research.py` 在上述日频趋势上比较六个冻结版本、两档成本，
+复用同一日采样风险引擎与原最长连续窗口。不重开已经净负的G5短周期参数扫描，
+不更改旧前向计划、K10、生产策略或任何账户。
+计划和消融定义见 [固定实验计划](reports/2026-08-30-cost-aware-trend-plan.md)。
+
+成本估计只使用决策日前已成熟的5日标签，以过去60日固定非重叠日期网格的
+10币样本拟合单变量ridge；最少30个资产窗口、5个日期簇。它是不具备校准/显著性
+证明的点估计，不是已证实期望收益；训练不足只阻买、不阻卖。连续两日信号确认
+不影响账户风险退出。`combined_no_trend`仅移除硬趋势门及确认，模型仍含均线
+强度；`combined_no_vol`只移除信号波动缩放，不移除账户风控或10%单币目标上限。
+
+```bash
+REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B \
+  -m Crypto.cost_aware_trend_research \
+  --input /absolute/previously-collected-normalized-td-inputs.json \
+  --reference-report Crypto/reports/2026-08-30-risk-replay.json \
+  --output /absolute/new-research-output.json
+
+REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest -q \
+  -p no:cacheprovider tests/test_crypto_cost_aware_trend_research.py \
+  tests/test_crypto_slow_trend_risk_replay.py tests/test_crypto_slow_trend_research.py
+```
+
+CLI无网络，先用输入完整复现已验证参考报告，再绑定规范化输入hash与来源元数据；
+这是本地输入及计算的交叉核验，不是对被normalizer丢弃的原始wire行hash重建，
+也不新增PIT authority。输出采用新文件独占创建，已存在路径不覆盖。完整返回全部
+12格、训练覆盖、拒买、暴露天数、暂停、费用、逐笔现金/仓位和基准差；不按最好
+结果自动晋级。两倍成本同时影响成交与买入门槛，属于重模拟而非固定成交单纯改价。
+回滚停止调用该独立入口即可，旧默认风险模拟器结果保持相同，不删除研究证据。
+
+本轮全部正负结果、证据hash及未验证项见
+[2026-08-30 成本过滤与信号消融结果](reports/2026-08-30-cost-aware-trend-review.md)。

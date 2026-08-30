@@ -88,13 +88,17 @@ class _Risk:
         self.streak = self.streak + 1 if pnl < ZERO else 0
 
 
-def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str) -> dict:
+def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str,
+              target_provider=None, buy_allowed=None, cost_multiplier: Decimal = ONE) -> dict:
     """Three modes share accounting; only risk_trend applies the risk latch."""
     if mode not in {"trend", "risk_trend", "btc_cash"}:
         raise ValueError("risk_replay_mode_invalid")
     plan = original.frozen_plan()
+    if cost_multiplier not in (ONE, Decimal(2)):
+        raise ValueError("risk_replay_cost_multiplier_invalid")
     initial = number(plan["starting_research_cash"])
-    fee, slip = number(plan["fee_each_side"]), number(plan["slippage_each_side"])
+    fee = number(plan["fee_each_side"]) * cost_multiplier
+    slip = number(plan["slippage_each_side"]) * cost_multiplier
     cash = initial
     quantities = {s: ZERO for s in plan["symbols"]}
     basis = dict(quantities)
@@ -103,6 +107,7 @@ def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str) 
     ledger, equity, daily, targets, closed = [], [], [], [], []
     fees = turnover = slippage = ZERO
     previous_close = initial
+    filtered_buys = []
 
     def value(prices):
         return cash + sum(quantities[s] * prices[s] for s in quantities)
@@ -165,7 +170,11 @@ def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str) 
         at = day + original.BAR
         day_base = previous_close
         before = mark(prices, day_base, at, "execution_open_before")
-        signal = original._weights(days, day)
+        signal = original._weights(days, day) if target_provider is None else target_provider(day)
+        if target_provider is not None and (set(signal) != set(quantities)
+                or any(not isinstance(w, Decimal) or not w.is_finite() or w < ZERO
+                       or w > number(plan["max_symbol_weight"]) for w in signal.values())):
+            raise ValueError("risk_replay_target_invalid")
         weights = ({s: sum(signal.values()) if s == "BTCUSDT" else ZERO for s in quantities}
                    if mode == "btc_cash" else signal)
         factor = risk.multiplier if mode == "risk_trend" else ONE
@@ -182,6 +191,10 @@ def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str) 
             if target and current and not cap_sell and abs(target - current) <= target * number(plan["rebalance_relative_band"]):
                 continue
             orders[symbol] = target / prices[symbol] - quantities[symbol]
+            if orders[symbol] > ZERO and buy_allowed is not None and not buy_allowed(day, symbol):
+                filtered_buys.append({"at": original.history._iso(at), "symbol": symbol,
+                                      "reason": "cost_estimate_or_training_gate"})
+                orders[symbol] = ZERO
         sell_batch(orders, prices, at, "risk_flatten" if paused else "rebalance")
         mark(prices, day_base, at, "after_sells")
         # A sell fee can cross the tightening threshold. Do not use a larger
@@ -222,7 +235,7 @@ def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str) 
         nav = number(day_equity)
         daily_peak = max(daily_peak, nav)
         daily_drawdown = max(daily_drawdown, (daily_peak - nav) / daily_peak)
-    return {
+    result = {
         "return": str(final / initial - ONE), "final_equity": str(final), "fees": str(fees),
         "slippage_cost": str(slippage), "turnover_over_initial_cash": str(turnover / initial),
         "trade_leg_count": len(ledger), "ledger": ledger, "ledger_sha256": original.history._sha256(ledger),
@@ -237,6 +250,11 @@ def _simulate(days: Mapping[str, Mapping], dates: list[datetime], *, mode: str) 
         "final_positions": {s: str(q) for s, q in quantities.items()},
         "risk_overlay_applied": mode == "risk_trend",
     }
+    # Default legacy report bytes are preserved; only opt-in experiments add metadata.
+    if target_provider is not None or buy_allowed is not None or cost_multiplier != ONE:
+        result["filtered_buys"] = filtered_buys
+        result["cost_multiplier"] = str(cost_multiplier)
+    return result
 
 
 def analyze(rows: Mapping[str, list[dict[str, Any]]], *, as_of: datetime) -> dict:

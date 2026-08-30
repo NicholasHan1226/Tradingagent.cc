@@ -73,3 +73,9 @@ candidate on #608 head 7e5312be4ad5d753f68ad6ba8d87d50272cd501a.
 Default market-lane identity check rejects this non-lane worktree as expected;
 isolated path/ancestry checks are structural only, not Controller acceptance.
 Keep #606/#608 unchanged and submit a separate stacked draft; no merge/deploy.
+
+Pre-run source clarification: the existing input copy contains normalized rows,
+not original wire rows. Verify the full original risk-report replay against its
+reference and bind a new normalized-input hash; retain receipt metadata but do
+not claim reconstruction of upstream page hashes or historical PIT. No fresh
+provider/API access or redefinition of the historical window is required.
