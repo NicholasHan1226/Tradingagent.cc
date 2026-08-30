@@ -59,6 +59,8 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q \
 
 两个合同显式分开：major 1 仍只接受旧 207 行、三页、`partial/degraded=true` 且唯一原因 `response_completeness_unverified`；不把如今 major 1 的多版本累积结果默默转成旧合同。major 2 接受实际 1–500 条唯一 DCE/M 行、最多五页；必须 `ready` 或 `success`、fresh、valid、non-degraded、完整 lineage、精确 receipt，且带时区的 data_through 不晚于 observed_at。实际行数写入 snapshot，不猜测 207 或 208；同一 ts_code 的修订/重复、超预算、缺字段、非 DCE/M、receipt/lineage/同观察 replay 漂移均 fail closed，不做静默去重。
 
+major 2 还允许上游真实返回的两个精确原生参考标识 `M.DCE`、`ML.DCE`；它们只作为 receipt-bound 原始 reference rows 保留，不解释为可交易到期合约、主力合约、连续合约或交易资格。其它无月份数字的标识仍拒绝，major 1 的严格 `M[0-9]{3,4}.DCE` 合同不变。
+
 两版均仅保留原始合约单位字段，不解释数值 tick、会话、换月或可执行规格。即使 major 2 查询完整读完，M 子集也不证明全市场或历史 coverage，故 `coverage_complete=false` 和旧 coverage-debt reason 保留；这不是将 major 2 metadata 伪装成 degraded。`as_of=null`，PIT/runtime/execution/trading authority 全为 false，CNFutures 仍暂停，不能启动 runtime、模拟成交或交易。
 
 验证入口：`python -m pytest -q tests/test_cn_futures_fut_basic_contract_units.py tests/test_cn_futures_m_simulation_readiness.py`。本次仅完成离线兼容测试；真实 major 2 的新 receipt、实际唯一行数和认证消费回读仍需另行验证，不以 fixture 的 208 行代替生产证据。

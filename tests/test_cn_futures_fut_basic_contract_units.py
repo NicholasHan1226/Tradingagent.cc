@@ -361,3 +361,29 @@ def test_major2_rejects_metadata_changed_between_traversals(field, value):
 def test_major2_rejects_invalid_or_future_watermark(through):
     with pytest.raises(FutBasicContractUnitConsumerError):
         _load(_major2_transport(metadata=_metadata(state="ready", degraded=False, reasons=[], data_through=through)))
+
+
+def test_major2_accepts_only_observed_native_reference_identifiers():
+    rows = [_row(index) for index in range(206)] + [
+        {**_row(206), "ts_code": "M.DCE"},
+        {**_row(207), "ts_code": "ML.DCE"},
+    ]
+    snapshot = _load(_major2_transport(rows=rows))
+    assert snapshot.row_count == 208
+    assert {fact.ts_code for fact in snapshot.facts}.issuperset({"M.DCE", "ML.DCE"})
+    assert not snapshot.runtime_eligible and not snapshot.execution_eligible
+    assert not snapshot.trading_eligible and not snapshot.pit_authority
+
+
+@pytest.mark.parametrize("ts_code", ["MX.DCE", "MMAIN.DCE", "M-.DCE", "MREF.DCE"])
+def test_major2_rejects_unknown_native_reference_identifiers(ts_code):
+    rows = [{**_row(0), "ts_code": ts_code}] + [_row(index) for index in range(1, 208)]
+    with pytest.raises(FutBasicContractUnitConsumerError, match="row_ts_code_invalid"):
+        _load(_major2_transport(rows=rows))
+
+
+@pytest.mark.parametrize("ts_code", ["M.DCE", "ML.DCE"])
+def test_major1_keeps_strict_expiring_contract_identity(ts_code):
+    rows = [{**_row(0), "ts_code": ts_code}] + [_row(index) for index in range(1, 207)]
+    with pytest.raises(FutBasicContractUnitConsumerError, match="row_ts_code_invalid"):
+        _load(FixtureTransport(rows=rows))
