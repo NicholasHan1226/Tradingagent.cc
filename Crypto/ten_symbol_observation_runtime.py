@@ -742,6 +742,7 @@ class _LazyObservationPort:
         token_file: Path,
         transport_factory: Callable[..., HTTPTransport],
         config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+        current_window_end: datetime | None = None,
         timeout_seconds: float = RUNTIME_TIMEOUT_SECONDS,
         retry_sleep: Callable[[float], None] = time.sleep,
         budget_check: Callable[[], float] | None = None,
@@ -749,6 +750,7 @@ class _LazyObservationPort:
         self._manifest = manifest
         self._token_file = token_file
         self._config = config
+        self._current_window_end = current_window_end
         self._transport_factory = transport_factory
         self._timeout_seconds = timeout_seconds
         self._retry_sleep = retry_sleep
@@ -883,6 +885,14 @@ class _LazyObservationPort:
             catalog = client.get_catalog()
             self.observed_catalog_version = catalog.catalog_version
             self._manifest.profile.verify_catalog(catalog)
+            shape_retry_delays = self._config.bar_shape_retry_delays
+            if (
+                self._current_window_end is not None
+                and window.window_end < self._current_window_end
+            ):
+                # Do not spend the current receipt's validity window retrying
+                # a historical shape rejection; let gap recovery validate it.
+                shape_retry_delays = ()
             observation, rows_by_symbol = (
                 _collect_market_observation_rows_with_catalog(
                     client,
@@ -890,7 +900,7 @@ class _LazyObservationPort:
                     expected_catalog_version=catalog.catalog_version,
                     window=window,
                     symbols=self._config.symbols,
-                    shape_retry_delays=self._config.bar_shape_retry_delays,
+                    shape_retry_delays=shape_retry_delays,
                     retry_sleep=self._retry_sleep,
                     budget_remaining=self._budget_check,
                 )
@@ -1411,6 +1421,7 @@ def run_crypto_ten_symbol_observation_once(
         token_file=token,
         transport_factory=bounded_transport_factory,
         config=config,
+        current_window_end=current_window.window_end,
         retry_sleep=retry_sleep,
         budget_check=lambda: _remaining_invocation_seconds(
             invocation_started_at, float(budget_seconds)

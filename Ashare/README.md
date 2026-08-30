@@ -708,8 +708,16 @@ Installing or enabling them requires an immutable release, the frozen artifact
 readback, `REAL_TRADING_ENABLED=false`, systemd verification, old-state byte
 fingerprints, and a tested rollback.
 
-The tracked systemd candidate runs at second 40 after each five-minute boundary
-during the two A-share sessions. The TradingDatas collector is an independent
+The tracked timers run at 09:42–11:37 and 13:12–15:07, every five minutes,
+420 seconds after each completed bar (plus up to ten seconds of timer jitter).
+The baseline service explicitly permits gap-marked late starts; rolling mode
+admits the first valid subset without a two-opening-bar availability gate.
+A rejected same-observation read does not admit any bad rows and does not latch
+future independent slots out. Gap recovery cannot claim full-session completion
+or learning eligibility. Authentication, state integrity and live-trading guards
+remain closed. The scale-paper service budget is 240 seconds, below its 300-second
+cadence; deployments must reconcile any older timeout or ExecStart overrides.
+The TradingDatas collector is an independent
 timer, not an ordering guarantee; its SQLite authority lock may overlap a TA
 request. The API adapter therefore uses the bounded transient retry above, and
 the natural-window readback must record collector overlap separately. It

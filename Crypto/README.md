@@ -710,6 +710,14 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
 
 ### slot / backlog / gap 语义
 
+40 币独立配置的补充：cutoff 固定为 bar close +270 秒，timer 在 +285 秒
+（`*:4/5:45`，另有最多3秒 jitter）触发；10 币配置不变。40 币当前槽的
+query-shape 瞬时错误仍允许预算内 20/45 秒重试；严格早于本次冻结 current window
+的历史槽只做一次 shape 查询，失败后立即进入既有缺口恢复。等待不会恢复历史 PIT，
+反而可能令当前窗口被下一批 receipt 替代而越过其 cutoff。当前窗口仍必须通过
+原始 watermark、quality、lineage、完整性校验后才能写 data_gap；没有合格数据则
+继续如实拒收，不推进 checkpoint、不生成价格、样本或订单。
+
 - `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不随 systemd
   jitter 或重跑墙上时钟漂移。
 - timer 固定在每根 bar close +3m25s，避开现役 Crypto core 的 close +55s

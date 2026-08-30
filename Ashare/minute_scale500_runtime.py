@@ -70,10 +70,20 @@ _ROLLING_RETRYABLE_EXACT = frozenset({
     # The authenticated query layer exposes transient/provider request
     # failures without leaking HTTP details; rolling must retry the next bar.
     "minute_tradingdatas_request_failed",
+    # Reject this read completely, but do not latch an independent future
+    # observation out for the rest of the day. No failed rows are persisted.
+    "minute_same_observation_mismatch",
     # A transport-level URL error can occur during a deploy/restart race
     # before the authenticated client has normalized it; it is still a
     # retryable read failure while the day's rolling session has no state.
     "minute_scale500_unclassified_urlerror",
+})
+_ROLLING_NONRETRYABLE_EXACT = frozenset({
+    "minute_paper_state_invalid",
+    "minute_paper_state_persist_failed",
+    "minute_paper_universe_invalid",
+    "minute_paper_universe_row_invalid",
+    "minute_paper_universe_drift",
 })
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _REASON_PATTERN = re.compile(r"^[a-z0-9_.:-]+$")
@@ -777,6 +787,8 @@ def _reason_code(exc: BaseException) -> str:
 def _rolling_retryable_failure(reason: str) -> bool:
     """Keep transient data/readiness failures retryable within the same day."""
 
+    if reason in _ROLLING_NONRETRYABLE_EXACT:
+        return False
     return reason.startswith(_ROLLING_RETRYABLE_PREFIXES) or reason in _ROLLING_RETRYABLE_EXACT
 
 
@@ -1121,6 +1133,7 @@ def _validate_runtime_receipt(
     allow_late_start: bool,
     expected_row_count: int = EXPECTED_UNIVERSE_COUNT,
     allow_partial: bool = False,
+    allow_gap_recovery: bool = False,
     expected_symbols: frozenset[str] | None = None,
 ) -> bool:
     if result.get("status") != "pass":
@@ -1211,7 +1224,21 @@ def _validate_runtime_receipt(
             )
         return True
     if result.get("gap_recovery") is True:
-        raise MinuteScale500RuntimeError("minute_scale500_gap_or_late_start_forbidden")
+        if not allow_gap_recovery:
+            raise MinuteScale500RuntimeError("minute_scale500_gap_or_late_start_forbidden")
+        slots = session_bar_ends(_parse_bar_end_any(expected_bar_end).date())
+        prior_slots = [value.strftime("%Y-%m-%d %H:%M:%S") for value in slots
+                       if value.strftime("%Y-%m-%d %H:%M:%S") < expected_bar_end]
+        gaps = result.get("gap_slots")
+        if (
+            result.get("gap_recovery_reason") != "minute_session_gap_detected"
+            or result.get("full_session_complete") is not False
+            or result.get("learning_eligible") is not False
+            or not isinstance(gaps, list)
+            or not gaps
+            or gaps != prior_slots[-len(gaps):]
+        ):
+            raise MinuteScale500RuntimeError("minute_scale500_gap_recovery_receipt_invalid")
     return False
 
 
@@ -1574,7 +1601,7 @@ def run_scale500_once(
             return {
                 **dict(result),
                 "scale500_acceptance_status": gate["status"],
-                "selected_mode": "scale500",
+                "selected_mode": mode,
                 "rollback30_state_root_preserved": True,
                 "capital_layer": "simulated",
                 "account_type": "simulated",
@@ -1590,6 +1617,7 @@ def run_scale500_once(
             allow_late_start=effective_allow_late_start,
             expected_row_count=expected_count,
             allow_partial=rolling_eligible,
+            allow_gap_recovery=rolling_eligible,
             expected_symbols=expected_symbols,
         )
         validated = list(gate["validated_bar_ends"])
@@ -1598,7 +1626,13 @@ def run_scale500_once(
                 "minute_scale500_late_start_gate_not_pending"
             )
         if gate["status"] == "pending_two_live_snapshots":
-            if late_start:
+            if rolling_eligible and not late_start:
+                # Rolling membership is admitted per validated current batch.
+                # The fixed-cohort opening two-bar test is not an availability
+                # gate: a missing second bar must not strand a running day.
+                gate["status"] = "active"
+                gate["validated_bar_ends"] = [*validated, expected_bar_end]
+            elif late_start:
                 if validated:
                     raise MinuteScale500RuntimeError(
                         "minute_scale500_gate_missing_or_invalid"
@@ -1711,11 +1745,12 @@ def run_scale500_once(
     }
 
 
-def _failure_payload(reason: str) -> dict[str, object]:
+def _failure_payload(reason: str, *, rolling_retryable: bool = False) -> dict[str, object]:
     return {
         "status": "failed_closed",
         "reason_code": reason,
-        "selected_mode": "rollback30",
+        "selected_mode": "rolling_eligible" if rolling_retryable else "rollback30",
+        "retry_next_slot": rolling_retryable,
         "capital_layer": "simulated",
         "account_type": "simulated",
         "capital_authority": False,
@@ -1811,7 +1846,14 @@ def main(argv: list[str] | None = None) -> int:
         reason = _reason_code(exc)
         print(
             json.dumps(
-                _failure_payload(reason),
+                _failure_payload(
+                    reason,
+                    rolling_retryable=(
+                        args.command == "run"
+                        and args.rolling_eligible
+                        and _rolling_retryable_failure(reason)
+                    ),
+                ),
                 ensure_ascii=False,
                 sort_keys=True,
             ),

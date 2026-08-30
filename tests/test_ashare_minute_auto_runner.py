@@ -429,6 +429,35 @@ def test_manual_late_start_is_explicit_and_never_learning_eligible(
     }
 
 
+def test_scheduled_late_start_recovers_after_opening_read_failure(tmp_path: Path) -> None:
+    day = _initialized_day(tmp_path, last_bar=None)
+
+    def fail(**_: object) -> dict[str, object]:
+        raise MinuteDataContractError("minute_same_observation_mismatch")
+
+    with pytest.raises(MinuteDataContractError, match="minute_same_observation_mismatch"):
+        run_current_delayed_minute_paper(
+            state_root=tmp_path, token_file=Path("/run/private/token"),
+            now=_at("2026-07-28T09:42:00"), run_once=fail, allow_late_start=True,
+        )
+    assert not (day / "state-bundle.json").exists()
+    calls = []
+
+    def recover(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        return {"status": "pass", "bar_end": kwargs["bar_end"]}
+
+    result = run_current_delayed_minute_paper(
+        state_root=tmp_path, token_file=Path("/run/private/token"),
+        now=_at("2026-07-28T09:47:00"), run_once=recover, allow_late_start=True,
+    )
+    assert result["bar_end"] == "2026-07-28 09:40:00"
+    assert result["gap_slots"] == ["2026-07-28 09:35:00"]
+    assert result["learning_eligible"] is False
+    assert result["full_session_complete"] is False
+    assert len(calls) == 1
+
+
 def test_real_trading_flag_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

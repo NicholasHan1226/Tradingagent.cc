@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
+
+from Crypto.ten_symbol_observation_runtime import (
+    FORTY_SYMBOL_RUNTIME_CONFIG,
+    crypto_ten_symbol_observation_window,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +47,7 @@ def test_forty_symbol_observation_service_is_simulation_only_and_isolated() -> N
 
 def test_forty_symbol_observation_timer_is_installable_and_not_enabled_by_repo() -> None:
     text = TIMER.read_text(encoding="utf-8")
-    assert "OnCalendar=*-*-* *:3/5:45" in text
+    assert "OnCalendar=*-*-* *:4/5:45" in text
     assert "AccuracySec=1s" in text
     assert "RandomizedDelaySec=3s" in text
     assert "Persistent=false" in text
@@ -49,3 +56,22 @@ def test_forty_symbol_observation_timer_is_installable_and_not_enabled_by_repo()
     assert "WantedBy=timers.target" in text
     assert "systemctl enable" not in text
     assert "systemctl start" not in text
+
+
+def test_forty_timer_selects_the_current_settled_window() -> None:
+    text = TIMER.read_text(encoding="utf-8")
+    schedule = re.search(
+        r"^OnCalendar=\*-\*-\* \*:(\d+)/5:(\d+)$", text, re.MULTILINE
+    )
+    assert schedule is not None
+    offset = int(schedule[1]) * 60 + int(schedule[2])
+    assert offset == 285
+    for minute in range(0, 60, 5):
+        end = datetime(2026, 8, 30, 5, minute, tzinfo=timezone.utc)
+        for jitter in (0, 3, 4):
+            window = crypto_ten_symbol_observation_window(
+                end + timedelta(seconds=offset + jitter),
+                config=FORTY_SYMBOL_RUNTIME_CONFIG,
+            )
+            assert window.window_end == end
+            assert window.observation_cutoff == end + timedelta(seconds=270)
