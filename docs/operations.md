@@ -1391,6 +1391,14 @@ frontend README 的 lint/test/build 检查。独立模拟展示失败只影响�
 回退恢复旧 unit 与代码，绝不恢复旧账本。前端观察值必须标明原数据日期；恢复目录里
 存在资金政策或账本，不等于现役服务已连接。迁移账本/调整唯一写者权限另行确认。
 
+四十币既有 daily rolling-eval service 的包装器也需与 CLI 同批更新：备份
+`/usr/local/sbin/tradingagent-crypto-rolling-eval.sh` 的原始字节/hash，在服务不运行时
+以 accepted immutable release 内 `deploy/run-crypto-forty-symbol-rolling-eval.sh`
+安装至该原位置，保持 root:root 0755。不新增/启用 timer，不修改观察器，不调用资本。
+受控运行只向已有独立研究 output root 新建唯一 attempt；失败不会覆盖报告或追加
+成功日志。回退恢复包装器和代码，保留研究输出。测试入口为
+`tests/test_crypto_forty_symbol_rolling_entrypoint.py`。
+
 ## 9. 按能力划分的外部依赖
 
 以下各项只约束依赖它的能力，不是所有代码、只读展示、普通 dataset 接入或模拟

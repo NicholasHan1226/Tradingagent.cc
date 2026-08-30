@@ -627,6 +627,11 @@ source store。`--out-json` 与 `--report` 仅写调用方明确指定、位于 
 收盘到收盘基线和 OHLC 触价退出都是描述性 bar-only counterfactual，不能作为
 成交、收益晋级、资本或执行 authority。
 
+既有每日任务的包装器源为 `deploy/run-crypto-forty-symbol-rolling-eval.sh`，
+发布时替换原 `/usr/local/sbin/tradingagent-crypto-rolling-eval.sh`，不新增 timer。
+仅传 `--store-root`，不再手工拼接事件分段；每次在既有独立研究 output root 下
+创建唯一 attempt 目录，失败保留诊断且不记成功，不覆盖旧报告，不写 observation store。
+
 `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
 `ten_symbol_observation_runtime.py` 组成一条独立、append-only、receipt 绑定的
 10 币 5 分钟观测积累链，为后续 factor research 扩到 10 币（横截面研究）提供

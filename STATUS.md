@@ -181,7 +181,19 @@ open; entry-bar stop/target checks and output/store alias rejection are covered.
 `source_receipt_integrity_verified` is separate from `tradeable_pit_verified`;
 the latter and `receipt_bound_pit` remain false because the bar-only exit and
 baseline model are still research counterfactuals. This candidate has not yet
-been merged/deployed or replayed against the live forty-symbol store.
+been merged/deployed. Subsequent bounded service-user read-only validation of
+the exact rolling module completed in 17.606s: 2,165 events, two history segments,
+68 contiguous eligible slots and 40 symbols. This is candidate consumer proof,
+not 48h stability. The existing daily wrapper still used old events/bars CLI
+arguments; its last 05:37 failure was `segment_too_short`. The candidate now
+updates that existing wrapper to canonical store input and unique output paths.
+No new timer or observation-store write is introduced.
+
+The nginx page root remains pinned to older release `69ca4475`, separate from
+the current internal API. An unauthenticated domain HEAD request at 21:51
+returned 502; neither current routing nor authentication is proven healthy.
+This batch does not change public ingress. Static artifact publication and
+internal API success must not be reported as that public page being updated.
 
 ## Lessons and next evidence
 
