@@ -52,6 +52,7 @@ EXACT_ROW_COUNT = 207
 _SHA256_LENGTH = 64
 _ALLOWED_DEGRADED_REASON = "response_completeness_unverified"
 _M_DCE_TS_CODE = re.compile(r"^M[0-9]{3,4}\.DCE$")
+_MAJOR2_NATIVE_REFERENCE_IDS = frozenset({"M.DCE", "ML.DCE"})
 
 
 class FutBasicContractUnitConsumerError(ValueError):
@@ -308,7 +309,9 @@ def _map_rows(
             raise FutBasicContractUnitConsumerError("row_exchange_invalid")
         if row.get("fut_code") != PRODUCT_CODE:
             raise FutBasicContractUnitConsumerError("row_fut_code_invalid")
-        if not _M_DCE_TS_CODE.fullmatch(ts_code):
+        if not _M_DCE_TS_CODE.fullmatch(ts_code) and not (
+            schema_major == 2 and ts_code in _MAJOR2_NATIVE_REFERENCE_IDS
+        ):
             raise FutBasicContractUnitConsumerError("row_ts_code_invalid")
         missing = [field for field in RAW_CONTRACT_UNIT_FIELDS if field not in row]
         if missing:
