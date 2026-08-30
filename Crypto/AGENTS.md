@@ -322,11 +322,12 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   horizon 配置；复用 factor v2 投影的 sidecar 资格门禁与
   `ten_symbol_factor_prescreen.analyze` 评估口径（不改评估逻辑、不
   复制实现），把四个已注册预筛候选在最新观测证据上重估，产出
-  `<store_root>/evolution/ten_symbol_research_loop/` 下 checksum 绑定的
+  `<store_root>/evolution/ten_symbol_research_loop.v2/` 下 checksum 绑定的
   immutable 评审报告（每候选×horizon 费用前后指标、与上份报告的
   diff、自动 `review.recommendation`：逐候选按最优非重叠费用后净收益
   推导 `auto_promote`/`auto_demote`/`auto_retain`）与
-  compact checkpoint；同输入重跑 `no_new_input` 且字节不变（幂等），
+  compact checkpoint；v2 命名空间与 v1 的未版本化目录完全隔离、保留
+  既有 v1 证据不迁移不覆盖；同输入重跑 `no_new_input` 且字节不变（幂等），
   链/sidecar/checkpoint/report 篡改一律 fail closed。第一阶段不生成
   新假设（注册集合漂移 fail closed）、不接 systemd、无 worker；晋级
   在模拟域内自动，实盘仍由 `REAL_TRADING_ENABLED=false` 硬闸。固定
