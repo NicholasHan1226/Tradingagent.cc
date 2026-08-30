@@ -20,9 +20,12 @@ from Crypto.round_trip_capital import (
 )
 from Crypto.ten_symbol_factor_strategy_evaluation import (
     CHECKPOINT_FILENAME,
+    CHAMPION_PROMOTION_DIRNAME,
+    COST_ATTRIBUTION_DIRNAME,
     COST_ATTRIBUTION_CONTRACT,
     COST_POLICY_ID,
     EVALUATION_BUNDLE_CONTRACT,
+    STRATEGY_EVALUATION_DIRNAME,
     CryptoTenSymbolFactorStrategyEvaluationError,
     run_ten_symbol_factor_strategy_evaluation,
     run_ten_symbol_factor_strategy_evaluation_fast,
@@ -179,7 +182,12 @@ def _expected_mean(root: Path) -> Decimal:
 
 
 def _artifact_dir(root: Path) -> Path:
-    return root / "evolution" / "ten_symbol_factor_research" / "strategy_evaluations"
+    return (
+        root
+        / "evolution"
+        / "ten_symbol_factor_research"
+        / STRATEGY_EVALUATION_DIRNAME
+    )
 
 
 def test_evaluation_metrics_baselines_and_recommendation_branches(
@@ -305,7 +313,7 @@ def test_evaluation_metrics_baselines_and_recommendation_branches(
         output_root
         / "evolution"
         / "ten_symbol_factor_research"
-        / "champion_promotions"
+        / CHAMPION_PROMOTION_DIRNAME
         / f"{artifact['champion_promotion_receipt_sha256']}.json"
     )
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -389,12 +397,29 @@ def test_evaluation_v2_preserves_legacy_v1_checkpoint_and_starts_own_lineage(
         },
     )
     legacy_bytes = legacy_checkpoint.read_bytes()
+    legacy_artifacts = {
+        "strategy_evaluations": {"legacy": "strategy"},
+        "strategy_evaluation_cost_attributions": {"legacy": "cost"},
+        "champion_promotions": {"legacy": "promotion"},
+    }
+    legacy_artifact_bytes: dict[Path, bytes] = {}
+    for directory_name, payload in legacy_artifacts.items():
+        path = evolution / directory_name / ("0" * 64 + ".json")
+        path.parent.mkdir(mode=0o700)
+        _write_canonical(path, payload)
+        legacy_artifact_bytes[path] = path.read_bytes()
 
     artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
     fast = run_ten_symbol_factor_strategy_evaluation_fast(store_root=output_root)
 
     assert artifact["status"] == "shadow_evaluated"
     assert legacy_checkpoint.read_bytes() == legacy_bytes
+    assert {
+        path: path.read_bytes() for path in legacy_artifact_bytes
+    } == legacy_artifact_bytes
+    assert (evolution / STRATEGY_EVALUATION_DIRNAME).is_dir()
+    assert (evolution / COST_ATTRIBUTION_DIRNAME).is_dir()
+    assert (evolution / CHAMPION_PROMOTION_DIRNAME).is_dir()
     checkpoint = json.loads((evolution / CHECKPOINT_FILENAME).read_text("utf-8"))
     assert checkpoint["contract"].endswith(".v2")
     assert fast["status"] == "no_new_outcome"
@@ -804,7 +829,7 @@ def _attribution_dir(root: Path) -> Path:
         root
         / "evolution"
         / "ten_symbol_factor_research"
-        / "strategy_evaluation_cost_attributions"
+        / COST_ATTRIBUTION_DIRNAME
     )
 
 
