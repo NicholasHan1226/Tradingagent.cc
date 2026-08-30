@@ -53,3 +53,12 @@ Decimal上下文固定、既有文件不可覆盖、sim-only与无晋级标记�
 TA另有现场修复任务独占运行/发布写域；已告知本研究不集中SSH/API取数、不占运维窗口。
 TD套息仍在合同owner决策入口#395，缺真实perp/mark/schedule时继续data_unavailable；本批不绕过。
 回滚仅停止调用该新增入口，旧报告、登记、账户与账本不删除不迁移。
+
+## 推送与最后读回
+
+实现与登记提交 `80164aab721a1be6173cfa2228e99eaa11acbdd4` 已推送并从远端ref读回一致。
+[草稿PR #612](https://github.com/NicholasHan1226/Tradingagent.cc/pull/612) 的GitHub `createdAt=2026-08-30T07:56:52Z`，
+早于固定窗口开始；API读回draft/open、base为#610分支、无CI checks，没有合并/部署。
+最终独立审查补验 **83 passed / 5.79s**，九源hash和实际登记/状态一致；提交后单模块 **36 passed / 1.89s**。
+浏览器实际检查该实现commit的GitHub计划Preview与README锚点：中文层级、日期、限制及命令代码块可读，链接正确。
+这些留证不证明未来数据首次可用、每日运行或收益。
