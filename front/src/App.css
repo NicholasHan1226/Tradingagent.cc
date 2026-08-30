@@ -2488,6 +2488,70 @@ button:not(:disabled) {
   gap: 10px;
 }
 
+.runtime-observations-panel {
+  min-width: 0;
+}
+
+.hero-performance .runtime-observations-panel {
+  border: 0;
+  border-radius: 0;
+  padding: 14px;
+}
+
+.hero-performance .runtime-observation-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.runtime-observations-boundary,
+.runtime-observations-note,
+.runtime-observations-panel > footer,
+.runtime-observation > p {
+  margin: 6px 0;
+  color: var(--text-muted);
+  font: 10px/1.6 var(--font-number);
+  overflow-wrap: anywhere;
+}
+
+.runtime-observation {
+  padding: 10px 0;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.runtime-observation > header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--text-secondary);
+  font: 600 11px/1.5 var(--font-number);
+}
+
+.runtime-observation [data-status="dated"],
+.runtime-observation [data-status="invalid"],
+.runtime-observation [data-status="unavailable"] {
+  color: var(--state-amber);
+}
+
+.runtime-observation-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 8px 0 0;
+}
+
+.runtime-observation-metrics dt {
+  color: var(--text-faint);
+  font: 10px/1.5 var(--font-number);
+}
+
+.runtime-observation-metrics dd {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font: 600 12px/1.5 var(--font-number);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
 .today-run-unavailable,
 .today-run-summary {
   display: grid;

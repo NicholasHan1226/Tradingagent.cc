@@ -1362,17 +1362,59 @@ active unit 缺 PID、进程无法绑定 release、unit/process 引用不同 rel
 声明 release 也固定 `runtime_verified=false`。该工具只消除版本误报，不执行切换、
 重启、daemon-reload、timer 或回滚。
 
-## 9. 发布前的外部阻塞
+### 8.1 独立模拟运行的只读展示
 
-即使本地全部通过，以下证据缺一不可：
+`tools/read_runtime_observations.py` 只读现有 A股分钟 state bundle 和 G5 epoch，
+不启动行情请求、模拟执行、初始化、补写或修复。A股复用 `MinuteFixtureClosedLoop.restore`
+验证完整状态/hash，从已验证 bar 集合计算覆盖；不信任外层未封存的 receipt 计数，
+也不把四份反事实资金相加。G5 复用现有 round-trip health 的无写读取，保留资本 head、
+数据时槽和模拟账务，不能作为 exchange/live 或统一账户 authority。
+
+既有 snapshot API 通过两个 server-only 配置启动固定 Python/script 子进程：
+`TRADING_AGENT_RUNTIME_PYTHON`、`TRADING_AGENT_RUNTIME_READER`。生产值见已跟踪
+`deploy/systemd/tradingagent-front-api.service`；无配置则不启动，HTTP 参数不能改命令。
+首次/过期请求只触发后台读取，页面不等待；单进程单飞、30 秒超时、64 KiB 输出上限、
+5 分钟缓存，缓存保留原时间，失败清除旧成功。无新 route、worker、timer、权限组或
+可写路径；front 继续不能访问 secrets。All Markets 不汇总或并列显示金额。
+
+A股最多查找近 8 个自然日；长假或长期停机后的 unavailable 不代表历史记录不存在。
+普通来源错误按市场隔离；共享子进程整体超时会撤下两个展示项，但不影响各市场运行。
+
+候选检查：`REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest -q
+tests/test_read_runtime_observations.py tests/test_tradingagent_service_identity.py`，以及
+frontend README 的 lint/test/build 检查。独立模拟展示失败只影响该展示块，不影响
+采集、资金、其它市场或既有 snapshot 领域。
+
+发布时先保留现役 front unit 的原始字节/hash，再以验收后的 immutable release 中
+同名 unit 安装两个读取路径配置，保持用户、组、只读 sandbox、localhost 和秘密隔离
+不变。既有 release helper 不会自动安装 front unit，必须独立核对安装字节并读回。
+回退恢复旧 unit 与代码，绝不恢复旧账本。前端观察值必须标明原数据日期；恢复目录里
+存在资金政策或账本，不等于现役服务已连接。迁移账本/调整唯一写者权限另行确认。
+
+四十币既有 daily rolling-eval service 的包装器也需与 CLI 同批更新：备份
+`/usr/local/sbin/tradingagent-crypto-rolling-eval.sh` 的原始字节/hash，在服务不运行时
+以 accepted immutable release 内 `deploy/run-crypto-forty-symbol-rolling-eval.sh`
+安装至该原位置，保持 root:root 0755。不新增/启用 timer，不修改观察器，不调用资本。
+受控运行只向已有独立研究 output root 新建唯一 attempt；失败不会覆盖报告或追加
+成功日志。回退恢复包装器和代码，保留研究输出。测试入口为
+`tests/test_crypto_forty_symbol_rolling_entrypoint.py`。
+
+## 9. 按能力划分的外部依赖
+
+以下各项只约束依赖它的能力，不是所有代码、只读展示、普通 dataset 接入或模拟
+积累的统一发布清单。局部可回退变更完成对应测试、回退和结果读回后独立交付；
+20 日、60–120 日及历史 PIT 条件不得阻断已合格 symbol/slot 的当前观察或受控模拟。
+已经成立的上游证据保留，下游失败单独报告：
 
 1. TradingDatas owner handoff 冻结的 base URL、catalog version、dataset IDs、schema、filters/as-of policy、auth/receipt authority，以及 TA 使用自身 token/client 完成的 fresh readback；上游声明不能替代 TA 独立复现；
-2. 所有 A 股消费者的同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；
+2. 本次切换的 A 股消费者完成同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；不等待无关消费者；
 3. 每个predictive dataset的首次可见时间、release/revision链、first-seen receipt和训练时vintage；无法还原历史回填版本的数据不得进入历史训练；
 4. PIT证券主数据覆盖上市/退市、板块迁移、ST/风险警示、停复牌和历史指数/行业成员，证明没有用当前存续集合回填过去Universe；
-5. 生产market-evidence verifier、Champion/数值特征registry verifier、独立metrics重算authority与长驻可信时钟，以及真实交易会话中的自动模拟盘、crash/restart、对账和 20 个以上交易日运行证据；
-6. 60–120 个交易日影子/模拟观察、费用后统计置信度、回撤与状态分层；
+5. 统一资本/执行接线需其 market-evidence、Champion/数值特征 registry 与可信时钟，费用后科学结论需独立 metrics 重算；真实会话、crash/restart、对账及 20 个交易日证明运行成熟度，不是首次启动模拟的前置；
+6. 60–120 个交易日、费用后统计置信度、回撤和状态分层仅约束长期策略结论及相应风险能力，不阻断只读发布、数据积累或独立模拟；
 7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only。首版固定单次调用、无自动重试；未来是否保留或变更该策略必须另立评审，不能在运行时静默开启；
 8. standing release authorization下仍须完成当次preflight、回退方案，以及本地、Git、远端、生产文件、生产runtime和外部路由的分别验收；授权不能替代证据。
 
-当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`fixture/mock-first / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。
+`server_validated_non_authority_simulation_only`只描述目标服务器安装与旁路验证，
+不自行升级为当前运行、完整账户接线或实盘能力。已经运行的组件以同轮
+`STATUS.md` 与直接 runtime/receipt/readback 分层确认，不使用本节静态文字覆盖新证据。

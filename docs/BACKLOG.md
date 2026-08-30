@@ -26,6 +26,9 @@ A股已经拥有 SampleJournal/KPI 科学证据、Challenger producer 和 simula
      cash/positions reconcile 证据；canonical capital-backed composition 仍仅
      test-only，真实 quote/calendar/Champion authority 与生产入口未接线，不能
      把 fixture 股票覆盖率当作其完成证明。该接线不阻断已合格股票继续模拟。
+   - 原 canonical 账本位于服务器恢复目录且现役服务无读取权限；先取得原样迁移/
+     单写者权限调整授权，保留账本 head 与全部执行 lineage，再接真实数据适配器。
+     不新建本金、不恢复旧策略、不把旧日期余额当成 current。
 2. 为 promotion 同等级补齐 demotion、retirement 与 deterministic rollback 证据。
 3. 保留**所有** Challenger/trial 的身份、参数、数据窗口、结果与淘汰原因，不能只保留赢家。
 4. 扩展不同交易日/决策 cluster/regime/费用环境覆盖，避免单一短窗口驱动晋级。

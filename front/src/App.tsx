@@ -261,6 +261,7 @@ function QuantApp() {
             runningCount={observatory.summary.runningCount}
             runtimeItem={observatory.runtimeItem}
             paperDayRun={readModelSnapshot?.paperDayRun}
+            runtimeObservations={readModelSnapshot?.runtimeObservations}
             snapshotGeneratedAt={readModelSnapshot?.generatedAt ?? null}
             funnelEvents={visibleFunnelEvents}
             events={chartEvents}
