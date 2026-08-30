@@ -1422,7 +1422,9 @@ def test_status_main_readback_cannot_pin_a_self_invalidating_commit_sha() -> Non
     assert all(commit_sha.search(line) is None for line in current_main_rows)
     assert all(pr_token.search(line) is None for line in current_main_rows)
     assert "`git rev-parse HEAD origin/main`" in status
-    assert set(pr_number.findall(status)) <= {"2", "3"}
+    # Only the live-main rows must avoid self-invalidating release identity.
+    # Dated release/runtime evidence elsewhere may cite any reviewed change.
+    assert all(pr_number.search(line) is None for line in current_main_rows)
     assert pr_token.search("/Users/example/Projects/TradingAgent") is None
     for stale_pr_example in ("PR #4", "历史PR #4", "历史 PR#4", "PR4"):
         assert pr_token.search(stale_pr_example) is not None
@@ -1461,7 +1463,9 @@ def test_crypto_docs_separate_current_g5_facts_from_historical_candidates() -> N
     assert "Observed at:" in status
     crypto_summary = status.split("## Crypto track", 1)[1]
     crypto_summary = crypto_summary.split("## Copilot and paused scopes", 1)[0]
-    assert "G5 delayed-paper service completed successfully" in crypto_summary
+    # Require the service's evidence lane, never a preordained success result:
+    # a fresh failed/pending readback must be representable truthfully too.
+    assert "G5 delayed-paper service" in crypto_summary
     assert "latest continuous 288-bar segment" in crypto_summary
     assert "do not block safe-segment simulation" in crypto_summary
 
