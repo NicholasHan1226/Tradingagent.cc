@@ -169,17 +169,19 @@ def test_research_loop_reestimates_registered_hypotheses(
     assert report["diff_vs_previous"]["status"] == "initial_report"
     assert report["review"]["recommendation"] == "automatic_reevaluation_complete"
     assert all(
-        entry["recommendation"] in {"auto_promote", "auto_demote", "auto_retain"}
+        entry["recommendation"] in {"positive_in_sample_only", "nonpositive_in_sample", "auto_retain"}
         and entry["automatic_action"]
         in {
-            "promote_into_sim_capital",
-            "demote_or_retire",
+            "retain_for_frozen_forward_validation",
+            "do_not_allocate",
             "retain_for_more_evidence",
         }
         for entry in report["review"]["per_candidate"].values()
     )
     assert report["promotion_authorized"] is False
     assert report["automatic_champion_replacement"] is False
+    assert report["slow_trend"]["forward"]["net_returns"] is None
+    assert report["trial_accounting"]["evaluated_cells_this_run"] > 0
     _assert_recursive_non_authority(report)
 
     summary = report["metrics_summary"]
@@ -250,6 +252,22 @@ def test_research_loop_v2_preserves_unversioned_v1_artifacts(
     assert (_loop_dir(root) / CHECKPOINT_FILENAME).is_file()
     assert legacy_checkpoint.read_bytes() == checkpoint_before
     assert legacy_report.read_bytes() == report_before
+
+
+def test_v3_preserves_prior_v2_and_does_not_promote_positive_maximum(monkeypatch, tmp_path):
+    from Crypto.ten_symbol_research_loop import _candidate_recommendation
+    root = _accumulate(monkeypatch, tmp_path, 14)
+    old = root / "evolution" / "ten_symbol_research_loop.v2"
+    old.mkdir(parents=True)
+    checkpoint = old / "research_loop_checkpoint.v2.json"
+    checkpoint.write_bytes(b'{"historical_v2":"preserve"}\n')
+    before = checkpoint.read_bytes()
+    result = run_ten_symbol_research_loop_once(store_root=root)
+    assert result["status"] == "report_written"
+    assert checkpoint.read_bytes() == before
+    assert LOOP_DIRECTORY_NAME.endswith(".v3")
+    decision = _candidate_recommendation({"288": {"best": {"non_overlapping_mean_net": "9"}}})
+    assert decision == {"recommendation": "positive_in_sample_only", "automatic_action": "retain_for_frozen_forward_validation"}
 
 
 def test_research_loop_diff_against_previous_report(

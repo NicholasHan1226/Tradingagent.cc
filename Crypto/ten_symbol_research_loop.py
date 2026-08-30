@@ -16,10 +16,8 @@ Stage-1 boundaries, all hard-coded:
   ``ten_symbol_factor_prescreen.analyze`` unchanged on the bar history
   reconstructed from the verified store event chain plus bars sidecars;
 - no scheduler installation: one-shot invocation only, no systemd unit;
-- automatic promotion stays inside the simulation domain: the review block
-  derives an evidence-bound automatic recommendation (``auto_promote`` /
-  ``auto_demote`` / ``auto_retain``) instead of a fixed
-  ``manual_review_required`` and never authorizes real trading.
+- retrospective maxima are descriptive only, never automatic promotion;
+  the separate frozen slow-trend candidate has a sealed forward readout.
 
 Input integrity mirrors the factor-projection precedent: the store event
 chain is verified read-only, every terminal slot's bars sidecar is
@@ -47,17 +45,18 @@ from Crypto.fixture_sim.contracts import _assert_simulation_only
 from Crypto.market_observation import OBSERVATION_SYMBOLS
 import Crypto.ten_symbol_factor_prescreen as prescreen
 import Crypto.ten_symbol_factor_research as projection
+import Crypto.slow_trend_research as slow_trend
 from Crypto.ten_symbol_observation_store import (
     CryptoTenSymbolObservationStoreError,
 )
 
 
-REVIEW_REPORT_CONTRACT = "tradingagent.crypto.ten_symbol_research_loop_review.v2"
+REVIEW_REPORT_CONTRACT = "tradingagent.crypto.ten_symbol_research_loop_review.v3"
 LOOP_CHECKPOINT_CONTRACT = (
-    "tradingagent.crypto.ten_symbol_research_loop_checkpoint.v2"
+    "tradingagent.crypto.ten_symbol_research_loop_checkpoint.v3"
 )
-LOOP_DIRECTORY_NAME = "ten_symbol_research_loop.v2"
-CHECKPOINT_FILENAME = "research_loop_checkpoint.v2.json"
+LOOP_DIRECTORY_NAME = "ten_symbol_research_loop.v3"
+CHECKPOINT_FILENAME = "research_loop_checkpoint.v3.json"
 LOOP_STAGE = "stage_1_registered_hypothesis_automatic_reevaluation"
 REGISTERED_CANDIDATE_IDS = (
     "xs_rs",
@@ -135,7 +134,7 @@ def _validate_horizon_bars(value: Any) -> tuple[int, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Artifact namespace: <store_root>/evolution/ten_symbol_research_loop.v2/
+# Artifact namespace: <store_root>/evolution/ten_symbol_research_loop.v3/
 #
 # Versioned on purpose: v1 used the unversioned directory and compact
 # checkpoint filename.  Reusing either would turn otherwise valid v1
@@ -419,13 +418,7 @@ def _metrics_summary(analyses: Mapping[str, Mapping[str, Any]]) -> dict[str, Any
 def _candidate_recommendation(
     candidate_summary: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Derive an evidence-bound automatic recommendation for one candidate.
-
-    The recommendation uses the best non-overlapping cost-adjusted mean net
-    across every evaluated horizon/variant; a positive value recommends
-    ``auto_promote``, a resolved non-positive value recommends
-    ``auto_demote``, and no resolved sample recommends ``auto_retain``.
-    """
+    """Label retrospective exploration without inventing promotion evidence."""
 
     if not isinstance(candidate_summary, Mapping):
         raise CryptoTenSymbolResearchLoopError(
@@ -455,12 +448,12 @@ def _candidate_recommendation(
         }
     if best > Decimal("0"):
         return {
-            "recommendation": "auto_promote",
-            "automatic_action": "promote_into_sim_capital",
+            "recommendation": "positive_in_sample_only",
+            "automatic_action": "retain_for_frozen_forward_validation",
         }
     return {
-        "recommendation": "auto_demote",
-        "automatic_action": "demote_or_retire",
+        "recommendation": "nonpositive_in_sample",
+        "automatic_action": "do_not_allocate",
     }
 
 
@@ -634,6 +627,7 @@ def _build_report(
     meta: Mapping[str, Any],
     summary: Mapping[str, Any],
     diff: Mapping[str, Any],
+    slow_trend_report: Mapping[str, Any],
     symbols: Sequence[str] = OBSERVATION_SYMBOLS,
 ) -> dict[str, Any]:
     report = {
@@ -644,7 +638,7 @@ def _build_report(
             "hypothesis_generation": "disabled_stage_1_registered_set_only",
             "evaluation_logic": "reused_unchanged_from_prescreen",
             "scheduler": "detached_one_shot_no_systemd",
-            "promotion": "automatic_sim_domain",
+            "promotion": "disabled_retrospective_selection_is_not_evidence",
             "execution": "not_connected",
         },
         "registered_candidate_ids": list(REGISTERED_CANDIDATE_IDS),
@@ -666,6 +660,14 @@ def _build_report(
         "analyses": dict(analyses),
         "metrics_summary": dict(summary),
         "diff_vs_previous": dict(diff),
+        "slow_trend": dict(slow_trend_report),
+        "trial_accounting": {
+            "evaluated_cells_this_run": sum(len(variants) for horizons in summary.values() for variants in horizons.values()),
+            "new_fixed_candidates": 1,
+            "lifetime_historical_trials": None,
+            "lifetime_warning": "prior_experiments_not_fully_enumerated; no_significance_claim",
+            "selection_bias_control": "no_promotion_from_retrospective_maximum; frozen_forward_window",
+        },
         "review": {
             "recommendation": "automatic_reevaluation_complete",
             "per_candidate": {
@@ -731,6 +733,7 @@ def run_ten_symbol_research_loop_once(
     input_digest = _sha256(
         {
             "contract": REVIEW_REPORT_CONTRACT,
+            "slow_trend_plan_sha256": _sha256(slow_trend.frozen_plan()),
             "horizon_bars": list(horizons),
             "store_event_count": len(events),
             "store_head_checksum": str(events[-1]["checksum"]),
@@ -785,6 +788,9 @@ def run_ten_symbol_research_loop_once(
                 meta=meta,
                 summary=summary,
                 diff=diff,
+                slow_trend_report=slow_trend.analyze(
+                    rows_by_symbol, as_of=eligible[-1]["slot"]
+                ),
                 symbols=config.symbols,
             )
             report_path = evolution / "reports" / f"{report['report_sha256']}.json"
