@@ -46,6 +46,9 @@ flowchart LR
 
 - TradingDatas 提供统一只读数据；TradingAgent 不直读兄弟仓数据库，也不现场采集行情。
 - MarketGraph 只作可开关增强，不阻塞基础样本闭环，也没有资金或执行权。
+- 独立分钟研究模拟、Crypto G5 模拟账本与统一账户接线是不同能力。只读总览可以
+  展示各自已验证的覆盖、数据时间与模拟结果，但不得将研究账本合并成统一账户、
+  用页面刷新时间替代数据时间，或将历史恢复目录当作现役写入根；当前接线见 `STATUS.md`。
 - A股拥有独立的 50,000 CNY 当前模拟账户；CNFutures 的独立 50,000 CNY 模拟 authority 只读保留且该市场当前暂停；Crypto 当前只有隔离的 10,000 USDT 本地 fixture opening candidate，尚无 current/runtime/live capital authority。三者不换汇、不相加、不净额抵消或互相补资；All Markets 只汇总非货币计数与健康状态。
 - 所有流程保持 `REAL_TRADING_ENABLED=false`。邮件、同花顺人工实盘和 broker gateway 都未在本仓实现。
 

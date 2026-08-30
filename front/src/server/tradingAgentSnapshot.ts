@@ -5,6 +5,7 @@ import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from
 import type { ApiStatus } from '../api/types.ts'
 import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareNoTradeEvidence, AShareProjectionAuthority, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, CNFuturesProjectionAuthority, CNFuturesReplayEvidence, FunnelEvent, FunnelEventStatus, HoldingRow, Market, MarketSummary, PaperDayRunSummary, PerformancePoint, PortfolioSummary, SignalCapitalEvidence, SignalRow, SignalStatus } from '../types/dashboard.ts'
 import { readSharedSignalsMarketPulses } from './sharedSignalsMarketPulse.ts'
+import { readRuntimeObservations } from './runtimeObservations.ts'
 
 type SnapshotOptions = {
   workspaceRoot: string
@@ -650,6 +651,7 @@ export async function readTradingAgentSnapshot({
     ashareForwardValidation,
     ashareTierSummaries,
     paperDayRun,
+    runtimeObservations: readRuntimeObservations(),
     sourceRefs: tradingAgentReadModelSources,
   }
 }

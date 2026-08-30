@@ -1,6 +1,7 @@
 import type { ApiStatus, DashboardApiResponse } from './types.ts'
 import type { AShareForwardValidation, AShareMarketMaturityProjection, AShareResearchEvidence, AShareSampleKpiProjection, AShareTierSummary, CNFuturesMarketMaturityProjection, FunnelEvent, HoldingRow, MarketPulse, MarketPulseCoverage, MarketPulseCoverageObservation, MarketSummary, PaperDayRunSummary, PerformancePoint, PortfolioSummary, SignalRow } from '../types/dashboard.ts'
 import type { DataDomain } from '../types/status.ts'
+import type { RuntimeObservations } from '../types/runtimeObservations.ts'
 
 export const tradingAgentReadModelSources = {
   capitalPlan: 'shared/accounting/position_plan.jsonl',
@@ -60,5 +61,7 @@ export type TradingAgentReadModelSnapshot = {
   ashareForwardValidation?: AShareForwardValidation
   ashareTierSummaries?: AShareTierSummary[]
   paperDayRun?: PaperDayRunSummary
+  /** Independent delayed simulation observation; excluded from all authority views. */
+  runtimeObservations?: RuntimeObservations
   sourceRefs: typeof tradingAgentReadModelSources
 }

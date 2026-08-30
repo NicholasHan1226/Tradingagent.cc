@@ -1,4 +1,5 @@
 import type { TradingAgentReadModelSnapshot } from './tradingAgentReadModel.ts'
+import { parseRuntimeObservations, runtimeObservationState } from '../types/runtimeObservations.ts'
 
 export const TRADING_AGENT_SNAPSHOT_ROUTE = '/api/trading-agent/snapshot'
 
@@ -31,6 +32,10 @@ export function createTradingAgentSnapshotClient({
 
         const payload = await response.json()
         assertTradingAgentSnapshot(payload)
+        if (payload.runtimeObservations !== undefined) {
+          payload.runtimeObservations = parseRuntimeObservations(payload.runtimeObservations)
+            ?? runtimeObservationState('unavailable', 'runtime_reader_output_invalid', new Date().toISOString())
+        }
         return payload
       } finally {
         clearTimeout(timer)

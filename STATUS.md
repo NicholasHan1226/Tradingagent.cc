@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-30T20:49:33+08:00
+Observed at: 2026-08-30T21:49:00+08:00
 
 This replaceable snapshot separates source, configuration, runtime and market
 receipts. It grants no capital, orders, live trading or promotion.
@@ -18,22 +18,17 @@ not deploy a new runtime.
 | 本地主线 | user's research checkout preserved; delivery uses an isolated worktree | resolve with `git rev-parse HEAD origin/main`; checkout is not necessarily main |
 | GitHub 主线 | use the current remote ref and matching CI | resolve with `git rev-parse HEAD origin/main`; no self-invalidating main SHA in this row |
 | Ordinary server source | clean at `5cd9649` in `/opt/investment/tradingagent` | not active release; no three-end-sync claim |
-| Immutable current release | `7eb0e6249475eb6e521494ac86af4ec160d81558` | `.deployed-sha`, current symlink and front process match |
+| Immutable current release | `3bb6e7653733072ed19aa4d9a2fbc690d8706b44` | PR 615 deployment and 21:15 process/readback; subsequent candidates are not implied deployed |
 | Front read API | `/healthz` returned `ok=true`; `/api/trading-agent/snapshot` returned JSON | separate from minute fixture receipts |
-| Accepted repair | [613](https://github.com/NicholasHan1226/Tradingagent.cc/pull/613), merge `7eb0e6249475eb6e521494ac86af4ec160d81558` | existing internal sim-only services; no public route, broker, capital or TD deployment change |
+| Accepted repair | [615](https://github.com/NicholasHan1226/Tradingagent.cc/pull/615), merge `3bb6e7653733072ed19aa4d9a2fbc690d8706b44` | per-batch prior-close isolation and variable rolling universe; no public route, broker, capital or TD deployment change |
 
-Candidate CI [33300656970](https://github.com/NicholasHan1226/Tradingagent.cc/actions/runs/33300656970)
-passed 6,122 Python tests, one skip, 266 subtests and 361 frontend tests.
-Independent reviewers approved the exact candidate. Exact merged-main CI
-[33301063331](https://github.com/NicholasHan1226/Tradingagent.cc/actions/runs/33301063331)
-passed the same full suite. Independently downloaded release archive checksum
-and `.source-sha` match. Deployment
-[33301483147](https://github.com/NicholasHan1226/Tradingagent.cc/actions/runs/33301483147)
-completed, and direct server readback confirms the actual cutover, not a skipped
-workflow. Effective configuration bindings of all nine helper-managed services
-plus the separately rebound forty-symbol observer point to the new release.
-Inactive A-share services are not natural-session runtime proof. The front process is verified on that SHA;
-service-user imports of five affected modules also resolve to it.
+Candidate CI 33312718791 and exact-main push CI 33313167300 each passed
+6,175 Python tests, one skip, 266 subtests and 361 frontend tests. Deployment
+[33313640173](https://github.com/NicholasHan1226/Tradingagent.cc/actions/runs/33313640173)
+actually published PR 615. Nine helper-managed service bindings and the front
+process match 3bb6e76; forty-symbol stays at 7eb0e62 and ten-symbol at 5d33501.
+All nine previously enabled timers were restored after the 72-second release
+window. Inactive A-share services are not natural-session runtime proof.
 
 ## A-share: coverage and actual fills
 
@@ -92,6 +87,21 @@ The accumulator remains `non_production_fixture`.
 quote/calendar/Champion authority and its production entry remain unwired.
 That separate integration debt must not stop valid fixture samples.
 
+**Canonical-account location audit (21:38):** the ordinary server source has
+no `shared/logs` directory. The existing `ashare-capital-v1` ledger was found
+under `/opt/investment/tradingagent.recovery-20260824T0104CST/shared/logs/capital/ashare`.
+Canonical replay verifies all 33 events and matches the JSON-normalized latest
+projection: 50,000 CNY cash/equity, zero positions/reservations/fills, generation
+1, lineage `ashare-sim-fresh-20260712-v1`, updated July 22. This is dated recovery
+evidence, not an active/current account. The corresponding execution trades and
+receipts are empty. Its `marketgraph:marketgraph 0600` files are unreadable by
+the current `tradingagent` service. No files, ownership or roots were changed.
+Events SHA256 `a9459349fada47b5fcfd3ba5a9013a9c08cadea0e6fef3fee0adb8012af132e6`;
+latest SHA256 `e65d4becc7013aa7b63a53edc2ac5f17853c93b236c05eaf8ecd18ae125d32ef`;
+head `1f0be2d18d63e6e162f07b7d4c59934d6f3577f01eea4d0a1c8dfbcbd6755d2b`.
+Migration/sole-writer ownership requires explicit authorization; quote/calendar/
+Champion runtime adapters remain a separate implementation gap even afterwards.
+
 Aug-28 files were not reset. Coverage SHA256:
 `88a4a75ec037c06a7630bdafd091292e7f69f3d0879f49e10001773e4646a87c`;
 state-bundle SHA256:
@@ -120,8 +130,8 @@ This is bounded `observed` evidence, not stable consumption or historical PIT.
 
 ## Crypto track
 
-G5 delayed-paper service and forty-symbol observation are now bound to
-`7eb0e62`; ten-symbol observation stays separately pinned to `5d33501`.
+G5 delayed-paper service is now bound to `3bb6e76`; forty-symbol observation
+stays at `7eb0e62`, and ten-symbol separately at `5d33501`.
 At 20:40, service journals since 20:00 prove eight consecutive requested
 windows per lane, from 11:55Z through 12:30Z inclusive, with
 `status=completed`, `requested_window_consumed=true`, `data_incomplete=false`
@@ -140,6 +150,38 @@ Full forty-symbol coverage and a latest continuous 288-bar segment constrain
 runtime maturity and later authority claims; they do not block safe-segment simulation.
 Research drafts 606/608/610/612 remain isolated and are not included in this
 runtime release, natural-window acceptance or current profitability claims.
+
+At 21:36:36 the candidate display reader, run under the actual service user
+against existing stores without API requests, returned the Aug-28 A-share
+coverage above as `dated`, not today's result. The existing G5 health validator
+returned 5,919 completions, market slot 13:20Z, zero positions, 906 order
+receipts, cash/equity 9,132.11130182 USDT, cumulative fees 904.93341958 and
+realized PnL -867.88869818. Capital head checksum
+`765dd11bb343afcfdf71388931d7cc45c36f8a0658a4ba9b3e58e4f3f72b05fb`.
+These are dated, independent simulated ledger results, not exchange/live
+account PnL, forty-symbol returns or maturity evidence. The display candidate
+has not yet been deployed; HTTP 200 on the existing frontend still does not
+prove it reads these independent stores.
+
+The current isolated display/integrity candidate passed 1,016 Python tests and
+eight subtests, plus 429 frontend tests, lint and both builds. Independent
+read-only review found no blocking display/reader issue. The actual service-user
+reader completed in 15.77 seconds; browser checks at 1280x720 verified first-fold
+placement, per-market filtering, no horizontal overflow and no All Markets
+money aggregation. Browser data was an explicitly dated replay of that server
+read, not a deployed-reader acceptance. A-share lookup is bounded to eight
+calendar days; absence in that window does not mean no historical records.
+The shared child timeout can temporarily hide both independent display entries;
+it cannot stop either simulator or remove existing account data.
+
+The same candidate replaces the forty-symbol rolling evaluator's handwritten
+event/row checks with canonical full-chain, head and reconstructed-sidecar
+validation. Entry waits until after input availability and uses a later bar
+open; entry-bar stop/target checks and output/store alias rejection are covered.
+`source_receipt_integrity_verified` is separate from `tradeable_pit_verified`;
+the latter and `receipt_bound_pit` remain false because the bar-only exit and
+baseline model are still research counterfactuals. This candidate has not yet
+been merged/deployed or replayed against the live forty-symbol store.
 
 ## Lessons and next evidence
 
@@ -160,6 +202,13 @@ runtime release, natural-window acceptance or current profitability claims.
   cannot hide an already-known identity or source-evidence violation.
 - Deployment instructions must match the explicit accepted-SHA dispatch and
   actual release/helper service bindings, not an obsolete automatic-push model.
+- An account policy and an old ledger are not proof of an active account.
+  Check the effective root, service identity, event replay, execution lineage
+  and evidence timestamp before claiming connection. Do not initialize another
+  account or relabel a recovery copy as current to fill a blank dashboard.
+- Reuse canonical read validators; nominal status/verify methods can create
+  lock files. A read-only web projection must not repair or bootstrap stores,
+  and a missing domain must not erase independently valid domains.
 
 Prior PR 613 root-only rollback backup: `/var/tmp/ta-sim-release-20260830.742c1b`.
 Rollback restores verified code/configuration and prior timer state, never old
