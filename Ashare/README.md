@@ -921,3 +921,35 @@ evidence:
 - do not connect a broker or create real orders;
 - do not restore the online front;
 - keep `REAL_TRADING_ENABLED=false`.
+
+### TD schema compatibility: cumulative minute and broker month
+
+`build_rt_min_daily_pit_feature_contract` preserves the legacy major 1 input
+(including response `freq=1MIN`). Major 2 and major 3 require the actual initial
+`QueryRequest`: its dataset, schema and exact eight fields must match the bound
+first-page request hash. Both versions retain `ts_code,time,open,close,high,low,
+vol,amount` without inventing a response `freq`; TD's upstream request remains
+`freq=1MIN`. The adapter verifies unique `[ts_code,time]` identities and exact
+response shape. Major 3 adopts that declared TD primary key; major 2's old
+empty registry identity is not evidence of current coverage. Append-only
+revisions with duplicate identities fail closed, rather than being deduplicated.
+Receipt, observation time, lineage, requested symbols and decision-time checks
+remain required. No version grants historical PIT, learning, promotion or
+execution authority, nor does this compatibility patch prove minute coverage.
+The legacy call without an explicit request remains major 1 only.
+
+`TradingDatasAshareEvidencePort` supports broker recommendation major 1 and
+major 2. Major 2 freezes the exact native fields/identity
+`[month,broker,ts_code,name]`; unrelated schema versions and target contract
+fingerprint changes fail closed. Native `YYYYMM` remains month precision,
+not an invented publication date or historical known-time proof. Availability
+comes from the receipt observation and must precede the decision; future months
+are rejected. The existing decision-time `as_of` request remains tied to the
+reviewed TD `month` as-of contract (catalog wire does not expose an as-of key).
+Same-observation replay and all existing proof/trading restrictions remain.
+
+These are caller-invoked read-only adapters using the existing authenticated
+catalog/query client; no transport, scheduler or runtime is instantiated here.
+Offline regression entry: `python -m pytest -q tests/test_ashare_rt_min_daily_pit.py
+tests/test_ashare_event_evidence.py`. Fixture success is not a fresh authenticated
+production readback or a stable-consumer declaration.
