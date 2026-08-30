@@ -1402,3 +1402,36 @@ CLI无网络，先用输入完整复现已验证参考报告，再绑定规范�
 
 本轮全部正负结果、证据hash及未验证项见
 [2026-08-30 成本过滤与信号消融结果](reports/2026-08-30-cost-aware-trend-review.md)。
+
+### 两日信号确认的独立前向登记
+
+`confirmation_forward_research.py` 只验证上述 `confirmation_only`，不改旧实验或K10。
+新窗口固定2026-09-01至2026-11-30 UTC（90日，右端不包含）；预热从7月2日起61日。
+冻结定义、成本、初始状态和描述性比较规则见
+[独立前向计划](reports/2026-08-30-confirmation-forward-plan.md)。
+
+```bash
+# 开始前生成一次登记，之后不得覆盖或为旧窗口更新源码hash。
+REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B \
+  -m Crypto.confirmation_forward_research register --output /absolute/new-registration.json
+
+# 结束前不读取input、不计算收益；到期缺input仅报待提供输入。
+REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B \
+  -m Crypto.confirmation_forward_research readout \
+  --registration Crypto/reports/2026-08-30-confirmation-forward-registration.json \
+  --input /absolute/previously-collected-normalized-td-inputs.json \
+  --output /absolute/new-readout.json
+
+REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest -q \
+  -p no:cacheprovider tests/test_crypto_confirmation_forward_research.py \
+  tests/test_crypto_cost_aware_trend_research.py tests/test_crypto_slow_trend_risk_replay.py \
+  tests/test_crypto_slow_trend_research.py
+```
+
+登记绑定plan及列明计算源文件hash，CLI使用实际UTC，不提供`--as-of`。这只防止
+意外提前读出/定义漂移，不是对恶意改代码的安全防护，也不是外部时间戳或PIT证明。
+到期逐币检查全部151日必需价格，缺失不跳日、不延期、不出收益；补齐同一固定窗口
+的重读须保留全部旧输入hash/报告并明确修订，不得择优选择。全部1x/2x成本与对照
+一起保留；normalized输入不能证明首次可用时点，始终无晋级/订单/资本权限。
+该入口无网络、自动采集、worker或timer；登记不表示运行已安装或已开始产生收益。
+停止调用即可回退，不删除登记、历史研究或任何账本。
