@@ -72,7 +72,11 @@ STRATEGY_HYPOTHESIS_PAIRS = {
     "volatility": "volume_breakout_v1",
 }
 _SYMBOLS = projection._SYMBOLS
-CHECKPOINT_FILENAME = "strategy_evaluation_checkpoint.json"
+# Keep the v2 compact checkpoint separate from the historical v1 checkpoint.
+# The v1 checkpoint is immutable evidence for a different evaluation contract;
+# interpreting or replacing it would either fail the v2 fast path or mutate
+# historical research output during a release transition.
+CHECKPOINT_FILENAME = "strategy_evaluation_checkpoint.v2.json"
 # A UTC-day bucket only qualifies as measured cost evidence with at least
 # one hour of 5-minute spread samples (12 of the day's 288 slots); below
 # that the type-7 p75 interpolates between fewer than ten observations of a
