@@ -10,6 +10,7 @@
 2. **核心 runtime 连续性**
    - A股会话/分钟模拟与 Crypto delayed-paper/observation 保持 restart-safe、幂等、可恢复。
    - gap、reject、no-trade 必须留下明确证据，不为追求“全绿”伪造成功。
+   - 40 币观察器：分解 catalog/bar/spread/transport 的读取预算，定位当前窗口耗时；只修复已证实的瓶颈，保持 PIT 与状态完整性。最新终态见 `STATUS.md`，不得以该链尚未通过阻断 A股、G5 或已合格研究 segment。
 3. **代码合并/自动部署使用机器 CI gate，不依赖人工审批**
    - 当前公共仓库的普通 PR 以当前 head SHA 的 CI 成功作为日常 merge gate；共享/治理/部署路径或真实文件重叠必须 fresh-base 后重跑。
    - `main` 的 exact-SHA 测试/打包证据是 GitHub 自动部署的代码 gate；部署后仍必须由 release/runtime/API/receipt/readback 证明生产事实。
