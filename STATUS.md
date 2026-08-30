@@ -1,10 +1,15 @@
 # TradingAgent current status
 
-Observed at: 2026-08-31T00:47:00+08:00. This replaceable snapshot separates
+Observed at: 2026-08-31T00:53:00+08:00. This replaceable snapshot separates
 source, configuration, runtime and market evidence. Simulation only; no live
 trading, new capital, risk expansion or strategy promotion.
 
 ## Source and release layers
+
+| Layer | Current verification | Boundary |
+|---|---|---|
+| 本地主线 | resolve with `git rev-parse HEAD origin/main` | isolated delivery checkout; user research checkout preserved |
+| GitHub 主线 | resolve with `git rev-parse HEAD origin/main` and matching CI | remote source is separate from the effective runtime |
 
 - Existing accepted runtime: PR [616](https://github.com/NicholasHan1226/Tradingagent.cc/pull/616),
   immutable release 752845b79381532838e1fb223e9b105afe6d16b0.
@@ -50,6 +55,9 @@ relocating the original A-share account without resetting capital.
   round_trip_health_core_incomplete. This is unresolved source/health-state
   handling, not proven credential failure or proven capital corruption. The
   failing Crypto entry remains isolated; no validation or permission was relaxed.
+  A later natural refresh at00:52 did return Crypto ready (market slot00:40,
+  5,949 completions), also visible in the actual browser. This proves successful
+  deployed-reader consumption, not resolution of intermittent incomplete states.
 - Local browser acceptance used the actual deployed API through a loopback SSH
   tunnel, not a replay fixture. At1280x720 it showed dated A-share3188/1197/1991,
   no horizontal overflow, per-market filtering, no All Markets money, and no
@@ -107,7 +115,12 @@ pending individually. Existing stocks' clocks were not reset. Baseline30/30.
 Four existing timers still schedule Aug-31 initialization at09:18 and delayed
 bar attempts at09:42. Monday execution/fills are not yet proven.
 
-## Crypto and other boundaries
+## Crypto track
+
+The G5 delayed-paper service was bound to the accepted752845b release in the
+Aug-30 deployment; this batch did not change its binding or scheduler.
+Full forty-symbol coverage and a latest continuous 288-bar segment constrain
+runtime maturity and later authority claims; they do not block safe-segment simulation.
 
 PR616's actual rolling evaluation completed Aug-30 22:17:02: 2,170 events,
 two history segments, 73 contiguous slots, 40 symbols and85 bars per symbol.
@@ -123,7 +136,12 @@ remain outside this delivery.
 TD's last authenticated consumer readback remains the Aug-30 record, not refreshed
 in this batch: rt_min and broker_recommend consumable then; rt_min_daily major3
 producer/readback still unproven then. TA does not deploy TD or wait on that
-dataset for independent work. CNFutures and prediction markets remain paused.
+dataset for independent work.
+
+## Copilot and paused scopes
+
+No Copilot publication or account-state writes were performed. CNFutures and
+prediction markets remain paused; no research draft was merged or deployed.
 
 ## Lessons and remaining work
 
