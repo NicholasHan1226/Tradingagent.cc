@@ -733,6 +733,8 @@ class MinuteFixtureClosedLoop:
             if candidate.instrument.symbol in book.positions
         ]
         selected: tuple[float, MinuteRankedCandidate, str] | None = None
+        buy_quantities: dict[str, int] = {}
+        unaffordable_symbols: set[str] = set()
         if held_with_scores:
             weakest_score, weakest = min(
                 held_with_scores, key=lambda item: (item[0], item[1].instrument.symbol)
@@ -746,6 +748,20 @@ class MinuteFixtureClosedLoop:
                     and score >= self.minimum_raw_score
                     and candidate.instrument.symbol not in book.positions
                 ):
+                    symbol = candidate.instrument.symbol
+                    try:
+                        buy_quantities[symbol] = self._quantity(
+                            price_cny=bars_by_symbol[symbol].close_cny,
+                            dynamic=sleeve_id == "dynamic_position" and score >= 0.5,
+                            constraints=book.constraints,
+                        )
+                    except MinuteLoopContractError as exc:
+                        if exc.args != ("minute_symbol_too_expensive_for_account",):
+                            raise
+                        # A symbol-local lot/cap refusal must not starve lower
+                        # ranked, affordable candidates in the same snapshot.
+                        unaffordable_symbols.add(symbol)
+                        continue
                     selected = (score, candidate, "buy")
                     break
         selected_symbol = None if selected is None else selected[1].instrument.symbol
@@ -753,7 +769,11 @@ class MinuteFixtureClosedLoop:
             if candidate.instrument.symbol == selected_symbol:
                 continue
             reason = candidate.reason_code
-            if reason is not None:
+            if candidate.instrument.symbol in unaffordable_symbols:
+                reason = "minute_symbol_too_expensive_for_account"
+                outcome = MinuteDecisionOutcome.INSUFFICIENT_CAPITAL
+                action = "abstain"
+            elif reason is not None:
                 outcome = MinuteDecisionOutcome.MODEL_REJECTED
                 action = "abstain"
             else:
@@ -787,35 +807,7 @@ class MinuteFixtureClosedLoop:
             position = book.positions[candidate.instrument.symbol]
             quantity = position.quantity
         else:
-            try:
-                quantity = self._quantity(
-                    price_cny=bar.close_cny,
-                    dynamic=sleeve_id == "dynamic_position" and score >= 0.5,
-                    constraints=book.constraints,
-                )
-            except MinuteLoopContractError as exc:
-                # A top-ranked symbol priced beyond the account's single-name cap
-                # is a normal market state, not a data fault: audit it as an
-                # abstention instead of failing the whole bar for every sleeve.
-                if exc.args != ("minute_symbol_too_expensive_for_account",):
-                    raise
-                decision_id = (
-                    f"minute-decision:{sleeve_id}:{candidate.instrument.symbol}:"
-                    f"{candidate.feature.current_bar_sha256[:16]}:abstain"
-                )
-                self._append_record(
-                    sleeve_id=sleeve_id,
-                    decision_id=decision_id,
-                    cluster_id=cluster_id,
-                    decision_time=decision_time,
-                    symbol=candidate.instrument.symbol,
-                    manifest_sha256=manifest_sha256,
-                    action="abstain",
-                    outcome=MinuteDecisionOutcome.INSUFFICIENT_CAPITAL,
-                    requested_notional_cny=0.0,
-                    reason_code=str(exc),
-                )
-                return None
+            quantity = buy_quantities[candidate.instrument.symbol]
         requested_notional = round(quantity * bar.close_cny, 6)
         action = "open" if side == "buy" else "exit"
         decision_id = (

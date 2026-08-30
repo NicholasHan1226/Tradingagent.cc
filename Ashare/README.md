@@ -595,6 +595,15 @@ identity and freshness failures still fail closed for the affected snapshot;
 they are never mislabeled as row-quality data. There is no provider fallback
 or direct database read.
 
+Shard deadlines reserve time for queued work. Each shard receives the larger
+of its fair share and the existing configured request timeout, capped by the
+remaining global load budget. This gives normal first/replay reads time to
+finish without granting a cold worker three full timeout periods. Every page's
+wire timeout and retry sleep respect the remaining deadline; the 180-second
+load budget, four workers and original per-request timeout are not increased.
+Worker-local bounded clients retain the original authentication and catalog
+checks; auth/contract failures cannot be mislabeled as partial transport loss.
+
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every accepted bar
 must still be completed and have positive volume. In the normal strict path,
@@ -784,6 +793,15 @@ dynamic-position sleeve changes only fixture lot count inside the same
 canonical 50k constraints. These four books are independent counterfactual
 experiments, not four real accounts and not four capital authorities.
 
+An otherwise eligible stock whose minimum 100-share lot exceeds the single-name
+cap receives `minute_symbol_too_expensive_for_account`; selection continues down
+the existing ranking to an affordable candidate. This does not change rank,
+cash, gross exposure, T+1, fill-capacity or price-limit checks. If every candidate
+is unaffordable, the sleeve remains without an order and retains the refusals.
+Delayed-paper receipts expose `settled_quantity`, `settled_notional_cny` and
+`settled_fee_cny` from the actual fixture receipt (zero if no settlement),
+separately from coverage, pending orders and per-sleeve reconciliation.
+
 Pending orders are restart-state hashed and may settle only against the exact
 next five-minute bar. A skipped/missing bar becomes a formal nonfill; it is
 never filled late. Data failure cancels pending new-risk attempts, records
@@ -794,9 +812,10 @@ step reconciles each sleeve only when marks exist for every held symbol.
 The loop is intentionally process-local and fixture-only. Its restart format
 protects test state integrity but is not the append-only SampleJournal,
 MarketCapitalLedger, durable outbox, production scheduler or promotion
-authority. Real minute handoff still requires the separate TradingDatas
-catalog profile, five-day observation gate and a future durable settlement
-adapter.
+authority. Real minute input uses the separate TradingDatas catalog/profile
+and receipt checks. Valid subsets may accumulate delayed-paper evidence now;
+five-day maturity is not an entry gate. Canonical capital-backed settlement is
+a separate, still test-only composition, not implied by these fixture books.
 
 ### Read-only real-data canary
 

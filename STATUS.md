@@ -1,6 +1,6 @@
 # TradingAgent current status
 
-Observed at: 2026-08-30T14:35:09+08:00
+Observed at: 2026-08-30T15:57:00+08:00
 
 This replaceable snapshot separates source, installed configuration, runtime and
 market receipts. Historical research/results remain in Git and dated reports;
@@ -68,6 +68,45 @@ No historical gate, receipt or capital ledger was reset.
 The fixture accumulator is `non_production_fixture`, not the canonical 50,000
 CNY capital-backed execution loop. Coverage is not a resolved outcome or PnL.
 
+The Aug-28 persisted books have **zero fills and zero positions**. Each of the
+four independent fixture sleeves retains 3,188 rejection records from the
+incident recovery. One accepted bar alone has no rolling features; this is not
+a completed trade. The canonical capital-backed composition remains test-only
+and network-closed, without a CLI or scheduler; it was not activated by this
+batch. Existing delayed-paper fixture simulation continues independently.
+
+Current candidate work, not yet deployed at this timestamp:
+
+- Skip only the unaffordable top stock and consider the next eligible stock;
+  preserve the refusal, 100-share lot and 7,500 CNY cap.
+- Add actual settled quantity/notional/fees to each sleeve receipt. Existing
+  runner/loop/capital tests pass with independent persisted cash/position
+  roll-forward and restart verification (62 tests); adjacent checks pass 287.
+- Bound retry sleeps and wire requests by the remaining shard/global budget,
+  preserving valid shards. Historical performance probes read three independent
+  100-stock shards twice: pair durations 21.997, 13.935 and 16.626 seconds;
+  catalog 2.927 seconds. These are timing observations, not fresh PIT acceptance
+  or proof of next-session full coverage. Do not mechanically divide the budget
+  so tightly that an otherwise successful first/replay pair cannot complete.
+
+## TD consumer compatibility
+
+Authenticated 18082 catalog readback reports `v1-10c505ce7d8b1c43`:
+`rt_min` major 2 has 1,199,368 rows; `broker_recommend` major 2 has 544 rows.
+`rt_min_daily` remains major 2, zero rows, `unobserved`, with
+`active_config_receipt_mismatch`. Its producer release/receipt remains a
+dataset-local dependency and does not block `rt_min` or TA deployment.
+
+At 15:55:22 CST, accepted-main code in an isolated server directory consumed
+one August broker recommendation for `600519.SH`, with two matching traversals,
+month precision, no audit rejection and receipt
+`receipt:69ade3f976d7c133d9eda6953b7bec2fd6067889271dfbd15616209c09af89f1`.
+Training/execution/live authority remained false. Single-dataset profile loading
+uses the existing exact catalog-row adapter, not the complete event-ensemble
+gate. Earlier empty, stale and out-of-mainboard queries were refused, not
+promoted into valid input. Schema-compatible source is not deployed runtime:
+the active TA release still precedes the recent read-only adapters.
+
 ## Crypto track
 
 - All five G5 effective release bindings now match `bb441386`.
@@ -104,6 +143,12 @@ CNY capital-backed execution loop. Coverage is not a resolved outcome or PnL.
 Full forty-symbol coverage and a latest continuous 288-bar segment constrain
 runtime maturity and later authority claims; they do not block safe-segment simulation.
 
+Fresh 15:57 inspection finds G5 and forty-symbol services executing on the
+same `bb441386` release; in-progress runs are not acceptance. The new candidate
+persists validated bars before optional spread collection and uses existing
+pending recovery across invocations. Budget exhaustion remains visible;
+historical receipts, original cutoffs and checkpoint integrity are unchanged.
+
 ## Lessons and next evidence
 
 Do not infer missing receipts from permission-denied/empty directory reads.
@@ -115,6 +160,12 @@ Documentation checks must protect scope and provenance, not whitelist obsolete
 change numbers or require a successful runtime outcome regardless of new facts.
 The live-main-row prohibition remains; dated release links and failed/pending
 service evidence elsewhere are legitimate.
+
+Apply gates to the consuming scope: one stock's affordability, one optional
+dataset, or one auxiliary leg must not discard independent valid work. Persist
+verified primary evidence before optional work, and retain an uninterrupted
+recovery locator. Budget fairness needs real latency evidence, not only fast
+fixture tests. Never convert coverage counts into fill counts.
 
 Candidate CI passed 5,993 Python tests, one skip, 266 subtests and 361 frontend
 tests; exact merged-main CI and packaged-source/checksum verification also passed.

@@ -743,6 +743,12 @@ python3 tools/run_ashare_observation.py \
 
 ### 5分钟 delayed-paper 自动积累
 
+运行读回须分别核对 accepted/feature/candidate、pending、实际模拟成交与
+reconciled，不可把 coverage 或 `status=pass` 当成交。每个 sleeve 的
+`settled_quantity`、`settled_notional_cny`、`settled_fee_cny` 来自本槽实际
+fixture receipt；无 settlement 为零。最高分股票买不起一手时只记录该股票
+拒绝，再检查后续合格股票；不增加现金、单票上限或放宽撮合条件。
+
 `Ashare.minute_auto_runner` 只为已初始化的当日私有目录选择一根当前应到达的
 5分钟K线，并委托同一个 `minute_paper_runner`。目录固定为：
 

@@ -693,6 +693,12 @@ the month never becomes an invented publication instant or historical known-time
 proof. The existing decision-time `as_of` follows the frozen TD `month` query
 contract. Unknown majors and changed dataset fingerprints require a new profile.
 
+Single-dataset callers may freeze `EvidenceDatasetProfile.from_catalog_row`
+from the exact target row and then use `load_event_snapshot`; this retains target
+identity, replay and receipt checks without requiring unrelated event datasets.
+`freeze_profiles` intentionally constructs the complete primary-event ensemble
+and is not the entry gate for an independent broker-recommendation reader.
+
 The caller-invoked `CNFutures.fut_basic_contract_units` reader preserves the
 major-1 frozen 207-row partial contract. Its separate major-2 contract accepts
 1–500 unique DCE/M rows, at most five pages per traversal, with strict fresh,
