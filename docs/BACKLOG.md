@@ -10,6 +10,9 @@
 2. **核心 runtime 连续性**
    - A股会话/分钟模拟与 Crypto delayed-paper/observation 保持 restart-safe、幂等、可恢复。
    - gap、reject、no-trade 必须留下明确证据，不为追求“全绿”伪造成功。
+   - G5 只读展示：区分已验证的 pending/写入重叠、core incomplete 与真实损坏，
+     复现 `round_trip_health_core_incomplete` 及请求缓存刷新；不把旧成功快照当新结果，
+     不给前端新增写权限，不因该展示失败阻断 A股或市场核心采集。
    - 40 币观察器：分解 catalog/bar/spread/transport 的读取预算，定位当前窗口耗时；只修复已证实的瓶颈，保持 PIT 与状态完整性。最新终态见 `STATUS.md`，不得以该链尚未通过阻断 A股、G5 或已合格研究 segment。
 3. **代码合并/自动部署使用机器 CI gate，不依赖人工审批**
    - 当前公共仓库的普通 PR 以当前 head SHA 的 CI 成功作为日常 merge gate；共享/治理/部署路径或真实文件重叠必须 fresh-base 后重跑。
@@ -26,9 +29,10 @@ A股已经拥有 SampleJournal/KPI 科学证据、Challenger producer 和 simula
      cash/positions reconcile 证据；canonical capital-backed composition 仍仅
      test-only，真实 quote/calendar/Champion authority 与生产入口未接线，不能
      把 fixture 股票覆盖率当作其完成证明。该接线不阻断已合格股票继续模拟。
-   - 原 canonical 账本位于服务器恢复目录且现役服务无读取权限；先取得原样迁移/
-     单写者权限调整授权，保留账本 head 与全部执行 lineage，再接真实数据适配器。
-     不新建本金、不恢复旧策略、不把旧日期余额当成 current。
+   - 使用已验证的仓外 canonical 账户 root，保留原账本 head 与全部 execution lineage，
+     完成 quote/calendar/Champion 的真实数据适配器和资本组合入口。搬迁与权限结果见
+     `STATUS.md`，不再将已完成搬迁当作待授权前置；不新建本金、不恢复旧策略、
+     不把旧日期余额当成 current。
 2. 为 promotion 同等级补齐 demotion、retirement 与 deterministic rollback 证据。
 3. 保留**所有** Challenger/trial 的身份、参数、数据窗口、结果与淘汰原因，不能只保留赢家。
 4. 扩展不同交易日/决策 cluster/regime/费用环境覆盖，避免单一短窗口驱动晋级。

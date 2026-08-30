@@ -1390,6 +1390,14 @@ frontend README 的 lint/test/build 检查。独立模拟展示失败只影响�
 不变。既有 release helper 不会自动安装 front unit，必须独立核对安装字节并读回。
 回退恢复旧 unit 与代码，绝不恢复旧账本。前端观察值必须标明原数据日期；恢复目录里
 存在资金政策或账本，不等于现役服务已连接。迁移账本/调整唯一写者权限另行确认。
+启用带金额的展示前还必须验证实际入口：后端监听 localhost、CORS 或代理注入 Bearer
+均不能证明公网用户已认证。无单用户认证时使用
+`deploy/nginx/tradingagent-snapshot-local-only.conf` 限制现有精确 snapshot location，
+不增加宽泛 `/api/` 代理。检查 effective nginx 的 real-IP 重写及其它代理入口；
+保留原文件/hash，候选和安装态均须 `nginx -t`，再验证真实非loopback来源被 nginx
+拒绝、localhost仍可读。外层 ICP/Cloudflare 错误不是 origin 权限证据。其它站点、
+DNS、静态 root 和健康路由保持不动。展示失败时回退读取器，不能为恢复页面而撤销
+已建立的访问限制。
 
 四十币既有 daily rolling-eval service 的包装器也需与 CLI 同批更新：备份
 `/usr/local/sbin/tradingagent-crypto-rolling-eval.sh` 的原始字节/hash，在服务不运行时
@@ -1398,6 +1406,37 @@ frontend README 的 lint/test/build 检查。独立模拟展示失败只影响�
 受控运行只向已有独立研究 output root 新建唯一 attempt；失败不会覆盖报告或追加
 成功日志。回退恢复包装器和代码，保留研究输出。测试入口为
 `tests/test_crypto_forty_symbol_rolling_entrypoint.py`。
+
+### 8.2 原 A股账户的原样搬迁与只读展示
+
+这不是 fresh-start、旧共享资金导入或交易启动。只有明确授权搬迁既有
+`ashare-capital-v1` 与匹配 execution lineage 后才执行；禁止 `init/bootstrap`、
+刷新旧投影时间戳、重置现金、改变 generation 或重建成交。先确认源没有打开文件和
+现役写入任务，持有既有账本/执行锁，再复制两个精确目录及全部 reconcile sources。
+用现有 canonical replay、lineage/outbox verifier 检查原件及副本，记录所有文件 hash、
+权限与账本 head；不复制整个 recovery 工作树或另一个市场。
+
+服务器的独立目标根是 `/var/lib/tradingagent/ashare-canonical`。资本子路径仍为
+`shared/logs/capital/ashare`，执行子路径仍从已验证 snapshot 的
+`execution_lineage_id` 派生到 `shared/logs/execution_lineages/<id>`。未来受验收的
+runtime 可显式使用既有 `TRADINGAGENT_ASHARE_CAPITAL_ROOT` 和
+`TRADINGAGENT_ASHARE_EXECUTION_ROOT`；本次搬迁不安装这些变量、不启用 legacy executor
+或新 scheduler，也不把此根接到反事实分钟资金簿。
+
+新根父目录由 root 所有，两个数据子树为 `tradingagent:tradingagent`、目录0700/
+文件0600。原件保留原字节，改为 root 所有、目录0500/文件0400，并对精确原件集合
+设置 immutable；元数据清单和本次回退路径记录在私有 migration receipt。应用只读
+验证必须以实际服务身份重放；权限验证可以打开现有文件的 append descriptor 后立即
+关闭（无create/truncate、无写入），并复核 hash：新writer可写，旧writer不可写，
+front mount namespace仍因 `ProtectSystem=strict` 不可写。root管理权不是第二个业务writer。
+
+失败时停止目标使用并保留所有新事实；不得用旧副本覆盖目标。只有确认目标已无writer、
+无新增事件且仍与原head一致，才可根据保存的精确metadata清单撤销原件immutable与权限。
+不要对 recovery 根或其它市场递归解冻，也不要自动恢复旧任务。
+
+搬迁验收只证明完整性和写入身份就绪。行情/交易日历/Champion适配器及资本组合入口
+未接通时，必须继续报告 `canonicalAccountConnected=false`；旧账本最后交易时间不
+因搬迁而变新，空仓旧账本也不能冒充当前收益。旁路模拟样本照常独立积累。
 
 ## 9. 按能力划分的外部依赖
 
