@@ -2187,7 +2187,7 @@ def test_minute_query_retry_rechecks_deadline_after_overslept_wait(
     assert clock["calls"] == 1
 
 
-@pytest.mark.parametrize("catalog_failure", [503, 401, "contract"])
+@pytest.mark.parametrize("catalog_failure", [503, 401, "contract", "budget"])
 def test_minute_worker_catalog_transient_isolation_preserves_hard_guards(
     monkeypatch: pytest.MonkeyPatch, catalog_failure: int | str,
 ) -> None:
@@ -2201,6 +2201,12 @@ def test_minute_worker_catalog_transient_isolation_preserves_hard_guards(
         def __call__(self, **kwargs: Any) -> HTTPResponse:
             if kwargs["method"] == "GET":
                 if self is workers[0]:
+                    if catalog_failure == "budget":
+                        raise minute_data_module.MinuteSnapshotLoadBudgetExhausted(
+                            "minute_snapshot_load_budget_exhausted",
+                            failure_stage="query_request",
+                            failure_class="MinuteSnapshotLoadBudgetExhausted",
+                        )
                     return HTTPResponse(
                         200 if catalog_failure == "contract" else catalog_failure,
                         {"error": "fixture-catalog-failure"},
@@ -2223,7 +2229,7 @@ def test_minute_worker_catalog_transient_isolation_preserves_hard_guards(
     kwargs = _stable_pair_load_kwargs(symbols)
     kwargs["profile"] = _profile(client, max_pages=3, max_rows=201, page_limit=100)
     port = TradingDatasMinuteMarketDataPort(client, shard_client_factory=factory)
-    if catalog_failure != 503:
+    if catalog_failure not in {503, "budget"}:
         with pytest.raises(MinuteDataContractError) as caught:
             port.load_snapshot(**kwargs)
         assert caught.value.failure_stage in {"catalog_contract", "catalog_request"}
@@ -2232,7 +2238,9 @@ def test_minute_worker_catalog_transient_isolation_preserves_hard_guards(
     assert snapshot.row_count == 101
     assert snapshot.same_observation is True
     assert snapshot.fanout_failures[0]["failure_stage"] == "catalog_request"
-    assert snapshot.fanout_failures[0]["failure_class"] == "HTTPStatusError"
+    assert snapshot.fanout_failures[0]["failure_class"] == (
+        "MinuteSnapshotLoadBudgetExhausted" if catalog_failure == "budget" else "HTTPStatusError"
+    )
     assert len(workers) == 2
     assert workers[1].catalog_count == 1
 

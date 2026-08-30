@@ -2011,7 +2011,7 @@ class TradingDatasMinuteMarketDataPort:
                     "shard_index": index,
                     "symbol_count": len(symbols),
                     "reason_code": exc.reason_code,
-                    "failure_stage": exc.failure_stage,
+                    "failure_stage": f"{phase}_request",
                     "failure_class": exc.failure_class,
                 }
             except (SharedSignalsV1Error, OSError) as exc:
