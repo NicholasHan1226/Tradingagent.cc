@@ -61,7 +61,12 @@ EVALUATION_CHECKPOINT_CONTRACT = (
 CHAMPION_PROMOTION_RECEIPT_CONTRACT = (
     "tradingagent.crypto.ten_symbol_champion_promotion_receipt.v1"
 )
-CHAMPION_PROMOTION_DIRNAME = "champion_promotions"
+# Every v2 output namespace stays apart from the historical v1 namespace.
+# Old artifacts are immutable research evidence and can legitimately share an
+# outcome identifier with a v2 recomputation while carrying a different
+# contract and hash.  Never attempt to reinterpret or overwrite them.
+STRATEGY_EVALUATION_DIRNAME = "strategy_evaluations.v2"
+CHAMPION_PROMOTION_DIRNAME = "champion_promotions.v2"
 HORIZON_MINUTES = 60
 AUXILIARY_HORIZONS = (240, 720, 1440)
 EVALUATION_HORIZONS = (HORIZON_MINUTES, *AUXILIARY_HORIZONS)
@@ -87,7 +92,7 @@ SPREAD_COST_QUANTILE = "p75_bps"
 COST_ATTRIBUTION_CONTRACT = (
     "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_cost_attribution.v1"
 )
-COST_ATTRIBUTION_DIRNAME = "strategy_evaluation_cost_attributions"
+COST_ATTRIBUTION_DIRNAME = "strategy_evaluation_cost_attributions.v2"
 
 
 class CryptoTenSymbolFactorStrategyEvaluationError(RuntimeError):
@@ -1230,7 +1235,9 @@ def _validated_current(evolution: Path) -> dict[str, Any] | None:
         raise CryptoTenSymbolFactorStrategyEvaluationError(
             "evaluation_checkpoint_invalid"
         )
-    artifact_path = evolution / "strategy_evaluations" / f"{prior_outcome}.json"
+    artifact_path = (
+        evolution / STRATEGY_EVALUATION_DIRNAME / f"{prior_outcome}.json"
+    )
     try:
         prior_artifact = projection._parse_canonical(
             artifact_path, reason="evaluation_artifact_invalid"
@@ -1501,7 +1508,7 @@ def run_ten_symbol_factor_strategy_evaluation(
             }
             artifact["artifact_sha256"] = _sha(artifact)
             for name in (
-                "strategy_evaluations",
+                STRATEGY_EVALUATION_DIRNAME,
                 COST_ATTRIBUTION_DIRNAME,
                 CHAMPION_PROMOTION_DIRNAME,
             ):
@@ -1518,7 +1525,8 @@ def run_ten_symbol_factor_strategy_evaluation(
                 attribution,
             )
             projection._write_immutable(
-                evolution / "strategy_evaluations" / f"{outcome}.json", artifact
+                evolution / STRATEGY_EVALUATION_DIRNAME / f"{outcome}.json",
+                artifact,
             )
             if promotion_receipt is not None:
                 projection._write_immutable(
@@ -1592,6 +1600,7 @@ __all__ = [
     "EVALUATION_CONTRACT",
     "SPREAD_COST_MIN_BUCKET_SAMPLES",
     "SPREAD_COST_QUANTILE",
+    "STRATEGY_EVALUATION_DIRNAME",
     "STRATEGY_HYPOTHESIS_PAIRS",
     "CryptoTenSymbolFactorStrategyEvaluationError",
     "run_ten_symbol_factor_strategy_evaluation",
