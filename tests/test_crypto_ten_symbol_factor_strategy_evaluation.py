@@ -19,6 +19,7 @@ from Crypto.round_trip_capital import (
     run_round_trip_fixture_cycle,
 )
 from Crypto.ten_symbol_factor_strategy_evaluation import (
+    CHECKPOINT_FILENAME,
     COST_ATTRIBUTION_CONTRACT,
     COST_POLICY_ID,
     EVALUATION_BUNDLE_CONTRACT,
@@ -206,7 +207,7 @@ def test_evaluation_metrics_baselines_and_recommendation_branches(
             output_root
             / "evolution"
             / "ten_symbol_factor_research"
-            / "strategy_evaluation_checkpoint.json"
+            / CHECKPOINT_FILENAME
         ).read_text(encoding="utf-8")
     )
     assert checkpoint["last_evaluated_outcome_sha256"] == (
@@ -368,6 +369,36 @@ def test_evaluation_is_idempotent_per_outcome(
     assert next(_artifact_dir(output_root).glob("*.json")).read_bytes() == (
         artifact_bytes
     )
+
+
+def test_evaluation_v2_preserves_legacy_v1_checkpoint_and_starts_own_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output_root = _accumulate(monkeypatch, tmp_path, 14)
+    _scrub(output_root)
+    evolution = output_root / "evolution" / "ten_symbol_factor_research"
+    legacy_checkpoint = evolution / "strategy_evaluation_checkpoint.json"
+    _write_canonical(
+        legacy_checkpoint,
+        {
+            "contract": "tradingagent.crypto.ten_symbol_factor_strategy_evaluation_checkpoint.v1",
+            "last_evaluated_completion_sha256": "0" * 64,
+            "last_evaluated_outcome_sha256": "1" * 64,
+            "artifact_sha256": "2" * 64,
+        },
+    )
+    legacy_bytes = legacy_checkpoint.read_bytes()
+
+    artifact = run_ten_symbol_factor_strategy_evaluation(store_root=output_root)
+    fast = run_ten_symbol_factor_strategy_evaluation_fast(store_root=output_root)
+
+    assert artifact["status"] == "shadow_evaluated"
+    assert legacy_checkpoint.read_bytes() == legacy_bytes
+    checkpoint = json.loads((evolution / CHECKPOINT_FILENAME).read_text("utf-8"))
+    assert checkpoint["contract"].endswith(".v2")
+    assert fast["status"] == "no_new_outcome"
+    assert fast["artifact_sha256"] == artifact["artifact_sha256"]
 
 
 def test_evaluation_tracks_new_outcomes_after_each_scrub(
