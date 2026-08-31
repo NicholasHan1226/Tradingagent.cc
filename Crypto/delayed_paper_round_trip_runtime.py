@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
+import http.client
 import json
 from pathlib import Path
+import re
 import sys
 import time
 from typing import Any, Callable, Mapping
+import urllib.error
 
 from Crypto.delayed_paper_ledger import (
     DECISION_LEDGER_CONTRACT,
@@ -38,8 +41,12 @@ from Crypto.five_minute_data import (
     CryptoFiveMinuteDataError,
     CryptoFiveMinuteWindowRequest,
 )
-from shared.data.sharedsignals_v1 import HTTPTransport
-from shared.data.tradingdatas_transport import build_runtime_transport
+from Crypto.round_trip_capital import CryptoRoundTripError
+from shared.data.sharedsignals_v1 import HTTPStatusError, HTTPTransport
+from shared.data.tradingdatas_transport import (
+    TradingDatasAuthenticationError,
+    build_runtime_transport,
+)
 
 
 ROUND_TRIP_RUNTIME_CONTRACT = "tradingagent.crypto.round_trip_server_runtime.v1"
@@ -62,8 +69,22 @@ ROUND_TRIP_GAP_ELIGIBLE_REASONS = frozenset(
         "crypto_5m_metadata_not_fresh",
         "crypto_5m_observation_stale",
         "crypto_5m_observation_stale_by_cutoff",
+        # load_snapshot can succeed while verify_against / observation mapping
+        # still reject the frozen cutoff.  Those codes used to escape core_cycle
+        # unclassified (generic runtime_validation_failed) and pin the timer.
+        "crypto_5m_metadata_lineage_incomplete",
+        "crypto_5m_snapshot_incomplete",
+        "crypto_5m_bar_order_or_gap_invalid",
+        "crypto_5m_snapshot_window_binding_mismatch",
+        "crypto_5m_snapshot_source_window_mismatch",
+        "crypto_5m_snapshot_source_budget_or_cutoff_invalid",
+        "crypto_5m_snapshot_source_freshness_invalid",
     }
 )
+_STABLE_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]{1,95}$")
+_TRANSPORT_UNAVAILABLE_REASON = "crypto_5m_transport_unavailable"
+_HTTP_STATUS_REASON = "crypto_5m_http_status_invalid"
+_AUTHENTICATION_REJECTED_REASON = "crypto_5m_authentication_rejected"
 ROUND_TRIP_MAX_GAPS_PER_INVOCATION = 24
 # The deployed service trial has a 300-second hard stop.  Reserve more than one
 # full TD call for final anchor validation, serialization, and scheduling jitter.
@@ -101,9 +122,116 @@ class _InvocationBudgetExhausted(RuntimeError):
     """Private control flow for a safely deferred, not rejected, backlog slot."""
 
 
+def _is_stable_reason_code(value: object) -> bool:
+    """True when a public reason is a secret-free snake_case code."""
+
+    return bool(isinstance(value, str) and _STABLE_REASON_CODE.fullmatch(value))
+
+
+def _stable_public_detail(error: Exception) -> str | None:
+    """Return an allowlisted reason code, never paths, tokens, or payloads."""
+
+    if isinstance(error, CryptoFiveMinuteDataError):
+        code = error.reason_code
+        return code if _is_stable_reason_code(code) else None
+    text = str(error)
+    return text if _is_stable_reason_code(text) else None
+
+
+def _exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    """Walk cause/context/URLError.reason without interpolating payloads."""
+
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    ordered: list[BaseException] = []
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        ordered.append(current)
+        related: list[BaseException] = []
+        if current.__cause__ is not None:
+            related.append(current.__cause__)
+        if current.__context__ is not None:
+            related.append(current.__context__)
+        reason = getattr(current, "reason", None)
+        if isinstance(reason, BaseException):
+            related.append(reason)
+        pending.extend(candidate for candidate in related if id(candidate) not in seen)
+    return tuple(ordered)
+
+
+def _is_retryable_transport_error(error: BaseException) -> bool:
+    """Timeout/connection faults are classified, retried next timer, never gapped."""
+
+    chain = _exception_chain(error)
+    if any(
+        isinstance(
+            current,
+            (
+                urllib.error.HTTPError,
+                HTTPStatusError,
+                TradingDatasAuthenticationError,
+                _InvocationBudgetExhausted,
+            ),
+        )
+        for current in chain
+    ):
+        return False
+    return any(
+        isinstance(
+            current,
+            (
+                TimeoutError,
+                ConnectionError,
+                urllib.error.URLError,
+                http.client.HTTPException,
+            ),
+        )
+        for current in chain
+    )
+
+
 def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeFailure | None:
     """Map only declared stable errors to a secret-free public category."""
 
+    if isinstance(error, _InvocationBudgetExhausted):
+        return None
+    if isinstance(error, CryptoFiveMinuteDataError) and phase in {
+        "market_data_query",
+        "core_cycle",
+    }:
+        # Observation mapping and verify_against run after load_snapshot, so
+        # the same PIT codes used to escape as unclassified core_cycle errors.
+        return CryptoRoundTripRuntimeFailure(
+            phase="market_data_query",
+            reason=_FAILURE_PROVENANCE["market_data_query"],
+            detail=_stable_public_detail(error),
+        )
+    if phase in {"market_data_query", "core_cycle"}:
+        chain = _exception_chain(error)
+        if any(isinstance(item, TradingDatasAuthenticationError) for item in chain):
+            return CryptoRoundTripRuntimeFailure(
+                phase="market_data_query",
+                reason=_FAILURE_PROVENANCE["market_data_query"],
+                detail=_AUTHENTICATION_REJECTED_REASON,
+            )
+        if any(
+            isinstance(item, (urllib.error.HTTPError, HTTPStatusError))
+            for item in chain
+        ):
+            return CryptoRoundTripRuntimeFailure(
+                phase="market_data_query",
+                reason=_FAILURE_PROVENANCE["market_data_query"],
+                detail=_HTTP_STATUS_REASON,
+            )
+        if _is_retryable_transport_error(error):
+            return CryptoRoundTripRuntimeFailure(
+                phase="market_data_query",
+                reason=_FAILURE_PROVENANCE["market_data_query"],
+                detail=_TRANSPORT_UNAVAILABLE_REASON,
+            )
     if phase == "pre_network_validation" and (
         isinstance(error, (CryptoRoundTripEpochError, CryptoDelayedPaperRuntimeError))
         or str(error)
@@ -128,18 +256,21 @@ def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeF
             phase=phase,
             reason=_FAILURE_PROVENANCE[phase],
         )
-    if phase == "market_data_query" and isinstance(error, CryptoFiveMinuteDataError):
+    if phase == "core_cycle" and (
+        isinstance(error, (CryptoDelayedPaperLedgerError, CryptoRoundTripError))
+        or str(error)
+        in {
+            "round_trip_pending_recovery_not_completed",
+            "round_trip_cycle_not_completed",
+            "round_trip_snapshot_type_invalid",
+            "round_trip_prepared_fixture_invalid",
+            "round_trip_fill_capacities_invalid",
+        }
+    ):
         return CryptoRoundTripRuntimeFailure(
             phase=phase,
             reason=_FAILURE_PROVENANCE[phase],
-        )
-    if phase == "core_cycle" and str(error) in {
-        "round_trip_pending_recovery_not_completed",
-        "round_trip_cycle_not_completed",
-    }:
-        return CryptoRoundTripRuntimeFailure(
-            phase=phase,
-            reason=_FAILURE_PROVENANCE[phase],
+            detail=_stable_public_detail(error),
         )
     if phase == "post_write_anchor_validation" and (
         isinstance(error, CryptoRoundTripEpochError)
@@ -159,14 +290,12 @@ def _run_failure_stage(phase: str, callback: Callable[[], Any]) -> Any:
         return callback()
     except CryptoRoundTripRuntimeFailure:
         raise
+    except _InvocationBudgetExhausted:
+        raise
     except Exception as exc:
         classified = _classified_failure(phase, exc)
         if classified is not None:
-            raise CryptoRoundTripRuntimeFailure(
-                phase=classified.phase,
-                reason=classified.reason,
-                detail=str(exc),
-            ) from None
+            raise classified from None
         raise
 
 
@@ -457,7 +586,7 @@ def round_trip_runtime_validation_failure_summary(
     """Describe a failed runtime cycle without exposing exception details."""
 
     request = crypto_round_trip_window_request(now)
-    return {
+    payload = {
         "contract": ROUND_TRIP_RUNTIME_FAILURE_CONTRACT,
         "status": "failed_closed",
         "failure_phase": (
@@ -468,6 +597,15 @@ def round_trip_runtime_validation_failure_summary(
         ),
         "target_window_end": _iso_utc(request.window_end),
     }
+    if failure is not None:
+        detail = str(failure)
+        if (
+            detail
+            and detail != failure.reason
+            and _is_stable_reason_code(detail)
+        ):
+            payload["failure_code"] = detail
+    return payload
 
 
 def run_crypto_delayed_paper_round_trip_server_once(
@@ -879,4 +1017,6 @@ __all__ = [
     "_round_trip_data_gap_event",
     "_round_trip_gap_eligible",
     "_round_trip_latest_gap_slot",
+    "_classified_failure",
+    "_is_retryable_transport_error",
 ]

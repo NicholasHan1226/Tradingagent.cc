@@ -72,12 +72,24 @@ def test_round_trip_gap_event_shape_and_eligibility() -> None:
         detail="crypto_5m_metadata_not_ready",
     )
     assert runtime_module._round_trip_gap_eligible(stale_metadata) is True
+    verify_freshness = runtime_module.CryptoRoundTripRuntimeFailure(
+        phase="market_data_query",
+        reason="runtime_market_data_query_failed",
+        detail="crypto_5m_snapshot_source_freshness_invalid",
+    )
+    assert runtime_module._round_trip_gap_eligible(verify_freshness) is True
     not_gap = runtime_module.CryptoRoundTripRuntimeFailure(
         phase="market_data_query",
         reason="runtime_market_data_query_failed",
         detail="crypto_5m_metadata_quality_invalid",
     )
     assert runtime_module._round_trip_gap_eligible(not_gap) is False
+    transport = runtime_module.CryptoRoundTripRuntimeFailure(
+        phase="market_data_query",
+        reason="runtime_market_data_query_failed",
+        detail="crypto_5m_transport_unavailable",
+    )
+    assert runtime_module._round_trip_gap_eligible(transport) is False
 
     gap = runtime_module._round_trip_data_gap_event(
         prior_market_slot=WINDOW_END,
@@ -460,6 +472,224 @@ def test_round_trip_runtime_does_not_classify_unexpected_error_text() -> None:
         )
         is None
     )
+
+
+def test_round_trip_runtime_classifies_core_cycle_five_minute_data_error() -> None:
+    """Post-query CryptoFiveMinuteDataError must not stay unclassified."""
+
+    failure = runtime_module._classified_failure(
+        "core_cycle",
+        runtime_module.CryptoFiveMinuteDataError("crypto_5m_window_incomplete"),
+    )
+
+    assert failure is not None
+    assert failure.phase == "market_data_query"
+    assert failure.reason == "runtime_market_data_query_failed"
+    assert str(failure) == "crypto_5m_window_incomplete"
+    assert runtime_module._round_trip_gap_eligible(failure) is True
+
+
+def test_round_trip_runtime_classifies_verify_against_freshness_as_gap() -> None:
+    failure = runtime_module._classified_failure(
+        "core_cycle",
+        runtime_module.CryptoFiveMinuteDataError(
+            "crypto_5m_snapshot_source_freshness_invalid"
+        ),
+    )
+
+    assert failure is not None
+    assert failure.phase == "market_data_query"
+    assert str(failure) == "crypto_5m_snapshot_source_freshness_invalid"
+    assert runtime_module._round_trip_gap_eligible(failure) is True
+
+
+def test_round_trip_runtime_classifies_timeout_without_gapping_or_leaking() -> None:
+    sensitive = "http://127.0.0.1/v1/query?token=do-not-emit"
+    failure = runtime_module._classified_failure(
+        "core_cycle", TimeoutError(sensitive)
+    )
+
+    assert failure is not None
+    assert failure.phase == "market_data_query"
+    assert failure.reason == "runtime_market_data_query_failed"
+    assert str(failure) == "crypto_5m_transport_unavailable"
+    assert runtime_module._round_trip_gap_eligible(failure) is False
+    assert sensitive not in str(failure)
+
+
+def test_round_trip_runtime_classifies_wrapped_urlerror_as_transport() -> None:
+    import urllib.error
+
+    wrapped = RuntimeError("query failed")
+    wrapped.__cause__ = urllib.error.URLError("timed out")
+    failure = runtime_module._classified_failure("market_data_query", wrapped)
+
+    assert failure is not None
+    assert str(failure) == "crypto_5m_transport_unavailable"
+    assert runtime_module._round_trip_gap_eligible(failure) is False
+
+
+def test_round_trip_runtime_does_not_gap_quality_or_price_contract_errors() -> None:
+    quality = runtime_module._classified_failure(
+        "core_cycle",
+        runtime_module.CryptoFiveMinuteDataError("crypto_5m_metadata_quality_invalid"),
+    )
+    price = runtime_module._classified_failure(
+        "core_cycle",
+        runtime_module.CryptoFiveMinuteDataError("crypto_5m_price_off_tick"),
+    )
+
+    assert quality is not None and price is not None
+    assert quality.phase == price.phase == "market_data_query"
+    assert runtime_module._round_trip_gap_eligible(quality) is False
+    assert runtime_module._round_trip_gap_eligible(price) is False
+
+
+def test_round_trip_runtime_gaps_unclassified_core_cycle_data_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Tonight's stall: runner CryptoFiveMinuteDataError was generic fail-closed.
+
+    The 12:40Z slot raised after load_snapshot (core_cycle), so gap eligibility
+    never ran and every later oneshot retried the same PIT-dead window.
+    """
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+    first = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=5, seconds=55),
+        transport_factory=_factory(FixtureTradingDatasTransport()),
+    )
+    assert first["status"] == "completed"
+
+    real_cycle = runtime_module.run_crypto_delayed_paper_round_trip_once
+
+    def fail_oldest_as_runner_would(**kwargs: object) -> object:
+        request = kwargs["request"]
+        if request.window_end == WINDOW_END + timedelta(minutes=5):
+            raise runtime_module.CryptoFiveMinuteDataError(
+                "crypto_5m_window_incomplete"
+            )
+        return real_cycle(**kwargs)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_once",
+        fail_oldest_as_runner_would,
+    )
+    recovered = run_crypto_delayed_paper_round_trip_server_once(
+        epoch_manifest=epoch,
+        runtime_manifest=runtime_manifest,
+        token_file=token,
+        now=WINDOW_END + timedelta(minutes=20, seconds=55),
+        transport_factory=_sequence_factory(
+            [_shifted_transport(10), _shifted_transport(15)]
+        ),
+    )
+
+    assert recovered["status"] == "data_incomplete"
+    assert recovered["data_incomplete"] is True
+    assert recovered["data_incomplete_count"] == 1
+    assert recovered["backlog_gap_cycle_count"] == 1
+    assert recovered["backlog_remaining"] is False
+    assert runtime_module.round_trip_receipt_exit_code(recovered) == 0
+    assert [item["cycle_kind"] for item in recovered["cycle_results"]] == [
+        "backlog_gap",
+        "backlog_recovery",
+        "backlog_recovery",
+    ]
+    gaps = CryptoDelayedPaperObservationStore(output).data_gap_events()
+    assert len(gaps) == 1
+    assert gaps[0]["reason_code"] == "crypto_5m_window_incomplete"
+
+
+def test_round_trip_runtime_fail_closes_classified_non_gap_core_cycle_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A contract-quality data error stays fail-closed, but no longer generic."""
+
+    epoch, _, output, token = _configure(monkeypatch, tmp_path)
+    runtime_manifest = _write_manifest(
+        tmp_path / "runtime", payload=_manifest_payload()
+    )
+
+    def fail_price_tick(**_kwargs: object) -> object:
+        raise runtime_module.CryptoFiveMinuteDataError("crypto_5m_price_off_tick")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_once",
+        fail_price_tick,
+    )
+
+    with pytest.raises(runtime_module.CryptoRoundTripRuntimeFailure) as captured:
+        run_crypto_delayed_paper_round_trip_server_once(
+            epoch_manifest=epoch,
+            runtime_manifest=runtime_manifest,
+            token_file=token,
+            now=WINDOW_END + timedelta(minutes=5, seconds=55),
+            transport_factory=_factory(FixtureTradingDatasTransport()),
+        )
+
+    failure = captured.value
+    assert failure.phase == "market_data_query"
+    assert failure.reason == "runtime_market_data_query_failed"
+    assert str(failure) == "crypto_5m_price_off_tick"
+    assert runtime_module._round_trip_gap_eligible(failure) is False
+    assert CryptoDelayedPaperObservationStore(output).data_gap_events() == []
+
+
+def test_round_trip_runtime_cli_emits_classified_code_not_generic_pair(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Operators must see market_data_query plus the stable PIT code."""
+
+    frozen_now = WINDOW_END + timedelta(minutes=5, seconds=55)
+
+    class _FrozenDatetime:
+        @staticmethod
+        def now(*, tz: timezone) -> object:
+            assert tz is timezone.utc
+            return frozen_now
+
+    monkeypatch.setattr(runtime_module, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(
+        runtime_module,
+        "run_crypto_delayed_paper_round_trip_server_once",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            runtime_module.CryptoRoundTripRuntimeFailure(
+                phase="market_data_query",
+                reason="runtime_market_data_query_failed",
+                detail="crypto_5m_window_incomplete",
+            )
+        ),
+    )
+
+    exit_code = runtime_module.main(
+        [
+            "--epoch-manifest",
+            "/tmp/epoch.json",
+            "--runtime-manifest",
+            "/tmp/runtime.json",
+            "--token-file",
+            "/tmp/token",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 2
+    assert payload["failure_phase"] == "market_data_query"
+    assert payload["failure_reason"] == "runtime_market_data_query_failed"
+    assert payload["failure_code"] == "crypto_5m_window_incomplete"
+    assert payload["status"] == "failed_closed"
+    assert "/tmp/" not in captured.out
+    assert captured.err == "crypto round-trip runtime failed closed\n"
 
 
 def test_round_trip_runtime_cli_fails_closed_when_journal_summary_is_invalid(
