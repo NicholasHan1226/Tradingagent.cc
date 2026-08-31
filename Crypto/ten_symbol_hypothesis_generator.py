@@ -10,16 +10,12 @@ immutable, checksum-bound *registration proposal* artifact for human review.
 
 Stage-2 boundaries, all hard-coded:
 
-- automatic registration: candidates that pass the lightweight feasibility
-  check are fixed ``registration_status=auto_registered`` and marked
-  ``registered_into_prescreen``/``registered_into_evaluation``; blocked
-  candidates stay unregistered, and the stage-1 registered-set drift check
-  still fails closed;
+- proposal only: lightweight feasibility never registers or evaluates a
+  candidate. Declared B-class availability is not verified series evidence;
 - no evaluation: the generator never runs the pre-screen, the factor
   projection or the strategy evaluation on the candidates;
 - no scheduler installation: one-shot invocation only, no systemd unit;
-- automatic promotion stays inside the simulation domain: the review block
-  is fixed ``automatic_registration`` and never authorizes real trading.
+- no promotion or capital allocation, including the simulation domain.
 
 Input integrity mirrors the stage-1 precedent: the observation store event
 chain is verified read-only, every terminal slot's bars sidecar is
@@ -56,17 +52,18 @@ from Crypto.ten_symbol_observation_store import (
 )
 
 
-PROPOSAL_CONTRACT = "tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v2"
+PROPOSAL_CONTRACT = "tradingagent.crypto.ten_symbol_hypothesis_generator_proposal.v3"
 GENERATOR_CHECKPOINT_CONTRACT = (
-    "tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v2"
+    "tradingagent.crypto.ten_symbol_hypothesis_generator_checkpoint.v3"
 )
 DATA_PLANE_MANIFEST_CONTRACT = (
     "tradingagent.crypto.ten_symbol_hypothesis_generator_data_planes.v1"
 )
 CHECKPOINT_FILENAME = "hypothesis_generator_checkpoint.json"
-GENERATOR_STAGE = "stage_2_hypothesis_generation_auto_registration"
+GENERATOR_STAGE = "stage_2_hypothesis_generation_proposal_only"
 GENERATION_CONFIG_ID = "crypto-ten-symbol-hypothesis-generation-v1"
-REGISTRATION_STATUS = "auto_registered"
+REGISTRATION_STATUS = "proposal_ready"
+GENERATOR_DIRECTORY_NAME = "ten_symbol_hypothesis_generator.v3"
 BLOCKED_REGISTRATION_STATUS = "blocked"
 _VARIANT_PATTERN = re.compile(r"^[a-z0-9_]+$")
 
@@ -362,7 +359,7 @@ def _result(*, status: str, **fields: Any) -> dict[str, Any]:
         "status": status,
         "loop_stage": GENERATOR_STAGE,
         "learning_mode": "detached_offline_worker",
-        "automatic_registration": True,
+        "automatic_registration": False,
         **fields,
         **projection._non_authority_fields(),
     }
@@ -576,7 +573,7 @@ def expand_candidates(
                         }
                         for plane in family["required_planes"]
                     ],
-                    "registration_status": REGISTRATION_STATUS,
+                    "registration_status": "not_checked",
                     "registered_into_prescreen": False,
                     "registered_into_evaluation": False,
                 }
@@ -732,7 +729,7 @@ def _candidate_feasibility(
         )
     return {
         "status": (
-            "feasible_for_auto_registration"
+            "feasible_for_proposal"
             if all(check["ok"] for check in checks)
             else "blocked"
         ),
@@ -741,12 +738,13 @@ def _candidate_feasibility(
 
 
 # ---------------------------------------------------------------------------
-# Artifact namespace: <store_root>/evolution/ten_symbol_hypothesis_generator/
+# Artifact namespace: <store_root>/evolution/ten_symbol_hypothesis_generator.v3/
 # ---------------------------------------------------------------------------
 
 
 def _generator_root(root: Path) -> Path:
-    return root / "evolution" / "ten_symbol_hypothesis_generator"
+    # Historical v1/v2 shared the unversioned root; never reinterpret it.
+    return root / "evolution" / GENERATOR_DIRECTORY_NAME
 
 
 def _ensure_root(root: Path) -> Path:
@@ -814,7 +812,7 @@ def _load_proposal(evolution: Path, proposal_sha256: str) -> dict[str, Any]:
     if (
         proposal.get("contract") != PROPOSAL_CONTRACT
         or proposal.get("loop_stage") != GENERATOR_STAGE
-        or proposal.get("automatic_registration") is not True
+        or proposal.get("automatic_registration") is not False
         or proposal.get("generation_config_id") != GENERATION_CONFIG_ID
         or claimed != _sha256(material)
         or claimed != proposal_sha256
@@ -831,10 +829,8 @@ def _load_proposal(evolution: Path, proposal_sha256: str) -> dict[str, Any]:
         not isinstance(candidate, Mapping)
         or candidate.get("registration_status")
         not in (REGISTRATION_STATUS, BLOCKED_REGISTRATION_STATUS)
-        or candidate.get("registered_into_prescreen")
-        != (candidate.get("registration_status") == REGISTRATION_STATUS)
-        or candidate.get("registered_into_evaluation")
-        != (candidate.get("registration_status") == REGISTRATION_STATUS)
+        or candidate.get("registered_into_prescreen") is not False
+        or candidate.get("registered_into_evaluation") is not False
         for candidate in candidates
     ):
         raise CryptoTenSymbolHypothesisGeneratorError(
@@ -901,10 +897,10 @@ def _build_proposal(
         "event_type": "hypothesis_registration_proposal",
         "loop_stage": GENERATOR_STAGE,
         "stage_boundaries": {
-            "registration": "auto_register_feasible",
+            "registration": "proposal_only_no_registry_write",
             "evaluation": "not_run_by_generator",
             "scheduler": "detached_one_shot_no_systemd",
-            "promotion": "automatic_sim_domain",
+            "promotion": "disabled_research_only",
             "execution": "not_connected",
         },
         "generation_config_id": config["config_id"],
@@ -929,25 +925,21 @@ def _build_proposal(
         "candidate_count": len(candidates),
         "candidates": [dict(candidate) for candidate in candidates],
         "review": {
-            "recommendation": "automatic_registration",
-            "registration": "auto_registered_feasible",
+            "recommendation": "proposal_classification_complete",
+            "registration": "not_registered",
             "per_candidate": {
                 candidate["candidate_id"]: {
                     "recommendation": (
-                        "auto_register"
+                        "await_verified_inputs_and_executor"
                         if candidate["registration_status"] == REGISTRATION_STATUS
                         else "blocked"
                     ),
-                    "automatic_action": (
-                        "register_into_prescreen"
-                        if candidate["registration_status"] == REGISTRATION_STATUS
-                        else "none"
-                    ),
+                    "automatic_action": "none",
                 }
                 for candidate in candidates
             },
         },
-        "automatic_registration": True,
+        "automatic_registration": False,
         **projection._non_authority_fields(),
     }
     proposal["proposal_sha256"] = _sha256(proposal)
@@ -1057,7 +1049,7 @@ def run_ten_symbol_hypothesis_generation_once(
             candidates = []
             for candidate in expanded:
                 feasibility = _candidate_feasibility(candidate, plane_states)
-                feasible = feasibility["status"] == "feasible_for_auto_registration"
+                feasible = feasibility["status"] == "feasible_for_proposal"
                 candidates.append(
                     {
                         **candidate,
@@ -1067,8 +1059,8 @@ def run_ten_symbol_hypothesis_generation_once(
                             if feasible
                             else BLOCKED_REGISTRATION_STATUS
                         ),
-                        "registered_into_prescreen": feasible,
-                        "registered_into_evaluation": feasible,
+                        "registered_into_prescreen": False,
+                        "registered_into_evaluation": False,
                     }
                 )
             proposal = _build_proposal(
@@ -1109,7 +1101,7 @@ def run_ten_symbol_hypothesis_generation_once(
         proposal_path=str(proposal_path),
         candidate_count=len(candidates),
         feasible_candidate_count=sum(
-            candidate["feasibility"]["status"] == "feasible_for_auto_registration"
+            candidate["feasibility"]["status"] == "feasible_for_proposal"
             for candidate in candidates
         ),
         last_eligible_slot=projection._iso(eligible[-1]["slot"]),
@@ -1127,7 +1119,7 @@ def ten_symbol_hypothesis_generator_exit_code(result: Mapping[str, Any]) -> int:
         return 2
     return (
         0
-        if result.get("automatic_registration") is True
+        if result.get("automatic_registration") is False
         and result.get("loop_stage") == GENERATOR_STAGE
         and all(
             result.get(key) == value
@@ -1192,6 +1184,7 @@ __all__ = [
     "GENERATION_CONFIG",
     "GENERATION_CONFIG_ID",
     "GENERATOR_CHECKPOINT_CONTRACT",
+    "GENERATOR_DIRECTORY_NAME",
     "GENERATOR_STAGE",
     "PLANES",
     "PROPOSAL_CONTRACT",

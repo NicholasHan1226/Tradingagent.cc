@@ -1,0 +1,382 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "title": "Crypto Cost and Risk Review",
+    "surface": "report",
+    "generatedAt": "2026-08-30T06:42:00Z",
+    "sources": [
+      {
+        "id": "ledger",
+        "label": "G5 模拟账本只读归因",
+        "path": "Crypto/reports/2026-08-30-paper-loss-attribution.json",
+        "query": {
+          "description": "2026-08-30 14:21 CST 有效模拟快照；14:28:35 CST 只读提取，head 11685。448 完整往返，全部 fixture_simulated。 可视化 SQL 仅运行于已核验报告的内存副本，不连接生产数据库。",
+          "filters": [
+            "single G5 epoch",
+            "currency=USDT",
+            "no real trading"
+          ],
+          "metric_definitions": {
+            "net_pnl": "equity-10000 = quote_midpoint_price_pnl - model_spread - model_slippage_rounding - fees",
+            "return_pct": "(equity / initial 10000 - 1) * 100"
+          },
+          "source_sha256": "72250d9aab937045b04b02c1d23ff4ab8f010c67de3311fc6b47297319d51489",
+          "sql": "WITH d AS (SELECT json_extract(document, '$.attribution') AS a FROM reviewed_report_documents WHERE id = 'ledger'), components AS (SELECT 1 AS ordering, '价格变动毛贡献' AS component, json_extract(a, '$.price_movement_at_quote_mid') * 1.0 AS amount FROM d UNION ALL SELECT 2, '模型买卖价差', -json_extract(a, '$.model_spread_cost') * 1.0 FROM d UNION ALL SELECT 3, '模型滑点及舍入', -json_extract(a, '$.model_slippage_and_rounding_cost') * 1.0 FROM d UNION ALL SELECT 4, '手续费', -json_extract(a, '$.fees') * 1.0 FROM d) SELECT component, amount, 'USDT' AS currency, json_extract(a, '$.initial_cash') * 1.0 AS initial_cash, json_extract(a, '$.net_pnl') * 1.0 AS net_pnl, 448 AS closed_round_trips, json_extract(a, '$.source_snapshot_at') AS valuation_at, 1 AS simulated FROM components CROSS JOIN d ORDER BY ordering",
+          "tables_used": [
+            "reviewed_report_documents (in-memory SQLite, reviewed JSON reports only)"
+          ]
+        }
+      },
+      {
+        "id": "risk",
+        "label": "148 天固定信号历史复算",
+        "path": "Crypto/reports/2026-08-30-risk-replay.json",
+        "query": {
+          "description": "正式 TD catalog/query 历史数据，catalog v1-c3011487473156b0，50 页 receipt 记录；2026-04-02 至 2026-08-28 exclusive。每天取两个采样点，非逐5分钟风险路径。 可视化 SQL 仅运行于已核验报告的内存副本，不连接生产数据库。",
+          "filters": [
+            "10 frozen symbols",
+            "historical cutoff 2026-08-30T00:00Z",
+            "no clean holdout"
+          ],
+          "metric_definitions": {
+            "return_pct": "(final_equity / 10000 - 1) * 100, net modeled fees/slippage",
+            "max_drawdown_pct": "max((running daily-close peak - daily-close equity)/peak)*100"
+          },
+          "source_sha256": "501ed63030f6891fe7cfa826fa29a07e76bbc582cde3960e53429a2ff27e3e76",
+          "sql": "WITH d AS (SELECT json_extract(document, '$.historical') AS h FROM reviewed_report_documents WHERE id = 'risk'), strategies AS (SELECT CASE e.key WHEN 'original_trend' THEN '原趋势' WHEN 'risk_trend' THEN '日采样风控趋势' WHEN 'btc_causal_exposure_cash' THEN '事前敞口 BTC＋现金' WHEN 'btc_buy_hold' THEN '全仓 BTC 对照' END AS strategy, json_extract(e.value, '$.return') * 100.0 AS return_pct, json_extract(e.value, '$.max_drawdown_daily_close') * 100.0 AS max_drawdown_pct, json_extract(e.value, '$.trade_leg_count') AS legs, json_extract(e.value, '$.fees') * 1.0 AS fees_usdt FROM d, json_each(h) e WHERE e.key IN ('original_trend','risk_trend','btc_causal_exposure_cash','btc_buy_hold') UNION ALL SELECT '现金',0,0,0,0) SELECT strategies.*, 'USDT' AS currency, 10000 AS initial_cash, json_extract(h, '$.days') AS days, json_extract(h, '$.start') AS start, json_extract(h, '$.end') AS end_exclusive, 1 AS research_only FROM strategies CROSS JOIN d ORDER BY return_pct DESC",
+          "tables_used": [
+            "reviewed_report_documents (in-memory SQLite, reviewed JSON reports only)"
+          ]
+        }
+      },
+      {
+        "id": "chain",
+        "label": "真实观察副本链路验收",
+        "path": "Crypto/reports/2026-08-30-research-cycle-acceptance.json"
+      },
+      {
+        "id": "td",
+        "label": "TD 数据合同待决",
+        "href": "https://github.com/NicholasHan1226/TradingDatas/pull/395"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# Crypto Cost and Risk Review"
+      },
+      {
+        "id": "summary",
+        "type": "markdown",
+        "body": "## Executive Summary\n\nG5 模拟账本仍亏损 **858.52 USDT（−8.59%）**，有效快照时间为 2026-08-30 14:21 CST；不是实盘账户收益。价格变动毛贡献为正，但不足以覆盖交易成本。历史风控实验降低回撤，却以 **−0.77%** 收益结束，未形成可晋级策略。\n\n已完成成本归因、固定参数风险复算、提案分类与幂等重评的本地验收。未完成生产自动接入，也没有证明正向盈利。套息所需数据合同仍待 TD 决策。"
+      },
+      {
+        "id": "cost-explanation",
+        "type": "markdown",
+        "body": "## 亏损来自哪里\n\n期初 10,000 USDT，期末 9,141.48 USDT，当前快照无持仓。448 次完整往返累计手续费 894.94 USDT；净损益与账本六项对账残差均为零。下图四项相加为 −858.52 USDT。"
+      },
+      {
+        "id": "cost-chart",
+        "type": "chart",
+        "chartId": "cost-components"
+      },
+      {
+        "id": "cost-meaning",
+        "type": "markdown",
+        "body": "### 经营含义\n\n每次往返平均价格毛贡献约 0.69 USDT，而模型执行成本加手续费约 2.60 USDT。成本足以解释亏损，不等于这些交易在真实市场可复制。下一项研究应先检验减少无效换手能否保留收益，而不是据此提高仓位或杠杆。"
+      },
+      {
+        "id": "historical-explanation",
+        "type": "markdown",
+        "body": "## 同窗历史对照\n\n148 天、同一冻结信号与成本口径。加入风控后日收盘最大回撤从 15.45% 降到 7.56%，但在 5 月 20 日触发持续暂停后留在现金，最终收益 −0.77%。原趋势 +3.60% 低于按事前总敞口配置的 BTC＋现金 +3.99%；后者不等同于严格风险匹配。"
+      },
+      {
+        "id": "return-chart",
+        "type": "chart",
+        "chartId": "strategy-returns"
+      },
+      {
+        "id": "comparison-table",
+        "type": "table",
+        "tableId": "comparison"
+      },
+      {
+        "id": "historical-meaning",
+        "type": "markdown",
+        "body": "### 结果边界\n\n全仓 BTC 对照收益更高，但日收盘最大回撤 28.69%，不能据此推荐全仓。风控仅检查每日采样与成交点，采样最大回撤实际为 7.58%；7% 是触发阈值，不是损失保证。参数未按本轮结果重新搜索，原封存前向窗口未修改。"
+      },
+      {
+        "id": "chain",
+        "type": "markdown",
+        "body": "## 自动链路验收\n\n真实观察数据的隔离本地副本中，2,065 个终态窗口含 2,048 个有效窗口、17 个无效窗口；最新有效窗口为 14:20 CST。原四候选完成 32 个配置单元重评，仍只是样本内描述性结果。\n\n23 个新提案均因所需数据面不完整而被阻止，没有宣称已注册或已评估。两次运行源文件摘要不变，第二次重评返回 no_new_input，研究产物字节不变。该验收证明手动入口可重跑，不证明生产定时器已接入。"
+      },
+      {
+        "id": "next",
+        "type": "markdown",
+        "body": "## 下一步\n\n1. 提交并保留研究草稿，等待精确候选审核；不合并或部署。\n2. 在新预先声明的研究批次中检验换手筛选及逐 5 分钟风险路径，不利用已看过的结果反复改参数。\n3. 由 TD Data-Contract Owner 与 Datas PM 在 [草稿 #395](https://github.com/NicholasHan1226/TradingDatas/pull/395) 确认 funding 事件身份及迁移方案，再实施结算 mark、独立 perp trade/mark K 线合同。"
+      },
+      {
+        "id": "questions",
+        "type": "markdown",
+        "body": "## 待决问题\n\n向旧 append-only funding 事件追加 mark 会改变 payload 身份；需选择新 schema major、审阅的迁移/dual-read，或另行批准的新合同。历史有效 funding schedule 尚无已确认来源，因此不能补造八小时结算假设。套息研究继续显示 data_unavailable。"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## 验证与限制\n\n173 项相关测试通过；主助手独立重放真实历史输入，报告哈希与逐笔现金/持仓核对一致。另有只读交叉审计，无阻断项。\n\n这些都是 Paper/research 证据。没有真实下单、生产策略替换、自动风险扩张或新服务安装。历史数据是回填，不具备当时可知的 PIT 保证；收益不代表未来。运行健康、HTTP 成功和候选 CI 也不等同盈利。"
+      }
+    ],
+    "charts": [
+      {
+        "id": "cost-components",
+        "title": "G5 模拟损益组成（USDT）",
+        "type": "bar",
+        "dataset": "costs",
+        "sourceId": "ledger",
+        "encodings": {
+          "x": {
+            "field": "component",
+            "type": "nominal",
+            "label": "损益项目"
+          },
+          "y": {
+            "field": "amount",
+            "type": "quantitative",
+            "label": "USDT",
+            "format": "number"
+          }
+        }
+      },
+      {
+        "id": "strategy-returns",
+        "title": "148 天历史净收益率（%）",
+        "type": "bar",
+        "dataset": "strategies",
+        "sourceId": "risk",
+        "encodings": {
+          "x": {
+            "field": "strategy",
+            "type": "nominal",
+            "label": "研究策略"
+          },
+          "y": {
+            "field": "return_pct",
+            "type": "quantitative",
+            "label": "收益率（%）",
+            "format": "number"
+          }
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "comparison",
+        "title": "同窗结果与成本",
+        "dataset": "strategies",
+        "sourceId": "risk",
+        "columns": [
+          {
+            "field": "strategy",
+            "label": "研究策略"
+          },
+          {
+            "field": "return_pct",
+            "label": "净收益率（%）",
+            "format": "number"
+          },
+          {
+            "field": "max_drawdown_pct",
+            "label": "日收盘最大回撤（%）",
+            "format": "number"
+          },
+          {
+            "field": "legs",
+            "label": "成交腿数",
+            "format": "number"
+          },
+          {
+            "field": "fees_usdt",
+            "label": "手续费（USDT）",
+            "format": "number"
+          }
+        ],
+        "defaultSort": {
+          "field": "return_pct",
+          "direction": "desc"
+        }
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "status": "partial",
+    "generatedAt": "2026-08-30T06:42:00Z",
+    "datasets": {
+      "costs": [
+        {
+          "component": "价格变动毛贡献",
+          "amount": 307.1737332,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "net_pnl": -858.51981064,
+          "closed_round_trips": 448,
+          "valuation_at": "2026-08-30T06:21:00Z",
+          "simulated": 1
+        },
+        {
+          "component": "模型买卖价差",
+          "amount": -90.5632886,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "net_pnl": -858.51981064,
+          "closed_round_trips": 448,
+          "valuation_at": "2026-08-30T06:21:00Z",
+          "simulated": 1
+        },
+        {
+          "component": "模型滑点及舍入",
+          "amount": -180.1856308,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "net_pnl": -858.51981064,
+          "closed_round_trips": 448,
+          "valuation_at": "2026-08-30T06:21:00Z",
+          "simulated": 1
+        },
+        {
+          "component": "手续费",
+          "amount": -894.94462444,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "net_pnl": -858.51981064,
+          "closed_round_trips": 448,
+          "valuation_at": "2026-08-30T06:21:00Z",
+          "simulated": 1
+        }
+      ],
+      "strategies": [
+        {
+          "strategy": "全仓 BTC 对照",
+          "return_pct": 17.51957231163555,
+          "max_drawdown_pct": 28.689137474277786,
+          "legs": 2,
+          "fees_usdt": 21.75373094212566,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "days": 148,
+          "start": "2026-04-02T00:00:00Z",
+          "end_exclusive": "2026-08-28T00:00:00Z",
+          "research_only": 1
+        },
+        {
+          "strategy": "事前敞口 BTC＋现金",
+          "return_pct": 3.9873640766150165,
+          "max_drawdown_pct": 15.84531878175909,
+          "legs": 17,
+          "fees_usdt": 32.26511528173302,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "days": 148,
+          "start": "2026-04-02T00:00:00Z",
+          "end_exclusive": "2026-08-28T00:00:00Z",
+          "research_only": 1
+        },
+        {
+          "strategy": "原趋势",
+          "return_pct": 3.5995471094494422,
+          "max_drawdown_pct": 15.454111852182335,
+          "legs": 66,
+          "fees_usdt": 45.78602814781943,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "days": 148,
+          "start": "2026-04-02T00:00:00Z",
+          "end_exclusive": "2026-08-28T00:00:00Z",
+          "research_only": 1
+        },
+        {
+          "strategy": "现金",
+          "return_pct": 0,
+          "max_drawdown_pct": 0,
+          "legs": 0,
+          "fees_usdt": 0,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "days": 148,
+          "start": "2026-04-02T00:00:00Z",
+          "end_exclusive": "2026-08-28T00:00:00Z",
+          "research_only": 1
+        },
+        {
+          "strategy": "日采样风控趋势",
+          "return_pct": -0.7744592000597718,
+          "max_drawdown_pct": 7.562439436750891,
+          "legs": 48,
+          "fees_usdt": 28.094050645338065,
+          "currency": "USDT",
+          "initial_cash": 10000,
+          "days": 148,
+          "start": "2026-04-02T00:00:00Z",
+          "end_exclusive": "2026-08-28T00:00:00Z",
+          "research_only": 1
+        }
+      ]
+    },
+    "accessIssues": [
+      {
+        "sourceId": "td",
+        "message": "套息所需 settlement mark、perp trade/mark K线及历史有效 schedule 尚未形成正式可消费合同。"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "id": "ledger",
+      "label": "G5 模拟账本只读归因",
+      "path": "Crypto/reports/2026-08-30-paper-loss-attribution.json",
+      "query": {
+        "description": "2026-08-30 14:21 CST 有效模拟快照；14:28:35 CST 只读提取，head 11685。448 完整往返，全部 fixture_simulated。",
+        "filters": [
+          "single G5 epoch",
+          "currency=USDT",
+          "no real trading"
+        ],
+        "metric_definitions": {
+          "net_pnl": "equity-10000 = quote_midpoint_price_pnl - model_spread - model_slippage_rounding - fees",
+          "return_pct": "(equity / initial 10000 - 1) * 100"
+        },
+        "source_sha256": "72250d9aab937045b04b02c1d23ff4ab8f010c67de3311fc6b47297319d51489"
+      }
+    },
+    {
+      "id": "risk",
+      "label": "148 天固定信号历史复算",
+      "path": "Crypto/reports/2026-08-30-risk-replay.json",
+      "query": {
+        "description": "正式 TD catalog/query 历史数据，catalog v1-c3011487473156b0，50 页 receipt 记录；2026-04-02 至 2026-08-28 exclusive。每天取两个采样点，非逐5分钟风险路径。",
+        "filters": [
+          "10 frozen symbols",
+          "historical cutoff 2026-08-30T00:00Z",
+          "no clean holdout"
+        ],
+        "metric_definitions": {
+          "return_pct": "(final_equity / 10000 - 1) * 100, net modeled fees/slippage",
+          "max_drawdown_pct": "max((running daily-close peak - daily-close equity)/peak)*100"
+        },
+        "source_sha256": "501ed63030f6891fe7cfa826fa29a07e76bbc582cde3960e53429a2ff27e3e76"
+      }
+    },
+    {
+      "id": "chain",
+      "label": "真实观察副本链路验收",
+      "path": "Crypto/reports/2026-08-30-research-cycle-acceptance.json"
+    },
+    {
+      "id": "td",
+      "label": "TD 数据合同待决",
+      "href": "https://github.com/NicholasHan1226/TradingDatas/pull/395"
+    }
+  ]
+}

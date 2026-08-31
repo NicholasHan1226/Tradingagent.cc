@@ -367,18 +367,28 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   逐候选做轻量可行性检查（ohlcv_bars 由已验证 store 链实测样本量，
   realized_spreads/open_interest_5m/premium_index 三 plane 只能由严格
   校验的调用方数据面 manifest 声明，未声明即 unavailable），产出
-  `<store_root>/evolution/ten_symbol_hypothesis_generator/` 下 checksum
-  绑定的 immutable 注册提案（feasible 候选自动
-  `registration_status=auto_registered`、
-  `registered_into_prescreen/registered_into_evaluation=true`，review 自动
-  `auto_register`/`blocked`）与 compact checkpoint；同输入重跑
+  `<store_root>/evolution/ten_symbol_hypothesis_generator.v3/` 下 checksum
+  绑定的 immutable 注册提案（feasible 候选仅
+  `registration_status=proposal_ready`，
+  `registered_into_prescreen/registered_into_evaluation=false`，review为
+  `await_verified_inputs_and_executor`/`blocked`）与 compact checkpoint；同输入重跑
   `no_new_input` 且字节不变（幂等），配置漂移、manifest/链/checkpoint/
-  提案篡改一律 fail closed。第二阶段对 feasible 候选自动注册进预筛集合
-  （blocked 候选未注册、预筛/一阶段注册集合漂移仍 fail closed）、不运行
-  任何评估、不接 systemd、无 worker；晋级在模拟域内自动，实盘仍由
+  提案篡改一律 fail closed。旧v1/v2目录只读保留、不迁移；声明available不等于
+  实际输入已校验。第二阶段不写registry、不运行
+  任何评估、不接 systemd、无 worker、无模拟晋级权限；实盘仍由
   `REAL_TRADING_ENABLED=false` 硬闸。固定 `authority=none`、零
   core/资本/order/Champion/learning 写权限，不构成 edge、参数变更、
   风险扩张或执行授权。
+- `ten_symbol_research_loop --include-proposals` 仅为显式一次性研究编排：生成
+  提案→分类→原四候选重评，状态与阶段artifact绑定；B类未接执行器不报已评估。
+  两阶段store head不同必须显式标记。中断可幂等重跑，完整性坏证据不可删除重建。
+  只在隔离观测副本运行该新模式，不因此授予生产root写权限、调度或资金权限。
+- `paper_loss_attribution.py` 只读现有资本runtime snapshot并独立对账，不扫描/改写
+  历史账本、不更新mark、不修复snapshot；来源时点必须与损益一起报告。
+  订单reference_price已含模拟滑点，归因需用记录的quote midpoint拆分执行成本。
+- `slow_trend_risk_replay.py` 是历史截止2026-08-30 UTC的独立日采样风控诊断，
+  不改原前向计划；3%日亏/3批连亏/7%回撤暂停不自动清除，5%回撤倍率收紧至0.75。
+  不能把日采样写成5分钟风控或保证7%最大回撤，不能把研究适配当现役账户状态机。
 - `delayed_paper_factor_research.py`/worker 只能从受版本化 G4 manifest 绑定的、
   已完成 observation/completion 建立独立 `evolution/factor_research/` 追加投影；
   不接受自由 output root。已验证的完整、连续且 gap-bounded segment 可以进入 detached
