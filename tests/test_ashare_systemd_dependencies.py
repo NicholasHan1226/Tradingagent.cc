@@ -10,6 +10,7 @@ ASHARE_DATA_UNITS = (
     ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-paper.service",
     ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-session.service",
     ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-late-start.service",
+    ROOT / "Ashare/systemd/tradingagent-ashare-capital-backed-paper.service",
 )
 
 BOOTSTRAP = ROOT / "deploy/systemd/tradingagent-ashare-minute-bootstrap.service"
@@ -67,3 +68,11 @@ def test_scale500_units_use_rolling_membership_but_late_start_stays_separate() -
     assert "--rolling-eligible" in session
     assert "--rolling-eligible" in paper
     assert "--rolling-eligible" not in late_start
+
+
+def test_baseline_recovers_late_start_and_scale_timeout_fits_timer_cadence() -> None:
+    baseline = (ROOT / "deploy/systemd/tradingagent-ashare-minute-paper.service").read_text()
+    scale = (ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500-paper.service").read_text()
+    assert "--allow-late-start" in baseline
+    # 180s query budget plus processing headroom, below the 300s cadence.
+    assert "TimeoutStartSec=240s" in scale

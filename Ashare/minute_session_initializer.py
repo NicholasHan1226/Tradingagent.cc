@@ -29,7 +29,7 @@ from .minute_canary import (
     load_minute_canary_config,
 )
 from .minute_paper_runner import load_minute_research_universe
-from .minute_data import SHANGHAI
+from .minute_data import SHANGHAI, _is_retryable_minute_query_error
 from .minute_auto_runner import session_bar_ends
 from .minute_research import MinuteResearchUniverse
 from shared.data.evidence_gate import (
@@ -522,6 +522,8 @@ def _query_twice(
         max_pages=max_pages,
         max_rows=max_rows,
     ).envelope
+    _accept_ready(first)
+    _validate_daily_query_identity(first, request=request)
     second = collect_query_pages(
         client=client,
         request=request,
@@ -529,13 +531,29 @@ def _query_twice(
         max_pages=max_pages,
         max_rows=max_rows,
     ).envelope
-    _accept_ready(first)
     _accept_ready(second)
+    _validate_daily_query_identity(second, request=request)
     if _semantic_payload(first) != _semantic_payload(second):
         raise MinuteSessionInitializerError(
             f"minute_session_replay_mismatch:{request.dataset_id}"
         )
     return first
+
+
+def _validate_daily_query_identity(
+    envelope: QueryEnvelope, *, request: QueryRequest,
+) -> None:
+    if request.dataset_id != DAILY_DATASET_ID:
+        return
+    symbols = request.filters["ts_code"]["in"]
+    trade_date = request.filters["trade_date"]["eq"]
+    if any(
+        not isinstance(row.get("ts_code"), str)
+        or row["ts_code"] not in symbols
+        or row.get("trade_date") != trade_date
+        for row in envelope.data
+    ):
+        raise MinuteSessionInitializerError("minute_session_daily_identity_mismatch")
 
 
 def _find_template_day(state_root: Path, target: date) -> Path:
@@ -1022,22 +1040,41 @@ def initialize_minute_session(
     for offset in range(0, len(symbols), daily_batch_size):
         symbol_batch = symbols[offset : offset + daily_batch_size]
         batch_max_pages = min(len(symbol_batch), MAX_DAILY_PAGES_PER_BATCH)
-        daily = _query_twice(
-            client=client,
-            request=QueryRequest(
-                dataset_id=DAILY_DATASET_ID,
-                schema_major=daily_contract[0],
-                fields=daily_contract[1],
-                filters={
-                    "trade_date": {"eq": compact_pretrade},
-                    "ts_code": {"in": list(symbol_batch)},
-                },
-                limit=len(symbol_batch),
-            ),
-            identity_fields=("ts_code", "trade_date"),
-            max_pages=batch_max_pages,
-            max_rows=len(symbol_batch),
-        )
+        try:
+            daily = _query_twice(
+                client=client,
+                request=QueryRequest(
+                    dataset_id=DAILY_DATASET_ID,
+                    schema_major=daily_contract[0],
+                    fields=daily_contract[1],
+                    filters={
+                        "trade_date": {"eq": compact_pretrade},
+                        "ts_code": {"in": list(symbol_batch)},
+                    },
+                    limit=len(symbol_batch),
+                ),
+                identity_fields=("ts_code", "trade_date"),
+                max_pages=batch_max_pages,
+                max_rows=len(symbol_batch),
+            )
+        except Exception as exc:
+            # Reuse the minute reader's narrow transport/capacity policy.
+            # Never retain a half-verified double read, retry authentication,
+            # or turn contract/identity/evidence failures into missing data.
+            if (
+                not allow_pending_recent_listings
+                or not _is_retryable_minute_query_error(exc)
+            ):
+                raise
+            daily_data_excluded.extend(
+                {
+                    "symbol": symbol,
+                    "reason": "previous_close_batch_unavailable",
+                    "trade_date": compact_pretrade,
+                }
+                for symbol in symbol_batch
+            )
+            continue
         batch_metadata = _metadata_payload(daily)
         batch_rows: dict[str, Mapping[str, Any]] = {}
         for row in daily.data:

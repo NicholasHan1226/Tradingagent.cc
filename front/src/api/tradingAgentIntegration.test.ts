@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tradingAgentReadModelSources, type TradingAgentReadModelSnapshot } from './tradingAgentReadModel'
+import { runtimeObservationFixture } from '../test/runtimeObservationFixture'
 import {
   TRADING_AGENT_SNAPSHOT_ROUTE,
   createTradingAgentSnapshotClient,
@@ -25,6 +26,14 @@ const snapshot: TradingAgentReadModelSnapshot = {
 }
 
 describe('TradingAgent integration port', () => {
+  it('rejects unsafe optional runtime observations locally without failing core snapshot fields', async () => {
+    const unsafe = { ...runtimeObservationFixture(), realTradingEnabled: true }
+    const client = createTradingAgentSnapshotClient({ fetcher: async () => new Response(JSON.stringify({ ...snapshot, runtimeObservations: unsafe })) })
+    const result = await client.getSnapshot()
+    expect(result.runtimeObservations?.entries[0].status).toBe('unavailable')
+    expect({ ...result, runtimeObservations: undefined }).toEqual({ ...snapshot, runtimeObservations: undefined })
+  })
+
   afterEach(() => {
     vi.unstubAllEnvs()
   })

@@ -500,6 +500,18 @@ def run_delayed_minute_paper_once(
                     if sleeve.settled_receipt is None
                     else sleeve.settled_receipt.status
                 ),
+                "settled_quantity": (
+                    0 if sleeve.settled_receipt is None
+                    else sleeve.settled_receipt.filled_quantity
+                ),
+                "settled_notional_cny": (
+                    0.0 if sleeve.settled_receipt is None
+                    else sleeve.settled_receipt.notional_cny
+                ),
+                "settled_fee_cny": (
+                    0.0 if sleeve.settled_receipt is None
+                    else sleeve.settled_receipt.fee_cny
+                ),
                 "scheduled": sleeve.scheduled_order is not None,
                 "ranked_count": sleeve.ranked_count,
                 "eligible_count": sleeve.eligible_count,

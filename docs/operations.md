@@ -1,6 +1,6 @@
 # TradingAgent 多市场 fixture 与服务器旁路运行、验收及回滚
 
-> 本文是 A股、CNFutures 与 Crypto **simulation-only** 候选在本地与服务器旁路环境中的唯一现役操作入口。Nicholas 已授予正常代码发布的 standing authorization；范围明确且通过测试、独立审计、preflight与回滚检查后，提交、PR/merge、push和版本化loopback-only sidecar不再等待逐次确认。该授权不自动扩展到现役源码/API/页面切换、网络数据联调、broker、真实交易、邮件、GUI、scheduler/cron、公开入口或生产密钥。仓库模板、fixture、本地测试、候选分支和服务器旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据以 AutoDev 状态为入口并由本轮运行读回验证；[STATUS.md](../STATUS.md) 仅为历史快照。
+> 本文是 **simulation-only** 本地、服务器旁路及既有内部运行服务的操作入口；CNFutures 当前暂停，不据本文启用。正常发布的 standing authorization 及例外以 [项目规则](../AGENTS.md#验收与发布边界) 为准：范围明确，测试、独立审计、preflight、回退与新鲜读回路径成立后，可继续提交、PR/合并、不可变 release 及既有内部 sim-only localhost 服务/定时任务的安装、启用或切换。公开入口、生产密钥/账号/权限、破坏性数据操作、broker、真实交易与其它例外不因此获授权。仓库模板、fixture、本地测试、候选分支和旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据以本轮运行读回为准；AutoDev 状态是入口，[STATUS.md](../STATUS.md) 是带时间戳快照。
 
 ## 1. 不可突破的边界
 
@@ -72,6 +72,10 @@ git -C /Users/nicholashan/Projects/Finance/Tradingagent.cc rev-parse HEAD origin
 不删除远程分支，不强推，不改写历史。PR CI 同时覆盖 Python 全量测试与前端
 `npm test/lint/build:all`；同一前端矩阵仍必须在本地与服务器旁路分别复验。只有当主工作树
 `HEAD == origin/main == PR merge commit`、现有未跟踪资产未受影响时，才能进入旁路验收。
+
+重写 `STATUS.md` 时保留既有导航章节与主线实时查询入口，并补跑
+`python -m pytest -q tests/test_architecture_contract_guards.py`。
+Markdown 渲染和局部运行测试不能代替这些文档/架构契约检查。
 
 ## 1.2 服务器旁路候选部署
 
@@ -250,8 +254,10 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 `127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
 
-同一现役发布助手还负责收口五个 G5 round-trip unit 与
-`tradingagent-ashare-minute-paper.service` 的 release 绑定。切换前这些 one-shot
+同一现役发布助手还负责收口五个 G5 round-trip unit 与四个 A股 unit
+（minute-session、minute-paper、minute-scale500-session、minute-scale500-paper）
+的 release 绑定。初始化和消费必须使用同一不可变版本，不能仅绑定基线 paper。
+切换前这些 one-shot
 unit 必须全部已停止：正常状态为 `inactive`；上一轮失败遗留的 `failed` 仅在
 `MainPID=0` 且 `ControlPID=0` 时允许切换，并保留失败事实，不执行 `reset-failed` 或手工
 启动。助手保存现有有效 `TimeoutStartUSec`，只备份并移除
@@ -737,6 +743,12 @@ python3 tools/run_ashare_observation.py \
 
 ### 5分钟 delayed-paper 自动积累
 
+运行读回须分别核对 accepted/feature/candidate、pending、实际模拟成交与
+reconciled，不可把 coverage 或 `status=pass` 当成交。每个 sleeve 的
+`settled_quantity`、`settled_notional_cny`、`settled_fee_cny` 来自本槽实际
+fixture receipt；无 settlement 为零。最高分股票买不起一手时只记录该股票
+拒绝，再检查后续合格股票；不增加现金、单票上限或放宽撮合条件。
+
 `Ashare.minute_auto_runner` 只为已初始化的当日私有目录选择一根当前应到达的
 5分钟K线，并委托同一个 `minute_paper_runner`。目录固定为：
 
@@ -827,6 +839,23 @@ Scale500 session timer 在 09:18、09:24、09:30、09:36 设置开盘前重试�
 执行 rollback service。初始化发现旧分区 gate 与当前 effective hash/count 不一致时，
 会先保留为 `.stale*.json` 历史证据，再创建当前分区的 pending gate。
 
+滚动模式的首批合格股票即可激活积累，不以固定 cohort 的开盘两根连续 PASS
+作为运行门禁；该两根验收仍保留给固定 cohort 模式。双读不一致仍拒绝本次所有
+不可信输入、不给失败槽写成功回执，但不锁死以后独立的当前槽。运行中恢复缺口
+必须带 `minute_session_gap_detected`、紧邻当前槽的缺失列表、
+`full_session_complete=false` 和 `learning_eligible=false`；不得跨缺口补造历史 PIT。
+认证拒绝、状态/账户损坏与真实交易开关不在可恢复分类中。
+特别是 `minute_paper_state_invalid`、状态落盘失败和 universe 内容漂移，不能被
+宽泛的 `minute_paper_*` 前缀误判为可恢复。可重试失败仍退出非零并输出
+`retry_next_slot=true / selected_mode=rolling_eligible`，不得假报已锁存 rollback30。
+
+30 股票基线服务显式启用 `--allow-late-start`：开盘读取失败后可在下一个当前槽
+启动，保留缺口且不宣称全天完整或可学习。若现场有覆盖 `ExecStart` 的 event-aux
+试验 drop-in，部署时必须保留 `--event-aux` 并同时加入恢复参数，不能只更新被遮蔽
+的基础 unit。scale paper 的 180 秒查询预算外保留处理余量，service 总超时为
+240 秒，小于 300 秒触发周期；现场旧 480 秒临时覆盖需备份后收口，不能被发布助手
+的“保留有效 timeout”逻辑永久继承。任何现场调整都需核对有效配置并保留精确回退副本。
+
 启动该模式的候选命令是在现有隔离服务参数上增加
 `Ashare.minute_scale500_runtime initialize/run --rolling-eligible`。该开关保持
 `REAL_TRADING_ENABLED=false`，不创建真实订单、资本 authority 或 live authority；
@@ -841,9 +870,8 @@ deploy/systemd/tradingagent-ashare-minute-paper.timer
 ```
 
 timer 只在工作日48根可处理K线的延迟到达窗口触发：上午
-`09:40–11:35`、下午`13:10–15:05`。每次计划触发在目标 bar end 后5分钟，
-含最多10秒随机延迟仍在 source 规定的5–5.5分钟窗口。生产读回证明上游在自然K线边界仍晚一根，
-因此策略固定等待一根完整5分钟K线后再触发。
+`09:42–11:37`、下午`13:12–15:07`。每次计划触发在目标 bar end 后420秒，
+含最多10秒随机延迟；实际 PIT/新鲜度仍由消费者逐批校验，调晚 timer 不会让过期数据合格。
 午休后段和收盘后不再重复触发，因此已知
 缺口只保留一次失败关闭证据，不会在无新K线时制造重复失败日志。启用前必须依次
 通过：不可变 release/manifest 校验、
@@ -1334,17 +1362,98 @@ active unit 缺 PID、进程无法绑定 release、unit/process 引用不同 rel
 声明 release 也固定 `runtime_verified=false`。该工具只消除版本误报，不执行切换、
 重启、daemon-reload、timer 或回滚。
 
-## 9. 发布前的外部阻塞
+### 8.1 独立模拟运行的只读展示
 
-即使本地全部通过，以下证据缺一不可：
+`tools/read_runtime_observations.py` 只读现有 A股分钟 state bundle 和 G5 epoch，
+不启动行情请求、模拟执行、初始化、补写或修复。A股复用 `MinuteFixtureClosedLoop.restore`
+验证完整状态/hash，从已验证 bar 集合计算覆盖；不信任外层未封存的 receipt 计数，
+也不把四份反事实资金相加。G5 复用现有 round-trip health 的无写读取，保留资本 head、
+数据时槽和模拟账务，不能作为 exchange/live 或统一账户 authority。
+
+既有 snapshot API 通过两个 server-only 配置启动固定 Python/script 子进程：
+`TRADING_AGENT_RUNTIME_PYTHON`、`TRADING_AGENT_RUNTIME_READER`。生产值见已跟踪
+`deploy/systemd/tradingagent-front-api.service`；无配置则不启动，HTTP 参数不能改命令。
+首次/过期请求只触发后台读取，页面不等待；单进程单飞、30 秒超时、64 KiB 输出上限、
+5 分钟缓存，缓存保留原时间，失败清除旧成功。无新 route、worker、timer、权限组或
+可写路径；front 继续不能访问 secrets。All Markets 不汇总或并列显示金额。
+
+A股最多查找近 8 个自然日；长假或长期停机后的 unavailable 不代表历史记录不存在。
+普通来源错误按市场隔离；共享子进程整体超时会撤下两个展示项，但不影响各市场运行。
+
+候选检查：`REAL_TRADING_ENABLED=false PYTHONDONTWRITEBYTECODE=1 python3 -B -m pytest -q
+tests/test_read_runtime_observations.py tests/test_tradingagent_service_identity.py`，以及
+frontend README 的 lint/test/build 检查。独立模拟展示失败只影响该展示块，不影响
+采集、资金、其它市场或既有 snapshot 领域。
+
+发布时先保留现役 front unit 的原始字节/hash，再以验收后的 immutable release 中
+同名 unit 安装两个读取路径配置，保持用户、组、只读 sandbox、localhost 和秘密隔离
+不变。既有 release helper 不会自动安装 front unit，必须独立核对安装字节并读回。
+回退恢复旧 unit 与代码，绝不恢复旧账本。前端观察值必须标明原数据日期；恢复目录里
+存在资金政策或账本，不等于现役服务已连接。迁移账本/调整唯一写者权限另行确认。
+启用带金额的展示前还必须验证实际入口：后端监听 localhost、CORS 或代理注入 Bearer
+均不能证明公网用户已认证。无单用户认证时使用
+`deploy/nginx/tradingagent-snapshot-local-only.conf` 限制现有精确 snapshot location，
+不增加宽泛 `/api/` 代理。检查 effective nginx 的 real-IP 重写及其它代理入口；
+保留原文件/hash，候选和安装态均须 `nginx -t`，再验证真实非loopback来源被 nginx
+拒绝、localhost仍可读。外层 ICP/Cloudflare 错误不是 origin 权限证据。其它站点、
+DNS、静态 root 和健康路由保持不动。展示失败时回退读取器，不能为恢复页面而撤销
+已建立的访问限制。
+
+四十币既有 daily rolling-eval service 的包装器也需与 CLI 同批更新：备份
+`/usr/local/sbin/tradingagent-crypto-rolling-eval.sh` 的原始字节/hash，在服务不运行时
+以 accepted immutable release 内 `deploy/run-crypto-forty-symbol-rolling-eval.sh`
+安装至该原位置，保持 root:root 0755。不新增/启用 timer，不修改观察器，不调用资本。
+受控运行只向已有独立研究 output root 新建唯一 attempt；失败不会覆盖报告或追加
+成功日志。回退恢复包装器和代码，保留研究输出。测试入口为
+`tests/test_crypto_forty_symbol_rolling_entrypoint.py`。
+
+### 8.2 原 A股账户的原样搬迁与只读展示
+
+这不是 fresh-start、旧共享资金导入或交易启动。只有明确授权搬迁既有
+`ashare-capital-v1` 与匹配 execution lineage 后才执行；禁止 `init/bootstrap`、
+刷新旧投影时间戳、重置现金、改变 generation 或重建成交。先确认源没有打开文件和
+现役写入任务，持有既有账本/执行锁，再复制两个精确目录及全部 reconcile sources。
+用现有 canonical replay、lineage/outbox verifier 检查原件及副本，记录所有文件 hash、
+权限与账本 head；不复制整个 recovery 工作树或另一个市场。
+
+服务器的独立目标根是 `/var/lib/tradingagent/ashare-canonical`。资本子路径仍为
+`shared/logs/capital/ashare`，执行子路径仍从已验证 snapshot 的
+`execution_lineage_id` 派生到 `shared/logs/execution_lineages/<id>`。未来受验收的
+runtime 可显式使用既有 `TRADINGAGENT_ASHARE_CAPITAL_ROOT` 和
+`TRADINGAGENT_ASHARE_EXECUTION_ROOT`；本次搬迁不安装这些变量、不启用 legacy executor
+或新 scheduler，也不把此根接到反事实分钟资金簿。
+
+新根父目录由 root 所有，两个数据子树为 `tradingagent:tradingagent`、目录0700/
+文件0600。原件保留原字节，改为 root 所有、目录0500/文件0400，并对精确原件集合
+设置 immutable；元数据清单和本次回退路径记录在私有 migration receipt。应用只读
+验证必须以实际服务身份重放；权限验证可以打开现有文件的 append descriptor 后立即
+关闭（无create/truncate、无写入），并复核 hash：新writer可写，旧writer不可写，
+front mount namespace仍因 `ProtectSystem=strict` 不可写。root管理权不是第二个业务writer。
+
+失败时停止目标使用并保留所有新事实；不得用旧副本覆盖目标。只有确认目标已无writer、
+无新增事件且仍与原head一致，才可根据保存的精确metadata清单撤销原件immutable与权限。
+不要对 recovery 根或其它市场递归解冻，也不要自动恢复旧任务。
+
+搬迁验收只证明完整性和写入身份就绪。行情/交易日历/Champion适配器及资本组合入口
+未接通时，必须继续报告 `canonicalAccountConnected=false`；旧账本最后交易时间不
+因搬迁而变新，空仓旧账本也不能冒充当前收益。旁路模拟样本照常独立积累。
+
+## 9. 按能力划分的外部依赖
+
+以下各项只约束依赖它的能力，不是所有代码、只读展示、普通 dataset 接入或模拟
+积累的统一发布清单。局部可回退变更完成对应测试、回退和结果读回后独立交付；
+20 日、60–120 日及历史 PIT 条件不得阻断已合格 symbol/slot 的当前观察或受控模拟。
+已经成立的上游证据保留，下游失败单独报告：
 
 1. TradingDatas owner handoff 冻结的 base URL、catalog version、dataset IDs、schema、filters/as-of policy、auth/receipt authority，以及 TA 使用自身 token/client 完成的 fresh readback；上游声明不能替代 TA 独立复现；
-2. 所有 A 股消费者的同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；
+2. 本次切换的 A 股消费者完成同 `as_of` parity、V1 cutover、旧引用清零和 runtime no-fallback 负例；不等待无关消费者；
 3. 每个predictive dataset的首次可见时间、release/revision链、first-seen receipt和训练时vintage；无法还原历史回填版本的数据不得进入历史训练；
 4. PIT证券主数据覆盖上市/退市、板块迁移、ST/风险警示、停复牌和历史指数/行业成员，证明没有用当前存续集合回填过去Universe；
-5. 生产market-evidence verifier、Champion/数值特征registry verifier、独立metrics重算authority与长驻可信时钟，以及真实交易会话中的自动模拟盘、crash/restart、对账和 20 个以上交易日运行证据；
-6. 60–120 个交易日影子/模拟观察、费用后统计置信度、回撤与状态分层；
+5. 统一资本/执行接线需其 market-evidence、Champion/数值特征 registry 与可信时钟，费用后科学结论需独立 metrics 重算；真实会话、crash/restart、对账及 20 个交易日证明运行成熟度，不是首次启动模拟的前置；
+6. 60–120 个交易日、费用后统计置信度、回撤和状态分层仅约束长期策略结论及相应风险能力，不阻断只读发布、数据积累或独立模拟；
 7. DeepSeek若启用，会话中曾暴露的credential必须先由供应商侧revoke/rotate，新值不得入仓；还需真实模型/请求字段readback、quota/限流/幂等/数据留存核验、敏感数据门、提示注入语义/编码变体、引用绑定、typed receipt持久化、成本/延迟和冻结增量评测，且仍保持evidence-only。首版固定单次调用、无自动重试；未来是否保留或变更该策略必须另立评审，不能在运行时静默开启；
 8. standing release authorization下仍须完成当次preflight、回退方案，以及本地、Git、远端、生产文件、生产runtime和外部路由的分别验收；授权不能替代证据。
 
-当前服务器sidecar没有提供上述外部authority证据，因此业务能力仍只能是`fixture/mock-first / simulation-only / nonpromotion`；`server_validated_non_authority_simulation_only`只描述目标服务器环境的安装与旁路运行证据，不能提升为现役生产状态。
+`server_validated_non_authority_simulation_only`只描述目标服务器安装与旁路验证，
+不自行升级为当前运行、完整账户接线或实盘能力。已经运行的组件以同轮
+`STATUS.md` 与直接 runtime/receipt/readback 分层确认，不使用本节静态文字覆盖新证据。

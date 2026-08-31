@@ -544,7 +544,7 @@ review eligibility signal, not `training_eligible`: shared SampleJournal,
 training, calibration and promotion authority remain false.
 
 `minute_session_initializer.py` closes that pre-open preparation gap without
-adding a provider route. At 09:20 it reads the current TradingDatas catalog,
+adding a provider route. At the configured pre-open start it reads the current TradingDatas catalog,
 proves the target date is open, obtains `pretrade_date`, and fetches only the
 reviewed universe's prior-session `daily.close` rows through `/v1/query`. It
 revalidates the current `rt_min` catalog contract, copies the already-reviewed
@@ -561,12 +561,24 @@ For a reviewed scale transition, the initializer accepts an explicit absolute
 the canonical universe SHA into the published manifest. Minute `ts_code in`
 filters are capped at 100 values by the V1 contract, so larger artifacts use
 100-symbol shards and replayed shard aggregation; a 500-symbol artifact is not
-silently truncated to the preceding 30-symbol canary. The supplied artifact must still
-pass the main-board, listing-age and risk checks, have complete prior-close
-coverage, and match every exact minute snapshot before any simulated step can
-proceed. The same absolute path can be supplied to the scheduled initializer as
+silently truncated to the preceding 30-symbol canary. Fixed-cohort mode requires
+complete prior-close and exact minute coverage for its reviewed cohort.
+`rolling_eligible` instead publishes the eligible partition: recent listings
+remain pending, missing prior closes are excluded by symbol, and validated
+minute subsets can continue independently. Mainboard, risk, identity and source
+proof checks still apply; a changing source universe does not reset the age of
+already-eligible stocks. The same absolute path can be supplied to the scheduled initializer as
 `ASHARE_MINUTE_UNIVERSE_SOURCE`; when absent, the prior reviewed session
 universe remains the default.
+
+In rolling mode, a prior-close batch with a transport failure or HTTP 429/503
+is excluded as `previous_close_batch_unavailable`; later independent batches
+continue and previously verified batches are retained. A failed second read
+discards that whole batch, never admits its first read alone, and never retries
+the failed batch in this initializer invocation. Authentication, catalog,
+identity, pagination and source-evidence failures still fail closed. An empty
+effective partition is not a successful session. Fixed-cohort initialization
+keeps its complete-cohort requirement.
 
 Prior-session daily references use the same bounded catalog contract instead
 of a fixed 10-symbol batch. The initializer derives each batch from the
@@ -578,8 +590,8 @@ twice and merged only after identity and same-observation checks. Daily
 references still use five 100-symbol batches for a 500-symbol Universe even
 when catalog `max_page_size=500`.
 Every batch is independently read twice, allows at most five cursor pages, and
-has a row budget exactly equal to its requested symbol set. Returned
-`(ts_code, trade_date)` identities must exactly match that set; missing, extra,
+has a row budget exactly equal to its requested symbol set. In fixed-cohort
+mode, returned `(ts_code, trade_date)` identities must exactly match that set; missing, extra,
 duplicate, over-budget or non-terminating cursor chains, replay-changing,
 catalog-drifting, 413, stale or degraded evidence fails closed. The TA API
 adapter may retry only transient 429/503, timeout and transport failures with
@@ -594,6 +606,15 @@ retried on the next cadence. Pagination, contract, catalog, replay, metadata,
 identity and freshness failures still fail closed for the affected snapshot;
 they are never mislabeled as row-quality data. There is no provider fallback
 or direct database read.
+
+Shard deadlines reserve time for queued work. Each shard receives the larger
+of its fair share and the existing configured request timeout, capped by the
+remaining global load budget. This gives normal first/replay reads time to
+finish without granting a cold worker three full timeout periods. Every page's
+wire timeout and retry sleep respect the remaining deadline; the 180-second
+load budget, four workers and original per-request timeout are not increased.
+Worker-local bounded clients retain the original authentication and catalog
+checks; auth/contract failures cannot be mislabeled as partial transport loss.
 
 The initializer's `suspended=false` value is explicitly provisional: it is not
 a claim derived from an identityless suspension dataset. Every accepted bar
@@ -612,15 +633,22 @@ snapshot/window boundary.
 
 ### Isolated scale-500 runtime candidate
 
-`minute_scale500_runtime.py` is the AShare-owned selector for a direct,
-simulation-only 500-symbol transition. It requires an absolute, regular,
-single-link, non-writable frozen Universe artifact with exactly 500 unique
-reviewed symbols and an explicit canonical SHA256. The runtime candidate is
+`minute_scale500_runtime.py` retains its historical scale-500 name. The fixed
+experiment uses the configured complete frozen Universe, not a hard-coded
+500-symbol admission rule. It requires an absolute, regular, single-link,
+non-writable artifact with the configured unique reviewed identities and an
+explicit canonical SHA256. The runtime candidate is
 fixed to `http://127.0.0.1:18082`, `cn.dataset.rt_min`, and the existing
 catalog/query clients; it never reads a provider database directly and does not
 add a provider route, fallback, broker, or historical-minute fallback. Bounded
 API retry and bounded shard fanout belong to the injected data adapter; the
 runtime gate still validates the resulting receipt and coverage independently.
+
+Only the fixed-cohort experiment requires exactly 3,193 source identities.
+`--rolling-eligible` accepts a non-empty, reviewed source of variable size and
+binds its actual count and canonical hash; a reviewed listing/delisting update
+does not reset or block unrelated eligible stocks. Source safety, uniqueness,
+scope checks and per-session partition identity remain required.
 
 The scale state root and rollback-30 state root must be disjoint. The selector
 can write only the scale root. The rollback root is mounted read-only and is
@@ -630,33 +658,38 @@ publishes no state bundle. Post-close minute rows and a prior 30-symbol bundle
 are forbidden as opening evidence.
 
 For a Controller-held next-window transition, `initialize` may additionally
-receive one explicit `--target-bar-end` and exactly five repeated
+receive one explicit `--target-bar-end` and the complete configured set of
 `--scale500-cohort-receipt` arguments. Each receipt must be an existing
-`minute_canary` observation-only, delayed-paper result for one deterministic
-100-symbol slice of the frozen 500 set. The initializer normalizes the canary's
-timezone-bearing ISO `bar_end`, requires all five receipts and all 500 embedded
+`minute_canary` observation-only, delayed-paper result for its deterministic
+slice of the frozen set. The initializer normalizes the canary's
+timezone-bearing ISO `bar_end`, requires all cohort receipts and all embedded
 bars to bind the same formal session slot, and records only their secret-free
 symbol, receipt, lineage, snapshot, and replay bindings in
 `minute-manifest.json` (never provider rows). Mixed slots, later-bar
 selection, overlap, missing/extra/duplicate identities, incomplete lineage,
-replay drift, a non-500 `max_rows`, or any partial cohort fails closed. This is
-session preparation only. The two adjacent exact 500/500 gate still controls
-delayed-paper activation, but it is not an admission gate for the recurring
-observation timer.
+replay drift, a `max_rows` inconsistent with the configured Universe, or any
+partial reference cohort fails closed. This is session preparation only.
+The two adjacent complete-cohort gate controls fixed-experiment activation,
+not `rolling_eligible` delayed-paper admission. It is not a promise that the
+fixed runner is called only after the second bar; gate and loop progress are
+separate evidence.
 
-Normally, the first accepted scale observations must be the adjacent 09:35 and
-09:40 500/500 bars. For `--rolling-eligible`, if a retryable incident leaves the
+In fixed-cohort mode, the first accepted scale observations must be the adjacent
+09:35 and 09:40 complete-cohort bars. In `--rolling-eligible`, the first validated
+current subset activates the day; there is no two-opening-bar or 99%-coverage
+entry gate. If a retryable incident leaves the
 day gate pending with no state bundle after the opening slot, the recurring
-paper path may start a new partial session from the next current complete formal
+paper path may start a new partial session from the next current formal
 bar. It never backfills skipped bars, and records `late_start=true`,
-`full_session_complete=false` and `learning_eligible=false`; later bars continue
-observation only. This automatic recovery is intentionally narrower than a
+`full_session_complete=false` and `learning_eligible=false`; valid later subsets
+continue the existing fixture simulation. This does not grant canonical capital
+or execution authority. This automatic recovery is intentionally narrower than a
 manual full-universe start. A one-time, manual `run --allow-late-start` remains
 the only exception for the fixed 3193 full-universe path: it can start only from
 the runner's exact current completed formal bar after an independently verified
-500/500 production canary. The static late-start candidate requires its
+full-cohort production canary. The static late-start candidate requires its
 secret-free canary receipt and verifies the same trading date, exact bar,
-delayed-paper tier, 500 canonical identities, same-observation replay,
+delayed-paper tier, exact frozen identities, same-observation replay,
 receipt/lineage proof and frozen Universe digest before it invokes the runner. It never
 queries or backfills earlier bars, cannot use mixed/failed observations, and is
 not accepted by `initialize` or either recurring systemd unit. The tracked
@@ -673,23 +706,32 @@ the normal-path timer continues the 48-slot session. Any missing, partial, mixed
 degraded, identity, lineage, fanout, continuity, authority, or persistence
 failure remains fail-closed for delayed-paper.
 
-The full 500/500 cohort remains mandatory before fixed `scale500`
-`delayed-paper` can run. In `rolling_eligible` mode, a separate pure receipt
+The complete frozen cohort remains mandatory before fixed `scale500`
+`delayed-paper` can run. For that fixed-cohort experiment, a separate pure receipt
 builder may describe a 99%-or-higher partial cohort only
 when the exact missing identity set is explicit and no replacement identity is
 present. That receipt is deterministic, zero-notional and shadow-only: it has
 no candidate, capital, execution, training or promotion authority and cannot
-be routed through the delayed-paper runner. The recurring Scale500 path now
+be routed through the delayed-paper runner. The fixed-cohort Scale500 path
 wires the same builder before any state-bundle mutation: a proof- and
-lineage-complete 495--499 subset is persisted as
+lineage-complete subset meeting the configured 99% threshold is persisted as
 `quality_status=usable_degraded` under the isolated scale day root, while the
-exact 500/500 snapshot alone continues into the existing runner. An unsafe
+complete frozen-cohort snapshot alone continues into the existing loop. An unsafe
 identity, time, key, proof, or lineage result fails only that cohort and leaves
 the Scale500 gate selected so the next cadence can observe again; it never
 grants execution, training, promotion, capital, or real-trading authority.
+This shadow-only branch is not the rolling admission rule: `rolling_eligible`
+passes `partial_observation_minimum=None` and validates the runner's accepted
+subset with `allow_partial=True` and `allow_gap_recovery=True`. Valid stock bars
+enter the fixture loop while missing/rejected stocks and gaps stay explicit.
 
-The runtime records `fallback30_selected` and its stable failure reason in the
-isolated scale gate before it exits non-zero. The tracked rollback unit only
+Failures entering the fixed-cohort/non-retryable exception branch record
+`fallback30_selected` and their stable reason before exiting non-zero.
+The partial-cohort validation branch instead returns its explicit failure
+without latching fallback, preserving the selected scale gate.
+Retryable rolling failures instead keep the selected rolling lane for the next
+slot (`retry_next_slot=true`); they do not latch independent future slots out.
+The tracked rollback unit only
 disables the two scale timers and stops the two scale services; it never changes
 TA `current`, starts or enables the 30-symbol units, or deletes or rewrites either
 state root. The preserved rollback-30 state therefore remains evidence for a
@@ -708,8 +750,16 @@ Installing or enabling them requires an immutable release, the frozen artifact
 readback, `REAL_TRADING_ENABLED=false`, systemd verification, old-state byte
 fingerprints, and a tested rollback.
 
-The tracked systemd candidate runs at second 40 after each five-minute boundary
-during the two A-share sessions. The TradingDatas collector is an independent
+The tracked timers run at 09:42–11:37 and 13:12–15:07, every five minutes,
+420 seconds after each completed bar (plus up to ten seconds of timer jitter).
+The baseline service explicitly permits gap-marked late starts; rolling mode
+admits the first valid subset without a two-opening-bar availability gate.
+A rejected same-observation read does not admit any bad rows and does not latch
+future independent slots out. Gap recovery cannot claim full-session completion
+or learning eligibility. Authentication, state integrity and live-trading guards
+remain closed. The scale-paper service budget is 240 seconds, below its 300-second
+cadence; deployments must reconcile any older timeout or ExecStart overrides.
+The TradingDatas collector is an independent
 timer, not an ordering guarantee; its SQLite authority lock may overlap a TA
 request. The API adapter therefore uses the bounded transient retry above, and
 the natural-window readback must record collector overlap separately. It
@@ -776,6 +826,15 @@ dynamic-position sleeve changes only fixture lot count inside the same
 canonical 50k constraints. These four books are independent counterfactual
 experiments, not four real accounts and not four capital authorities.
 
+An otherwise eligible stock whose minimum 100-share lot exceeds the single-name
+cap receives `minute_symbol_too_expensive_for_account`; selection continues down
+the existing ranking to an affordable candidate. This does not change rank,
+cash, gross exposure, T+1, fill-capacity or price-limit checks. If every candidate
+is unaffordable, the sleeve remains without an order and retains the refusals.
+Delayed-paper receipts expose `settled_quantity`, `settled_notional_cny` and
+`settled_fee_cny` from the actual fixture receipt (zero if no settlement),
+separately from coverage, pending orders and per-sleeve reconciliation.
+
 Pending orders are restart-state hashed and may settle only against the exact
 next five-minute bar. A skipped/missing bar becomes a formal nonfill; it is
 never filled late. Data failure cancels pending new-risk attempts, records
@@ -786,9 +845,33 @@ step reconciles each sleeve only when marks exist for every held symbol.
 The loop is intentionally process-local and fixture-only. Its restart format
 protects test state integrity but is not the append-only SampleJournal,
 MarketCapitalLedger, durable outbox, production scheduler or promotion
-authority. Real minute handoff still requires the separate TradingDatas
-catalog profile, five-day observation gate and a future durable settlement
-adapter.
+authority. Real minute input uses the separate TradingDatas catalog/profile
+and receipt checks. Valid subsets may accumulate delayed-paper evidence now;
+five-day maturity is not an entry gate. Canonical capital-backed settlement is
+a separate, still test-only composition, not implied by these fixture books.
+
+### Capital-backed paper session (sibling runner)
+
+`Ashare.capital_backed_paper_runner` is the A-share-lane sibling for one
+natural session on the relocated 50k `ashare-capital-v1` account. It does
+**not** wrap `compose_capital_backed_paper_runtime` and does not accept live
+TradingDatas inside that fixture composer. The runner binds an isolated or
+explicitly allowed canonical ledger, classifies a frozen hashed 科技 + 医药
+mainboard universe (plus a small add-list) through
+`CanonicalMainboardScopePolicy`, gates each remaining symbol on
+dataset/catalog/session window evidence, and persists every candidate into
+SampleJournal plus a local `latest.json` as `paper_filled`,
+`paper_not_filled`, `rejected`, or `observation_only` with an explicit reason
+code.
+
+ChiNext `300/301` and STAR `688/689` stay exclusions. Industry shadow names
+are not order identity. Coverage `accepted_count`, daily close/touch, KPI
+pressure, and `MinuteFixturePaperBook` fingerprints are never fills. A
+`PAPER_FILLED` row is written only after `MarketCapitalLedger` proves a new
+`fill_commit`. `REAL_TRADING_ENABLED` must remain `false`. The systemd
+oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`
+is a candidate only; it is not enabled by this change and does not flip
+`canonicalAccountConnected`.
 
 ### Read-only real-data canary
 
@@ -913,3 +996,35 @@ evidence:
 - do not connect a broker or create real orders;
 - do not restore the online front;
 - keep `REAL_TRADING_ENABLED=false`.
+
+### TD schema compatibility: cumulative minute and broker month
+
+`build_rt_min_daily_pit_feature_contract` preserves the legacy major 1 input
+(including response `freq=1MIN`). Major 2 and major 3 require the actual initial
+`QueryRequest`: its dataset, schema and exact eight fields must match the bound
+first-page request hash. Both versions retain `ts_code,time,open,close,high,low,
+vol,amount` without inventing a response `freq`; TD's upstream request remains
+`freq=1MIN`. The adapter verifies unique `[ts_code,time]` identities and exact
+response shape. Major 3 adopts that declared TD primary key; major 2's old
+empty registry identity is not evidence of current coverage. Append-only
+revisions with duplicate identities fail closed, rather than being deduplicated.
+Receipt, observation time, lineage, requested symbols and decision-time checks
+remain required. No version grants historical PIT, learning, promotion or
+execution authority, nor does this compatibility patch prove minute coverage.
+The legacy call without an explicit request remains major 1 only.
+
+`TradingDatasAshareEvidencePort` supports broker recommendation major 1 and
+major 2. Major 2 freezes the exact native fields/identity
+`[month,broker,ts_code,name]`; unrelated schema versions and target contract
+fingerprint changes fail closed. Native `YYYYMM` remains month precision,
+not an invented publication date or historical known-time proof. Availability
+comes from the receipt observation and must precede the decision; future months
+are rejected. The existing decision-time `as_of` request remains tied to the
+reviewed TD `month` as-of contract (catalog wire does not expose an as-of key).
+Same-observation replay and all existing proof/trading restrictions remain.
+
+These are caller-invoked read-only adapters using the existing authenticated
+catalog/query client; no transport, scheduler or runtime is instantiated here.
+Offline regression entry: `python -m pytest -q tests/test_ashare_rt_min_daily_pit.py
+tests/test_ashare_event_evidence.py`. Fixture success is not a fresh authenticated
+production readback or a stable-consumer declaration.

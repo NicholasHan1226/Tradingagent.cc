@@ -347,6 +347,96 @@ Display-ready fields used by the homepage:
   `fill_price_source`, `fill_price_source_class`, and `fill_evidence`; missing
   fill provenance is a chain-validation sample, not strategy PnL.
 
+## Independent Runtime Observations
+
+The existing snapshot optionally includes `runtimeObservations`; no route or
+service is added. `src/server/runtimeObservations.ts` calls the separately owned
+`tools/read_runtime_observations.py` only when both server-side variables are
+configured: `TRADING_AGENT_RUNTIME_PYTHON` (absolute executable) and
+`TRADING_AGENT_RUNTIME_READER` (absolute script). The integrator owns CLI and
+production unit bindings. These are not browser/Vite variables. The front does
+not discover runtime/recovery paths, read credentials, or contact TradingDatas.
+
+Execution is exactly `execFile(python, ['-B', reader], { shell: false, ... })`.
+No request parameter contributes to executable, argv or environment. Child env
+contains only `PATH`, `LANG`, `REAL_TRADING_ENABLED=false`,
+`PYTHONDONTWRITEBYTECODE=1`, `PYTHONUTF8=1`; no inherited HOME, PYTHONPATH,
+loader options, proxy, TD token or credential settings. The CLI owns read-only
+validation of fixed existing runtime roots and must not write or use the network.
+
+HTTP never awaits the child. The first request starts a single background read
+and returns explicit pending entries with null source timestamps/hashes; the
+existing browser poll later picks up the result. Concurrent requests share that
+one process. The child has a 30-second timeout with SIGKILL and a 64KiB
+stdout/stderr limit. Success and failure are cached for five minutes **after
+completion**. Hits preserve the original `generatedAt`. Expiry immediately
+removes the old successful result and starts a request-triggered refresh; failure
+replaces it with local unavailable entries, never indefinitely stale success.
+No new scheduler or periodic refresh timer is introduced. Unconfigured readers
+omit the optional field and never spawn. Incomplete/relative configuration,
+spawn errors, timeout, malformed/oversized output and contract failures affect
+only this field. Raw stderr, command paths and exception messages are not exposed.
+
+Accepted envelope (strict key allowlists throughout):
+
+```text
+contract: tradingagent.runtime_observations.v1
+readOnly: true
+realTradingEnabled: false
+generatedAt: timezone-aware ISO timestamp
+entries: [] or up to two distinct entries
+  id/market: ashare-minute-scale/A-share OR crypto-g5/Crypto
+  sourceClass: delayed_research
+  status: ready | dated | pending | unavailable | invalid
+  observedAt: timezone-aware ISO timestamp | null
+  sourceSha256: 64 hex characters | null
+  coverage?: { universe, accepted, missing } nonnegative safe integers
+  simulation?: { currency: CNY (A-share) | USDT (Crypto),
+    cash, equity, fees, realizedPnl: decimal strings,
+    positions, orders: nonnegative safe integers }
+  counts?: { completed, rejected } nonnegative safe integers
+  canonicalAccountConnected: false
+  reason: string
+```
+
+No unknown fields, IDs, market/currency mismatches, duplicate IDs, implicit safety
+defaults, numeric money, non-finite decimals or fractional/negative counts are
+accepted. Coverage requires accepted + missing = universe. Decimal strings stay
+strings; display never rounds through a JavaScript number. The browser also
+validates this optional block; an invalid block cannot fail the core snapshot.
+`ready` and `dated` require non-null source SHA-256 and timezone-aware
+`observedAt <= generatedAt`. Other statuses must not include simulation,
+coverage or count payloads. Unknown reasons always render a generic message;
+only the explicitly mapped reader/source reason codes have user-facing text.
+Arbitrary reason strings, including Chinese text, are never echoed by the UI.
+
+The homepage uses existing panel styles and only filters by selected market.
+A-share shows coverage and source time; Crypto shows ledger cash/equity/fees,
+position counts, simulated order receipt counts and source time. `counts.completed`
+means completed observation rounds, never fills; `counts.rejected` means data
+rejections, never risk-rejected orders. The panel labels them accordingly.
+`observedAt` is the A-share source observation time or the Crypto market slot,
+not an equity cutoff time. `generatedAt` is the CLI verification time; local
+adapter pending/failure envelopes instead label their timestamp as refresh-start
+or read-status time. The UI does not display `realizedPnl` as current return.
+All Markets hides every monetary value
+and only juxtaposes counts. Pending, invalid and unavailable states hide
+metrics; empty entries are not substituted with zero or demo data. Dates include
+the calendar date and UTC+8, even if the containing snapshot is new. `ready`
+means readable source, not present-day performance; `dated` explicitly labels
+historical data. No freshness cadence is invented in the UI. The CLI determines
+the source status. These data never enter account, portfolio, performance,
+market summaries, heartbeat, maturity, promotion or 48-hour stability assertions.
+Recovery account discovery is deliberately not connected.
+
+Local verification: `npm run lint`, `npm test -- --run`, `npm run build`,
+`npm run build:api`. Targeted tests include
+`src/server/runtimeObservations.test.ts`,
+`src/server/runtimeObservationsSnapshot.test.ts`, and
+`src/components/panels/RuntimeObservationsPanel.test.tsx`.
+Local synthetic tests prove integration/containment, not production CLI execution,
+runtime availability, current PnL, or natural-market stability.
+
 ## Result-First Panel Rules
 
 Every primary page should start with a compact summary board before detailed
@@ -472,7 +562,10 @@ omit `VITE_TRADING_AGENT_SNAPSHOT_URL` and use the same-origin
 
 ## Nginx Shape
 
-Example route shape for the production server:
+Local-only fallback when a single-user remote boundary has not been verified.
+The tracked location is [tradingagent-snapshot-local-only.conf](../../deploy/nginx/tradingagent-snapshot-local-only.conf).
+Replace only the existing snapshot location; preserve the site's listener,
+static root, health route and other sites. Do not add a broad `/api/` proxy.
 
 ```nginx
 server {
@@ -486,20 +579,35 @@ server {
     try_files $uri /index.html;
   }
 
-  location /api/trading-agent/snapshot {
+  location = /api/trading-agent/snapshot {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
     proxy_pass http://127.0.0.1:8787/api/trading-agent/snapshot;
     proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header Authorization "Bearer server-only-token";
+    proxy_set_header X-Real-IP $remote_addr;
   }
 }
 ```
 
-If the internal API is bound to `127.0.0.1` and only reachable through the same
-server Nginx process, the token can be omitted by leaving
-`TRADING_AGENT_SNAPSHOT_API_TOKEN` unset. If the token is set, Nginx must inject
-the `Authorization` header as shown above.
+A loopback backend does **not** secure a public reverse proxy. A proxy-injected
+Bearer token authenticates the proxy, not the browser user; CORS is not access
+control. Omit the optional backend token only when every reachable ingress is
+independently restricted. Never place a token in a tracked Nginx example.
+
+Before applying the local-only location, inspect `nginx -T` for other snapshot
+proxies, `real_ip_header` and `set_real_ip_from`; a forwarded header must not turn
+an external peer into localhost. Validate with `nginx -t`, then require 200 from
+localhost and Nginx 403 from a real non-loopback connection for all three TA
+host aliases, including forged forwarding headers and normalized path variants.
+Unmatched SPA HTML is not snapshot JSON. An edge/ICP 403 is not origin denial
+proof. Direct Node access must remain bound to loopback. IPv6 is tested only if
+an IPv6 listener already exists; do not open one for this check.
+
+This closes the named Nginx route only, not any unverified historical Pages or
+Tunnel ingress. Remote API use remains unavailable until separately authorized
+single-user access is installed and verified. Roll back an observation-reader
+change by restoring its unit, not by reopening an anonymous API route.
 
 ## Production Service Shape
 

@@ -12,6 +12,7 @@ trading authority exists here.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import copy
 import hashlib
 import json
 import math
@@ -194,26 +195,70 @@ def _collect_minute_query_pages_with_retry(
 
     delays = (0.0, *MINUTE_QUERY_RETRY_DELAYS_SECONDS)
     for attempt, delay in enumerate(delays):
-        if deadline is not None and _monotonic() >= deadline:
-            raise MinuteSnapshotLoadBudgetExhausted(
-                "minute_snapshot_load_budget_exhausted",
-                failure_stage="query_request",
-                failure_class="MinuteSnapshotLoadBudgetExhausted",
-            )
-        if delay:
-            _sleep(delay)
+        _wait_for_minute_read_retry(delay, deadline=deadline)
         try:
-            return collect_query_pages(
+            run = collect_query_pages(
                 client=client,
                 request=request,
                 identity_fields=identity_fields,
                 max_pages=max_pages,
                 max_rows=max_rows,
             )
+            _minute_read_budget_remaining(deadline)
+            return run
         except (SharedSignalsV1Error, OSError) as exc:
             if attempt == len(delays) - 1 or not _is_retryable_minute_query_error(exc):
                 raise
     raise AssertionError("minute query retry loop exhausted without a result")
+
+
+def _minute_read_budget_remaining(deadline: float | None) -> float:
+    remaining = math.inf if deadline is None else deadline - _monotonic()
+    if remaining <= 0:
+        raise MinuteSnapshotLoadBudgetExhausted(
+            "minute_snapshot_load_budget_exhausted",
+            failure_stage="query_request",
+            failure_class="MinuteSnapshotLoadBudgetExhausted",
+        )
+    return remaining
+
+
+def _wait_for_minute_read_retry(delay: float, *, deadline: float | None) -> None:
+    remaining = _minute_read_budget_remaining(deadline)
+    if delay >= remaining:
+        raise MinuteSnapshotLoadBudgetExhausted(
+            "minute_snapshot_load_budget_exhausted",
+            failure_stage="query_request",
+            failure_class="MinuteSnapshotLoadBudgetExhausted",
+        )
+    if delay:
+        _sleep(delay)
+        _minute_read_budget_remaining(deadline)
+
+
+def _minute_deadline_client(
+    client: SharedSignalsV1Client, *, deadline: Callable[[], float],
+) -> SharedSignalsV1Client:
+    """Keep the client contract/transport, capping every page's wire timeout.
+
+    The shared client has no per-call timeout parameter. A worker-local copy
+    avoids changing its caller's config, cache or single-flight transport.
+    Authentication and envelope validation remain with their existing owners.
+    """
+
+    bounded = copy(client)
+    bounded._cache = dict(client._cache)
+    bounded._query_cache_index = dict(client._query_cache_index)
+    transport = client._transport
+    if transport is not None:
+        def send(**kwargs: Any) -> Any:
+            kwargs["timeout_seconds"] = min(
+                kwargs["timeout_seconds"], _minute_read_budget_remaining(deadline())
+            )
+            return transport(**kwargs)
+
+        bounded._transport = send
+    return bounded
 
 
 def _collect_stable_minute_pair(
@@ -239,8 +284,7 @@ def _collect_stable_minute_pair(
 
     delays = (0.0, *MINUTE_STABLE_PAIR_RETRY_DELAYS_SECONDS)
     for attempt, delay in enumerate(delays[:MINUTE_STABLE_PAIR_ATTEMPTS]):
-        if delay:
-            _sleep(delay)
+        _wait_for_minute_read_retry(delay, deadline=deadline)
         first = _collect_minute_query_pages_with_retry(
             client=client,
             request=request,
@@ -1868,7 +1912,12 @@ class TradingDatasMinuteMarketDataPort:
             raise MinuteDataContractError("minute_fanout_receipt_proof_unsupported")
         if load_budget_seconds is None:
             load_budget_seconds = MINUTE_SNAPSHOT_LOAD_BUDGET_SECONDS
+        if not math.isfinite(load_budget_seconds):
+            raise MinuteDataContractError("minute_snapshot_load_budget_invalid")
         load_deadline = _monotonic() + load_budget_seconds
+        worker_count = min(MAX_MINUTE_FANOUT_WORKERS, len(shards))
+        scheduling_lock = threading.Lock()
+        started_shards = 0
 
         # The production bearer transport is deliberately single-flight per
         # client. Keep the bounded fanout parallel, but give each executor
@@ -1886,20 +1935,7 @@ class TradingDatasMinuteMarketDataPort:
             PagedQueryRun | None,
             dict[str, object] | None,
         ]:
-            shard_client = self._client
-            if self._shard_client_factory is not None:
-                shard_client = getattr(worker_state, "client", None)
-                if shard_client is None:
-                    shard_client = self._shard_client_factory()
-                    if not isinstance(shard_client, SharedSignalsV1Client):
-                        raise MinuteDataContractError(
-                            "minute_shard_client_factory_invalid"
-                        )
-                    try:
-                        shard_client.get_catalog()
-                    except SharedSignalsV1Error as exc:
-                        raise _marked_request_failure(exc, phase="catalog") from exc
-                    worker_state.client = shard_client
+            nonlocal started_shards
             shard_filters = dict(filters)
             shard_filters[profile.symbol_field] = {"in": list(symbols)}
             page_limit = min(profile.page_limit, len(symbols))
@@ -1913,14 +1949,55 @@ class TradingDatasMinuteMarketDataPort:
                 limit=page_limit,
                 include_receipt_proofs=False,
             )
+            phase = "query"
             try:
+                _minute_read_budget_remaining(load_deadline)
+                shard_client = getattr(worker_state, "client", None)
+                source = shard_client
+                if source is None:
+                    source = (
+                        self._client if self._shard_client_factory is None
+                        else self._shard_client_factory()
+                    )
+                    if not isinstance(source, SharedSignalsV1Client):
+                        raise MinuteDataContractError("minute_shard_client_factory_invalid")
+                # Reserve time for queued waves instead of letting the first
+                # retry chains consume the entire load budget. Keep at least
+                # the existing client timeout as a read quantum: hard fair
+                # shares alone can discard otherwise healthy catalog/pairs.
+                with scheduling_lock:
+                    now = _monotonic()
+                    remaining_shards = len(shards) - started_shards
+                    started_shards += 1
+                    fair_budget = max(0.0, load_deadline - now) * (
+                        worker_count / max(worker_count, remaining_shards)
+                    )
+                    worker_state.deadline = min(
+                        load_deadline,
+                        now + max(source.config.timeout_seconds, fair_budget),
+                    )
+                _minute_read_budget_remaining(worker_state.deadline)
+                if shard_client is None:
+                    shard_client = _minute_deadline_client(
+                        source, deadline=lambda: worker_state.deadline,
+                    )
+                    if self._shard_client_factory is not None:
+                        phase = "catalog"
+                        try:
+                            shard_client.get_catalog()
+                        except SharedSignalsV1Error as exc:
+                            if not _is_retryable_minute_query_error(exc):
+                                raise _marked_request_failure(exc, phase="catalog") from exc
+                            raise
+                    worker_state.client = shard_client
+                phase = "query"
                 first, replay = _collect_stable_minute_pair(
                     client=shard_client,
                     request=request,
                     identity_fields=profile.identity_fields,
                     max_pages=shard_pages,
                     max_rows=len(symbols),
-                    deadline=load_deadline,
+                    deadline=worker_state.deadline,
                 )
                 return index, first, replay, None
             except PaginationContractError:
@@ -1934,11 +2011,13 @@ class TradingDatasMinuteMarketDataPort:
                     "shard_index": index,
                     "symbol_count": len(symbols),
                     "reason_code": exc.reason_code,
-                    "failure_stage": exc.failure_stage,
+                    "failure_stage": f"{phase}_request",
                     "failure_class": exc.failure_class,
                 }
             except (SharedSignalsV1Error, OSError) as exc:
-                marked = _marked_request_failure(exc, phase="query")
+                if not _is_retryable_minute_query_error(exc):
+                    raise
+                marked = _marked_request_failure(exc, phase=phase)
                 return index, None, None, {
                     "shard_index": index,
                     "symbol_count": len(symbols),
@@ -1955,9 +2034,7 @@ class TradingDatasMinuteMarketDataPort:
                 dict[str, object] | None,
             ],
         ] = {}
-        with ThreadPoolExecutor(
-            max_workers=min(MAX_MINUTE_FANOUT_WORKERS, len(shards))
-        ) as executor:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = {
                 executor.submit(query_shard, index, symbols): index
                 for index, symbols in enumerate(shards)

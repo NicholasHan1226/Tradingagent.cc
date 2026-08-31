@@ -742,6 +742,7 @@ class _LazyObservationPort:
         token_file: Path,
         transport_factory: Callable[..., HTTPTransport],
         config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+        current_window_end: datetime | None = None,
         timeout_seconds: float = RUNTIME_TIMEOUT_SECONDS,
         retry_sleep: Callable[[float], None] = time.sleep,
         budget_check: Callable[[], float] | None = None,
@@ -749,6 +750,7 @@ class _LazyObservationPort:
         self._manifest = manifest
         self._token_file = token_file
         self._config = config
+        self._current_window_end = current_window_end
         self._transport_factory = transport_factory
         self._timeout_seconds = timeout_seconds
         self._retry_sleep = retry_sleep
@@ -764,7 +766,7 @@ class _LazyObservationPort:
     ) -> tuple[
         CryptoMarketObservation,
         dict[str, list[dict[str, Any]]],
-        dict[str, Any],
+        HTTPTransport,
     ]:
         """Collect one slot, retrying only transport-layer faults in-place.
 
@@ -772,10 +774,9 @@ class _LazyObservationPort:
         frozen manifest configuration; the slot cutoff never moves.  After
         the final attempt the exact original failure propagates, preserving
         the established fail-closed paths (data_reject for wrapped semantic
-        errors, runtime failure for raw transport errors).  The auxiliary
-        spread leg rides on the successful bar attempt and is error-isolated:
-        its failures degrade to a recorded status instead of triggering the
-        bar retry path or failing the slot.
+        errors, runtime failure for raw transport errors). Return the same
+        bounded transport so the caller can persist the verified bars before
+        sampling optional spreads. Spread failures never retry the bar leg.
         """
 
         self.collect_calls += 1
@@ -857,7 +858,7 @@ class _LazyObservationPort:
     ) -> tuple[
         CryptoMarketObservation,
         dict[str, list[dict[str, Any]]],
-        dict[str, Any],
+        HTTPTransport,
     ]:
         try:
             self.transport_factory_attempts += 1
@@ -883,6 +884,14 @@ class _LazyObservationPort:
             catalog = client.get_catalog()
             self.observed_catalog_version = catalog.catalog_version
             self._manifest.profile.verify_catalog(catalog)
+            shape_retry_delays = self._config.bar_shape_retry_delays
+            if (
+                self._current_window_end is not None
+                and window.window_end < self._current_window_end
+            ):
+                # Do not spend the current receipt's validity window retrying
+                # a historical shape rejection; let gap recovery validate it.
+                shape_retry_delays = ()
             observation, rows_by_symbol = (
                 _collect_market_observation_rows_with_catalog(
                     client,
@@ -890,13 +899,12 @@ class _LazyObservationPort:
                     expected_catalog_version=catalog.catalog_version,
                     window=window,
                     symbols=self._config.symbols,
-                    shape_retry_delays=self._config.bar_shape_retry_delays,
+                    shape_retry_delays=shape_retry_delays,
                     retry_sleep=self._retry_sleep,
                     budget_remaining=self._budget_check,
                 )
             )
-            spread = self._collect_spread(transport=transport, window=window)
-            return observation, rows_by_symbol, spread
+            return observation, rows_by_symbol, transport
         except CryptoMarketObservationError:
             raise
         except CryptoTenSymbolProfileError:
@@ -1222,16 +1230,19 @@ def _observation_for_slot(
             window=window,
             config=config,
         )
-    observation, rows_by_symbol, spread = lazy.collect(window)
-    store.write_bars_sidecar(
-        build_ten_symbol_bars_sidecar(
-            window=window,
-            profile_sha256=manifest.profile.profile_sha256,
-            observation=observation,
-            rows_by_symbol=rows_by_symbol,
-            bars_sidecar_contract=config.bars_sidecar_contract,
-        )
+    observation, rows_by_symbol, transport = lazy.collect(window)
+    sidecar = build_ten_symbol_bars_sidecar(
+        window=window,
+        profile_sha256=manifest.profile.profile_sha256,
+        observation=observation,
+        rows_by_symbol=rows_by_symbol,
+        bars_sidecar_contract=config.bars_sidecar_contract,
     )
+    lazy._budget_check()
+    store.write_bars_sidecar(sidecar)
+    # Budget exhaustion in the optional leg must leave the verified bars
+    # available for the existing zero-network orphan recovery path.
+    spread = lazy._collect_spread(transport=transport, window=window)
     return observation, _fresh_spread_block(store=store, spread=spread, config=config)
 
 
@@ -1310,13 +1321,27 @@ def _attempt_outage_gap_recovery(
 ) -> dict[str, Any]:
     """Append one checksum-bound data_gap after the current window passes."""
 
-    if store.pending_record() is not None:
+    pending_record = {
+        "window_end": _iso_utc(current_window.window_end),
+        "observation_cutoff": _iso_utc(current_window.observation_cutoff),
+        "profile_sha256": manifest.profile.profile_sha256,
+        "catalog_version": manifest.catalog_version,
+    }
+    existing_pending = store.pending_record()
+    if existing_pending is not None and any(
+        existing_pending.get(key) != value for key, value in pending_record.items()
+    ):
         raise CryptoTenSymbolObservationRuntimeError(
             "runtime_outage_gap_pending_forbidden"
         )
     checkpoint = store.checkpoint()
     if checkpoint.get("latest_terminal_slot") != _iso_utc(prior_market_slot):
         raise CryptoTenSymbolObservationRuntimeError("runtime_outage_gap_state_changed")
+    # Use the existing pending marker to locate this recovery window even if
+    # the invocation deadline expires and the next invocation selects a new slot.
+    # set_pending is idempotent: never clear a matching orphan's only locator
+    # before its terminal event (or explicit data rejection) has been appended.
+    store.set_pending(pending_record)
     try:
         observation, spread_block = _observation_for_slot(
             store=store,
@@ -1326,13 +1351,15 @@ def _attempt_outage_gap_recovery(
             config=config,
         )
     except CryptoMarketObservationError as exc:
-        return _append_reject(
+        result = _append_reject(
             store=store,
             manifest=manifest,
             window=current_window,
             reason_code=str(exc),
             config=config,
         )
+        store.clear_pending(_iso_utc(current_window.window_end))
+        return result
     stored = store.append_event(
         _data_gap_event(
             manifest=manifest,
@@ -1345,6 +1372,7 @@ def _attempt_outage_gap_recovery(
             config=config,
         )
     )
+    store.clear_pending(_iso_utc(current_window.window_end))
     return {
         "status": "completed",
         "reason_code": _family_reason(config, "outage_gap_recovered"),
@@ -1411,6 +1439,7 @@ def run_crypto_ten_symbol_observation_once(
         token_file=token,
         transport_factory=bounded_transport_factory,
         config=config,
+        current_window_end=current_window.window_end,
         retry_sleep=retry_sleep,
         budget_check=lambda: _remaining_invocation_seconds(
             invocation_started_at, float(budget_seconds)
@@ -1470,10 +1499,12 @@ def run_crypto_ten_symbol_observation_once(
                             "network_used": False,
                         }
                     )
-                elif pending_slot < current_window.window_end:
-                    # A historical pending intent can never pass the current-read
-                    # watermark gate; drop the marker and let the data_gap
-                    # contract record the skipped range explicitly.
+                elif (
+                    pending_slot < current_window.window_end
+                    and store.read_bars_sidecar(str(pending["window_end"])) is None
+                ):
+                    # Only an intent without preserved bars needs a new current
+                    # read. A historical orphan retains its original PIT proof.
                     store.clear_pending(str(pending["window_end"]))
                     cycle_results.append(
                         {
@@ -1494,19 +1525,57 @@ def run_crypto_ten_symbol_observation_once(
                             "runtime_pending_profile_drift"
                         )
                     try:
-                        result = _fresh_cycle(
-                            store=store,
-                            lazy=lazy,
-                            manifest=manifest,
-                            target_window_end=pending_slot,
-                            config=config,
-                        )
+                        collect_calls_before = lazy.collect_calls
+                        cycle_kind = "pending_recovery"
+                        if (
+                            latest_terminal is not None
+                            and pending_slot > latest_terminal + timedelta(minutes=5)
+                        ):
+                            rejected_window = _window_for_end(
+                                latest_terminal + timedelta(minutes=5), config=config
+                            )
+                            rejected = store.event_for_slot(
+                                "data_reject", _iso_utc(rejected_window.window_end)
+                            )
+                            if (
+                                rejected is None
+                                or rejected.get("reason_code")
+                                not in HISTORICAL_GAP_RECOVERY_REASONS
+                                or rejected.get("profile_sha256")
+                                != manifest.profile.profile_sha256
+                                or rejected.get("observation_cutoff")
+                                != _iso_utc(rejected_window.observation_cutoff)
+                            ):
+                                raise CryptoTenSymbolObservationRuntimeError(
+                                    "runtime_outage_gap_reject_missing_or_invalid"
+                                )
+                            cycle_kind = "outage_gap_recovery"
+                            result = _attempt_outage_gap_recovery(
+                                store=store,
+                                lazy=lazy,
+                                manifest=manifest,
+                                prior_market_slot=latest_terminal,
+                                rejected_window=rejected_window,
+                                current_window=_window_for_end(
+                                    pending_slot, config=config
+                                ),
+                                reason_code=str(rejected["reason_code"]),
+                                config=config,
+                            )
+                        else:
+                            result = _fresh_cycle(
+                                store=store,
+                                lazy=lazy,
+                                manifest=manifest,
+                                target_window_end=pending_slot,
+                                config=config,
+                            )
                     except _InvocationBudgetExhausted:
                         budget_deferred = True
                     else:
                         cycle_results.append(
                             {
-                                "cycle_kind": "pending_recovery",
+                                "cycle_kind": cycle_kind,
                                 "target_window_end": _iso_utc(pending_slot),
                                 "result": result,
                             }
@@ -1520,7 +1589,9 @@ def run_crypto_ten_symbol_observation_once(
                                         "profile_sha256"
                                     ],
                                     "runtime_manifest_profile_used_for_recovery": True,
-                                    "network_used": True,
+                                    "network_used": (
+                                        lazy.collect_calls > collect_calls_before
+                                    ),
                                 }
                             )
 

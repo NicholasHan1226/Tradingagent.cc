@@ -10,6 +10,8 @@ import { MarketMaturityPanel } from '../components/panels/MarketMaturityPanel'
 import { RealtimeReturnCard } from '../components/panels/RealtimeReturnCard'
 import { SignalFunnelFlow } from '../components/panels/SignalFunnelFlow'
 import { TodayRunPanel } from '../components/panels/TodayRunPanel'
+import { RuntimeObservationsPanel } from '../components/panels/RuntimeObservationsPanel'
+import type { RuntimeObservations } from '../types/runtimeObservations'
 import { WorkbenchShell } from '../components/workbench/WorkbenchShell'
 import { formatTime } from '../lib/format'
 import { getSignalFunnel } from '../lib/dashboard'
@@ -50,6 +52,7 @@ export function HomeDashboard({
   runningCount,
   runtimeItem,
   paperDayRun,
+  runtimeObservations,
 }: {
   accountMode: AccountMode
   activeMarket: Market
@@ -83,6 +86,7 @@ export function HomeDashboard({
   runningCount: number
   runtimeItem: AutomationRuntimeItem
   paperDayRun?: PaperDayRunSummary
+  runtimeObservations?: RuntimeObservations
 }) {
   const signalFunnel = getSignalFunnel(signals)
   const liveProfit = portfolio?.pnlAmount ?? 0
@@ -117,7 +121,7 @@ export function HomeDashboard({
             />
           </div>
           <div className="chart-section-title">
-            <span>收益曲线</span>
+            <span>{hasPerformanceData ? '收益曲线' : '独立运行记录'}</span>
             <strong>{hasPerformanceData ? '持续性与风险距离' : '等待收益、目标和基准数据'}</strong>
           </div>
           <StatusBoundary loading={<ChartSkeleton height={220} />} onRetry={onRetry} status={hasPerformanceData ? performanceStatus : 'ready'}>
@@ -131,11 +135,7 @@ export function HomeDashboard({
                 onSelectEvent={setActivePage}
               />
             ) : (
-              <div className="chart-empty-state" style={{ height: 220 }}>
-                <span>等待收益序列</span>
-                <strong>连接正常，暂无可展示的收益曲线。</strong>
-                <p>当模拟盘写入净值、目标和市场基准后，这里会自动更新。</p>
-              </div>
+              <RuntimeObservationsPanel observations={runtimeObservations} activeMarket={activeMarket} />
             )}
           </StatusBoundary>
           <div className="chart-meta">
@@ -148,6 +148,7 @@ export function HomeDashboard({
   const evidence = (
     <div className="home-rail">
         <TodayRunPanel run={paperDayRun} />
+        {hasPerformanceData && <RuntimeObservationsPanel observations={runtimeObservations} activeMarket={activeMarket} />}
         <MarketSummaryPanel activeMarket={activeMarket} summary={marketSummary} />
         <MarketMaturityPanel
           activeMarket={activeMarket}

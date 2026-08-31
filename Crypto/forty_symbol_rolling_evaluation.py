@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -39,11 +40,18 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from Crypto.market_observation import (
-    BAR_FIELDS,
-    FORTY_SYMBOL_BARS_SIDECAR_CONTRACT,
     OBSERVATION_SYMBOLS_V40 as FORTY_SYMBOLS,
-    _recomputed_identity_sha256,
-    _recomputed_market_data_sha256,
+)
+from Crypto.ten_symbol_factor_research import (
+    FORTY_SYMBOL_FACTOR_RESEARCH_CONFIG,
+    CryptoTenSymbolFactorProjectionError,
+    _attach_eligibility,
+    _open_store,
+    _terminal_events,
+)
+from Crypto.ten_symbol_observation_store import (
+    CryptoTenSymbolObservationStore,
+    CryptoTenSymbolObservationStoreError,
 )
 
 CONTRACT = "tradingagent.crypto.forty_symbol_rolling_evaluation.v1"
@@ -178,7 +186,12 @@ def _non_evidence_fields() -> dict[str, Any]:
         "authority": "none",
         "shadow_only_recommendation": True,
         "not_promotion_evidence": True,
-        "receipt_bound_pit": True,
+        # Receipt integrity proves the source history is attributable.  It does
+        # not prove a bar-only counterfactual had a tradeable quote or fill.
+        "source_receipt_integrity_verified": True,
+        "source_receipt_integrity_scope": "selected_eligible_segment_only",
+        "tradeable_pit_verified": False,
+        "receipt_bound_pit": False,
         "execution_eligible": False,
         "execution_authority": False,
         "capital_write_eligible": False,
@@ -197,165 +210,149 @@ def _non_evidence_fields() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _load_event_log(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise FortySymbolRollingEvaluationError(
-                    "rolling_evaluation_event_line_invalid"
-                ) from exc
-            if not isinstance(event, dict):
-                raise FortySymbolRollingEvaluationError(
-                    "rolling_evaluation_event_line_invalid"
-                )
-            events.append(event)
-    if not events:
-        raise FortySymbolRollingEvaluationError("rolling_evaluation_event_log_empty")
-    return events
+def _read_head_bytes(store: CryptoTenSymbolObservationStore) -> bytes:
+    """Read the immutable checkpoint without invoking its repair path."""
 
-
-def _verify_event_chain(events: Sequence[Mapping[str, Any]]) -> None:
-    previous: Mapping[str, Any] | None = None
-    for event in events:
-        if event.get("contract") != EVENT_CONTRACT:
+    try:
+        metadata = store.head_path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             raise FortySymbolRollingEvaluationError(
-                "rolling_evaluation_event_contract_invalid"
+                "rolling_evaluation_store_head_invalid"
             )
-        if previous is not None:
-            if event.get("previous_checksum") != previous.get("checksum"):
-                raise FortySymbolRollingEvaluationError(
-                    "rolling_evaluation_event_chain_broken"
-                )
-            try:
-                if int(event["sequence"]) != int(previous["sequence"]) + 1:
-                    raise FortySymbolRollingEvaluationError(
-                        "rolling_evaluation_event_sequence_broken"
-                    )
-            except (KeyError, TypeError, ValueError) as exc:
-                raise FortySymbolRollingEvaluationError(
-                    "rolling_evaluation_event_sequence_broken"
-                ) from exc
-        previous = event
+        return store.head_path.read_bytes()
+    except FortySymbolRollingEvaluationError:
+        raise
+    except OSError as exc:
+        raise FortySymbolRollingEvaluationError(
+            "rolling_evaluation_store_head_unavailable"
+        ) from exc
 
 
-def _success_events(events: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    selected = [
-        event
-        for event in events
-        if str(event.get("event_id") or "").startswith("crypto-forty-observation-")
-        and str(event.get("event_type") or "") == "observation"
-    ]
-    if not selected:
+def _verified_store_units(
+    store_root: Path,
+) -> tuple[CryptoTenSymbolObservationStore, list[dict[str, Any]], dict[str, Any]]:
+    """Read one stable, full-store snapshot with a read-only head anchor."""
+
+    try:
+        store = _open_store(store_root, FORTY_SYMBOL_FACTOR_RESEARCH_CONFIG)
+        before = _read_head_bytes(store)
+        events = store.events_read_only()
+        after = _read_head_bytes(store)
+        if before != after:
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_store_advanced_retry"
+            )
+        head = json.loads(before)
+        if not isinstance(head, dict):
+            raise FortySymbolRollingEvaluationError("rolling_evaluation_store_head_invalid")
+        # Reuse the store's exact head schema/hash validator but never call
+        # head(), which is allowed to repair a stale checkpoint for a writer.
+        store._verify_head_structure(head)
+        if (
+            not events
+            or head.get("sequence") != len(events)
+            or head.get("last_checksum") != events[-1].get("checksum")
+            or head.get("latest_event_id") != events[-1].get("event_id")
+            or head.get("latest_event_checksum") != events[-1].get("checksum")
+            or head.get("segment_count") != len(store._segment_paths())
+        ):
+            raise FortySymbolRollingEvaluationError("rolling_evaluation_store_head_invalid")
+        current_sha = (
+            _sha256_file(store.events_path) if store.events_path.exists() else None
+        )
+        if head.get("current_file_sha256") != current_sha:
+            raise FortySymbolRollingEvaluationError("rolling_evaluation_store_head_invalid")
+        units = _terminal_events(store)
+        for unit in units:
+            _attach_eligibility(store, unit, FORTY_SYMBOL_FACTOR_RESEARCH_CONFIG)
+        if _read_head_bytes(store) != before:
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_store_advanced_retry"
+            )
+        return store, units, head
+    except FortySymbolRollingEvaluationError:
+        raise
+    except (
+        CryptoTenSymbolFactorProjectionError,
+        CryptoTenSymbolObservationStoreError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise FortySymbolRollingEvaluationError(
+            "rolling_evaluation_store_read_invalid"
+        ) from exc
+
+
+def _contiguous_eligible_observation_suffix(
+    units: Sequence[Mapping[str, Any]],
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    """Return the newest contiguous suffix; gaps and ineligible slots cut it."""
+
+    ordered = sorted(units, key=lambda unit: unit["window_end"])
+    selected_reversed: list[Mapping[str, Any]] = []
+    expected: datetime | None = None
+    for unit in reversed(ordered):
+        event = unit["event"]
+        window_end = unit["window_end"]
+        if (
+            event.get("event_type") != "observation"
+            or unit.get("eligible") is not True
+            or (expected is not None and window_end != expected)
+        ):
+            break
+        selected_reversed.append(unit)
+        expected = window_end - timedelta(seconds=FIVE_MINUTE_SECONDS)
+    if not selected_reversed:
         raise FortySymbolRollingEvaluationError(
             "rolling_evaluation_success_events_empty"
         )
-    return selected
+    selected = list(reversed(selected_reversed))
+    dropped = [
+        str(item["window_end"])
+        for item in ordered[: len(ordered) - len(selected)]
+    ]
+    return selected, dropped
 
 
-def _sidecar_path(bars_dir: Path, window_end: datetime) -> Path:
-    name = _iso_slot(window_end).replace(":", "-") + ".json"
-    return bars_dir / name
-
-
-def _load_and_verify_sidecar(
-    bars_dir: Path,
-    event: Mapping[str, Any],
-) -> dict[tuple[str, str], dict[str, Any]]:
-    observation = event.get("observation")
-    if not isinstance(observation, Mapping):
-        raise FortySymbolRollingEvaluationError(
-            "rolling_evaluation_event_observation_missing"
-        )
-    window_end = _parse_utc(event.get("window_end"))
-    path = _sidecar_path(bars_dir, window_end)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise FortySymbolRollingEvaluationError(
-            "rolling_evaluation_sidecar_unreadable"
-        ) from exc
-
-    if payload.get("contract") != FORTY_SYMBOL_BARS_SIDECAR_CONTRACT:
-        raise FortySymbolRollingEvaluationError(
-            "rolling_evaluation_sidecar_contract_invalid"
-        )
-    if payload.get("window_end") != event.get("window_end"):
-        raise FortySymbolRollingEvaluationError(
-            "rolling_evaluation_sidecar_window_mismatch"
-        )
-    if payload.get("observation_sha256") != observation.get("observation_sha256"):
-        raise FortySymbolRollingEvaluationError(
-            "rolling_evaluation_sidecar_event_binding_invalid"
-        )
-    if (
-        payload.get("authority") != "none"
-        or payload.get("execution_eligible") is not False
-        or payload.get("capital_write_eligible") is not False
-        or payload.get("model_authority") is not False
-    ):
-        raise FortySymbolRollingEvaluationError("rolling_evaluation_authority_invalid")
-
-    sources = payload.get("sources")
-    if not isinstance(sources, list) or tuple(
-        source.get("symbol") for source in sources
-    ) != FORTY_SYMBOLS:
-        raise FortySymbolRollingEvaluationError(
-            "rolling_evaluation_sidecar_symbols_drift"
-        )
-
-    rows_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for source in sources:
-        rows = source.get("rows")
-        symbol = source.get("symbol")
-        if (
-            source.get("row_count") != 13
-            or source.get("page_count") != 1
-            or not isinstance(rows, list)
-            or len(rows) != 13
-            or any(
-                not isinstance(row, dict)
-                or set(row) != set(BAR_FIELDS)
-                or row.get("symbol") != symbol
-                for row in rows
-            )
-            or _recomputed_identity_sha256(rows) != source.get("identity_sha256")
-            or _recomputed_market_data_sha256(rows)
-            != source.get("market_data_sha256")
-        ):
-            raise FortySymbolRollingEvaluationError(
-                "rolling_evaluation_row_digest_invalid"
-            )
-        for row in rows:
-            key = (str(symbol), str(row["open_time"]))
-            prior = rows_by_key.get(key)
-            if prior is not None and prior != row:
-                raise FortySymbolRollingEvaluationError(
-                    "rolling_evaluation_overlap_conflict"
-                )
-            rows_by_key[key] = row
-    return rows_by_key
-
-
-def _assemble_segment(
-    slots: Sequence[dict[tuple[str, str], dict[str, Any]]],
-) -> dict[str, Any]:
+def _assemble_segment(units: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Union chained slot rows into one contiguous per-symbol bar panel."""
 
-    union: dict[str, dict[str, dict[str, Any]]] = {symbol: {} for symbol in FORTY_SYMBOLS}
-    for rows in slots:
-        for (symbol, open_time), row in rows.items():
-            prior = union[symbol].get(open_time)
-            if prior is not None and prior != row:
-                raise FortySymbolRollingEvaluationError(
-                    "rolling_evaluation_overlap_conflict"
-                )
-            union[symbol][open_time] = row
+    union: dict[str, dict[str, tuple[dict[str, Any], datetime]]] = {
+        symbol: {} for symbol in FORTY_SYMBOLS
+    }
+    for unit in units:
+        observation = unit["observation"]
+        event = unit["event"]
+        if (
+            observation is None
+            or _parse_utc(event.get("observation_cutoff"))
+            != observation.window.observation_cutoff
+        ):
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_sidecar_event_binding_invalid"
+            )
+        rows = unit["rows_by_symbol"]
+        availability = {source.symbol: source.observed_at for source in observation.sources}
+        if any(
+            seen_at < observation.window.window_end
+            or seen_at > observation.window.observation_cutoff
+            for seen_at in availability.values()
+        ):
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_observed_at_invalid"
+            )
+        for symbol, source_rows in rows.items():
+            for row in source_rows:
+                open_time = str(row["open_time"])
+                prior = union[symbol].get(open_time)
+                candidate = (row, availability[symbol])
+                if prior is not None and prior[0] != row:
+                    raise FortySymbolRollingEvaluationError(
+                        "rolling_evaluation_overlap_conflict"
+                    )
+                if prior is None or candidate[1] < prior[1]:
+                    union[symbol][open_time] = candidate
 
     reference_times: list[str] | None = None
     for symbol in FORTY_SYMBOLS:
@@ -379,15 +376,44 @@ def _assemble_segment(
         expected += timedelta(seconds=FIVE_MINUTE_SECONDS)
 
     bars_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    available_at_by_symbol: dict[str, list[datetime]] = {}
     for symbol in FORTY_SYMBOLS:
-        bars_by_symbol[symbol] = [union[symbol][t] for t in reference_times]
+        bars_by_symbol[symbol] = [union[symbol][time][0] for time in reference_times]
+        available_at_by_symbol[symbol] = [
+            union[symbol][time][1] for time in reference_times
+        ]
     return {
         "open_times": reference_times,
         "bars_by_symbol": bars_by_symbol,
+        "available_at_by_symbol": available_at_by_symbol,
         "first_open_time": reference_times[0],
         "last_open_time": reference_times[-1],
         "bar_count_per_symbol": len(reference_times),
     }
+
+
+def _first_executable_entry_index(
+    open_times: Sequence[str],
+    available_at: Sequence[datetime],
+    signal_index: int,
+) -> tuple[int, datetime] | None:
+    """Use the first bar open strictly after all signal inputs were observed."""
+
+    if (
+        len(open_times) != len(available_at)
+        or signal_index < REGIME_LOOKBACK_BARS
+        or signal_index >= len(open_times)
+    ):
+        raise FortySymbolRollingEvaluationError(
+            "rolling_evaluation_entry_timing_invalid"
+        )
+    decision_available_at = max(
+        available_at[signal_index - REGIME_LOOKBACK_BARS : signal_index + 1]
+    )
+    for index in range(signal_index + 1, len(open_times)):
+        if _parse_utc(open_times[index]) > decision_available_at:
+            return index, decision_available_at
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -426,17 +452,19 @@ def _simulate_path(
     highs: Sequence[Decimal],
     lows: Sequence[Decimal],
     closes: Sequence[Decimal],
+    entry_price: Decimal,
     entry_index: int,
 ) -> dict[str, Any]:
     """Champion exit ladder; pessimistic intrabar (stop before target)."""
 
-    entry_price = closes[entry_index]
     tp_level = entry_price * (ONE + TAKE_PROFIT_RETURN)
     sl_level = entry_price * (ONE + STOP_LOSS_RETURN)
     last_index = min(entry_index + MAX_HOLD_BARS, len(closes) - 1)
     mfe = ZERO
     mae = ZERO
-    for offset in range(1, last_index - entry_index + 1):
+    # Entry is now at the bar OPEN, so its own high/low are post-entry
+    # exposure. Skipping offset zero would erase an immediate stop/target.
+    for offset in range(0, last_index - entry_index + 1):
         index = entry_index + offset
         mfe = max(mfe, highs[index] / entry_price - ONE)
         mae = min(mae, lows[index] / entry_price - ONE)
@@ -496,7 +524,8 @@ def _recommendation(resolved_trips: int, mean_net: Decimal | None) -> dict[str, 
 
 def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
     trips: list[dict[str, Any]] = []
-    abstentions = 0
+    abstentions_data_end = 0
+    abstentions_unavailable_entry = 0
     observe_slots = 0
     excluded_symbols: list[str] = []
 
@@ -505,27 +534,42 @@ def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
         closes = [_decimal(row["close"]) for row in rows]
         highs = [_decimal(row["high"]) for row in rows]
         lows = [_decimal(row["low"]) for row in rows]
+        opens = [_decimal(row["open"]) for row in rows]
+        available_at = segment["available_at_by_symbol"][symbol]
         index = REGIME_LOOKBACK_BARS
         while index < len(closes):
             if not _is_entry_signal(closes, index):
                 index += 1
                 observe_slots += 1
                 continue
-            trip = _simulate_path(highs, lows, closes, index)
+            executable = _first_executable_entry_index(
+                segment["open_times"], available_at, index
+            )
+            if executable is None:
+                abstentions_unavailable_entry += 1
+                break
+            entry_index, decision_available_at = executable
+            trip = _simulate_path(
+                highs, lows, closes, opens[entry_index], entry_index
+            )
             trip["symbol"] = symbol
-            trip["entry_index"] = index
-            trip["entry_open_time"] = segment["open_times"][index]
+            trip["signal_index"] = index
+            trip["signal_open_time"] = segment["open_times"][index]
+            trip["decision_available_at"] = _iso_slot(decision_available_at)
+            trip["entry_index"] = entry_index
+            trip["entry_open_time"] = segment["open_times"][entry_index]
+            trip["entry_price"] = _text(opens[entry_index])
             trip["exit_open_time"] = segment["open_times"][
-                min(index + trip["exit_offset_bars"], len(closes) - 1)
+                min(entry_index + trip["exit_offset_bars"], len(closes) - 1)
             ]
             trip["net"] = _round_trip_net(trip["gross"]) if trip["resolved"] else None
             trips.append(trip)
             if not trip["resolved"]:
-                abstentions += 1
+                abstentions_data_end += 1
                 break  # data_end: no further bars to decide or exit on
             # Resolved trip: scanning resumes after the exit bar so a symbol
             # may re-enter later inside the same segment.
-            index = index + trip["exit_offset_bars"] + 1
+            index = entry_index + trip["exit_offset_bars"] + 1
 
     resolved = [trip for trip in trips if trip["resolved"]]
     resolved_nets = [trip["net"] for trip in resolved]  # type: ignore[misc]
@@ -547,7 +591,8 @@ def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "trips_total": len(trips),
         "trips_resolved": len(resolved),
-        "abstentions_data_end": abstentions,
+        "abstentions_data_end": abstentions_data_end,
+        "abstentions_no_later_observed_bar": abstentions_unavailable_entry,
         "observe_slots_total": observe_slots,
         "excluded_symbols": excluded_symbols,
         "hits": len(hits),
@@ -563,6 +608,8 @@ def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
             format(Decimal(len(trips)) / Decimal(len(FORTY_SYMBOLS)), "f")
         ),
         "baseline_buy_hold": {
+            "basis": "descriptive_observed_close_to_close_not_tradeable_pit",
+            "tradeable_pit_verified": False,
             "mean_net": _text(baseline_mean_net),
             "per_symbol_net": baselines,
         },
@@ -588,34 +635,15 @@ def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_artifact(
     *,
-    events_path: Path,
-    bars_dir: Path,
+    store_root: Path,
     replay_command: str,
 ) -> dict[str, Any]:
     _assert_simulation_only()
-    events = _load_event_log(events_path)
-    _verify_event_chain(events)
-    selected = _success_events(events)
-
-    slots: list[dict[tuple[str, str], dict[str, Any]]] = []
+    _, units, head = _verified_store_units(store_root)
+    selected, dropped = _contiguous_eligible_observation_suffix(units)
     receipts: list[dict[str, str]] = []
-    # Deterministic selection: the longest contiguous 5-minute suffix of
-    # success slots.  Earlier isolated receipts (e.g. the pre-cutover identity
-    # era) are dropped from the segment but kept in the artifact as evidence.
-    selected_sorted = sorted(selected, key=lambda event: str(event["window_end"]))
-    ends = [_parse_utc(event["window_end"]) for event in selected_sorted]
-    keep_from = len(ends) - 1
-    while keep_from > 0:
-        if ends[keep_from] - ends[keep_from - 1] != timedelta(
-            seconds=FIVE_MINUTE_SECONDS
-        ):
-            break
-        keep_from -= 1
-    dropped = [str(event["window_end"]) for event in selected_sorted[:keep_from]]
-    selected_sorted = selected_sorted[keep_from:]
-
-    for event in selected_sorted:
-        slots.append(_load_and_verify_sidecar(bars_dir, event))
+    for unit in selected:
+        event = unit["event"]
         receipts.append(
             {
                 "event_id": str(event["event_id"]),
@@ -628,16 +656,19 @@ def build_artifact(
         if later - earlier != timedelta(seconds=FIVE_MINUTE_SECONDS):
             raise FortySymbolRollingEvaluationError("rolling_evaluation_slot_gap")
 
-    segment = _assemble_segment(slots)
+    segment = _assemble_segment(selected)
     evaluation = _evaluate_segment(segment)
 
     return {
         "contract": CONTRACT,
         **_non_evidence_fields(),
         "generated_from": {
-            "events_file_sha256": _sha256_file(events_path),
-            "events_file_name": events_path.name,
-            "bars_dir_file_count": len(list(bars_dir.glob("*.json"))),
+            "store_read_mode": "events_read_only_with_immutable_head_anchor",
+            "head_sequence": head["sequence"],
+            "head_last_checksum": head["last_checksum"],
+            "head_sha256": head["head_sha256"],
+            "head_segment_count": head["segment_count"],
+            "full_chain_event_count": head["event_count"],
             "replay_command": replay_command,
         },
         "champion_configuration": {
@@ -675,8 +706,8 @@ def render_markdown(result: Mapping[str, Any]) -> str:
         "# Crypto 首个滚动评估入口（MVP-2 receipt-bound）",
         "",
         f"- 契约：`{result['contract']}`；shadow-only，authority=none。",
-        "- 输入为四十币观察器自身回执：append-only 成功事件（校验链完整）+"
-        " 逐槽不可变 K 线边车，逐行复算 identity/market-data 双哈希全部通过。",
+        "- 输入只接受完整只读 observation store：head 锚定前后字节一致、"
+        "全链校验及逐槽边车重建 observation/market-data 双哈希全部通过。",
         f"- 段：{segment['first_open_time']} → {segment['last_open_time']}"
         f"（每标的 {segment['bar_count_per_symbol']} 根 5m，"
         f"{segment['slot_count']} 个连续回执槽，无缺口）。",
@@ -689,17 +720,20 @@ def render_markdown(result: Mapping[str, Any]) -> str:
         "|---|---|",
         f"| 已了结回合 | {evaluation['trips_resolved']} |",
         f"| 未了结（data_end，计为弃权）| {evaluation['abstentions_data_end']} |",
+        f"| 无后续可执行 bar（计为弃权）| {evaluation['abstentions_no_later_observed_bar']} |",
         f"| 命中数 / 命中率 | {evaluation['hits']} / {evaluation['hit_rate']} |",
         f"| 平均毛收益（已了结）| {evaluation['mean_gross_resolved']} |",
         f"| 平均净收益（已了结）| {evaluation['mean_net_resolved']} |",
         f"| 最大回撤（净）| {evaluation['max_drawdown_resolved']} |",
-        f"| 买入持有基线平均净 | {evaluation['baseline_buy_hold']['mean_net']} |",
+        f"| 描述性收盘到收盘基线平均净 | {evaluation['baseline_buy_hold']['mean_net']} |",
         "",
         "## 建议（机械规则，shadow-only）",
         "",
         f"`{recommendation['action']}` — {recommendation['detail']}",
         "",
-        "本条目按序进入 MVP-2 滚动评估累积；负结果与弃权照实保留，"
+        "source receipt integrity 已验证；tradeable PIT 仍为 false：信号须在"
+        "全部输入 source 的 observed_at 后、下一根可用 bar 开盘才计算入场，"
+        "且 bar-only 资料不能证明真实可成交报价或成交。负结果与弃权照实保留，"
         "不构成任何晋级证据，也不触发任何资本或风险行为。",
     ]
     return "\n".join(lines) + "\n"
@@ -707,19 +741,31 @@ def render_markdown(result: Mapping[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--events", type=Path, required=True, help="full events.jsonl copy")
-    parser.add_argument("--bars-dir", type=Path, required=True, help="bars sidecar directory")
+    parser.add_argument(
+        "--store-root",
+        type=Path,
+        required=True,
+        help="full immutable forty-symbol observation store root",
+    )
     parser.add_argument("--out-json", type=Path, help="write machine artifact JSON here")
     parser.add_argument("--report", type=Path, help="write Markdown report here")
     args = parser.parse_args(argv)
 
+    # A read-only store cannot also be a report destination (including aliases).
+    # Refuse before building or writing anything, even for explicit CLI paths.
+    source_root = args.store_root.resolve()
+    for output in (args.out_json, args.report):
+        if output is not None and output.resolve().is_relative_to(source_root):
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_output_inside_source_store"
+            )
+
     replay_command = (
         f"python3 -m Crypto.forty_symbol_rolling_evaluation "
-        f"--events {args.events} --bars-dir {args.bars_dir}"
+        f"--store-root {args.store_root}"
     )
     result = build_artifact(
-        events_path=args.events,
-        bars_dir=args.bars_dir,
+        store_root=args.store_root,
         replay_command=replay_command,
     )
     payload = json.dumps(

@@ -1616,3 +1616,92 @@ def test_query_filters_are_frozen_by_catalog(
         call for call in transport.calls[calls_before:] if call["method"] == "POST"
     ]
     assert audit.records()[0].reason_code == reason
+
+
+def test_broker_native_month_is_period_not_an_instant():
+    from Ashare.event_evidence import _event_time
+    from datetime import timezone
+    value, precision, proven = _event_time("202608", available_at=datetime(2026, 8, 12, 7, tzinfo=timezone.utc), allow_month=True)
+    assert (value, precision, proven) == ("202608", "month", False)
+    for value in ("202609", "202613", "202600", "000008", "20268"):
+        with pytest.raises(AshareEvidenceContractError):
+            _event_time(value, available_at=datetime(2026, 8, 12, 7, tzinfo=timezone.utc), allow_month=True)
+    with pytest.raises(AshareEvidenceContractError):
+        _event_time("202608", available_at=datetime(2026, 8, 12, 7, tzinfo=timezone.utc))
+
+
+def _native_broker_port(schema_major=2):
+    dataset_id = "cn.dataset.broker_recommend"
+    fields = ["month", "broker", "ts_code", "name"]
+    catalogs = [row for row in _catalog_rows() if row["dataset_id"] != dataset_id]
+    catalog = _catalog_row(dataset_id, fields=fields, identity_fields=fields)
+    catalog["schema_major"] = schema_major
+    catalogs.append(catalog)
+    transport = _Transport(catalog_rows=catalogs,
+        rows_by_dataset={dataset_id: [{"month": "202607", "broker": "fixture-broker", "ts_code": "600000.SH", "name": "浦发银行"}]})
+    port = TradingDatasAshareEvidencePort(_client(transport))
+    audit = AshareEvidenceAuditLedger()
+    return port, audit, transport
+
+
+@pytest.mark.parametrize("schema_major", [1, 2])
+def test_native_broker_month_full_port_preserves_precision_and_asof(schema_major):
+    port, audit, transport = _native_broker_port(schema_major)
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset["cn.dataset.broker_recommend"]
+    snapshot = port.load_event_snapshot(profile=profile, filters={"ts_code": {"eq": "600000.SH"}},
+        decision_time=DECISION_TIME, audit_ledger=audit, allowed_symbols=("600000.SH",))
+    event = snapshot.events[0]
+    assert (event.event_time, event.event_time_precision) == ("202607", "month")
+    assert event.event_time_instant_proven is False
+    assert event.historical_known_time_proven is False
+    assert event.execution_eligible is False
+    assert event.training_eligible is False
+    assert snapshot.same_observation is True
+    queries = [call["json_body"] for call in transport.calls if call["method"] == "POST"]
+    assert len(queries) == 2
+    assert all(query["schema_major"] == schema_major and query["as_of"] == DECISION_TIME.isoformat() for query in queries)
+    with pytest.raises(AshareEvidenceContractError):
+        port.load_event_snapshot(profile=profile, filters={}, decision_time=datetime.fromisoformat("2026-07-31T10:24:00+08:00"), audit_ledger=audit)
+
+
+def test_native_broker_rejects_unknown_major_and_changed_profile_before_query():
+    port, audit, transport = _native_broker_port(3)
+    with pytest.raises(AshareEvidenceContractError):
+        port.freeze_profiles(audit_ledger=audit)
+    assert all(call["method"] == "GET" for call in transport.calls)
+    port, audit, transport = _native_broker_port()
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset["cn.dataset.broker_recommend"]
+    transport.catalog_rows[-1]["identity_fields"] = ["month", "broker", "ts_code"]
+    with pytest.raises(AshareEvidenceContractError, match="contract_drift"):
+        port.load_event_snapshot(profile=profile, filters={}, decision_time=DECISION_TIME, audit_ledger=audit)
+    assert all(call["method"] == "GET" for call in transport.calls)
+
+
+def test_single_broker_profile_consumes_without_unrelated_primary_datasets():
+    from Ashare.event_evidence import EvidenceDatasetProfile
+    _, _, transport = _native_broker_port()
+    dataset_id = "cn.dataset.broker_recommend"
+    transport.catalog_rows = [row for row in transport.catalog_rows if row["dataset_id"] == dataset_id]
+    client = _client(transport, configured_ids=frozenset({dataset_id}))
+    catalog = client.get_catalog()
+    profile = EvidenceDatasetProfile.from_catalog_row(
+        catalog, catalog.data[0], expected_catalog_version=CATALOG
+    )
+    audit = AshareEvidenceAuditLedger()
+    result = TradingDatasAshareEvidencePort(client).load_event_snapshot(
+        profile=profile, filters={"ts_code": {"eq": "600000.SH"}},
+        decision_time=DECISION_TIME, audit_ledger=audit, allowed_symbols=("600000.SH",),
+    )
+    assert result.row_count == 1
+    assert result.same_observation is True
+    assert result.execution_eligible is False
+    assert not audit.records()
+
+
+@pytest.mark.parametrize("month", ["2026-07-01", "20260731", "202613", "202608", None])
+def test_major2_broker_rejects_non_native_or_future_month(month):
+    port, audit, transport = _native_broker_port()
+    profile = port.freeze_profiles(audit_ledger=audit).by_dataset["cn.dataset.broker_recommend"]
+    transport.rows_by_dataset["cn.dataset.broker_recommend"][0]["month"] = month
+    with pytest.raises(AshareEvidenceContractError):
+        port.load_event_snapshot(profile=profile, filters={}, decision_time=DECISION_TIME, audit_ledger=audit)

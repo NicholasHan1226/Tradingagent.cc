@@ -656,6 +656,15 @@ Canonical A股账户估值 mark 不接受“只要早于决策时刻即可”的
 
 ### A股5分钟 fixture research contract
 
+滚动会话初始化按实际审核过的非空 source 集合核对唯一身份与 canonical SHA，
+不以固定 3,193 数量阻断上市/退市后的审核快照；固定 cohort 实验仍保留精确总数。
+前收盘价独立批次遇到与分钟读取相同的可恢复 transport/HTTP 429/503 错误时，
+`daily_data_excluded` 为该批每只股票保留 `symbol`、
+`reason=previous_close_batch_unavailable`、`trade_date`；不封存原始异常或响应。
+首读成功但重读失败时整批排除，不能使用半验证行。其他双读通过的批次仍可发布；
+认证、catalog、身份、分页与来源证据错误不降级，全部无可用股票时不发布空成功。
+该输入准备、覆盖率与 fixture 成交仍不能替代 canonical capital-backed runtime。
+
 ### `rt_min_daily` receipt-bound current-observation contract
 
 `Ashare.rt_min_daily_pit.build_rt_min_daily_pit_feature_contract` consumes a
@@ -678,6 +687,34 @@ provider field fails closed before a feature projection is returned. The
 existing runtime caller must supply the page run and may persist only through
 the existing snapshot/artifact store; this module adds no route, table,
 service or timer.
+
+Schema compatibility is explicit: the legacy call remains major 1 with native
+`freq=1MIN`; major 2 and 3 require the original `QueryRequest`, matching its
+dataset, exact eight native fields and first-page hash. Both use unique
+`[ts_code,time]` observations without synthesizing a response `freq`; major 3
+matches TD's newly declared primary key. Unsupported versions, altered queries,
+duplicate revisions and malformed/future rows fail closed. This is consumer
+compatibility, not proof that the TD major-3 collection is deployed or complete.
+
+Broker recommendation major 2 freezes `[month,broker,ts_code,name]` and keeps
+native `YYYYMM` as month precision. Receipt observation defines availability;
+the month never becomes an invented publication instant or historical known-time
+proof. The existing decision-time `as_of` follows the frozen TD `month` query
+contract. Unknown majors and changed dataset fingerprints require a new profile.
+
+Single-dataset callers may freeze `EvidenceDatasetProfile.from_catalog_row`
+from the exact target row and then use `load_event_snapshot`; this retains target
+identity, replay and receipt checks without requiring unrelated event datasets.
+`freeze_profiles` intentionally constructs the complete primary-event ensemble
+and is not the entry gate for an independent broker-recommendation reader.
+
+The caller-invoked `CNFutures.fut_basic_contract_units` reader preserves the
+major-1 frozen 207-row partial contract. Its separate major-2 contract accepts
+1–500 unique DCE/M rows, at most five pages per traversal, with strict fresh,
+valid, non-degraded metadata and matching receipt/lineage across two traversals.
+It records actual counts, performs no deduplication, and keeps coverage-complete,
+PIT, runtime and trading authority false. This read-only maintenance does not
+activate the paused market. See [CNFutures handoff](../CNFutures/TRADINGDATAS_HANDOFF.md).
 
 该合同只用于 `Ashare/minute_data.py`、`Ashare/minute_research.py`、
 `Ashare/minute_paper.py` 与 `Ashare/minute_loop.py` 的网络关闭 fixture/mock

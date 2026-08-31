@@ -1,180 +1,163 @@
 # TradingAgent current status
 
-Observed at: 2026-08-23T17:40:00+08:00
-
-This file is a replaceable current summary. It separates source, release, runtime,
-market evidence, and authority. Historical chronology remains in Git history and
-dated `docs/reports/`; it is never a substitute for a fresh readback.
+Observed at: 2026-08-31T00:53:00+08:00. This replaceable snapshot separates
+source, configuration, runtime and market evidence. Simulation only; no live
+trading, new capital, risk expansion or strategy promotion.
 
 ## Source and release layers
 
-| Layer | Current observation | Claim boundary |
+| Layer | Current verification | Boundary |
 |---|---|---|
-| 本地主线 | Kimi/user A-share lane, intentionally not acting as canonical main | resolve with `git rev-parse HEAD origin/main`; preserve and do not reset or repurpose |
-| GitHub 主线 | branch CI passed and exact-main validation ran green for the latest research/docs merges at the observation time | resolve with `git rev-parse HEAD origin/main`; accepted and packaged source only |
-| Ordinary server source | `1d58efe`, behind GitHub and containing untracked operational files | not synchronized; do not clean or fast-forward over unknown files |
-| Effective release | immutable release `e64e20dca7ac992a5ce2e2839dd1204a8d8e8ee6` | deployed code layer, cut over 2026-08-23 with green exact-main and front health; the forty-symbol observer service drop-in and its systemd timer were rebound to it after cutover (+270 s settle margin, five-minute fires at wall-clock :x4:45) |
-| Runtime authority | all observed A-share/Crypto receipts reported real trading, execution, capital, production promotion, and automatic risk expansion disabled | simulation/read-only only |
+| 本地主线 | resolve with `git rev-parse HEAD origin/main` | isolated delivery checkout; user research checkout preserved |
+| GitHub 主线 | resolve with `git rev-parse HEAD origin/main` and matching CI | remote source is separate from the effective runtime |
 
-An effective immutable release can be valid while the ordinary source checkout is
-dirty or behind. These are separate layers; neither state is described as “all
-three ends synchronized.”
+- Existing accepted runtime: PR [616](https://github.com/NicholasHan1226/Tradingagent.cc/pull/616),
+  immutable release 752845b79381532838e1fb223e9b105afe6d16b0.
+  Candidate CI33315398287 and exact-main CI33315864586 passed 6,211 Python
+  tests, one skip, 266 subtests and 429 frontend tests. Deployment33316330837
+  actually published the artifact on Aug-30. Package SHA256:
+  8c4c6c1c5c36249d7d77622aa6de9764c6fecae21406a0bbd795097682e2c65a.
+- Aug-31 effective-runtime readback binds the front process, unit and current
+  to that release without blockers. No application release switch in this
+  configuration/account-relocation batch. Resolve GitHub main afresh; this
+  document is not a self-updating main pointer.
+- Ordinary server source was last verified at 5cd9649, not the active release.
+  It was not synchronized or reset. Research/user worktrees preserved.
+- Nine release bindings/timers were restored in PR616's 117-second window.
+  This batch does not stop or change A-share/Crypto simulators.
 
-## A-share track
+## Private API: origin restriction and reader activation
 
-Latest applicable natural market evidence is from 2026-08-21:
+Nicholas explicitly authorized restricting the named API to localhost and
+relocating the original A-share account without resetting capital.
 
-- the 30-symbol session initializer completed successfully with 30 active
-  partitions, no pending listings, and all trading/capital authority false, but
-  catalog-version drift left `rolling_eligible=false`;
-- the rolling scale session completed successfully with 3,186 eligible symbols,
-  five previous-close exclusions, two newly listed pending symbols, and
-  `rolling_eligible=true`;
-- the scale paper unit completed as a safe `noop`, selecting the preserved
-  rollback-30 state because of `minute_scale500_unclassified_urlerror`;
-- the scale session and paper timers are enabled/waiting; the legacy 30-symbol
-  paper timer is disabled. Timer state proves scheduling only.
+- Before correction, a real non-loopback connection returned snapshot HTTP200
+  through nginx. External direct-origin requests currently meet an Aliyun
+  Beaver/ICP HTTP403; that is **not** nginx authorization proof.
+- Only the exact /api/trading-agent/snapshot location in the TA nginx site was
+  changed: allow127.0.0.1/::1, deny all. No real-IP rewriting was present.
+  Listener, static root, health route, other sites, DNS and credentials unchanged.
+- Candidate and installed nginx syntax checks passed. **29 actual origin checks
+  passed**: all three TA hosts, forged forwarding headers and normalized paths
+  denied; unmatched variants returned only byte-identical static HTML.
+  Localhost snapshot/no-store, direct backend, healthz and static page retained.
+- Installed site SHA256:
+  a131695acce0f3d275bceb365e885e71478522cd1c61b275a2517fbfa71fddd6.
+  Private backup/request matrix: /var/tmp/ta-private-ingress-20260831.qLFAz9/.
+- After origin denial proof, the accepted front unit's two runtime-reader
+  environment entries were installed, with no other unit field changes.
+  Unit SHA256: da08828150c1e75c7c42ff77473d64bcc5e9ad35666d36c307c3b24d3c26e538.
+  The process is active. First response was pending, then A-share correctly
+  showed Aug-28 as dated. Crypto initially returned an isolated validation
+  failure. Some direct reads outside and inside the front mount namespace were
+  healthy, but the natural 00:46 cache refresh reproduced the failure. A bounded
+  diagnostic under the same clean child environment identifies
+  round_trip_health_core_incomplete. This is unresolved source/health-state
+  handling, not proven credential failure or proven capital corruption. The
+  failing Crypto entry remains isolated; no validation or permission was relaxed.
+  A later natural refresh at00:52 did return Crypto ready (market slot00:40,
+  5,949 completions), also visible in the actual browser. This proves successful
+  deployed-reader consumption, not resolution of intermittent incomplete states.
+- Local browser acceptance used the actual deployed API through a loopback SSH
+  tunnel, not a replay fixture. At1280x720 it showed dated A-share3188/1197/1991,
+  no horizontal overflow, per-market filtering, no All Markets money, and no
+  runtime observation panel in live mode. Public static files were not changed.
+- Public static root remains the old 69ca4475 build. This does not claim the
+  public page is updated, remote single-user access configured, or historical
+  Pages/Tunnel routes audited. IPv6 has no active listener and was not opened.
+  Remote snapshot access remains unavailable.
 
-Therefore the broad rolling cohort is available for a named coverage claim, but
-the latest paper cycle did not create a new simulation fill/outcome. The exact
-next product evidence is one natural 2026-08-24 closed-bar cycle that consumes a
-safe eligible subset, records a receipt-bound simulated decision or explicit
-abstention, and later resolves its fixed-horizon outcome after declared costs. The
-3,186-symbol count is not a global gate and the five/two local exclusions do not
-block the safe subset.
+## A-share: original account relocated, trading entry still unwired
+
+The original ashare-capital-v1 is byte-identically relocated from its Aug-24
+recovery directory to /var/lib/tradingagent/ashare-canonical:
+
+- Capital relative path: shared/logs/capital/ashare/.
+- Execution relative path:
+  shared/logs/execution_lineages/ashare-sim-fresh-20260712-v1/,
+  derived from the verified snapshot, not a newly selected lineage.
+- **43 files**, including 32 reconcile sources, copied without byte changes.
+  Canonical replay checks all **33 events**, the JSON-normalized projection,
+  execution manifest/outbox hashes, empty trade/receipt files and zero pending
+  actions. The actual service identity replays the target successfully.
+- Cash/equity remains **50,000 CNY**, generation1, zero positions, reservations,
+  fills and PnL. Account timestamp remains **2026-07-22**: a relocated dated
+  account, not new funding or current market PnL.
+- Events SHA256: a9459349fada47b5fcfd3ba5a9013a9c08cadea0e6fef3fee0adb8012af132e6.
+  Latest SHA256: e65d4becc7013aa7b63a53edc2ac5f17853c93b236c05eaf8ecd18ae125d32ef.
+  Head: 1f0be2d18d63e6e162f07b7d4c59934d6f3577f01eea4d0a1c8dfbcbd6755d2b.
+- Originals retained, root-owned and immutable. Target data subtrees are owned
+  by tradingagent only, directories0700/files0600, with root-owned parents.
+  Actual append-open/no-write probes prove the new identity can write the target,
+  the old identity cannot write either copy, and front's mount namespace rejects
+  writes with EROFS. No bytes were written by the probes.
+- Private receipt: /var/lib/tradingagent/ashare-canonical/migration-receipt.json.
+  Metadata backup: /var/tmp/ta-account-migration-20260831.llaxnm8p/.
+  No source writer was open; no legacy scheduler restarted or active service
+  redirected to the relocated root.
+
+compose_capital_backed_paper_runtime remains test-only/network-closed.
+Production quote/calendar/Champion adapters and the capital-backed entry are
+**unwired**. Keep canonicalAccountConnected=false. Relocation and write
+readiness cannot be promoted into full-chain simulated-trading success.
+
+## A-share coverage and next natural session
+
+Latest natural evidence remains Aug-28: **1,197 accepted / 3,188 active**,
+1,991 missing at the persisted slot; four counterfactual books have zero fills.
+These are research books, not four capital authorities. Preserved bundle SHA256:
+53b1d9e5de51476403fd008f02642edd524e9988be5bb31c24761bd9554e291e.
+
+Aug-30 service-identity preopen preparation (isolated roots, not natural runtime)
+proved Aug-31 open: **3,193 source / 3,191 age-eligible / 3,187 prior closes**.
+Four missing closes: 000635.SZ, 000711.SZ, 002274.SZ, 002586.SZ; two listings
+pending individually. Existing stocks' clocks were not reset. Baseline30/30.
+Four existing timers still schedule Aug-31 initialization at09:18 and delayed
+bar attempts at09:42. Monday execution/fills are not yet proven.
 
 ## Crypto track
 
-Data plane (verified this batch against the production read-model store,
-read-only):
+The G5 delayed-paper service was bound to the accepted752845b release in the
+Aug-30 deployment; this batch did not change its binding or scheduler.
+Full forty-symbol coverage and a latest continuous 288-bar segment constrain
+runtime maturity and later authority claims; they do not block safe-segment simulation.
 
-- the six crypto collection timers were resumed and subsequently observed
-  collecting with success receipts and zero lock contention;
-- spot 5m bars are complete for all 40 datasets (the known 2,560-bar hole was
-  closed by backfill); premium-index daily dumps are complete for all 40
-  symbols over the 198-day acceptance horizon;
-- open interest: the 198-day official daily-dump backfill is accepted; 422
-  partially-ingested days (1–287 surviving slots) were repaired through the
-  idempotent append-only re-collection path with zero failures. `2026-08-12`
-  is a permanent provider-side hole across all 40 symbols — Binance's own
-  daily zips for that day contain 285/288 rows, which the complete-grid store
-  contract correctly rejects. A residual single-slot ARBUSDT seam at
-  `2026-07-04/05` is a grid-phase boundary artifact of the provider's
-  unfrozen phase convention, not missing data;
-- pre-existing duplicate-timestamp rows (same bucket under different payload
-  versions) remain in some OI datasets; read-only research consumers dedupe
-  deterministically per slot. No rows were rewritten or erased.
+PR616's actual rolling evaluation completed Aug-30 22:17:02: 2,170 events,
+two history segments, 73 contiguous slots, 40 symbols and85 bars per symbol.
+Its116 resolved counterfactual trips are not account fills or runtime returns;
+tradeable PIT, capital, execution and promotion remain false. Daily wrapper
+uses the canonical store and unique output path; no new timer added.
 
-Research plane (sealed `research_only` / `not_promotion_evidence` /
-historical-backfill-without-PIT; archived under `Crypto/reports/`):
+G5 health service last checked here exited successfully Aug-31 00:34:47.
+Independent read-only health also succeeded under the front mount namespace.
+Neither establishes48h stability or profitability. Research drafts606/608/610/612
+remain outside this delivery.
 
-- the momentum entry event study on current main measured the frozen champion
-  entry over ~204 days × 40 symbols (~109k non-overlapping samples in the
-  largest cell): every threshold × horizon cell is net-negative with
-  |t(net)| ≥ 3.9 under round-trip taker costs, and per-trip net loss equals
-  the ~0.24% cost line. Shadow-only conclusion: no parameter change is
-  justified; frequency/threshold tuning cannot rescue this signal family;
-- the exit-cost counterfactual on the same frozen champion simulated full
-  round trips at path level over the identical window (non-overlapping strides,
-  stop-loss checked before take-profit inside each bar, 6,208–7,423 trips per
-  cell): mean gross return is ≈ 0 in every threshold cell (best +0.008%),
-  momentum-reversal exits dominate at 94–96% of trips while take-profit is hit
-  only 3–5%, mean favorable excursion never approaches the +3% target, and even
-  the maker-exit upper bound (assumes touch equals fill) leaves every cell
-  net-negative at about −0.139% to −0.167% per trip versus −0.239% to −0.267%
-  under taker exits — the maker delta is pure fee arithmetic (+0.0998%). This
-  closes execution-cost reduction as a lever: the per-trip loss is structural,
-  not an artifact of exit fees or slippage;
-- the first receipt-bound rolling evaluation entry (2026-08-23, entry 001)
-  consumed a hash-chain-verified gap-free nine-slot segment from the recovered
-  forty-symbol observer: 22 champion trips with 7 resolved (all
-  momentum-reversal exits), 0 take-profits, mean net ≈ −0.63% per trip versus a
-  buy-and-hold baseline of ≈ −0.09%, shadow-only recommendation
-  `continue_accumulation` (below the 30-resolved-trip threshold for any
-  retain/downweight/disable call); accumulation continues;
-- the pre-registered forty-symbol cross-sectional prescreen (20 frozen
-  candidates over a ~186-day common grid: long-top relative strength /
-  long-bottom reversal × lookback 288/576 × K=5/10 × horizon 48/288 plus
-  dispersion-gated variants, replaced-weight taker costing, always-invested
-  equal-weight baseline) found the reversal family net-negative in all cells
-  (worst ≈ −28bp per window) and the relative-strength family directionally
-  positive only in the 24-hour-hold cells, best +43bp/window at t=1.47 — not
-  significant, median near zero. Verdict: no statistically significant usable
-  signal in the pre-registered grid; no grid widening or retuning. The
-  dispersion-gated variants were structurally inert on this window (gate
-  threshold unit defect reported as-is, not repaired post hoc);
-- the 2026-08-18 funding/basis carry research modules and reports landed on
-  current main as archived assets.
-
-Runtime plane:
-
-- the delayed-exit shadow reversal threshold now matches the champion exit
-  rule on current main;
-- the forty-symbol observer runs on two hardening changes cut over on
-  2026-08-23 (release `e64e20d…`, service drop-in rebind plus timer retime).
-  First, the PIT cutoff settle margin moved from +225 s to +270 s (inside the
-  <300 s family cap): collector-write latency bursts were producing receipts
-  whose intrinsic `observed_at` timestamps could never pass the watermark gate
-  on any later re-read, so widening the margin is the primary lever and pure
-  retry cannot rescue those slots. Second, a bounded same-invocation retry now
-  covers only `crypto_observation_query_shape_invalid` transients (delays
-  20 s/45 s, invocation-budget guarded; the frozen ten-symbol family stays
-  pinned single-attempt). Live verification after cutover shows the new
-  arithmetic (`observation_cutoff == window_end + 270 s`) and the restored
-  five-minute fire cadence; the identity isolation readback (inherited
-  ten-prefix events stop at 2026-08-22T11:20:55Z) remains verified;
-- interim data-plane boundary: since ~17:00 CST on 2026-08-23 a concurrent
-  TradingDatas-side release has kept the crypto collection timers stopped, so
-  both observers emit honest fail-closed rejects instead of observations until
-  collection resumes and any resulting bar gap is backfilled. No fabricated or
-  partial observation enters the chain during the interruption;
-- the G5 delayed-paper service completed successfully with
-  `data_incomplete=false` in its latest applicable readback; this batch did
-  not re-observe it, and service completion alone does not prove a new
-  resolved label, fee-after baseline comparison, or shadow recommendation;
-- the 40-symbol timer remains disabled. No provider call or runtime activation
-  is inferred from source presence.
-
-Crypto may use any complete gap-bounded segment for deterministic delayed-paper or
-factor/strategy evaluation. Labels never cross a gap. Full 40-symbol coverage and
-a latest continuous 288-bar segment constrain coverage/runtime maturity and later
-promotion/risk claims; they do not block safe-segment simulation.
+TD's last authenticated consumer readback remains the Aug-30 record, not refreshed
+in this batch: rt_min and broker_recommend consumable then; rt_min_daily major3
+producer/readback still unproven then. TA does not deploy TD or wait on that
+dataset for independent work.
 
 ## Copilot and paused scopes
 
-- TradingCopilot remains a transitional A-share-only observation and manual
-  takeover surface. No fresh Copilot runtime/consumer readback was taken in this
-  observation batch, so no current health claim is made and no Copilot field blocks
-  A-share or Crypto TA.
-- CNFutures and prediction markets remain paused. U.S. equities and A-share
-  options remain future isolated scopes.
+No Copilot publication or account-state writes were performed. CNFutures and
+prediction markets remain paused; no research draft was merged or deployed.
 
-## Factor/Strategy MVP evidence
+## Lessons and remaining work
 
-For each active market, MVP-1 requires one real receipt-bound resolved outcome,
-declared fees/slippage, one existing factor or strategy, a simple baseline,
-deterministic artifact, and a shadow-only retain/downweight/disable/parameter
-recommendation. This observation proves runtime/data plumbing but does not yet
-prove a new MVP-1 outcome for either market. Pending labels, service/timer health,
-coverage counts, and generated projections are not called learning.
+- Gate the dependent stock/dataset/window, not the whole changing universe.
+  Preserve valid observations and rejection evidence without inventing fills.
+- A localhost backend, injected token, CORS or edge403 does not authenticate
+  a remote browser. Test the real proxy peer boundary and legitimate control.
+- Policy, ownership and an old ledger do not prove runtime account connection.
+  Preserve timestamps and verify execution-root/head identity.
+- Read-only means no bootstrap, repair or lock-file creation. Validate under the
+  actual service sandbox, not only the same UID in an ordinary shell.
+- Next: resolve Crypto incomplete-core display semantics and implement bounded
+  capital-backed adapters while existing stock samples keep accumulating.
+  No global maturity wait, capital reset, legacy fallback or automatic live mode.
 
-## Next acceptance points
-
-1. Keep the recovered forty-symbol observer under natural readback and keep
-   feeding receipt-bound segments into rolling evaluation entries (first entry
-   recorded 2026-08-23 with `continue_accumulation`); a retain/downweight/
-   disable recommendation becomes eligible only at ≥30 resolved trips.
-2. On the next A-share market window, prove the first safe-subset simulation
-   decision/outcome without waiting for exact500 or every rolling symbol.
-3. Historical-grid scanning is exhausted for the crypto book: threshold/horizon
-   scanning of the momentum entry, maker-exit execution variants, and now the
-   cross-sectional family have all been screened under taker costs without a
-   significant positive survivor. No further historical scanning of any family
-   is justified; learning continues only through receipt-bound rolling
-   accumulation of resolved outcomes on live segments.
-4. For both markets, bind the next resolved outcome to fees/slippage, baseline,
-   factor/strategy version, deterministic replay, exclusions, and a shadow-only
-   recommendation.
-5. Replace this file after the next material readback. Do not append incident logs
-   or copy these SHAs, counts, timer states, or maturity claims into durable
-   architecture and policy documents.
+Rollback preserves all account bytes and new append-only facts. Disable/revert
+the reader if necessary, retaining nginx restrictions. Account rollback requires
+fencing target writers and checking head continuity; never overwrite the target
+with the original or recursively unfreeze the recovery tree.

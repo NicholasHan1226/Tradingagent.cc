@@ -315,6 +315,27 @@ def test_runner_persists_fixture_state_and_waits_for_reachable_fill(
     assert persisted["real_trading_enabled"] is False
     assert persisted["last_receipt"] == receipts[-1]
     assert oct(state.stat().st_mode & 0o777) == "0o600"
+    restored = MinuteFixtureClosedLoop.restore(persisted["loop_state"])
+    assert restored.export_state() == persisted["loop_state"]
+    # Independent cash/position roll-forward verifies persisted simulated
+    # fills, not merely a successful runner exit or coverage counter.
+    for sleeve in receipts[-1]["sleeves"]:
+        book = restored.counterfactual_books[sleeve["sleeve_id"]]
+        cash = 50_000.0
+        quantities = {}
+        for fill in book.receipts.values():
+            direction = 1 if fill.side == "buy" else -1
+            cash -= direction * fill.notional_cny + fill.fee_cny
+            quantities[fill.symbol] = quantities.get(fill.symbol, 0) + direction * fill.filled_quantity
+        assert book.cash_cny == pytest.approx(cash, abs=1e-6)
+        assert {symbol: position.quantity for symbol, position in book.positions.items()} == {
+            symbol: quantity for symbol, quantity in quantities.items() if quantity
+        }
+        assert sleeve["reconciled"] is True
+        if sleeve["settled_status"] in {"filled", "partial"}:
+            assert sleeve["settled_quantity"] > 0
+            assert sleeve["settled_notional_cny"] > 0
+            assert sleeve["settled_fee_cny"] > 0
 
 
 def test_runner_persists_gap_recovery_and_blocks_learning(

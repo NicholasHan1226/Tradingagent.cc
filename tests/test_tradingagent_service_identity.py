@@ -47,6 +47,8 @@ def test_front_api_uses_dedicated_primary_identity_and_read_only_release() -> No
         "Environment=FINANCE_WORKSPACE_ROOT=/opt/investment/tradingagent",
         "Environment=TRADING_AGENT_SNAPSHOT_HOST=127.0.0.1",
         "Environment=TRADING_AGENT_SNAPSHOT_PORT=8787",
+        "Environment=TRADING_AGENT_RUNTIME_PYTHON=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3",
+        "Environment=TRADING_AGENT_RUNTIME_READER=/opt/investment/releases/tradingagent/current/tools/read_runtime_observations.py",
         (
             "Environment=TRADING_COPILOT_EVENT_TIMELINE_DIR="
             "/var/lib/tradingagent/trading-copilot/event-timeline"

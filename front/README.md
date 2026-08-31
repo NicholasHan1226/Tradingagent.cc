@@ -68,6 +68,17 @@ TradingAgent signals / positions / review / risk
 - 本地开发：Vite dev server 会挂载只读快照 API。
 - 生产 API：`src/server/tradingAgentSnapshotHttp.ts` 可独立启动 Node 只读服务。
 - 读取入口：`GET /api/trading-agent/snapshot`。
+- 统一账户尚无收益序列时，首页原空图区域优先展示独立模拟运行记录；已有收益曲线时
+  保留曲线，将该记录放到下方证据区。两种布局都不把独立账本并入账户收益。
+- 首页新增“独立模拟运行”紧凑面板，仅读取可选 `runtimeObservations`：A股分钟覆盖和
+  Crypto 独立模拟账本各自展示原数据时间与本次核验时间，市场时段不冒充权益截止时刻。
+  完成观测轮次、数据拒收、模拟订单回执分别标记，不称成交或风险拒单，账户始终未接入。它不改变 `portfolio`、
+  `performance`、`marketSummaries`、心跳或成熟度；All Markets 只并列非货币计数。
+  缺失、空记录、后台运行中、滞后与损坏分别展示，不注入演示结果，也不声称当前收益或自然48h稳定。
+  服务端须同时配置绝对路径 `TRADING_AGENT_RUNTIME_PYTHON` 与
+  `TRADING_AGENT_RUNTIME_READER`；未配置不启动子进程。请求只触发后台刷新并立即返回，
+  子进程单飞、30秒强制超时、64KiB输出上限，成功/失败各缓存5分钟；过期即撤下旧成功值。
+  具体合同与整合边界见 [integration.md](docs/integration.md#independent-runtime-observations)。
 - 浏览器客户端：`src/api/tradingAgentIntegration.ts`。
 - TradingAgent 读取器：`src/server/tradingAgentSnapshot.ts`。
 - 今日自动模拟盘状态：只读 snapshot 可选读取

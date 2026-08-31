@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -1229,9 +1230,22 @@ def test_forty_family_settle_margin_and_shape_retry_pins() -> None:
         assert 0 <= config.slot_settle_delay_seconds < 5 * 60
 
 
-def test_forty_family_wires_the_bounded_shape_retry_into_bar_collection(
+@pytest.mark.parametrize(
+    ("config", "slot_offset_minutes", "expected_delays"),
+    [
+        (runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG, -5, ()),
+        (runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG, 0, (20.0, 45.0)),
+        (runtime_module.TEN_SYMBOL_RUNTIME_CONFIG, -5, ()),
+        (runtime_module.TEN_SYMBOL_RUNTIME_CONFIG, 0, ()),
+    ],
+    ids=["forty-historical", "forty-current", "ten-historical", "ten-current"],
+)
+def test_family_selects_shape_retry_from_frozen_invocation_window(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    config: runtime_module.CryptoTenSymbolObservationRuntimeConfig,
+    slot_offset_minutes: int,
+    expected_delays: tuple[float, ...],
 ) -> None:
     captured: dict[str, Any] = {}
 
@@ -1268,16 +1282,129 @@ def test_forty_family_wires_the_bounded_shape_retry_into_bar_collection(
         transport_factory=_factory(
             lambda **kwargs: HTTPResponse(200, catalog_payload())
         ),
-        config=runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG,
+        config=config,
+        current_window_end=WINDOW_END,
         retry_sleep=sleeps.append,
     )
     window = runtime_module._window_for_end(
-        WINDOW_END, config=runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG
+        WINDOW_END + timedelta(minutes=slot_offset_minutes), config=config
     )
     with pytest.raises(RuntimeError, match="stop-before-persistence"):
         port.collect(window)
 
-    assert captured["symbols"] == runtime_module.OBSERVATION_SYMBOLS_V40
-    assert captured["shape_retry_delays"] == (20.0, 45.0)
+    assert captured["symbols"] == config.symbols
+    assert captured["shape_retry_delays"] == expected_delays
     assert callable(captured["retry_sleep"])
     assert callable(captured["budget_remaining"])
+
+
+@pytest.mark.parametrize("late_receipt", [False, True], ids=["recover", "reject-late"])
+def test_forty_historical_shape_failure_preserves_current_gap_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    late_receipt: bool,
+) -> None:
+    from tests.test_crypto_forty_symbol_universe import FortySymbolFixtureTransport
+
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    config = replace(runtime_module.FORTY_SYMBOL_RUNTIME_CONFIG, output_root=output_root)
+    catalog = parse_catalog_envelope(
+        FortySymbolFixtureTransport()(method="GET").json_body
+    )
+    profile = CryptoTenSymbolObservationProfile.from_catalog(
+        catalog,
+        expected_catalog_version=catalog.catalog_version,
+        symbols=config.symbols,
+        profile_contract=config.profile_contract,
+    )
+    payload = _manifest_payload(output_root)
+    payload.update(
+        schema=config.manifest_contract,
+        catalog_version=profile.catalog_version,
+        profile=profile.to_payload(),
+        profile_sha256=profile.profile_sha256,
+    )
+    manifest = _write_manifest(tmp_path, payload=payload)
+
+    def run(
+        end: datetime, transport: Any, sleep: Callable[[float], None]
+    ) -> dict[str, Any]:
+        return run_crypto_ten_symbol_observation_once(
+            runtime_manifest=manifest,
+            token_file=token_file,
+            output_root=output_root,
+            now=end + timedelta(seconds=285),
+            config=config,
+            transport_factory=_factory(transport),
+            retry_sleep=sleep,
+        )
+
+    first = run(WINDOW_END, FortySymbolFixtureTransport(), lambda _: None)
+    assert first["status"] == "completed"
+    current_end = WINDOW_END + timedelta(minutes=30)
+    elapsed = 285.0
+    sleeps: list[float] = []
+    old_queries = 0
+
+    def sleep(seconds: float) -> None:
+        nonlocal elapsed
+        sleeps.append(seconds)
+        elapsed += seconds
+
+    class MissingHistoryTransport(FortySymbolFixtureTransport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            nonlocal old_queries
+            # Waiting 65 seconds on missing history exposes the next receipt.
+            delay = 320 if elapsed >= 320 else (271 if late_receipt else 20)
+            self.observed_at = current_end + timedelta(seconds=delay)
+            response = super().__call__(**kwargs)
+            body = kwargs.get("json_body")
+            if isinstance(body, dict) and str(body["dataset_id"]).endswith(".5m"):
+                last_open = datetime.fromisoformat(
+                    body["filters"]["open_time"]["between"][1]
+                )
+                if last_open < current_end - timedelta(minutes=5):
+                    old_queries += 1
+                    incomplete = copy.deepcopy(dict(response.json_body))
+                    incomplete["data"] = incomplete["data"][:11]
+                    return HTTPResponse(200, incomplete)
+            return response
+
+    receipt = run(current_end, MissingHistoryTransport(), sleep)
+    assert old_queries == 1
+    assert sleeps == []
+    assert [cycle["cycle_kind"] for cycle in receipt["cycle_results"]] == [
+        "fresh_query",
+        "outage_gap_recovery",
+    ]
+    assert receipt["cycle_results"][0]["result"]["reason_code"] == (
+        "crypto_observation_query_shape_invalid"
+    )
+    _assert_recursive_non_authority(receipt)
+    store = CryptoTenSymbolObservationStore(output_root, contracts=config.store_contracts)
+    assert store.pending_record() is None
+    if late_receipt:
+        assert receipt["status"] == "data_reject"
+        assert receipt["outage_gap_recovered"] is False
+        assert receipt["cycle_results"][1]["result"]["reason_code"] == (
+            "crypto_observation_watermark_invalid"
+        )
+        assert store.data_gap_events() == []
+        assert store.checkpoint()["latest_terminal_slot"] == iso(WINDOW_END)
+        assert store.read_bars_sidecar(iso(current_end)) is None
+    else:
+        assert receipt["status"] == "completed"
+        assert receipt["outage_gap_recovered"] is True
+        gap = store.data_gap_events()[0]
+        assert gap["skipped_from"] == iso(WINDOW_END + timedelta(minutes=5))
+        assert gap["skipped_to"] == iso(current_end - timedelta(minutes=5))
+        assert len(gap["recovery_observation"]["sources"]) == 40
+        assert store.checkpoint()["latest_terminal_slot"] == iso(current_end)
+        sidecar = store.read_bars_sidecar(iso(current_end))
+        assert sidecar is not None
+        assert sidecar["observation_cutoff"] == iso(current_end + timedelta(seconds=270))
+        replay = run(
+            current_end, lambda **_: pytest.fail("replay queried transport"), sleep
+        )
+        assert replay["status"] == "noop"
+        assert len(store.data_gap_events()) == 1

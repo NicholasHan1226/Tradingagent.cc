@@ -8,6 +8,7 @@ It configures no transport, persistence, scheduler, runtime, or execution path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -26,7 +27,10 @@ from shared.data.tradingdatas_pagination import (
 
 
 DATASET_ID = "cn.dataset.fut_basic"
-SCHEMA_MAJOR = 1
+SCHEMA_MAJOR = 1  # Legacy public symbol; new reads bind the catalog major.
+SUPPORTED_SCHEMA_MAJORS = frozenset({1, 2})
+MAJOR2_MAX_ROWS = 500
+MAJOR2_MAX_PAGES = 5
 IDENTITY_FIELDS = ("ts_code",)
 PRODUCT_CODE = "M"
 EXCHANGE = "DCE"
@@ -48,6 +52,7 @@ EXACT_ROW_COUNT = 207
 _SHA256_LENGTH = 64
 _ALLOWED_DEGRADED_REASON = "response_completeness_unverified"
 _M_DCE_TS_CODE = re.compile(r"^M[0-9]{3,4}\.DCE$")
+_MAJOR2_NATIVE_REFERENCE_IDS = frozenset({"M.DCE", "ML.DCE"})
 
 
 class FutBasicContractUnitConsumerError(ValueError):
@@ -101,9 +106,12 @@ class FutBasicRawContractUnitSnapshot:
     def __post_init__(self) -> None:
         if (
             self.dataset_id != DATASET_ID
-            or self.schema_major != SCHEMA_MAJOR
-            or self.row_count != EXACT_ROW_COUNT
-            or self.page_count != MAX_PAGES
+            or type(self.schema_major) is not int
+            or self.schema_major not in SUPPORTED_SCHEMA_MAJORS
+            or type(self.row_count) is not int
+            or type(self.page_count) is not int
+            or (self.schema_major == 1 and (self.row_count != EXACT_ROW_COUNT or self.page_count != MAX_PAGES))
+            or (self.schema_major == 2 and not (1 <= self.row_count <= MAJOR2_MAX_ROWS and 1 <= self.page_count <= MAJOR2_MAX_PAGES))
             or self.as_of is not None
             or self.pit_authority
             or self.runtime_eligible
@@ -111,11 +119,11 @@ class FutBasicRawContractUnitSnapshot:
             or self.trading_eligible
             or not self.terminal_pagination
             or not self.replay_verified
-            or self.state != "partial"
-            or not self.degraded
+            or (self.schema_major == 1 and (self.state != "partial" or self.degraded is not True))
+            or (self.schema_major == 2 and (self.state not in {"ready", "success"} or self.degraded is not False))
             or self.coverage_complete
             or self.coverage_reason != _ALLOWED_DEGRADED_REASON
-            or len(self.facts) != EXACT_ROW_COUNT
+            or len(self.facts) != self.row_count
         ):
             raise FutBasicContractUnitConsumerError("raw_snapshot_authority_invalid")
 
@@ -144,10 +152,12 @@ def load_fut_basic_raw_contract_units(
         catalog = client.get_catalog()
         if catalog.catalog_version != expected_catalog:
             raise FutBasicContractUnitConsumerError("catalog_version_mismatch")
-        _validate_catalog_row(_single_catalog_row(catalog.data))
+        schema_major = _validate_catalog_row(_single_catalog_row(catalog.data))
+        max_pages = MAX_PAGES if schema_major == 1 else MAJOR2_MAX_PAGES
+        max_rows = EXACT_ROW_COUNT if schema_major == 1 else MAJOR2_MAX_ROWS
         request = QueryRequest(
             dataset_id=DATASET_ID,
-            schema_major=SCHEMA_MAJOR,
+            schema_major=schema_major,
             fields=QUERY_FIELDS,
             filters={"fut_code": {"eq": PRODUCT_CODE}},
             as_of=None,
@@ -158,15 +168,15 @@ def load_fut_basic_raw_contract_units(
             client=client,
             request=request,
             identity_fields=IDENTITY_FIELDS,
-            max_pages=MAX_PAGES,
-            max_rows=EXACT_ROW_COUNT,
+            max_pages=max_pages,
+            max_rows=max_rows,
         )
         replay = collect_query_pages(
             client=client,
             request=request,
             identity_fields=IDENTITY_FIELDS,
-            max_pages=MAX_PAGES,
-            max_rows=EXACT_ROW_COUNT,
+            max_pages=max_pages,
+            max_rows=max_rows,
         )
     except FutBasicContractUnitConsumerError:
         raise
@@ -185,15 +195,17 @@ def load_fut_basic_raw_contract_units(
         metadata=first.envelope.metadata,
         expected_receipt_id=expected_receipt,
         expected_lineage_sha256=expected_lineage,
+        schema_major=schema_major,
     )
     facts = _map_rows(
         rows=first.envelope.data,
         receipt_id=expected_receipt,
         lineage_sha256=expected_lineage,
+        schema_major=schema_major,
     )
     return FutBasicRawContractUnitSnapshot(
         dataset_id=first.envelope.dataset_id,
-        schema_major=SCHEMA_MAJOR,
+        schema_major=schema_major,
         catalog_version=first.envelope.catalog_version,
         receipt_id=expected_receipt,
         lineage_sha256=expected_lineage,
@@ -203,8 +215,8 @@ def load_fut_basic_raw_contract_units(
         replay_verified=True,
         semantic_sha256=first.semantic_sha256,
         pagination_trace_sha256=first.pagination_trace_sha256,
-        state="partial",
-        degraded=True,
+        state=first.envelope.metadata.state.strip().lower(),
+        degraded=first.envelope.metadata.degraded,
         coverage_complete=False,
         coverage_reason=_ALLOWED_DEGRADED_REASON,
         facts=facts,
@@ -218,8 +230,9 @@ def _single_catalog_row(rows: tuple[dict[str, Any], ...]) -> Mapping[str, Any]:
     return matches[0]
 
 
-def _validate_catalog_row(row: Mapping[str, Any]) -> None:
-    if row.get("schema_major") != SCHEMA_MAJOR:
+def _validate_catalog_row(row: Mapping[str, Any]) -> int:
+    major = row.get("schema_major")
+    if type(major) is not int or major not in SUPPORTED_SCHEMA_MAJORS:
         raise FutBasicContractUnitConsumerError("catalog_schema_invalid")
     identity_fields = _text_list(row.get("identity_fields"), "catalog.identity_fields")
     if tuple(identity_fields) != IDENTITY_FIELDS:
@@ -235,6 +248,7 @@ def _validate_catalog_row(row: Mapping[str, Any]) -> None:
         raise FutBasicContractUnitConsumerError("catalog_filter_contract_missing")
     if "eq" not in _text_list(operators.get("fut_code"), "catalog.fut_code_operators"):
         raise FutBasicContractUnitConsumerError("catalog_fut_code_filter_invalid")
+    return major
 
 
 def _validate_metadata(
@@ -242,13 +256,30 @@ def _validate_metadata(
     metadata: Any,
     expected_receipt_id: str,
     expected_lineage_sha256: str,
+    schema_major: int = 1,
 ) -> None:
-    if metadata.state.strip().lower() != "partial":
+    if schema_major == 1 and metadata.state.strip().lower() != "partial":
         raise FutBasicContractUnitConsumerError("metadata_state_invalid")
-    if metadata.degraded is not True:
+    if schema_major == 1 and metadata.degraded is not True:
         raise FutBasicContractUnitConsumerError("metadata_degraded_invalid")
-    if tuple(metadata.reasons) != (_ALLOWED_DEGRADED_REASON,):
+    if schema_major == 1 and tuple(metadata.reasons) != (_ALLOWED_DEGRADED_REASON,):
         raise FutBasicContractUnitConsumerError("metadata_degraded_reason_invalid")
+    if schema_major == 2:
+        freshness, quality = metadata.freshness, metadata.quality
+        if (metadata.state.strip().lower() not in {"ready", "success"}
+                or metadata.degraded is not False or metadata.reasons
+                or not isinstance(freshness, Mapping) or freshness.get("state") != "fresh"
+                or freshness.get("stale") is not False or freshness.get("fresh") is False
+                or not isinstance(quality, Mapping) or quality.get("state") != "valid"
+                or quality.get("valid") is not True):
+            raise FutBasicContractUnitConsumerError("metadata_major2_not_ready")
+        try:
+            through = datetime.fromisoformat(metadata.data_through.replace("Z", "+00:00"))
+            observed = datetime.fromisoformat(metadata.observed_at.replace("Z", "+00:00"))
+            if through.utcoffset() is None or observed.utcoffset() is None or through > observed:
+                raise ValueError("invalid source time order")
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise FutBasicContractUnitConsumerError("metadata_time_invalid") from exc
     if metadata.receipt_id != expected_receipt_id:
         raise FutBasicContractUnitConsumerError("receipt_mismatch")
     if not isinstance(metadata.lineage, Mapping):
@@ -267,8 +298,9 @@ def _map_rows(
     rows: tuple[dict[str, Any], ...],
     receipt_id: str,
     lineage_sha256: str,
+    schema_major: int = 1,
 ) -> tuple[FutBasicRawContractUnitFact, ...]:
-    if len(rows) != EXACT_ROW_COUNT:
+    if (schema_major == 1 and len(rows) != EXACT_ROW_COUNT) or (schema_major == 2 and not 1 <= len(rows) <= MAJOR2_MAX_ROWS):
         raise FutBasicContractUnitConsumerError("row_count_invalid")
     facts: list[FutBasicRawContractUnitFact] = []
     for row in rows:
@@ -277,7 +309,9 @@ def _map_rows(
             raise FutBasicContractUnitConsumerError("row_exchange_invalid")
         if row.get("fut_code") != PRODUCT_CODE:
             raise FutBasicContractUnitConsumerError("row_fut_code_invalid")
-        if not _M_DCE_TS_CODE.fullmatch(ts_code):
+        if not _M_DCE_TS_CODE.fullmatch(ts_code) and not (
+            schema_major == 2 and ts_code in _MAJOR2_NATIVE_REFERENCE_IDS
+        ):
             raise FutBasicContractUnitConsumerError("row_ts_code_invalid")
         missing = [field for field in RAW_CONTRACT_UNIT_FIELDS if field not in row]
         if missing:

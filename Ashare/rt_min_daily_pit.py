@@ -458,18 +458,22 @@ def _feature_rows(
     *,
     observed: datetime,
     decision: datetime,
+    schema_major: int = 1,
 ) -> tuple[dict[str, Any], ...]:
     result: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         if not isinstance(row, Mapping):
             raise RtMinDailyPITContractError(f"row_{index}_not_mapping")
-        missing = [field for field in RT_MIN_DAILY_FIELDS if field not in row]
+        fields = tuple(field for field in RT_MIN_DAILY_FIELDS if schema_major == 1 or field != "freq")
+        missing = [field for field in fields if field not in row]
+        if schema_major in {2, 3} and set(row) != set(fields):
+            raise RtMinDailyPITContractError(f"row_{index}_schema_shape_invalid")
         if missing:
             raise RtMinDailyPITContractError(f"row_{index}_field_missing")
         symbol = _symbol(row["ts_code"], field_name=f"row_{index}_ts_code")
         if symbol not in requested:
             raise RtMinDailyPITContractError("row_symbol_out_of_requested_scope")
-        if not isinstance(row["freq"], str) or row["freq"] != "1MIN":
+        if schema_major == 1 and (not isinstance(row["freq"], str) or row["freq"] != "1MIN"):
             raise RtMinDailyPITContractError(f"row_{index}_freq_invalid")
         if not isinstance(row["time"], str) or not row["time"].strip():
             raise RtMinDailyPITContractError(f"row_{index}_time_invalid")
@@ -481,7 +485,7 @@ def _feature_rows(
         result.append(
             {
                 "symbol": symbol,
-                "freq": row["freq"],
+                **({"freq": row["freq"]} if schema_major == 1 else {}),
                 "time": row["time"],
                 "open": row["open"],
                 "close": row["close"],
@@ -504,6 +508,7 @@ def build_rt_min_daily_pit_feature_contract(
     page_run: PagedQueryRun,
     requested_symbols: Sequence[str],
     decision_as_of: datetime,
+    request: QueryRequest | None = None,
 ) -> RtMinDailyPITFeatureContract:
     """Build a current-observation contract from an existing complete page run.
 
@@ -516,6 +521,17 @@ def build_rt_min_daily_pit_feature_contract(
         raise RtMinDailyPITContractError("page_run_invalid")
     if page_run.dataset_id != RT_MIN_DAILY_DATASET_ID:
         raise RtMinDailyPITContractError("dataset_id_mismatch")
+    schema_major = RT_MIN_DAILY_SCHEMA_MAJOR
+    if request is not None:
+        if (not isinstance(request, QueryRequest) or request.dataset_id != RT_MIN_DAILY_DATASET_ID
+                or request.schema_major not in {1, 2, 3} or request.cursor is not None or request.as_of is not None):
+            raise RtMinDailyPITContractError("query_contract_invalid")
+        schema_major = request.schema_major
+        required_fields = tuple(field for field in RT_MIN_DAILY_FIELDS if schema_major == 1 or field != "freq")
+        if request.fields != required_fields or not page_run.page_request_sha256s or request.sha256 != page_run.page_request_sha256s[0]:
+            raise RtMinDailyPITContractError("query_binding_mismatch")
+    identity_fields = tuple(field for field in RT_MIN_DAILY_IDENTITY_FIELDS if schema_major == 1 or field != "freq")
+    page_run.verify_integrity(identity_fields=identity_fields)
     requested = _normalize_symbols(requested_symbols, field_name="requested_symbols")
     decision = _timestamp(decision_as_of, field_name="decision_as_of")
     envelope = page_run.envelope
@@ -540,7 +556,7 @@ def build_rt_min_daily_pit_feature_contract(
             DatasetRequirement(
                 RT_MIN_DAILY_DATASET_ID,
                 role="required_execution",
-                identity_fields=RT_MIN_DAILY_IDENTITY_FIELDS,
+                identity_fields=identity_fields,
                 query_as_of_mode="omit",
                 minimum_row_count=0,
                 max_pages=1_000,
@@ -570,6 +586,7 @@ def build_rt_min_daily_pit_feature_contract(
         set(requested),
         observed=observed,
         decision=decision,
+        schema_major=schema_major,
     )
     accepted = tuple(sorted({row["symbol"] for row in rows}))
     missing = tuple(symbol for symbol in requested if symbol not in accepted)
@@ -580,7 +597,7 @@ def build_rt_min_daily_pit_feature_contract(
     payload = {
         "contract_id": RT_MIN_DAILY_CONTRACT_ID,
         "dataset_id": RT_MIN_DAILY_DATASET_ID,
-        "schema_major": RT_MIN_DAILY_SCHEMA_MAJOR,
+        "schema_major": schema_major,
         "catalog_version": catalog_version,
         "decision_as_of": decision.isoformat(),
         "requested_symbols": list(requested),
@@ -605,7 +622,7 @@ def build_rt_min_daily_pit_feature_contract(
     return RtMinDailyPITFeatureContract(
         contract_id=RT_MIN_DAILY_CONTRACT_ID,
         dataset_id=RT_MIN_DAILY_DATASET_ID,
-        schema_major=RT_MIN_DAILY_SCHEMA_MAJOR,
+        schema_major=schema_major,
         catalog_version=catalog_version,
         decision_as_of=decision.isoformat(),
         requested_symbols=requested,

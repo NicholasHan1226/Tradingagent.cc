@@ -1,25 +1,23 @@
 [Unit]
-Description=TradingAgent A-share delayed five-minute paper accumulator
+Description=TradingAgent A-share capital-backed paper session (simulation oneshot candidate)
 Wants=network-online.target
 After=network-online.target tradingdatas-v1-internal.service
-ConditionPathExists=/etc/tradingagent/ashare-minute-paper.env
+ConditionPathExists=/etc/tradingagent/ashare-capital-backed-paper.env
 ConditionPathExists=/run/secrets/tradingagent/tradingdatas-read.token
 ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
-ConditionPathExists=/opt/investment/releases/tradingagent/current/Ashare/minute_auto_runner.py
+ConditionPathExists=/var/lib/tradingagent/ashare-canonical/shared/logs/capital/ashare
 
 [Service]
 Type=oneshot
 User=tradingagent
 Group=tradingagent
 WorkingDirectory=/opt/investment/releases/tradingagent/current
-EnvironmentFile=/etc/tradingagent/ashare-minute-paper.env
+EnvironmentFile=/etc/tradingagent/ashare-capital-backed-paper.env
 Environment=REAL_TRADING_ENABLED=false
 Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
-ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.minute_auto_runner --state-root ${ASHARE_MINUTE_PAPER_STATE_ROOT} --token-file /run/secrets/tradingagent/tradingdatas-read.token --allow-late-start
-TimeoutStartSec=90s
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.capital_backed_paper_runner --trade-date ${ASHARE_PAPER_TRADE_DATE} --decision-as-of ${ASHARE_PAPER_DECISION_AS_OF} --ledger-root /var/lib/tradingagent/ashare-canonical/shared/logs/capital/ashare --journal-path /var/lib/tradingagent/ashare-canonical/shared/review/ashare/sample_journal.jsonl --latest-path /var/lib/tradingagent/ashare-canonical/capital-backed-paper/latest.json --token-file /run/secrets/tradingagent/tradingdatas-read.token --champion-registry-root ${ASHARE_CHAMPION_REGISTRY_ROOT} --allow-canonical-root
+TimeoutStartSec=180s
 UMask=0077
-StateDirectory=tradingagent/ashare-minute-paper
-StateDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -41,6 +39,6 @@ ReadOnlyPaths=/opt/investment/releases/tradingagent
 ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1
 ReadOnlyPaths=/etc/tradingagent
 ReadOnlyPaths=/run/secrets/tradingagent
-ReadWritePaths=/var/lib/tradingagent/ashare-minute-paper
+ReadWritePaths=/var/lib/tradingagent/ashare-canonical
 StandardOutput=journal
 StandardError=journal

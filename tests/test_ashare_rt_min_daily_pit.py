@@ -446,3 +446,48 @@ def test_rt_min_daily_rejects_incomplete_lineage() -> None:
             requested_symbols=("000001.SZ",),
             decision_as_of=datetime(2026, 8, 12, 7, 0, tzinfo=timezone.utc),
         )
+
+
+def _major2_run_request(schema_major=2, row_override=None):
+    row = _row("000001.SZ")
+    del row["freq"]
+    if row_override is not None:
+        row.update(row_override)
+    original = _run(rows=[_row("000001.SZ")]).envelope
+    from shared.data.sharedsignals_v1 import QueryEnvelope
+    envelope = QueryEnvelope(api_version=original.api_version, catalog_version=original.catalog_version, request_id=original.request_id, dataset_id=original.dataset_id, data=(row,), next_cursor=None, metadata=original.metadata)
+    request = QueryRequest(dataset_id=RT_MIN_DAILY_DATASET_ID, schema_major=schema_major,
+        fields=("ts_code", "time", "open", "close", "high", "low", "vol", "amount"), limit=100)
+    return bind_complete_page(request=request, envelope=envelope, identity_fields=("ts_code", "time")), request
+
+
+@pytest.mark.parametrize("schema_major", [2, 3])
+def test_major2_minute_binds_query_and_never_synthesizes_freq(schema_major):
+    run, request = _major2_run_request(schema_major)
+    contract = build_rt_min_daily_pit_feature_contract(page_run=run, request=request,
+        requested_symbols=("000001.SZ",), decision_as_of=datetime(2026, 8, 12, 7, tzinfo=timezone.utc))
+    assert contract.schema_major == schema_major
+    assert "freq" not in contract.features[0]
+    assert contract.historical_pit_eligible is False
+
+
+def test_major2_minute_rejects_query_binding_drift_and_unsupported_major():
+    run, request = _major2_run_request()
+    for changed in (QueryRequest(**{**request.to_payload(), "limit": 101}), QueryRequest(**{**request.to_payload(), "schema_major": 4})):
+        with pytest.raises(RtMinDailyPITContractError):
+            build_rt_min_daily_pit_feature_contract(page_run=run, request=changed,
+                requested_symbols=("000001.SZ",), decision_as_of=datetime(2026, 8, 12, 7, tzinfo=timezone.utc))
+
+
+def test_legacy_profile_helper_remains_bound_to_major1_identity():
+    from Ashare.rt_min_daily_pit import _profile, RT_MIN_DAILY_IDENTITY_FIELDS
+    assert _profile().requirements[0].identity_fields == RT_MIN_DAILY_IDENTITY_FIELDS
+
+
+@pytest.mark.parametrize("schema_major", [2, 3])
+@pytest.mark.parametrize("override", [{"freq":"1MIN"}, {"time":"not-a-time"}, {"time":"2026-08-12 14:01:00"}, {"ts_code":"BAD"}])
+def test_native_minute_rejects_shape_date_and_symbol_failures(schema_major, override):
+    run, request = _major2_run_request(schema_major, override)
+    with pytest.raises(RtMinDailyPITContractError):
+        build_rt_min_daily_pit_feature_contract(page_run=run, request=request,
+            requested_symbols=("000001.SZ",), decision_as_of=datetime(2026, 8, 12, 7, tzinfo=timezone.utc))

@@ -1886,6 +1886,478 @@ def _stable_pair_load_kwargs(symbols: tuple[str, ...]) -> dict[str, Any]:
     }
 
 
+def test_minute_query_retry_does_not_sleep_or_request_past_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 0.0, "calls": 0}
+    sleeps: list[float] = []
+
+    def sleep(delay: float) -> None:
+        sleeps.append(delay)
+        clock["now"] += delay
+
+    def collect(**kwargs: Any) -> Any:
+        clock["calls"] += 1
+        if clock["calls"] == 1:
+            raise HTTPStatusError("TradingDatas V1 /v1/query returned HTTP 503")
+        return SimpleNamespace()
+
+    monkeypatch.setattr(minute_data_module, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(minute_data_module, "_sleep", sleep)
+    monkeypatch.setattr(minute_data_module, "collect_query_pages", collect)
+    with pytest.raises(
+        minute_data_module.MinuteSnapshotLoadBudgetExhausted,
+        match="minute_snapshot_load_budget_exhausted",
+    ):
+        minute_data_module._collect_minute_query_pages_with_retry(
+            client=_client(_Transport()),
+            request=SimpleNamespace(),
+            identity_fields=("ts_code", "bar_time"),
+            max_pages=1,
+            max_rows=1,
+            deadline=1.0,
+        )
+    assert clock["calls"] == 1
+    assert sleeps == []
+
+
+def test_minute_fanout_slow_front_shard_cannot_starve_valid_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One executor worker makes the queued-wave starvation deterministic;
+    # production's four-worker cap is covered separately by the fanout tests.
+    monkeypatch.setattr(minute_data_module, "MAX_MINUTE_FANOUT_WORKERS", 1)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(minute_data_module, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        minute_data_module, "_sleep",
+        lambda delay: clock.update(now=clock["now"] + delay),
+    )
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(201))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    query_timeouts: list[tuple[str, float]] = []
+
+    class SlowFrontTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            requested = kwargs["json_body"]["filters"]["ts_code"]["in"]
+            timeout = kwargs["timeout_seconds"]
+            query_timeouts.append((requested[0], timeout))
+            if requested[0] == symbols[0]:
+                clock["now"] += timeout
+                raise TimeoutError("fixture slow shard")
+            clock["now"] += 0.01
+            return HTTPResponse(200, _query_payload(
+                request_id=f"fair-{len(query_timeouts)}",
+                rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                next_cursor=None,
+            ))
+
+    client = _client(SlowFrontTransport(catalog_row=catalog_row), max_limit=100)
+    client.config = replace(client.config, timeout_seconds=2.0)
+    kwargs = _stable_pair_load_kwargs(symbols)
+    kwargs.update(
+        profile=_profile(client, max_pages=3, max_rows=201, page_limit=100),
+        load_budget_seconds=12.0,
+    )
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(**kwargs)
+    assert snapshot.row_count == 101
+    assert snapshot.same_observation is True
+    assert snapshot.fanout_failures[0]["shard_index"] == 0
+    assert snapshot.fanout_failures[0]["reason_code"] == "minute_snapshot_load_budget_exhausted"
+    assert [key for key, _ in query_timeouts] == [
+        symbols[0], symbols[100], symbols[100], symbols[200], symbols[200],
+    ]
+    assert query_timeouts[0][1] == pytest.approx(2.0)
+    assert all(0 < timeout <= client.config.timeout_seconds for _, timeout in query_timeouts)
+    assert clock["now"] < 12.0
+    assert client.config.timeout_seconds == 2.0
+
+
+@pytest.mark.parametrize("failure", ["401", "403", "contract", "catalog", "auth", "pit"])
+def test_minute_fanout_hard_error_is_not_downgraded_to_partial_success(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    monkeypatch.setattr(minute_data_module, "_sleep", lambda delay: None)
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class HardFailureTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            requested = kwargs["json_body"]["filters"]["ts_code"]["in"]
+            if requested[0] == symbols[100]:
+                if failure in {"401", "403"}:
+                    return HTTPResponse(int(failure), {"error": "fixture-denied"})
+                if failure == "contract":
+                    return HTTPResponse(200, {"invalid": "fixture-envelope"})
+                if failure == "auth":
+                    raise TradingDatasAuthenticationError("fixture-denied")
+            return HTTPResponse(200, _query_payload(
+                request_id=f"hard-{requested[0]}",
+                rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                next_cursor=None,
+                catalog_version=(
+                    "fixture-drift" if failure == "catalog" and requested[0] == symbols[100]
+                    else CATALOG
+                ),
+                metadata=(
+                    {**_metadata(), "observed_at": "2026-07-27T09:46:00+08:00"}
+                    if failure == "pit" and requested[0] == symbols[100] else None
+                ),
+            ))
+
+    client = _client(HardFailureTransport(catalog_row=catalog_row), max_limit=100)
+    kwargs = _stable_pair_load_kwargs(symbols)
+    kwargs["profile"] = _profile(client, max_pages=2, max_rows=101, page_limit=100)
+    with pytest.raises(MinuteDataContractError) as caught:
+        TradingDatasMinuteMarketDataPort(client).load_snapshot(**kwargs)
+    assert caught.value.reason_code == (
+        "minute_evidence_time_order_invalid" if failure == "pit"
+        else "minute_tradingdatas_request_failed"
+    )
+    assert len(kwargs["audit_ledger"].records()) == 1
+
+
+@pytest.mark.parametrize("use_factory", [False, True])
+def test_minute_deadline_client_caps_each_page_and_worker_catalog(
+    monkeypatch: pytest.MonkeyPatch, use_factory: bool,
+) -> None:
+    clock = {"now": 0.0}
+    monkeypatch.setattr(minute_data_module, "_monotonic", lambda: clock["now"])
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(100))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    timeouts: list[float] = []
+    worker_catalog_timeouts: list[float] = []
+
+    class DeadlineTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                if use_factory:
+                    worker_catalog_timeouts.append(kwargs["timeout_seconds"])
+                    clock["now"] += 1.0
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            requested = body["filters"]["ts_code"]["in"]
+            timeouts.append(kwargs["timeout_seconds"])
+            slow = len(requested) == 100
+            clock["now"] += min(4.0 if slow else 0.01, kwargs["timeout_seconds"])
+            cursor = "page-2" if slow and body.get("cursor") is None else None
+            selected = requested[:50] if cursor else requested[-50:]
+            return HTTPResponse(200, _query_payload(
+                request_id=f"deadline-{len(timeouts)}",
+                rows=[_row(symbol, "20260727 09:40:00") for symbol in selected],
+                next_cursor=cursor,
+            ))
+
+    client = _client(DeadlineTransport(catalog_row=catalog_row), max_limit=100)
+    bounded = minute_data_module._minute_deadline_client(client, deadline=lambda: 6.0)
+    bounded.get_catalog()
+    with pytest.raises(minute_data_module.MinuteSnapshotLoadBudgetExhausted):
+        minute_data_module._collect_stable_minute_pair(
+            client=bounded,
+            request=minute_data_module.QueryRequest(
+                dataset_id=DATASET, fields=tuple(FIELDS), schema_major=1,
+                filters={"ts_code": {"in": list(symbols)}}, limit=50,
+            ),
+            identity_fields=("ts_code", "bar_time"),
+            max_pages=2, max_rows=100, deadline=6.0,
+        )
+    assert timeouts[:2] == ([5.0, 1.0] if use_factory else [6.0, 2.0])
+    assert len(timeouts) == 2  # no replay of the expired 100-symbol shard
+    assert worker_catalog_timeouts == ([6.0] if use_factory else [])
+    assert client.config.timeout_seconds == 10.0
+
+
+def test_minute_fanout_four_slow_workers_leave_budget_for_queued_shards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Separate virtual clocks model four concurrent slow requests without
+    # real sleeps. The barrier guarantees all four workers enter the first wave.
+    local_clock = threading.local()
+    barrier = threading.Barrier(4)
+    lock = threading.Lock()
+    started: set[str] = set()
+    active = {"count": 0, "peak": 0}
+    monkeypatch.setattr(
+        minute_data_module, "_monotonic", lambda: getattr(local_clock, "now", 0.0),
+    )
+    monkeypatch.setattr(
+        minute_data_module, "_sleep",
+        lambda delay: setattr(local_clock, "now", getattr(local_clock, "now", 0.0) + delay),
+    )
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(801))
+    slow_symbols = frozenset(symbols[index] for index in (0, 100, 200, 300))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+
+    class FourSlowTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            requested = kwargs["json_body"]["filters"]["ts_code"]["in"]
+            key = requested[0]
+            with lock:
+                first = key not in started
+                started.add(key)
+                active["count"] += 1
+                active["peak"] = max(active["peak"], active["count"])
+            try:
+                if key in slow_symbols:
+                    if first:
+                        barrier.wait(timeout=5)
+                    local_clock.now = getattr(local_clock, "now", 0.0) + kwargs["timeout_seconds"]
+                    raise TimeoutError("fixture slow wave")
+                return HTTPResponse(200, _query_payload(
+                    request_id=f"wave-{key}",
+                    rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                    next_cursor=None,
+                ))
+            finally:
+                with lock:
+                    active["count"] -= 1
+
+    client = _client(FourSlowTransport(catalog_row=catalog_row), max_limit=100)
+    kwargs = _stable_pair_load_kwargs(symbols)
+    kwargs.update(
+        profile=_profile(client, max_pages=9, max_rows=801, page_limit=100),
+        load_budget_seconds=12.0,
+    )
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(**kwargs)
+    assert minute_data_module.MAX_MINUTE_FANOUT_WORKERS == 4
+    assert active["peak"] == 4
+    assert snapshot.row_count == 401
+    assert snapshot.same_observation is True
+    assert len(snapshot.fanout_failures) == 4
+    assert started == set(symbols[::100])
+    assert all(
+        failure["reason_code"] == "minute_snapshot_load_budget_exhausted"
+        for failure in snapshot.fanout_failures
+    )
+
+
+def test_minute_stable_pair_retry_cannot_sleep_past_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"count": 0}
+    sleeps: list[float] = []
+
+    def collect(**kwargs: Any) -> Any:
+        calls["count"] += 1
+        return SimpleNamespace(
+            semantic_sha256=str(calls["count"]), semantic_trace_sha256="trace",
+        )
+
+    monkeypatch.setattr(minute_data_module, "_monotonic", lambda: 0.0)
+    monkeypatch.setattr(minute_data_module, "_sleep", sleeps.append)
+    monkeypatch.setattr(minute_data_module, "collect_query_pages", collect)
+    with pytest.raises(minute_data_module.MinuteSnapshotLoadBudgetExhausted):
+        minute_data_module._collect_stable_minute_pair(
+            client=_client(_Transport()), request=SimpleNamespace(),
+            identity_fields=("ts_code", "bar_time"),
+            max_pages=1, max_rows=1, deadline=0.25,
+        )
+    assert calls["count"] == 2
+    assert sleeps == []
+
+
+def test_minute_query_retry_rechecks_deadline_after_overslept_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 0.0, "calls": 0}
+
+    def collect(**kwargs: Any) -> Any:
+        clock["calls"] += 1
+        raise TimeoutError("fixture timeout")
+
+    monkeypatch.setattr(minute_data_module, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(minute_data_module, "_sleep", lambda delay: clock.update(now=4.0))
+    monkeypatch.setattr(minute_data_module, "collect_query_pages", collect)
+    with pytest.raises(minute_data_module.MinuteSnapshotLoadBudgetExhausted):
+        minute_data_module._collect_minute_query_pages_with_retry(
+            client=_client(_Transport()), request=SimpleNamespace(),
+            identity_fields=("ts_code", "bar_time"),
+            max_pages=1, max_rows=1, deadline=3.0,
+        )
+    assert clock["calls"] == 1
+
+
+@pytest.mark.parametrize("catalog_failure", [503, 401, "contract", "budget"])
+def test_minute_worker_catalog_transient_isolation_preserves_hard_guards(
+    monkeypatch: pytest.MonkeyPatch, catalog_failure: int | str,
+) -> None:
+    monkeypatch.setattr(minute_data_module, "MAX_MINUTE_FANOUT_WORKERS", 1)
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(201))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    workers: list[Any] = []
+
+    class CatalogFailureTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                if self is workers[0]:
+                    if catalog_failure == "budget":
+                        raise minute_data_module.MinuteSnapshotLoadBudgetExhausted(
+                            "minute_snapshot_load_budget_exhausted",
+                            failure_stage="query_request",
+                            failure_class="MinuteSnapshotLoadBudgetExhausted",
+                        )
+                    return HTTPResponse(
+                        200 if catalog_failure == "contract" else catalog_failure,
+                        {"error": "fixture-catalog-failure"},
+                    )
+                return super().__call__(**kwargs)
+            requested = kwargs["json_body"]["filters"]["ts_code"]["in"]
+            return HTTPResponse(200, _query_payload(
+                request_id=f"catalog-recovery-{requested[0]}",
+                rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                next_cursor=None,
+            ))
+
+    client = _client(_Transport(catalog_row=catalog_row), max_limit=100)
+
+    def factory() -> SharedSignalsV1Client:
+        transport = CatalogFailureTransport(catalog_row=catalog_row)
+        workers.append(transport)
+        return _client(transport, max_limit=100)
+
+    kwargs = _stable_pair_load_kwargs(symbols)
+    kwargs["profile"] = _profile(client, max_pages=3, max_rows=201, page_limit=100)
+    port = TradingDatasMinuteMarketDataPort(client, shard_client_factory=factory)
+    if catalog_failure not in {503, "budget"}:
+        with pytest.raises(MinuteDataContractError) as caught:
+            port.load_snapshot(**kwargs)
+        assert caught.value.failure_stage in {"catalog_contract", "catalog_request"}
+        return
+    snapshot = port.load_snapshot(**kwargs)
+    assert snapshot.row_count == 101
+    assert snapshot.same_observation is True
+    assert snapshot.fanout_failures[0]["failure_stage"] == "catalog_request"
+    assert snapshot.fanout_failures[0]["failure_class"] == (
+        "MinuteSnapshotLoadBudgetExhausted" if catalog_failure == "budget" else "HTTPStatusError"
+    )
+    assert len(workers) == 2
+    assert workers[1].catalog_count == 1
+
+
+@pytest.mark.parametrize("slow_front", [False, True])
+def test_minute_fanout_production_budget_preserves_healthy_pairs_and_worker_isolation(
+    monkeypatch: pytest.MonkeyPatch, slow_front: bool,
+) -> None:
+    # Production-shaped fixture, not a live throughput claim: 32 shards,
+    # 4 workers, 180s total, 60s HTTP timeout, 2.927s catalog once/worker and
+    # a healthy pair of 12.653 + 9.344s.
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(3188))
+    catalog_row = _catalog_row()
+    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    local_clock = threading.local()
+    barrier = threading.Barrier(4)
+    lock = threading.Lock()
+    workers: list[Any] = []
+    deadlines: list[tuple[float, float]] = []
+    queried: set[str] = set()
+    slow_symbols = frozenset(symbols[index] for index in (0, 100, 200, 300))
+    monkeypatch.setattr(
+        minute_data_module, "_monotonic", lambda: getattr(local_clock, "now", 0.0),
+    )
+    monkeypatch.setattr(
+        minute_data_module, "_sleep",
+        lambda delay: setattr(local_clock, "now", getattr(local_clock, "now", 0.0) + delay),
+    )
+    original_pair = minute_data_module._collect_stable_minute_pair
+
+    def collect_pair(**kwargs: Any) -> Any:
+        with lock:
+            deadlines.append((getattr(local_clock, "now", 0.0), kwargs["deadline"]))
+        return original_pair(**kwargs)
+
+    monkeypatch.setattr(minute_data_module, "_collect_stable_minute_pair", collect_pair)
+
+    class ProductionTimingTransport(_Transport):
+        def __init__(self, *, is_worker: bool = False) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self.is_worker = is_worker
+            self.owner: int | None = None
+            self.per_symbol_calls: dict[str, int] = {}
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                if self.is_worker:
+                    assert kwargs["timeout_seconds"] <= 60.0
+                    local_clock.now = getattr(local_clock, "now", 0.0) + 2.927
+                return super().__call__(**kwargs)
+            assert self.is_worker
+            if self.owner is None:
+                self.owner = threading.get_ident()
+            assert self.owner == threading.get_ident()
+            requested = kwargs["json_body"]["filters"]["ts_code"]["in"]
+            key = requested[0]
+            self.per_symbol_calls[key] = self.per_symbol_calls.get(key, 0) + 1
+            with lock:
+                queried.add(key)
+            # Synchronize first reads to keep virtual concurrent waves fair.
+            if self.per_symbol_calls[key] == 1:
+                barrier.wait(timeout=5)
+            timeout = kwargs["timeout_seconds"]
+            assert 0 < timeout <= 60.0
+            assert local_clock.now + timeout <= 180.0
+            if slow_front and key in slow_symbols:
+                local_clock.now += timeout
+                raise TimeoutError("fixture first wave consumes its quantum")
+            elapsed = 12.653 if self.per_symbol_calls[key] == 1 else 9.344
+            local_clock.now += min(elapsed, timeout)
+            if elapsed >= timeout:
+                raise TimeoutError("fixture global deadline")
+            return HTTPResponse(200, _query_payload(
+                request_id=f"production-shaped-{key}-{self.per_symbol_calls[key]}",
+                rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                next_cursor=None,
+            ))
+
+    def make_client(transport: ProductionTimingTransport) -> SharedSignalsV1Client:
+        client = _client(transport, max_limit=100)
+        client.config = replace(client.config, timeout_seconds=60.0)
+        return client
+
+    primary_transport = ProductionTimingTransport()
+    client = make_client(primary_transport)
+
+    def factory() -> SharedSignalsV1Client:
+        transport = ProductionTimingTransport(is_worker=True)
+        worker = make_client(transport)
+        with lock:
+            workers.append((worker, transport))
+        return worker
+
+    kwargs = _stable_pair_load_kwargs(symbols)
+    kwargs["profile"] = _profile(client, max_pages=32, max_rows=3188, page_limit=100)
+    snapshot = TradingDatasMinuteMarketDataPort(
+        client, shard_client_factory=factory,
+    ).load_snapshot(**kwargs)
+    assert snapshot.same_observation is True
+    assert all(start < deadline <= 180.0 for start, deadline in deadlines)
+    assert all(deadline == 60.0 for _, deadline in deadlines[:4])
+    assert len(workers) == 4
+    assert len({transport.owner for _, transport in workers}) == 4
+    assert all(transport.catalog_count == 1 for _, transport in workers)
+    assert all(worker.config.timeout_seconds == 60.0 for worker, _ in workers)
+    assert primary_transport.query_count == 0
+    if slow_front:
+        assert snapshot.row_count == 2000
+        assert len(snapshot.fanout_failures) == 12
+        assert set(symbols[400:2400:100]).issubset(queried)
+        assert len(queried) > 4
+    else:
+        assert snapshot.row_count == 3188
+        assert snapshot.fanout_failures == ()
+        assert queried == set(symbols[::100])
+
+
 def _patch_stable_pair_collect(
     monkeypatch: pytest.MonkeyPatch,
     *,

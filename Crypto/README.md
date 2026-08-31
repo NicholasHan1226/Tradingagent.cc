@@ -611,6 +611,27 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 > `evolution/forty_symbol_factor_research/`，不写旧
 > `evolution/ten_symbol_factor_research/`。
 
+### 四十币滚动评估（research-only CLI）
+
+`python3 -m Crypto.forty_symbol_rolling_evaluation --store-root <完整40币只读store>`
+只读取完整的 observation store；不接受自由的 events 尾文件或 bars 目录。它以
+`head.json` 前后字节一致、`events_read_only()` 全链和既有 sidecar eligibility
+重建为输入锚点；head 缺失、漂移或链/边车不一致时失败关闭或要求重试，绝不修复
+source store。`--out-json` 与 `--report` 仅写调用方明确指定、位于 source store
+之外的研究输出路径（解析别名后仍检查，不能覆盖输入）。
+
+产物将 `source_receipt_integrity_verified` 与 `tradeable_pit_verified` 分开：前者
+仅说明选中的连续 eligible segment 可归因；后者固定为 `false`。动量信号必须等到
+所有输入的 `observed_at` 后的下一根可用 bar 开盘才作模拟入场；没有后续 bar 即为
+弃权。开盘入场后从当根 bar 开始检查退出，同根同时触及止盈止损先记止损。
+收盘到收盘基线和 OHLC 触价退出都是描述性 bar-only counterfactual，不能作为
+成交、收益晋级、资本或执行 authority。
+
+既有每日任务的包装器源为 `deploy/run-crypto-forty-symbol-rolling-eval.sh`，
+发布时替换原 `/usr/local/sbin/tradingagent-crypto-rolling-eval.sh`，不新增 timer。
+仅传 `--store-root`，不再手工拼接事件分段；每次在既有独立研究 output root 下
+创建唯一 attempt 目录，失败保留诊断且不记成功，不覆盖旧报告，不写 observation store。
+
 `ten_symbol_observation_store.py`、`ten_symbol_observation_profile.py` 与
 `ten_symbol_observation_runtime.py` 组成一条独立、append-only、receipt 绑定的
 10 币 5 分钟观测积累链，为后续 factor research 扩到 10 币（横截面研究）提供
@@ -709,6 +730,21 @@ core/learning/factor 完全不共享 root、锁或状态，任何一方故障互
   评估的 record/评估合同均不变。
 
 ### slot / backlog / gap 语义
+
+完整行情校验通过后，先保存不可变 bars sidecar，再采样可选 spread。
+可选 catalog/book-ticker 耗尽预算仍返回 `backlog_pending`，不伪造完成；
+已有 bars 与原 pending 定位保留，同槽或下一槽重启可零网络恢复原槽。
+缺 spread sidecar 明确记录 `crypto_spread_sidecar_missing`，不回补采样。
+跨 gap 恢复还须绑定原始 rejection、profile 与 cutoff，保留 skipped range；
+行情自身超时、PIT 不合格或损坏 sidecar 不能借此绕过校验。
+
+40 币独立配置的补充：cutoff 固定为 bar close +270 秒，timer 在 +285 秒
+（`*:4/5:45`，另有最多3秒 jitter）触发；10 币配置不变。40 币当前槽的
+query-shape 瞬时错误仍允许预算内 20/45 秒重试；严格早于本次冻结 current window
+的历史槽只做一次 shape 查询，失败后立即进入既有缺口恢复。等待不会恢复历史 PIT，
+反而可能令当前窗口被下一批 receipt 替代而越过其 cutoff。当前窗口仍必须通过
+原始 watermark、quality、lineage、完整性校验后才能写 data_gap；没有合格数据则
+继续如实拒收，不推进 checkpoint、不生成价格、样本或订单。
 
 - `window_end` 与 `observation_cutoff` 固定为 bar close +55 秒，不随 systemd
   jitter 或重跑墙上时钟漂移。

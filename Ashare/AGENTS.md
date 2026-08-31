@@ -31,7 +31,7 @@
 
 ## 执行与资本一致性
 
-- 当前 V1 仓库合同由 `compose_capital_backed_paper_runtime` 组合 canonical simulated account、capital-backed risk、模拟执行、outbox commit 与 reconcile。`Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/execution/local_sim_ledger.py` 仅是限时 legacy/compatibility 诊断链，不得作为 V1 fallback 或另一套资本/执行 authority。
+- 当前 V1 仓库合同由 `compose_capital_backed_paper_runtime` 组合 canonical simulated account、capital-backed risk、模拟执行、outbox commit 与 reconcile。该 composer 保持 network-closed，且只接受 `FrozenFixtureHTTPTransport`；不得为生产会话放宽。一个自然 A 股交易日的资本记账由同仓 sibling `Ashare.capital_backed_paper_runner` 完成：它复用 `MarketCapitalLedger` / `CapitalBackedSimulationExecutionStagePort` / `ChampionSelectionRegistry.load_current`，消费已工作的 TradingDatas `catalog/query`，并把每个候选持久化为 `paper_filled` / `paper_not_filled` / `rejected` / `observation_only`。coverage 计数、日线 close/touch、`MinuteFixturePaperBook` 与 `compose_paper_runtime` 都不是成交。缺 window 或 quote clocks 不得发明 fill。`Ashare/sim_executor.py → shared/execution/sim_broker.py → shared/execution/local_sim_ledger.py` 仅是限时 legacy/compatibility 诊断链，不得作为 V1 fallback 或另一套资本/执行 authority。
 - 只有实际 `filled/partial` 数量、价格、时区时间、5 分钟正成交量证据、候选/执行来源和完整 PIT lineage 才可进入 execution-eligible 样本。
 - 买入通过 durable outbox 原子提交 `fill_commit`；卖出原子提交 `ashare_sell_commit`。capital commit 成功/幂等成功前不得把成交计入策略绩效。
 - partial 只消费实际成交部分；终态原子释放未使用预约。pending commit 保守占用风险并在重启后重放。
@@ -46,7 +46,7 @@
 - 样本 authority：`shared/review/ashare/sample_journal.jsonl`。
 - 投影：`sample_kpi_latest.json`、`evolution_decision_latest.json`、`market_maturity_latest.json`；可重建，不能反写事实。
 - SampleJournal/KPI 是唯一演化 authority。旧 review/portfolio 文件不得触发自动生命周期或风险晋级。
-- 第 5、10 个交易日只标记人工复核到期。首 1–2 周保持 sim-only；成熟度通过也不自动实盘。
+- 第 5、10 个交易日仅是自动证据/报告检查点，不是人工晋级或模拟接入门禁；缺少成熟度证据不能阻止数据合格股票继续积累模拟样本。全程保持 sim-only，成熟度通过也不自动实盘。
 - 未来 20%–30% 人工试运行必须由 Nicholas 另行明确确认。邮件/同花顺路由未实现，不属于本模块当前入口。
 
 运行、验收和回滚见 [../docs/operations.md](../docs/operations.md)，字段见 [../docs/data_contract.md](../docs/data_contract.md)。

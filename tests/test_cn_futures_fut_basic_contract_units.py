@@ -138,7 +138,7 @@ class FixtureTransport:
         body = kwargs["json_body"]
         assert isinstance(body, dict)
         assert body["dataset_id"] == DATASET_ID
-        assert body["schema_major"] == 1
+        assert body["schema_major"] == self.catalog_row["schema_major"]
         assert body["fields"] == list(QUERY_FIELDS)
         assert body["filters"] == {"fut_code": {"eq": "M"}}
         assert body["order"] == ["ts_code:asc"]
@@ -292,3 +292,98 @@ def test_rejects_catalog_receipt_lineage_and_replay_drift() -> None:
                 replay_mutator=lambda rows: rows[0].update({"trade_unit": "changed"})
             )
         )
+
+
+def _major2_transport(*, count=208, rows=None, metadata=None, replay_mutator=None):
+    catalog = _catalog_row()
+    catalog["schema_major"] = 2
+    return FixtureTransport(catalog_row=catalog, rows=rows if rows is not None else [_row(i) for i in range(count)],
+        metadata=metadata or _metadata(state="ready", degraded=False, reasons=[]), replay_mutator=replay_mutator)
+
+
+@pytest.mark.parametrize("count", [207, 208, 500])
+def test_major2_accepts_bounded_observed_count_without_completeness_claim(count):
+    result = _load(_major2_transport(count=count))
+    assert result.schema_major == 2
+    assert result.row_count == count
+    assert result.page_count == (count + 99) // 100
+    assert not result.coverage_complete and not result.runtime_eligible
+    assert not result.pit_authority and not result.execution_eligible and not result.trading_eligible
+
+
+@pytest.mark.parametrize("case", ["duplicate", "over_budget", "replay_count", "stale", "quality", "receipt"])
+def test_major2_rejects_untrusted_cohort(case):
+    kwargs = {}
+    if case == "duplicate":
+        kwargs["rows"] = [_row(i) for i in range(207)] + [_row(0)]
+    elif case == "over_budget":
+        kwargs["count"] = 501
+    elif case == "replay_count":
+        kwargs["replay_mutator"] = lambda rows: rows.pop()
+    elif case == "stale":
+        kwargs["metadata"] = _metadata(state="ready", degraded=False, reasons=[], freshness={"state":"stale", "stale":True})
+    elif case == "quality":
+        kwargs["metadata"] = _metadata(state="ready", degraded=False, reasons=[], quality={"state":"invalid", "valid":False})
+    else:
+        kwargs["metadata"] = _metadata(state="ready", degraded=False, reasons=[], receipt_id="wrong-receipt")
+    with pytest.raises(FutBasicContractUnitConsumerError):
+        _load(_major2_transport(**kwargs))
+
+
+@pytest.mark.parametrize("major", [True, 0, 3, "2"])
+def test_unknown_schema_rejected_before_query(major):
+    catalog = _catalog_row()
+    catalog["schema_major"] = major
+    transport = FixtureTransport(catalog_row=catalog)
+    with pytest.raises(FutBasicContractUnitConsumerError):
+        _load(transport)
+    assert all(call["method"] == "GET" for call in transport.calls)
+
+
+@pytest.mark.parametrize("field,value", [("quality", {"state":"valid"}), ("quality", {"state":"valid", "valid":1}), ("freshness", {"state":"fresh"}), ("freshness", {"state":"fresh", "stale":0})])
+def test_major2_requires_explicit_boolean_quality_and_freshness(field, value):
+    metadata = _metadata(state="ready", degraded=False, reasons=[], **{field: value})
+    with pytest.raises(FutBasicContractUnitConsumerError):
+        _load(_major2_transport(metadata=metadata))
+
+
+@pytest.mark.parametrize("field,value", [("receipt_id", "changed-receipt"), ("observed_at", "2026-08-04T08:00:00+00:00")])
+def test_major2_rejects_metadata_changed_between_traversals(field, value):
+    transport = _major2_transport()
+    def change_metadata(rows):
+        transport.metadata[field] = value
+    transport.replay_mutator = change_metadata
+    with pytest.raises(FutBasicContractUnitConsumerError):
+        _load(transport)
+
+
+@pytest.mark.parametrize("through", ["not-a-date", "2026-08-03T08:00:00", "2099-01-01T00:00:00+00:00"])
+def test_major2_rejects_invalid_or_future_watermark(through):
+    with pytest.raises(FutBasicContractUnitConsumerError):
+        _load(_major2_transport(metadata=_metadata(state="ready", degraded=False, reasons=[], data_through=through)))
+
+
+def test_major2_accepts_only_observed_native_reference_identifiers():
+    rows = [_row(index) for index in range(206)] + [
+        {**_row(206), "ts_code": "M.DCE"},
+        {**_row(207), "ts_code": "ML.DCE"},
+    ]
+    snapshot = _load(_major2_transport(rows=rows))
+    assert snapshot.row_count == 208
+    assert {fact.ts_code for fact in snapshot.facts}.issuperset({"M.DCE", "ML.DCE"})
+    assert not snapshot.runtime_eligible and not snapshot.execution_eligible
+    assert not snapshot.trading_eligible and not snapshot.pit_authority
+
+
+@pytest.mark.parametrize("ts_code", ["MX.DCE", "MMAIN.DCE", "M-.DCE", "MREF.DCE"])
+def test_major2_rejects_unknown_native_reference_identifiers(ts_code):
+    rows = [{**_row(0), "ts_code": ts_code}] + [_row(index) for index in range(1, 208)]
+    with pytest.raises(FutBasicContractUnitConsumerError, match="row_ts_code_invalid"):
+        _load(_major2_transport(rows=rows))
+
+
+@pytest.mark.parametrize("ts_code", ["M.DCE", "ML.DCE"])
+def test_major1_keeps_strict_expiring_contract_identity(ts_code):
+    rows = [{**_row(0), "ts_code": ts_code}] + [_row(index) for index in range(1, 207)]
+    with pytest.raises(FutBasicContractUnitConsumerError, match="row_ts_code_invalid"):
+        _load(FixtureTransport(rows=rows))
