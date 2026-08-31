@@ -1,0 +1,12 @@
+[Unit]
+Description=TradingAgent A-share capital-backed paper session timer (candidate, not enabled)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 10:05:00
+AccuracySec=1s
+RandomizedDelaySec=10s
+Persistent=false
+Unit=tradingagent-ashare-capital-backed-paper.service
+
+[Install]
+WantedBy=timers.target

@@ -850,6 +850,29 @@ and receipt checks. Valid subsets may accumulate delayed-paper evidence now;
 five-day maturity is not an entry gate. Canonical capital-backed settlement is
 a separate, still test-only composition, not implied by these fixture books.
 
+### Capital-backed paper session (sibling runner)
+
+`Ashare.capital_backed_paper_runner` is the A-share-lane sibling for one
+natural session on the relocated 50k `ashare-capital-v1` account. It does
+**not** wrap `compose_capital_backed_paper_runtime` and does not accept live
+TradingDatas inside that fixture composer. The runner binds an isolated or
+explicitly allowed canonical ledger, classifies a frozen hashed 科技 + 医药
+mainboard universe (plus a small add-list) through
+`CanonicalMainboardScopePolicy`, gates each remaining symbol on
+dataset/catalog/session window evidence, and persists every candidate into
+SampleJournal plus a local `latest.json` as `paper_filled`,
+`paper_not_filled`, `rejected`, or `observation_only` with an explicit reason
+code.
+
+ChiNext `300/301` and STAR `688/689` stay exclusions. Industry shadow names
+are not order identity. Coverage `accepted_count`, daily close/touch, KPI
+pressure, and `MinuteFixturePaperBook` fingerprints are never fills. A
+`PAPER_FILLED` row is written only after `MarketCapitalLedger` proves a new
+`fill_commit`. `REAL_TRADING_ENABLED` must remain `false`. The systemd
+oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`
+is a candidate only; it is not enabled by this change and does not flip
+`canonicalAccountConnected`.
+
 ### Read-only real-data canary
 
 `Ashare.minute_canary` is the bridge from the mock-ready contract to a formal
