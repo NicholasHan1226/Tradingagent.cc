@@ -243,6 +243,7 @@ def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeF
         return CryptoRoundTripRuntimeFailure(
             phase=phase,
             reason=_FAILURE_PROVENANCE[phase],
+            detail=_stable_public_detail(error),
         )
     if phase == "checkpoint_recovery_selection" and (
         isinstance(error, CryptoDelayedPaperLedgerError)
@@ -255,6 +256,7 @@ def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeF
         return CryptoRoundTripRuntimeFailure(
             phase=phase,
             reason=_FAILURE_PROVENANCE[phase],
+            detail=_stable_public_detail(error),
         )
     if phase == "core_cycle" and (
         isinstance(error, (CryptoDelayedPaperLedgerError, CryptoRoundTripError))
@@ -279,6 +281,7 @@ def _classified_failure(phase: str, error: Exception) -> CryptoRoundTripRuntimeF
         return CryptoRoundTripRuntimeFailure(
             phase=phase,
             reason=_FAILURE_PROVENANCE[phase],
+            detail=_stable_public_detail(error),
         )
     return None
 
