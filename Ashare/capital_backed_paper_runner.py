@@ -22,6 +22,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
@@ -102,6 +103,7 @@ class SymbolWindow:
     session_calendar_ok: bool
     quote_clocks_ok: bool
     reason_code: str = "window_ready"
+    quote_trade_date: str = ""
 
     @property
     def observation_ready(self) -> bool:
@@ -823,6 +825,7 @@ def make_observation_window(
     prior_close_cny: float = 10.0,
     quote_clocks_ok: bool = False,
     quote_fresh: bool = True,
+    quote_trade_date: str = "",
 ) -> SymbolWindow:
     return SymbolWindow(
         symbol=symbol,
@@ -833,21 +836,182 @@ def make_observation_window(
         session_calendar_ok=True,
         quote_clocks_ok=quote_clocks_ok,
         reason_code="window_ready" if quote_clocks_ok else "quote_clocks_unavailable",
+        quote_trade_date=quote_trade_date,
     )
+
+
+def _compact_session_date(value: object) -> str:
+    raw = str(value or "").replace("-", "").strip()
+    if len(raw) < 8 or not raw[:8].isdigit():
+        return ""
+    return raw[:8]
+
+
+def _calendar_session_open(row: Mapping[str, Any]) -> bool:
+    if "is_open" in row:
+        value = row.get("is_open")
+    elif "open" in row:
+        value = row.get("open")
+    else:
+        return False
+    if type(value) is bool:
+        return value
+    if type(value) is int:
+        return value == 1
+    return str(value).strip().lower() in {"1", "true"}
+
+
+def _calendar_row_for_trade_date(
+    calendar_rows: Sequence[Mapping[str, Any]],
+    trade_date: str,
+) -> Mapping[str, Any] | None:
+    expected = _compact_session_date(trade_date)
+    if not expected:
+        return None
+    for row in calendar_rows:
+        if not isinstance(row, Mapping):
+            continue
+        raw = row.get("cal_date") if row.get("cal_date") not in (None, "") else row.get(
+            "trade_date"
+        )
+        if _compact_session_date(raw) == expected:
+            return row
+    return None
+
+
+def last_complete_daily_date(
+    *,
+    trade_date: str,
+    calendar_row: Mapping[str, Any] | None,
+    daily_rows: Sequence[Mapping[str, Any]] = (),
+) -> str:
+    """Compact yyyymmdd of the last complete daily strictly before ``trade_date``."""
+
+    session = _compact_session_date(trade_date)
+    if not session:
+        return ""
+    if calendar_row is not None:
+        pretrade = _compact_session_date(
+            calendar_row.get("pretrade_date") or calendar_row.get("pretrade")
+        )
+        if pretrade and pretrade < session:
+            return pretrade
+    prior = [
+        compact
+        for row in daily_rows
+        if isinstance(row, Mapping)
+        for compact in (_compact_session_date(row.get("trade_date")),)
+        if compact and compact < session
+    ]
+    return max(prior) if prior else ""
+
+
+def bind_cash_session_windows(
+    symbols: tuple[str, ...],
+    *,
+    trade_date: str,
+    catalog_version: str,
+    calendar_rows: Sequence[Mapping[str, Any]],
+    daily_rows: Sequence[Mapping[str, Any]],
+    dataset_id: str = QUOTE_DATASET_ID,
+) -> dict[str, SymbolWindow]:
+    """Bind an in-session window from live calendar + last complete daily.
+
+    Today's ``cn.equity.daily`` postclose partition is never required.  A closed
+    calendar stays fail-closed.  Daily close/touch is prior-close evidence only.
+    """
+
+    calendar_row = _calendar_row_for_trade_date(calendar_rows, trade_date)
+    session_ok = calendar_row is not None and _calendar_session_open(calendar_row)
+    if not session_ok:
+        return {
+            symbol: make_missing_window(
+                symbol,
+                reason_code="missing_dataset_catalog_or_session_window",
+            )
+            for symbol in symbols
+        }
+
+    last_complete = last_complete_daily_date(
+        trade_date=trade_date,
+        calendar_row=calendar_row,
+        daily_rows=daily_rows,
+    )
+    by_symbol: dict[str, Mapping[str, Any]] = {}
+    for row in daily_rows:
+        if not isinstance(row, Mapping):
+            continue
+        symbol = str(row.get("ts_code") or row.get("symbol") or "").upper()
+        row_date = _compact_session_date(row.get("trade_date"))
+        if symbol not in symbols:
+            continue
+        if last_complete:
+            if row_date != last_complete:
+                continue
+        elif row_date == _compact_session_date(trade_date):
+            continue
+        by_symbol[symbol] = row
+
+    windows: dict[str, SymbolWindow] = {}
+    for symbol in symbols:
+        if not looks_like_security_symbol(symbol):
+            windows[symbol] = make_missing_window(
+                symbol,
+                reason_code="industry_shadow_not_order_identity",
+            )
+            continue
+        row = by_symbol.get(symbol)
+        if row is None:
+            windows[symbol] = SymbolWindow(
+                symbol=symbol,
+                dataset_id=dataset_id,
+                catalog_version=catalog_version,
+                quote_fresh=False,
+                prior_close_cny=None,
+                session_calendar_ok=True,
+                quote_clocks_ok=False,
+                reason_code="missing_prior_close",
+                quote_trade_date=last_complete,
+            )
+            continue
+        close = row.get("close") or row.get("pre_close") or row.get("prior_close")
+        try:
+            prior_close = float(close)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            prior_close = None
+        windows[symbol] = SymbolWindow(
+            symbol=symbol,
+            dataset_id=dataset_id,
+            catalog_version=catalog_version,
+            quote_fresh=True,
+            prior_close_cny=prior_close,
+            session_calendar_ok=True,
+            quote_clocks_ok=False,
+            reason_code=(
+                "window_ready" if prior_close and prior_close > 0 else "missing_prior_close"
+            ),
+            quote_trade_date=last_complete
+            or _compact_session_date(row.get("trade_date")),
+        )
+    return windows
 
 
 def query_windows_from_tradingdatas(
     symbols: tuple[str, ...],
     *,
-    token_file: Path,
     trade_date: str,
+    token_file: Path | None = None,
     base_url: str = FORMAL_BASE_URL,
     timeout_seconds: float = 20.0,
+    client: Any | None = None,
 ) -> dict[str, SymbolWindow]:
-    """Gate symbols on already-working TradingDatas catalog/query windows.
+    """Gate symbols on live trade_calendar plus last complete daily.
 
-    Daily close/touch is observation evidence only.  It never becomes a fill.
-    Any catalog/query failure becomes a missing window, not a synthetic quote.
+    Cash-session paper observes ``cn.market.trade_calendar`` for the trade_date
+    and ``cn.equity.daily`` for the preceding complete partition (calendar
+    ``pretrade_date`` / last daily strictly before today).  Today's postclose
+    daily partition is not an observation requirement.  Daily close/touch never
+    becomes a fill.  A closed calendar stays fail-closed.
     """
 
     from shared.data.sharedsignals_v1 import (
@@ -867,24 +1031,27 @@ def query_windows_from_tradingdatas(
         }
 
     try:
-        transport = build_runtime_transport(
-            "http-json-v1",
-            token_file=token_file,
-            base_url=base_url,
-        )
-        client = SharedSignalsV1Client(
-            SharedSignalsV1Config(
+        if client is None:
+            if token_file is None:
+                raise CapitalBackedPaperError("tradingdatas_token_file_required")
+            transport = build_runtime_transport(
+                "http-json-v1",
+                token_file=token_file,
                 base_url=base_url,
-                expected_catalog_version="evidence-only",
-                dataset_ids=frozenset({CALENDAR_DATASET_ID, QUOTE_DATASET_ID}),
-                access_policy_id="tradingagent-read-v1",
-                catalog_version_policy="evidence_only",
-                timeout_seconds=timeout_seconds,
-                max_limit=10_000,
-                cache_ttl_seconds=0.0,
-            ),
-            transport=transport,
-        )
+            )
+            client = SharedSignalsV1Client(
+                SharedSignalsV1Config(
+                    base_url=base_url,
+                    expected_catalog_version="evidence-only",
+                    dataset_ids=frozenset({CALENDAR_DATASET_ID, QUOTE_DATASET_ID}),
+                    access_policy_id="tradingagent-read-v1",
+                    catalog_version_policy="evidence_only",
+                    timeout_seconds=timeout_seconds,
+                    max_limit=10_000,
+                    cache_ttl_seconds=0.0,
+                ),
+                transport=transport,
+            )
         catalog = client.get_catalog()
     except Exception:
         return _missing("tradingdatas_catalog_window_missing")
@@ -895,9 +1062,9 @@ def query_windows_from_tradingdatas(
         for row in catalog.data
         if isinstance(row, Mapping)
     }
-    calendar_row = rows_by_id.get(CALENDAR_DATASET_ID)
-    daily_row = rows_by_id.get(QUOTE_DATASET_ID)
-    if not catalog_version or calendar_row is None or daily_row is None:
+    calendar_catalog = rows_by_id.get(CALENDAR_DATASET_ID)
+    daily_catalog = rows_by_id.get(QUOTE_DATASET_ID)
+    if not catalog_version or calendar_catalog is None or daily_catalog is None:
         return _missing("tradingdatas_catalog_window_missing")
 
     def _schema_major(row: Mapping[str, Any]) -> int | None:
@@ -906,78 +1073,69 @@ def query_windows_from_tradingdatas(
             return None
         return value
 
-    calendar_schema = _schema_major(calendar_row)
-    daily_schema = _schema_major(daily_row)
+    calendar_schema = _schema_major(calendar_catalog)
+    daily_schema = _schema_major(daily_catalog)
     if calendar_schema is None or daily_schema is None:
         return _missing("tradingdatas_catalog_window_missing")
 
+    compact_session = _compact_session_date(trade_date)
     try:
         calendar = client.query(
             QueryRequest(
                 dataset_id=CALENDAR_DATASET_ID,
                 schema_major=calendar_schema,
+                filters={
+                    "exchange": {"eq": "SSE"},
+                    "cal_date": {"eq": compact_session},
+                },
                 limit=500,
-            )
-        )
-        daily = client.query(
-            QueryRequest(
-                dataset_id=QUOTE_DATASET_ID,
-                schema_major=daily_schema,
-                limit=10_000,
             )
         )
     except Exception:
         return _missing("missing_dataset_catalog_or_session_window")
 
-    session_ok = False
-    expected = trade_date.replace("-", "")
-    for row in calendar.data:
-        raw_date = str(row.get("cal_date") or row.get("trade_date") or "")
-        if raw_date.replace("-", "") == expected and str(
-            row.get("is_open") or row.get("open") or ""
-        ) in {"1", "true", "True"}:
-            session_ok = True
-            break
-
-    by_symbol: dict[str, Mapping[str, Any]] = {}
-    for row in daily.data:
-        symbol = str(row.get("ts_code") or row.get("symbol") or "").upper()
-        if symbol in symbols:
-            by_symbol[symbol] = row
-
-    windows: dict[str, SymbolWindow] = {}
-    for symbol in symbols:
-        if not looks_like_security_symbol(symbol):
-            windows[symbol] = make_missing_window(
-                symbol,
-                reason_code="industry_shadow_not_order_identity",
-            )
-            continue
-        row = by_symbol.get(symbol)
-        if row is None or not session_ok:
-            windows[symbol] = make_missing_window(
-                symbol,
-                reason_code="missing_dataset_catalog_or_session_window",
-            )
-            continue
-        close = row.get("close") or row.get("pre_close") or row.get("prior_close")
-        try:
-            prior_close = float(close)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            prior_close = None
-        windows[symbol] = SymbolWindow(
-            symbol=symbol,
-            dataset_id=QUOTE_DATASET_ID,
+    calendar_rows = tuple(
+        row for row in calendar.data if isinstance(row, Mapping)
+    )
+    session_row = _calendar_row_for_trade_date(calendar_rows, trade_date)
+    if session_row is None or not _calendar_session_open(session_row):
+        return bind_cash_session_windows(
+            symbols,
+            trade_date=trade_date,
             catalog_version=catalog_version,
-            quote_fresh=True,
-            prior_close_cny=prior_close,
-            session_calendar_ok=session_ok,
-            quote_clocks_ok=False,
-            reason_code=(
-                "window_ready" if prior_close and prior_close > 0 else "missing_prior_close"
-            ),
+            calendar_rows=calendar_rows,
+            daily_rows=(),
         )
-    return windows
+
+    last_complete = last_complete_daily_date(
+        trade_date=trade_date,
+        calendar_row=session_row,
+    )
+    daily_rows: tuple[Mapping[str, Any], ...] = ()
+    if last_complete:
+        try:
+            daily = client.query(
+                QueryRequest(
+                    dataset_id=QUOTE_DATASET_ID,
+                    schema_major=daily_schema,
+                    filters={"trade_date": {"eq": last_complete}},
+                    limit=10_000,
+                )
+            )
+            daily_rows = tuple(
+                row for row in daily.data if isinstance(row, Mapping)
+            )
+        except Exception:
+            daily_rows = ()
+
+    return bind_cash_session_windows(
+        symbols,
+        trade_date=trade_date,
+        catalog_version=catalog_version,
+        calendar_rows=calendar_rows,
+        daily_rows=daily_rows,
+        dataset_id=QUOTE_DATASET_ID,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
