@@ -62,6 +62,9 @@ RUNNER_CONTRACT_ID = "tradingagent.ashare.capital_backed_paper_session.v1"
 QUOTE_DATASET_ID = "cn.equity.daily"
 CALENDAR_DATASET_ID = "cn.market.trade_calendar"
 FORMAL_BASE_URL = "http://127.0.0.1:18082"
+# Bounded ``ts_code in`` shards for last-complete daily.  Aligns with the
+# documented A-share daily query cap; unfiltered partition pulls 413.
+CASH_SESSION_DAILY_TS_CODE_CHUNK = 10
 BUY_LOT = 100
 SINGLE_NAME_CAP_CNY = 7_500.0
 GROSS_CAP_CNY = 45_000.0
@@ -996,6 +999,101 @@ def bind_cash_session_windows(
     return windows
 
 
+def cash_session_daily_ts_codes(symbols: Sequence[str]) -> tuple[str, ...]:
+    """Order-preserving security identities eligible for a daily ``ts_code`` filter."""
+
+    seen: list[str] = []
+    for symbol in symbols:
+        if not looks_like_security_symbol(symbol):
+            continue
+        normalized = str(symbol).strip().upper()
+        if normalized not in seen:
+            seen.append(normalized)
+    return tuple(seen)
+
+
+def _daily_query_budget_exceeded(exc: BaseException) -> bool:
+    text = str(exc).replace("-", "_").lower()
+    return "413" in text or "budget_exceeded" in text
+
+
+def _query_last_complete_daily_chunk(
+    client: Any,
+    *,
+    schema_major: int,
+    last_complete: str,
+    codes: Sequence[str],
+) -> tuple[Mapping[str, Any], ...]:
+    """Query one ``trade_date`` + ``ts_code in`` shard.  Split on 413, never empty-all."""
+
+    from shared.data.sharedsignals_v1 import QueryRequest
+
+    if not codes:
+        return ()
+    try:
+        daily = client.query(
+            QueryRequest(
+                dataset_id=QUOTE_DATASET_ID,
+                schema_major=schema_major,
+                filters={
+                    "trade_date": {"eq": last_complete},
+                    "ts_code": {"in": list(codes)},
+                },
+                limit=max(len(codes), 1),
+            )
+        )
+    except Exception as exc:
+        if _daily_query_budget_exceeded(exc) and len(codes) > 1:
+            mid = max(1, len(codes) // 2)
+            return _query_last_complete_daily_chunk(
+                client,
+                schema_major=schema_major,
+                last_complete=last_complete,
+                codes=codes[:mid],
+            ) + _query_last_complete_daily_chunk(
+                client,
+                schema_major=schema_major,
+                last_complete=last_complete,
+                codes=codes[mid:],
+            )
+        raise
+    return tuple(row for row in daily.data if isinstance(row, Mapping))
+
+
+def query_last_complete_daily_rows(
+    client: Any,
+    *,
+    schema_major: int,
+    last_complete: str,
+    symbols: Sequence[str],
+    chunk_size: int = CASH_SESSION_DAILY_TS_CODE_CHUNK,
+) -> tuple[Mapping[str, Any], ...]:
+    """Fetch last-complete daily rows for candidate codes only.
+
+    An unfiltered ``cn.equity.daily`` partition 413s.  Empty/413 on that
+    unfiltered pull must not be rewritten as ``missing_prior_close``.
+    """
+
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or chunk_size <= 0
+    ):
+        raise CapitalBackedPaperError("daily_ts_code_chunk_size_invalid")
+    codes = cash_session_daily_ts_codes(symbols)
+    collected: list[Mapping[str, Any]] = []
+    for offset in range(0, len(codes), chunk_size):
+        collected.extend(
+            _query_last_complete_daily_chunk(
+                client,
+                schema_major=schema_major,
+                last_complete=last_complete,
+                codes=codes[offset : offset + chunk_size],
+            )
+        )
+    return tuple(collected)
+
+
 def query_windows_from_tradingdatas(
     symbols: tuple[str, ...],
     *,
@@ -1009,7 +1107,9 @@ def query_windows_from_tradingdatas(
 
     Cash-session paper observes ``cn.market.trade_calendar`` for the trade_date
     and ``cn.equity.daily`` for the preceding complete partition (calendar
-    ``pretrade_date`` / last daily strictly before today).  Today's postclose
+    ``pretrade_date`` / last daily strictly before today).  Daily queries always
+    include a ``ts_code`` filter (chunked).  An unfiltered partition pull 413s
+    and must not be swallowed into ``missing_prior_close``.  Today's postclose
     daily partition is not an observation requirement.  Daily close/touch never
     becomes a fill.  A closed calendar stays fail-closed.
     """
@@ -1113,20 +1213,12 @@ def query_windows_from_tradingdatas(
     )
     daily_rows: tuple[Mapping[str, Any], ...] = ()
     if last_complete:
-        try:
-            daily = client.query(
-                QueryRequest(
-                    dataset_id=QUOTE_DATASET_ID,
-                    schema_major=daily_schema,
-                    filters={"trade_date": {"eq": last_complete}},
-                    limit=10_000,
-                )
-            )
-            daily_rows = tuple(
-                row for row in daily.data if isinstance(row, Mapping)
-            )
-        except Exception:
-            daily_rows = ()
+        daily_rows = query_last_complete_daily_rows(
+            client,
+            schema_major=daily_schema,
+            last_complete=last_complete,
+            symbols=symbols,
+        )
 
     return bind_cash_session_windows(
         symbols,
