@@ -440,7 +440,6 @@ def attempt_capital_backed_simulation_fill(
         raise CapitalBackedPaperError("fill_attempt_request_invalid")
     if type(ledger) is not MarketCapitalLedger:
         raise CapitalBackedPaperError("capital_ledger_required")
-    reject_invented_fill_source("close_touch")
     if not request.window.fill_quote_ready:
         return _unfilled_attempt("quote_clocks_unavailable")
     if (
