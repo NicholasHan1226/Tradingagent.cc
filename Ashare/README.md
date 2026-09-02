@@ -881,11 +881,16 @@ slot, even if `freq` is omitted. Missing clocks stay honest
 `PAPER_NOT_FILLED` / `quote_clocks_unavailable`. The same last-complete bar
 may bind volume and query-receipt proof as a bar-evidence snapshot: last/close
 is the bar mid, not bid/ask, and bid/ask are last ± conservative slippage
-inside the bar high/low. Daily close/touch never becomes that snapshot and
-cannot mint a fill. A missing or broken query receipt must not discard a
-present clock. Present clocks without a snapshot stay
-`capital_fill_market_snapshot_unavailable`. A bound snapshot older than the
-30s execution quote window stays `paper_market_snapshot_stale`.
+(one tick if rounding collapses). A bar that closes at the high or low still
+models a 1-tick book; last/close is never copied to both sides. Daily
+close/touch never becomes that snapshot and cannot mint a fill. A missing or
+broken query receipt must not discard a present clock. Present clocks without
+a snapshot stay `capital_fill_market_snapshot_unavailable`. A last-complete
+five-minute bar in the same continuous session is fill-fresh for an in-session
+oneshot; the fill snapshot is as-of decision/execution, not the 30s L1 quote
+window. Lunch and the closing auction stay
+`paper_continuous_session_unavailable`. A morning bar used after the afternoon
+session starts stays `paper_market_snapshot_stale`.
 `PAPER_FILLED` still requires a real ledger `fill_commit`.
 `REAL_TRADING_ENABLED` must remain `false`. The systemd
 oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`

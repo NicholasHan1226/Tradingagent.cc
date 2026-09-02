@@ -560,10 +560,24 @@ def _bar_evidence_bid_ask(
     high_cny: float | None,
     low_cny: float | None,
 ) -> tuple[float, float] | None:
-    """Model bid/ask from a completed rt_min last.  Never copy last as both."""
+    """Model bid/ask from a completed rt_min last.  Never copy last as both.
+
+    High/low describe the bar print.  A bar that closes at the high or low
+    cannot host last±tick inside that envelope, so the modeled 1-tick book
+    may extend one tick past the print.  That is still bar-evidence, not a
+    copied close and not a daily fill.
+    """
 
     model = ashare_execution_reality()
     if last_cny <= 0:
+        return None
+    if (
+        high_cny is not None
+        and low_cny is not None
+        and high_cny > 0
+        and low_cny > 0
+        and high_cny < low_cny
+    ):
         return None
     slippage = model.conservative_label_slippage_bps_per_side / 10_000.0
     ask = model._round_to_tick(float(last_cny) * (1.0 + slippage))
@@ -573,13 +587,34 @@ def _bar_evidence_bid_ask(
         ask = model._round_to_tick(last_cny + tick)
     if bid >= last_cny:
         bid = model._round_to_tick(max(tick, last_cny - tick))
-    if high_cny is not None and high_cny > 0 and ask > high_cny:
-        return None
-    if low_cny is not None and low_cny > 0 and bid < low_cny:
-        return None
     if bid <= 0 or ask <= bid:
         return None
     return bid, ask
+
+
+def _bar_evidence_fill_gate(
+    *,
+    decision: datetime,
+    bar_slot: datetime | None,
+) -> str | None:
+    """Return a non-fill reason, or None when the last-complete bar may fill.
+
+    A last-complete ``rt_min`` five-minute bar in the same continuous session
+    is fill-fresh until the next session slot.  The 30s L1 quote window is
+    not a 5-minute bar clock.  Lunch and the closing auction have no
+    continuous session.  A morning bar is stale once the afternoon session
+    has started.  Daily close/touch never reaches this gate.
+    """
+
+    if bar_slot is None:
+        return "capital_fill_market_snapshot_unavailable"
+    decision_session = ashare_continuous_session(decision)
+    if decision_session is None:
+        return "paper_continuous_session_unavailable"
+    bar_session = ashare_continuous_session(bar_slot)
+    if bar_session is None or bar_session != decision_session:
+        return "paper_market_snapshot_stale"
+    return None
 
 
 def _reservation_price_cny(*, ask: float, high_cny: float | None) -> float:
@@ -667,19 +702,19 @@ def _build_bar_evidence_snapshot(
     session = ashare_continuous_session(execution)
     if session is None:
         return None
-    data_through = window.snapshot_data_through
-    observed = window.snapshot_observed_at
-    available = window.snapshot_available_at
     catalog_version = window.snapshot_catalog_version or window.catalog_version
+    # The fill snapshot is as-of execution.  The 5-minute bar print stays on
+    # the window clock; reusing that print time as data_through made every
+    # in-session oneshot outside the 30s L1 window look stale.
     source = MarketSourceBinding(
         dataset_id=QUOTE_CLOCK_DATASET_ID,
         catalog_version=catalog_version,
         source_receipt_id=window.snapshot_receipt_id,
         source_receipt_sha256=window.snapshot_source_sha256,
         source_lineage_sha256=window.snapshot_lineage_sha256,
-        data_through=_parse_quote_clock_time(data_through) or execution,
-        observed_at=_parse_quote_clock_time(observed) or execution,
-        available_at=_parse_quote_clock_time(available) or execution,
+        data_through=execution,
+        observed_at=execution,
+        available_at=execution,
     )
     if not request.trade_date:
         return None
@@ -769,6 +804,8 @@ def attempt_capital_backed_simulation_fill(
     stay ``PAPER_NOT_FILLED``.  This function never mints a commit from
     ``prior_close_cny``.  A bound in-session ``rt_min`` bar may become
     bar-evidence bid/ask (last ± conservative slippage), never a copied close.
+    The last-complete bar in the same continuous session is fill-fresh; lunch
+    and the closing auction do not mint a fill.
     """
 
     if type(request) is not FillAttemptRequest:
@@ -802,14 +839,19 @@ def attempt_capital_backed_simulation_fill(
     decision_text = request.decision_as_of.isoformat()
     available = _parse_quote_clock_time(request.window.snapshot_available_at)
     data_through = _parse_quote_clock_time(request.window.snapshot_data_through)
-    if available is None or data_through is None:
+    bar_slot = _parse_quote_clock_time(request.window.quote_clock_at)
+    if available is None or data_through is None or bar_slot is None:
         return _unfilled_attempt("capital_fill_market_snapshot_unavailable")
+    gate = _bar_evidence_fill_gate(
+        decision=request.decision_as_of,
+        bar_slot=bar_slot,
+    )
+    if gate is not None:
+        return _unfilled_attempt(gate)
     execution = request.decision_as_of
     if execution < available:
         execution = available
     execution_text = execution.isoformat()
-    if execution - data_through > timedelta(seconds=30):
-        return _unfilled_attempt("paper_market_snapshot_stale")
     calendar_receipt = paper_session_calendar_receipt()
     snapshot_before = ledger.snapshot()
     market_snapshot = _build_bar_evidence_snapshot(
