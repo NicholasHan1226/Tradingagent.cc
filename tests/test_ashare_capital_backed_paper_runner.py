@@ -36,6 +36,8 @@ from Ashare.capital_backed_paper_runner import (
     query_windows_from_tradingdatas,
     reject_invented_fill_source,
     run_capital_backed_paper_session,
+    _bar_evidence_bid_ask,
+    _bar_evidence_fill_gate,
     _envelope_query_proof,
     _looks_like_daily_close_row,
 )
@@ -1150,9 +1152,13 @@ def _snapshot_ready_window(
     prior_close_cny: float = 10.0,
     last_cny: float = 10.0,
     clock_at: str = "2026-07-16 09:35:00",
+    high_cny: float | None = None,
+    low_cny: float | None = None,
 ) -> object:
     clock = datetime.strptime(clock_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=SHANGHAI)
     iso = clock.isoformat()
+    high = last_cny + 0.05 if high_cny is None else high_cny
+    low = last_cny - 0.05 if low_cny is None else low_cny
     return make_observation_window(
         symbol,
         prior_close_cny=prior_close_cny,
@@ -1160,8 +1166,8 @@ def _snapshot_ready_window(
         quote_clock_at=clock_at,
         quote_clock_dataset_id=QUOTE_CLOCK_DATASET_ID,
         snapshot_last_cny=last_cny,
-        snapshot_high_cny=last_cny + 0.05,
-        snapshot_low_cny=last_cny - 0.05,
+        snapshot_high_cny=high,
+        snapshot_low_cny=low,
         snapshot_open_cny=last_cny,
         snapshot_volume=12_345.0,
         snapshot_receipt_id="receipt-cn.dataset.rt_min",
@@ -1675,10 +1681,7 @@ def test_fresh_production_rt_min_bind_is_neither_banned_reason(tmp_path: Path) -
         champion_registry=registry,
     )
     row = result.disposition_for(symbol)
-    assert row.nonfill_reason not in {
-        "quote_clocks_unavailable",
-        "capital_fill_market_snapshot_unavailable",
-    }
+    assert row.nonfill_reason not in IN_SESSION_BANNED_NONFILL
     assert row.disposition is ExposureDisposition.PAPER_FILLED
     assert result.fill_count == 1
     assert result.canonical_account_connected is False
@@ -1690,7 +1693,17 @@ def test_fresh_production_rt_min_bind_is_neither_banned_reason(tmp_path: Path) -
     )
 
 
-def test_stale_bound_snapshot_is_not_the_banned_unavailable_codes(
+IN_SESSION_BANNED_NONFILL = frozenset(
+    {
+        "quote_clocks_unavailable",
+        "capital_fill_market_snapshot_unavailable",
+        "capital_fill_bar_evidence_invalid",
+        "paper_market_snapshot_stale",
+    }
+)
+
+
+def test_lunch_bound_snapshot_is_session_unavailable_not_a_fill(
     tmp_path: Path,
 ) -> None:
     _prepare_ledger(tmp_path)
@@ -1727,12 +1740,10 @@ def test_stale_bound_snapshot_is_not_the_banned_unavailable_codes(
     )
     row = result.disposition_for(CASH_SESSION_SYMBOL)
     assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
-    assert row.nonfill_reason == "paper_market_snapshot_stale"
-    assert row.nonfill_reason not in {
-        "capital_fill_market_snapshot_unavailable",
-        "quote_clocks_unavailable",
-    }
+    assert row.nonfill_reason == "paper_continuous_session_unavailable"
+    assert row.nonfill_reason not in IN_SESSION_BANNED_NONFILL
     assert result.fill_count == 0
+    assert close_or_touch_is_not_a_fill() == 0
     assert result.disposition_for("300750.SZ").rejection_reason == (
         "chinext_individual_permission_unavailable"
     )
@@ -1787,3 +1798,249 @@ def test_default_fill_path_paper_filled_requires_ledger_fill_commit(
     assert result.disposition_for("688981.SH").rejection_reason == (
         "star_individual_permission_unavailable"
     )
+
+
+def test_doji_and_close_at_high_still_model_a_one_tick_book() -> None:
+    doji = _bar_evidence_bid_ask(last_cny=10.0, high_cny=10.0, low_cny=10.0)
+    assert doji is not None
+    bid, ask = doji
+    assert ask > bid
+    assert ask != 10.0 or bid != 10.0
+    close_at_high = _bar_evidence_bid_ask(last_cny=12.8, high_cny=12.8, low_cny=12.76)
+    assert close_at_high is not None
+    assert close_at_high[1] > close_at_high[0]
+
+
+def test_bar_evidence_fill_gate_keeps_session_and_cross_session_honest() -> None:
+    bar_0935 = datetime(2026, 9, 3, 9, 35, tzinfo=SHANGHAI)
+    assert (
+        _bar_evidence_fill_gate(
+            decision=datetime(2026, 9, 3, 9, 37, tzinfo=SHANGHAI),
+            bar_slot=bar_0935,
+        )
+        is None
+    )
+    assert (
+        _bar_evidence_fill_gate(
+            decision=datetime(2026, 9, 3, 12, 17, tzinfo=SHANGHAI),
+            bar_slot=datetime(2026, 9, 3, 11, 30, tzinfo=SHANGHAI),
+        )
+        == "paper_continuous_session_unavailable"
+    )
+    assert (
+        _bar_evidence_fill_gate(
+            decision=datetime(2026, 9, 3, 14, 59, tzinfo=SHANGHAI),
+            bar_slot=datetime(2026, 9, 3, 14, 55, tzinfo=SHANGHAI),
+        )
+        == "paper_continuous_session_unavailable"
+    )
+    assert (
+        _bar_evidence_fill_gate(
+            decision=datetime(2026, 9, 3, 13, 2, tzinfo=SHANGHAI),
+            bar_slot=datetime(2026, 9, 3, 11, 30, tzinfo=SHANGHAI),
+        )
+        == "paper_market_snapshot_stale"
+    )
+
+
+def test_in_session_doji_bar_outside_30s_is_paper_filled(
+    tmp_path: Path,
+) -> None:
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    decision = datetime(2026, 7, 16, 9, 38, tzinfo=SHANGHAI)
+    symbol = "000063.SZ"
+    windows = {
+        symbol: _snapshot_ready_window(
+            symbol,
+            last_cny=10.0,
+            high_cny=10.0,
+            low_cny=10.0,
+            clock_at="2026-07-16 09:35:00",
+        )
+    }
+    result = run_capital_backed_paper_session(
+        _config(tmp_path, decision_as_of=decision),
+        windows=windows,
+        champion_registry=registry,
+    )
+    filled = result.disposition_for(symbol)
+    assert filled.nonfill_reason not in IN_SESSION_BANNED_NONFILL
+    assert filled.disposition is ExposureDisposition.PAPER_FILLED
+    assert filled.simulated_fill_id
+    assert result.fill_count == 1
+    ledger = MarketCapitalLedger(
+        _config(tmp_path).ledger_root,
+        policy=MarketPolicy.load("ashare"),
+    )
+    events = [
+        json.loads(line)
+        for line in (Path(ledger.root) / ledger.events_filename)
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(row.get("event_type") == "fill_commit" for row in events)
+    assert result.canonical_account_connected is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
+
+
+def test_thursday_open_oneshot_close_at_high_is_paper_filled(
+    tmp_path: Path,
+) -> None:
+    """Proof window: Thu 2026-09-03 ~09:30 CST after the first 09:35 bar."""
+
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    trade_date = "2026-09-03"
+    decision = datetime(2026, 9, 3, 9, 37, tzinfo=SHANGHAI)
+    symbol = "000063.SZ"
+    live_bar = _production_rt_min_row(
+        symbol,
+        time_text="2026-09-03 09:35:00",
+        trade_date="20260903",
+        close=12.8,
+        high=12.8,
+        low=12.74,
+    )
+    daily = bind_cash_session_windows(
+        (symbol,),
+        trade_date=trade_date,
+        catalog_version="td-catalog-live",
+        calendar_rows=(
+            {
+                "exchange": "SSE",
+                "cal_date": "20260903",
+                "is_open": 1,
+                "pretrade_date": "20260902",
+            },
+        ),
+        daily_rows=(_daily_row(symbol, trade_date="20260902", close=12.8),),
+    )
+    clocked = bind_quote_clocks(
+        daily,
+        trade_date=trade_date,
+        decision_as_of=decision,
+        quote_clock_rows=(live_bar,),
+    )
+    overlay = bind_market_snapshots(
+        clocked,
+        trade_date=trade_date,
+        decision_as_of=decision,
+        snapshot_rows=(live_bar,),
+        snapshot_proof=_quote_clock_proof(),
+    )
+    assert overlay[symbol].quote_clocks_ok is True
+    assert overlay[symbol].fill_snapshot_ready is True
+    result = run_capital_backed_paper_session(
+        _config(tmp_path, trade_date=trade_date, decision_as_of=decision),
+        windows=overlay,
+        champion_registry=registry,
+    )
+    filled = result.disposition_for(symbol)
+    assert filled.nonfill_reason not in IN_SESSION_BANNED_NONFILL
+    assert filled.disposition is ExposureDisposition.PAPER_FILLED
+    assert filled.simulated_fill_id
+    assert filled.filled_quantity == 100
+    assert result.fill_count == 1
+    ledger = MarketCapitalLedger(
+        _config(tmp_path, trade_date=trade_date, decision_as_of=decision).ledger_root,
+        policy=MarketPolicy.load("ashare"),
+    )
+    snapshot = ledger.snapshot()
+    assert snapshot.cash_balance_cny < 50_000.0
+    assert snapshot.unreconciled_fill_commit_ids
+    events = [
+        json.loads(line)
+        for line in (Path(ledger.root) / ledger.events_filename)
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(row.get("event_type") == "fill_commit" for row in events)
+    latest = json.loads(result.latest_path.read_text(encoding="utf-8"))
+    assert latest["fill_count"] == 1
+    assert latest["canonical_account_connected"] is False
+    assert latest["real_trading_enabled"] is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
+
+
+def test_closed_session_does_not_invent_a_fill_from_daily_close(
+    tmp_path: Path,
+) -> None:
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    decision = datetime(2026, 9, 1, 14, 59, tzinfo=SHANGHAI)
+    symbol = CASH_SESSION_SYMBOL
+    windows = {
+        symbol: _snapshot_ready_window(
+            symbol,
+            last_cny=12.8,
+            high_cny=12.8,
+            low_cny=12.8,
+            clock_at="2026-09-01 14:55:00",
+        )
+    }
+    result = run_capital_backed_paper_session(
+        _config(
+            tmp_path,
+            trade_date=CASH_SESSION_TRADE_DATE,
+            decision_as_of=decision,
+        ),
+        windows=windows,
+        champion_registry=registry,
+    )
+    row = result.disposition_for(symbol)
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "paper_continuous_session_unavailable"
+    assert row.nonfill_reason not in IN_SESSION_BANNED_NONFILL
+    assert result.fill_count == 0
+    assert close_or_touch_is_not_a_fill() == 0
+    assert result.canonical_account_connected is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
+
+
+def test_morning_bar_in_afternoon_session_stays_stale_not_a_fill(
+    tmp_path: Path,
+) -> None:
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    decision = datetime(2026, 9, 1, 13, 2, tzinfo=SHANGHAI)
+    symbol = CASH_SESSION_SYMBOL
+    windows = {
+        symbol: _snapshot_ready_window(
+            symbol,
+            last_cny=12.8,
+            clock_at="2026-09-01 11:30:00",
+        )
+    }
+    result = run_capital_backed_paper_session(
+        _config(
+            tmp_path,
+            trade_date=CASH_SESSION_TRADE_DATE,
+            decision_as_of=decision,
+        ),
+        windows=windows,
+        champion_registry=registry,
+    )
+    row = result.disposition_for(symbol)
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "paper_market_snapshot_stale"
+    assert result.fill_count == 0
+    assert close_or_touch_is_not_a_fill() == 0
+
