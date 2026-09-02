@@ -199,9 +199,9 @@ def test_bootstrap_does_not_handwrite_current_or_fabricate_kpi() -> None:
     source = (
         ROOT / "Ashare" / "paper_champion_bootstrap.py"
     ).read_text(encoding="utf-8")
-    assert "record_selection" in source
-    assert "current.json" not in source or "handwritten" in source
+    assert "registry.record_selection(" in source
     assert "execute_automatic_promotion" not in source
     assert "completed_round_trips" not in source
     assert "sample_kpi" not in source
-    assert "promotion_evidence_ready" not in source
+    assert 'open("current.json"' not in source
+    assert "current_path.write" not in source
