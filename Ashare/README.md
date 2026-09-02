@@ -873,6 +873,25 @@ oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`
 is a candidate only; it is not enabled by this change and does not flip
 `canonicalAccountConnected`.
 
+An empty Champion registry still fail-closes every order-identity name as
+`champion_current_unavailable`. The first 科技+医药 paper Champion is the
+in-repo hashed `FrozenChampionSpec` recorded only by
+`ChampionSelectionRegistry.record_selection` (AUTOMATION actor). Host ops
+run that after deploy against an explicit registry root; do not seed a
+handwritten `current.json`, fabricate KPI/round trips, or treat a missing
+current as a buy:
+
+```bash
+export REAL_TRADING_ENABLED=false
+python3 -m Ashare.paper_champion_bootstrap \
+  --registry-root /var/lib/tradingagent/ashare-canonical/shared/review/ashare/champion_registry
+```
+
+`Ashare/systemd/tradingagent-ashare-paper-champion-bootstrap.service` is the
+matching oneshot candidate. It is not enabled and has no timer. Replay is
+idempotent for the same frozen designation. A later evidence-ready promotion
+remains a separate path; today's empty journal is still an honest no-op.
+
 ### Read-only real-data canary
 
 `Ashare.minute_canary` is the bridge from the mock-ready contract to a formal

@@ -1,0 +1,40 @@
+[Unit]
+Description=Record the frozen TradingAgent A-share 科技+医药 paper Champion (simulation oneshot candidate)
+ConditionPathExists=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3
+ConditionPathExists=/opt/investment/releases/tradingagent/current/Ashare/paper_champion_bootstrap.py
+ConditionPathExists=/var/lib/tradingagent/ashare-canonical/shared/review/ashare/champion_registry
+
+[Service]
+Type=oneshot
+User=tradingagent
+Group=tradingagent
+WorkingDirectory=/opt/investment/releases/tradingagent/current
+Environment=REAL_TRADING_ENABLED=false
+Environment=PYTHONPATH=/opt/investment/releases/tradingagent/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1/bin/python3 -m Ashare.paper_champion_bootstrap --registry-root /var/lib/tradingagent/ashare-canonical/shared/review/ashare/champion_registry
+TimeoutStartSec=60s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/opt/investment/releases/tradingagent
+ReadOnlyPaths=/opt/investment/tools/venvs/tradingagent-observation-py312-pyyaml603-v1
+ReadWritePaths=/var/lib/tradingagent/ashare-canonical/shared/review/ashare/champion_registry
+StandardOutput=journal
+StandardError=journal
