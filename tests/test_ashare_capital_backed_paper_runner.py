@@ -21,8 +21,10 @@ from Ashare.capital_backed_paper_runner import (
     CapitalBackedPaperError,
     FillAttemptRequest,
     FillAttemptResult,
+    QuoteClockQueryProof,
     attempt_capital_backed_simulation_fill,
     bind_cash_session_windows,
+    bind_market_snapshots,
     bind_quote_clocks,
     cash_session_daily_ts_codes,
     close_or_touch_is_not_a_fill,
@@ -52,6 +54,8 @@ from shared.data.sharedsignals_v1 import (
 )
 from shared.review.decision_ledger import ExposureDisposition, SampleJournalDecisionLedger
 from shared.review.sample_journal import SampleJournal
+from shared.capital.market_ledger import MarketCapitalLedger
+from shared.capital.market_policy import MarketPolicy
 from shared.runtime.capital_stages import PaperCapitalAccount
 from shared.runtime.composition import (
     PaperRuntimeConfig,
@@ -633,6 +637,7 @@ def test_systemd_candidate_is_sim_only_and_points_at_sibling_runner() -> None:
     assert "paper_session_drift_allows_new_risk" in runner_source
     assert "attempt_capital_backed_simulation_fill" in runner_source
     assert "bind_quote_clocks" in runner_source
+    assert "bind_market_snapshots" in runner_source
     assert "cn.dataset.rt_min" in runner_source
     assert "decision_as_of=config.decision_as_of" in main_source
 
@@ -1082,16 +1087,63 @@ def _quote_clock_row(
     time_text: str = CASH_SESSION_QUOTE_SLOT,
     freq: str = "5MIN",
     close: float = 12.8,
+    vol: float | None = None,
+    high: float | None = None,
+    low: float | None = None,
 ) -> dict[str, object]:
-    return {
+    row: dict[str, object] = {
         "ts_code": symbol,
         "freq": freq,
         "time": time_text,
         "open": close,
         "close": close,
-        "high": close,
-        "low": close,
+        "high": close if high is None else high,
+        "low": close if low is None else low,
     }
+    if vol is not None:
+        row["vol"] = vol
+    return row
+
+
+def _quote_clock_proof() -> QuoteClockQueryProof:
+    return QuoteClockQueryProof(
+        receipt_id="receipt-cn.dataset.rt_min",
+        catalog_version="td-catalog-live",
+        data_through="2026-08-31T16:00:00+08:00",
+        observed_at="2026-09-01T09:30:00+08:00",
+        source_sha256="a" * 64,
+        source_lineage_sha256="b" * 64,
+    )
+
+
+def _snapshot_ready_window(
+    symbol: str,
+    *,
+    prior_close_cny: float = 10.0,
+    last_cny: float = 10.0,
+    clock_at: str = "2026-07-16 09:35:00",
+) -> object:
+    clock = datetime.strptime(clock_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=SHANGHAI)
+    iso = clock.isoformat()
+    return make_observation_window(
+        symbol,
+        prior_close_cny=prior_close_cny,
+        quote_clocks_ok=True,
+        quote_clock_at=clock_at,
+        quote_clock_dataset_id=QUOTE_CLOCK_DATASET_ID,
+        snapshot_last_cny=last_cny,
+        snapshot_high_cny=last_cny + 0.05,
+        snapshot_low_cny=last_cny - 0.05,
+        snapshot_open_cny=last_cny,
+        snapshot_volume=12_345.0,
+        snapshot_receipt_id="receipt-cn.dataset.rt_min",
+        snapshot_source_sha256="a" * 64,
+        snapshot_lineage_sha256="b" * 64,
+        snapshot_data_through=iso,
+        snapshot_observed_at=iso,
+        snapshot_available_at=iso,
+        snapshot_catalog_version="td-catalog-v1",
+    )
 
 
 def _cash_session_daily_windows(
@@ -1242,6 +1294,7 @@ def test_query_windows_present_rt_min_clock_is_not_daily_close() -> None:
     assert window.quote_clocks_ok is True
     assert window.quote_clock_at == CASH_SESSION_QUOTE_SLOT
     assert window.fill_quote_ready is True
+    assert window.fill_snapshot_ready is False
     clock_filters = [
         call["json_body"]["filters"]
         for call in transport.calls
@@ -1304,3 +1357,207 @@ def test_query_windows_missing_rt_min_stays_quote_clocks_unavailable() -> None:
         ),
     )
     assert without_clock_dataset[CASH_SESSION_SYMBOL].quote_clocks_ok is False
+    assert without_clock_dataset[CASH_SESSION_SYMBOL].fill_snapshot_ready is False
+
+
+def test_daily_close_does_not_bind_market_snapshot_or_mint_fill(tmp_path: Path) -> None:
+    windows = bind_quote_clocks(
+        _cash_session_daily_windows(CASH_SESSION_SYMBOL),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        quote_clock_rows=(_quote_clock_row(CASH_SESSION_SYMBOL),),
+    )
+    overlay = bind_market_snapshots(
+        windows,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        snapshot_rows=(
+            _daily_row(
+                CASH_SESSION_SYMBOL,
+                trade_date=LAST_COMPLETE_DAILY,
+                close=12.5,
+            ),
+            _daily_row(
+                CASH_SESSION_SYMBOL,
+                trade_date="20260901",
+                close=99.0,
+                pre_close=12.5,
+            ),
+        ),
+        snapshot_proof=_quote_clock_proof(),
+    )
+    window = overlay[CASH_SESSION_SYMBOL]
+    assert window.quote_clocks_ok is True
+    assert window.fill_snapshot_ready is False
+    assert window.snapshot_last_cny is None
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    result = run_capital_backed_paper_session(
+        _config(
+            tmp_path,
+            trade_date=CASH_SESSION_TRADE_DATE,
+            decision_as_of=CASH_SESSION_DECISION,
+        ),
+        windows=overlay,
+        champion_registry=registry,
+    )
+    row = result.disposition_for(CASH_SESSION_SYMBOL)
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "capital_fill_market_snapshot_unavailable"
+    assert result.fill_count == 0
+    assert close_or_touch_is_not_a_fill() == 0
+
+
+def test_rt_min_bar_without_volume_stays_snapshot_unready() -> None:
+    windows = bind_quote_clocks(
+        _cash_session_daily_windows(CASH_SESSION_SYMBOL),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        quote_clock_rows=(_quote_clock_row(CASH_SESSION_SYMBOL),),
+    )
+    overlay = bind_market_snapshots(
+        windows,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        snapshot_rows=(_quote_clock_row(CASH_SESSION_SYMBOL),),
+        snapshot_proof=_quote_clock_proof(),
+    )
+    assert overlay[CASH_SESSION_SYMBOL].fill_quote_ready is True
+    assert overlay[CASH_SESSION_SYMBOL].fill_snapshot_ready is False
+
+
+def test_query_windows_rt_min_bar_binds_snapshot_not_daily_through() -> None:
+    transport = _RecordingTDTransport(
+        calendar_rows=(_open_calendar_row(),),
+        daily_by_date={
+            LAST_COMPLETE_DAILY: (
+                _daily_row(
+                    CASH_SESSION_SYMBOL,
+                    trade_date=LAST_COMPLETE_DAILY,
+                    close=12.5,
+                ),
+            ),
+        },
+        quote_clock_rows=(
+            _quote_clock_row(
+                CASH_SESSION_SYMBOL,
+                vol=8_800.0,
+                high=13.0,
+                low=12.4,
+            ),
+        ),
+    )
+    windows = query_windows_from_tradingdatas(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.fill_quote_ready is True
+    assert window.fill_snapshot_ready is True
+    assert window.snapshot_last_cny == 12.8
+    assert window.snapshot_volume == 8_800.0
+    assert window.snapshot_receipt_id == "receipt-cn.dataset.rt_min"
+    assert window.snapshot_data_through.startswith("2026-09-01T11:30:00")
+    assert "16:00:00" not in window.snapshot_data_through
+    assert window.snapshot_data_through != "2026-08-31T16:00:00+08:00"
+
+
+def test_stale_bound_snapshot_is_not_the_banned_unavailable_codes(
+    tmp_path: Path,
+) -> None:
+    _prepare_ledger(tmp_path)
+    windows = bind_quote_clocks(
+        _cash_session_daily_windows(CASH_SESSION_SYMBOL),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        quote_clock_rows=(_quote_clock_row(CASH_SESSION_SYMBOL),),
+    )
+    overlay = bind_market_snapshots(
+        windows,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        snapshot_rows=(
+            _quote_clock_row(
+                CASH_SESSION_SYMBOL,
+                vol=8_800.0,
+                high=13.0,
+                low=12.4,
+            ),
+        ),
+        snapshot_proof=_quote_clock_proof(),
+    )
+    assert overlay[CASH_SESSION_SYMBOL].fill_snapshot_ready is True
+    registry, _manifest = _manual_registry(tmp_path)
+    result = run_capital_backed_paper_session(
+        _config(
+            tmp_path,
+            trade_date=CASH_SESSION_TRADE_DATE,
+            decision_as_of=CASH_SESSION_DECISION,
+        ),
+        windows=overlay,
+        champion_registry=registry,
+    )
+    row = result.disposition_for(CASH_SESSION_SYMBOL)
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "paper_market_snapshot_stale"
+    assert row.nonfill_reason not in {
+        "capital_fill_market_snapshot_unavailable",
+        "quote_clocks_unavailable",
+    }
+    assert result.fill_count == 0
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
+
+
+def test_default_fill_path_paper_filled_requires_ledger_fill_commit(
+    tmp_path: Path,
+) -> None:
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    decision = datetime(2026, 7, 16, 9, 35, 10, tzinfo=SHANGHAI)
+    symbol = "000063.SZ"
+    windows = {symbol: _snapshot_ready_window(symbol)}
+    result = run_capital_backed_paper_session(
+        _config(tmp_path, decision_as_of=decision),
+        windows=windows,
+        champion_registry=registry,
+    )
+    filled = result.disposition_for(symbol)
+    assert filled.disposition is ExposureDisposition.PAPER_FILLED
+    assert filled.simulated_fill_id
+    assert filled.filled_quantity == 100
+    assert filled.filled_notional_cny > 0
+    assert filled.rejection_reason is None
+    assert filled.nonfill_reason is None
+    assert result.fill_count == 1
+    ledger = MarketCapitalLedger(
+        _config(tmp_path).ledger_root,
+        policy=MarketPolicy.load("ashare"),
+    )
+    snapshot = ledger.snapshot()
+    assert snapshot.cash_balance_cny < 50_000.0
+    assert snapshot.positions_quantity_by_risk_unit.get(symbol, 0) >= 100
+    assert snapshot.unreconciled_fill_commit_ids
+    events_path = Path(ledger.root) / ledger.events_filename
+    events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(row.get("event_type") == "fill_commit" for row in events)
+    latest = json.loads(result.latest_path.read_text(encoding="utf-8"))
+    assert latest["fill_count"] == 1
+    assert latest["canonical_account_connected"] is False
+    assert latest["real_trading_enabled"] is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )

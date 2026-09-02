@@ -19,20 +19,26 @@ import argparse
 import hashlib
 import json
 import os
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, fields
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo
 
 from shared.capital.market_ledger import MarketCapitalLedger, MarketCapitalSnapshot
 from shared.capital.market_policy import MarketPolicy
 from shared.execution.execution_lineage import ASHARE_CAPITAL_AUTHORITY_ID
+from shared.execution.execution_reality import ashare_execution_reality
 from shared.models.champion_registry import (
     ChampionRegistryError,
     ChampionSelectionReceipt,
     ChampionSelectionRegistry,
+)
+from shared.models.lifecycle import (
+    TradingSessionCalendarAuthority,
+    TradingSessionCalendarAuthorityVerification,
 )
 from shared.review.decision_ledger import (
     DecisionExposureRecord,
@@ -41,9 +47,22 @@ from shared.review.decision_ledger import (
 )
 from shared.review.sample_journal import SampleJournal
 from shared.runtime.capital_stages import (
+    CapitalBackedPreopenStagePort,
+    CapitalBackedRiskStagePort,
     CapitalBackedSimulationExecutionStagePort,
     PaperCapitalAccount,
+    PaperCapitalStageError,
 )
+from shared.runtime.day_loop import StageRequest, StageResult
+from shared.runtime.execution_receipt_contract import ashare_continuous_session
+from shared.runtime.market_evidence_authority import (
+    AShareExecutionQuoteEvidence,
+    MarketEvidenceContext,
+    MarketSourceBinding,
+    freeze_non_production_market_evidence,
+)
+from shared.runtime.run_bundle import ComponentIdentity, RunStage
+from shared.runtime.trusted_clock import NonProductionFixtureExecutionClock
 from shared.universe.policy import CanonicalMainboardScopePolicy
 
 from .capital_backed_paper_universe import (
@@ -115,6 +134,18 @@ class SymbolWindow:
     quote_trade_date: str = ""
     quote_clock_at: str = ""
     quote_clock_dataset_id: str = ""
+    snapshot_last_cny: float | None = None
+    snapshot_high_cny: float | None = None
+    snapshot_low_cny: float | None = None
+    snapshot_open_cny: float | None = None
+    snapshot_volume: float | None = None
+    snapshot_receipt_id: str = ""
+    snapshot_source_sha256: str = ""
+    snapshot_lineage_sha256: str = ""
+    snapshot_data_through: str = ""
+    snapshot_observed_at: str = ""
+    snapshot_available_at: str = ""
+    snapshot_catalog_version: str = ""
 
     @property
     def observation_ready(self) -> bool:
@@ -130,6 +161,30 @@ class SymbolWindow:
     def fill_quote_ready(self) -> bool:
         return self.observation_ready and self.quote_fresh and self.quote_clocks_ok
 
+    @property
+    def fill_snapshot_ready(self) -> bool:
+        """True only when an in-session rt_min bar snapshot is bound.
+
+        Daily close/touch never sets these fields.  Last/close is a bar
+        mid, not a bid/ask.
+        """
+
+        return bool(
+            self.fill_quote_ready
+            and self.snapshot_last_cny is not None
+            and self.snapshot_last_cny > 0
+            and self.snapshot_volume is not None
+            and self.snapshot_volume > 0
+            and self.snapshot_receipt_id
+            and self.snapshot_source_sha256
+            and self.snapshot_lineage_sha256
+            and self.snapshot_data_through
+            and self.snapshot_observed_at
+            and self.snapshot_available_at
+            and self.quote_clock_at
+            and self.quote_clock_dataset_id == QUOTE_CLOCK_DATASET_ID
+        )
+
 
 @dataclass(frozen=True)
 class FillAttemptRequest:
@@ -141,6 +196,10 @@ class FillAttemptRequest:
     champion: ChampionSelectionReceipt
     window: SymbolWindow
     snapshot_before: MarketCapitalSnapshot
+    trade_date: str = ""
+    decision_as_of: datetime | None = None
+    run_id: str = ""
+    artifact_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -261,6 +320,14 @@ def _canonical_json(value: object) -> str:
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _looks_like_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _is_under(path: Path, root: Path) -> bool:
@@ -432,16 +499,276 @@ def _unfilled_attempt(reason_code: str) -> FillAttemptResult:
     )
 
 
+def _replace_window(window: SymbolWindow, **updates: object) -> SymbolWindow:
+    payload = {item.name: getattr(window, item.name) for item in fields(SymbolWindow)}
+    payload.update(updates)
+    return SymbolWindow(**payload)  # type: ignore[arg-type]
+
+
+def _paper_weekday_sessions() -> tuple[date, ...]:
+    current = date(2024, 12, 2)
+    end = date(2027, 12, 31)
+    closed = {date(2025, 1, 1)}
+    sessions: list[date] = []
+    while current <= end:
+        if current.weekday() < 5 and current not in closed:
+            sessions.append(current)
+        current += timedelta(days=1)
+    return tuple(sessions)
+
+
+def paper_session_calendar_receipt() -> dict[str, Any]:
+    """Sim-only calendar receipt required by the capital fill port.
+
+    This is the same non-production fixture tier the port already requires.
+    It is not a production exchange calendar and does not mint a fill.
+    """
+
+    calendar = TradingSessionCalendarAuthority(
+        market="ashare",
+        calendar_id="fixture-sse-szse-joint-trading-sessions",
+        calendar_version="non-production-fixture-through-20271231-v1",
+        source_dataset_id="fixture.ashare.trade_calendar",
+        source_receipt_id="receipt-non-production-fixture-calendar-001",
+        source_receipt_sha256="e" * 64,
+        available_at=datetime(2025, 4, 1, tzinfo=timezone.utc),
+        sessions=_paper_weekday_sessions(),
+    )
+    frozen_at = datetime(2025, 4, 2, tzinfo=timezone.utc)
+    verification = TradingSessionCalendarAuthorityVerification(
+        accepted=True,
+        verifier_id="non-production-fixture-calendar-verifier",
+        verifier_version="1.0.0",
+        proof_sha256="f" * 64,
+        verified_at=frozen_at - timedelta(minutes=1),
+        frozen_at=frozen_at,
+        calendar_sha256=calendar.calendar_sha256,
+        source_receipt_id=calendar.source_receipt_id,
+        source_receipt_sha256=calendar.source_receipt_sha256,
+    )
+    return {
+        "authority_tier": "non_production_fixture",
+        "production_eligible": False,
+        "calendar": calendar.canonical_payload(),
+        "verification": verification.canonical_payload(),
+    }
+
+
+def _bar_evidence_bid_ask(
+    *,
+    last_cny: float,
+    high_cny: float | None,
+    low_cny: float | None,
+) -> tuple[float, float] | None:
+    """Model bid/ask from a completed rt_min last.  Never copy last as both."""
+
+    model = ashare_execution_reality()
+    if last_cny <= 0:
+        return None
+    slippage = model.conservative_label_slippage_bps_per_side / 10_000.0
+    ask = model._round_to_tick(float(last_cny) * (1.0 + slippage))
+    bid = model._round_to_tick(float(last_cny) * (1.0 - slippage))
+    tick = model.price_tick_cny
+    if ask <= last_cny:
+        ask = model._round_to_tick(last_cny + tick)
+    if bid >= last_cny:
+        bid = model._round_to_tick(max(tick, last_cny - tick))
+    if high_cny is not None and high_cny > 0 and ask > high_cny:
+        return None
+    if low_cny is not None and low_cny > 0 and bid < low_cny:
+        return None
+    if bid <= 0 or ask <= bid:
+        return None
+    return bid, ask
+
+
+def _reservation_price_cny(*, ask: float, high_cny: float | None) -> float:
+    """Worst-case buy reservation.  The engine may slip through the ask."""
+
+    model = ashare_execution_reality()
+    pad = model.conservative_label_slippage_bps_per_side / 10_000.0
+    padded = model._round_to_tick(ask * (1.0 + pad) + model.price_tick_cny)
+    if high_cny is not None and high_cny >= padded:
+        return model._round_to_tick(float(high_cny))
+    return padded
+
+
+class _StaticFillStagePort:
+    """Minimal in-process stage payload.  Not a second capital authority."""
+
+    def __init__(self, stage: RunStage, payload: Mapping[str, Any]) -> None:
+        self.identity = ComponentIdentity(
+            stage=stage,
+            component_id=f"ashare-paper-fill-{stage.value}",
+            version="1",
+            artifact_sha256=_sha256({"stage": stage.value, "payload": dict(payload)}),
+        )
+        self._payload = dict(payload)
+
+    def execute(self, request: StageRequest) -> StageResult:
+        if request.stage is not self.identity.stage:
+            raise CapitalBackedPaperError("fill_stage_mismatch")
+        return StageResult(payload=self._payload)
+
+
+def _fill_bundle(
+    *,
+    run_id: str,
+    trade_date: str,
+    decision_as_of: str,
+    snapshot: MarketCapitalSnapshot,
+    permitted_order_ids: tuple[str, ...],
+    stage_payloads: Mapping[RunStage, Mapping[str, Any]],
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        context=SimpleNamespace(
+            authority_id=snapshot.authority_id,
+            authority_generation=snapshot.authority_generation,
+            execution_lineage=snapshot.execution_lineage_id,
+            trade_date=trade_date,
+            decision_as_of=decision_as_of,
+            account_type="simulated",
+            real_trading_enabled=False,
+        ),
+        run_id=run_id,
+        permitted_order_ids=permitted_order_ids,
+        stage_payloads=dict(stage_payloads),
+        receipt_for=lambda stage: SimpleNamespace(payload=dict(stage_payloads[stage])),
+    )
+
+
+def _build_bar_evidence_snapshot(
+    request: FillAttemptRequest,
+    *,
+    order_id: str,
+    snapshot: MarketCapitalSnapshot,
+    decision_text: str,
+    execution_text: str,
+    calendar_receipt: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    window = request.window
+    last = window.snapshot_last_cny
+    if last is None or last <= 0:
+        return None
+    spread = _bar_evidence_bid_ask(
+        last_cny=last,
+        high_cny=window.snapshot_high_cny,
+        low_cny=window.snapshot_low_cny,
+    )
+    if spread is None:
+        return None
+    bid, ask = spread
+    prior_close = float(window.prior_close_cny or 0.0)
+    if prior_close <= 0:
+        return None
+    execution = _parse_quote_clock_time(execution_text)
+    if execution is None:
+        return None
+    session = ashare_continuous_session(execution)
+    if session is None:
+        return None
+    data_through = window.snapshot_data_through
+    observed = window.snapshot_observed_at
+    available = window.snapshot_available_at
+    catalog_version = window.snapshot_catalog_version or window.catalog_version
+    source = MarketSourceBinding(
+        dataset_id=QUOTE_CLOCK_DATASET_ID,
+        catalog_version=catalog_version,
+        source_receipt_id=window.snapshot_receipt_id,
+        source_receipt_sha256=window.snapshot_source_sha256,
+        source_lineage_sha256=window.snapshot_lineage_sha256,
+        data_through=_parse_quote_clock_time(data_through) or execution,
+        observed_at=_parse_quote_clock_time(observed) or execution,
+        available_at=_parse_quote_clock_time(available) or execution,
+    )
+    if not request.trade_date:
+        return None
+    context = MarketEvidenceContext(
+        trade_date=date.fromisoformat(request.trade_date),
+        decision_as_of=datetime.fromisoformat(decision_text.replace("Z", "+00:00")),
+        capital_authority_id=snapshot.authority_id,
+        authority_generation=snapshot.authority_generation,
+        execution_lineage_id=snapshot.execution_lineage_id,
+        account_type="simulated",
+        real_trading_enabled=False,
+    )
+    receipt_sha256 = _sha256(
+        {
+            "authority_tier": calendar_receipt.get("authority_tier"),
+            "calendar": calendar_receipt.get("calendar"),
+            "production_eligible": calendar_receipt.get("production_eligible"),
+            "verification": calendar_receipt.get("verification"),
+        }
+    )
+    quote = AShareExecutionQuoteEvidence(
+        symbol=request.symbol,
+        order_id=order_id,
+        bid_price_cny=bid,
+        ask_price_cny=ask,
+        bid_size=BUY_LOT,
+        ask_size=BUY_LOT,
+        previous_close_cny=prior_close,
+        market_session=session,
+        execution_time=execution,
+        source=source,
+        session_calendar_receipt_sha256=str(
+            calendar_receipt.get("receipt_sha256") or receipt_sha256
+        ),
+        context=context,
+    )
+    authority = freeze_non_production_market_evidence(
+        quote,
+        expected_dataset_id=QUOTE_CLOCK_DATASET_ID,
+        frozen_at=execution,
+    )
+    return {
+        "snapshot_id": f"SNAPSHOT-{order_id}",
+        "source_receipt_id": window.snapshot_receipt_id,
+        "source_sha256": window.snapshot_source_sha256,
+        "source_lineage_sha256": window.snapshot_lineage_sha256,
+        "dataset_id": QUOTE_CLOCK_DATASET_ID,
+        "catalog_version": catalog_version,
+        "symbol": request.symbol,
+        "market": "ashare",
+        "trade_date": request.trade_date,
+        "decision_as_of": decision_text,
+        "capital_authority_id": snapshot.authority_id,
+        "authority_generation": snapshot.authority_generation,
+        "execution_lineage": snapshot.execution_lineage_id,
+        "account_type": "simulated",
+        "real_trading_enabled": False,
+        "observed_at": source.observed_at.isoformat(),
+        "available_at": source.available_at.isoformat(),
+        "data_through": source.data_through.isoformat(),
+        "execution_time": execution.isoformat(),
+        "bid_price": bid,
+        "ask_price": ask,
+        "bid_size": BUY_LOT,
+        "ask_size": BUY_LOT,
+        "previous_close": prior_close,
+        "market_session": session,
+        "session_calendar_receipt": dict(calendar_receipt),
+        "cash_available": float(snapshot.cash_balance_cny),
+        "market_evidence_authority": authority,
+        "bar_evidence_fill": True,
+        "bar_last_cny": last,
+        "bar_volume": float(window.snapshot_volume or 0.0),
+        "volume": float(window.snapshot_volume or 0.0),
+    }
+
+
 def attempt_capital_backed_simulation_fill(
     request: FillAttemptRequest,
     *,
     ledger: MarketCapitalLedger,
+    account: PaperCapitalAccount | None = None,
 ) -> FillAttemptResult:
     """The only fill path is ``CapitalBackedSimulationExecutionStagePort``.
 
     Daily close/touch is valuation, not a fill snapshot.  Missing quote clocks
     stay ``PAPER_NOT_FILLED``.  This function never mints a commit from
-    ``prior_close_cny``.
+    ``prior_close_cny``.  A bound in-session ``rt_min`` bar may become
+    bar-evidence bid/ask (last ± conservative slippage), never a copied close.
     """
 
     if type(request) is not FillAttemptRequest:
@@ -455,9 +782,230 @@ def attempt_capital_backed_simulation_fill(
         or _PAPER_CAPITAL_ACCOUNT is not PaperCapitalAccount
     ):
         raise CapitalBackedPaperError("wrong_capital_fill_port")
-    # Port-grade snapshots need bid/ask + trusted execution clocks.  A cash
-    # session window only carries last-complete daily close; do not invent.
-    return _unfilled_attempt("capital_fill_market_snapshot_unavailable")
+    if not request.window.fill_snapshot_ready:
+        return _unfilled_attempt("capital_fill_market_snapshot_unavailable")
+    if (
+        not request.trade_date
+        or request.decision_as_of is None
+        or request.decision_as_of.tzinfo is None
+        or request.decision_as_of.utcoffset() is None
+        or not request.run_id
+    ):
+        return _unfilled_attempt("capital_fill_market_snapshot_unavailable")
+    spread = _bar_evidence_bid_ask(
+        last_cny=float(request.window.snapshot_last_cny or 0.0),
+        high_cny=request.window.snapshot_high_cny,
+        low_cny=request.window.snapshot_low_cny,
+    )
+    if spread is None:
+        return _unfilled_attempt("capital_fill_bar_evidence_invalid")
+    decision_text = request.decision_as_of.isoformat()
+    available = _parse_quote_clock_time(request.window.snapshot_available_at)
+    data_through = _parse_quote_clock_time(request.window.snapshot_data_through)
+    if available is None or data_through is None:
+        return _unfilled_attempt("capital_fill_market_snapshot_unavailable")
+    execution = request.decision_as_of
+    if execution < available:
+        execution = available
+    execution_text = execution.isoformat()
+    if execution - data_through > timedelta(seconds=30):
+        return _unfilled_attempt("paper_market_snapshot_stale")
+    calendar_receipt = paper_session_calendar_receipt()
+    snapshot_before = ledger.snapshot()
+    market_snapshot = _build_bar_evidence_snapshot(
+        request,
+        order_id=f"ORDER-{request.symbol}",
+        snapshot=snapshot_before,
+        decision_text=decision_text,
+        execution_text=execution_text,
+        calendar_receipt=calendar_receipt,
+    )
+    if market_snapshot is None:
+        return _unfilled_attempt("capital_fill_bar_evidence_invalid")
+    artifact_root = request.artifact_root
+    if artifact_root is None:
+        artifact_root = Path(ledger.root) / "paper-capital-artifacts"
+    bound_account = account
+    if bound_account is None:
+        bound_account = PaperCapitalAccount(
+            ledger=ledger,
+            artifact_root=artifact_root,
+            mark_prices={},
+        )
+    elif type(bound_account) is not PaperCapitalAccount:
+        raise CapitalBackedPaperError("paper_capital_account_invalid")
+    reservation_price = _reservation_price_cny(
+        ask=float(spread[1]),
+        high_cny=request.window.snapshot_high_cny,
+    )
+    order = {
+        "order_id": f"ORDER-{request.symbol}",
+        "decision_id": f"DECISION-{request.symbol}",
+        "symbol": request.symbol,
+        "intent": "open",
+        "side": "buy",
+        "quantity": int(request.quantity),
+        "reservation_price_cny": reservation_price,
+        "expected_fee_cny": float(
+            ashare_execution_reality()
+            .calculate_fees("buy", request.quantity * reservation_price)
+            .get("total")
+            or 5.0
+        ),
+        "capital_authority_id": snapshot_before.authority_id,
+        "authority_generation": snapshot_before.authority_generation,
+        "execution_lineage": snapshot_before.execution_lineage_id,
+    }
+    context = {
+        "run_id": request.run_id,
+        "trade_date": request.trade_date,
+        "decision_as_of": decision_text,
+    }
+    try:
+        if not bound_account.ledger.provider_state(
+            request.trade_date.replace("-", "")
+        ).get("fresh"):
+            preopen_bundle = _fill_bundle(
+                **context,
+                snapshot=snapshot_before,
+                permitted_order_ids=(),
+                stage_payloads={
+                    RunStage.PREOPEN: {
+                        "market": "ashare",
+                        "account_type": "simulated",
+                        "real_trading_enabled": False,
+                        "account_authority_valid": True,
+                        "position_authority_valid": True,
+                    }
+                },
+            )
+            CapitalBackedPreopenStagePort(
+                base_port=_StaticFillStagePort(
+                    RunStage.PREOPEN,
+                    {
+                        "market": "ashare",
+                        "account_type": "simulated",
+                        "real_trading_enabled": False,
+                        "account_authority_valid": True,
+                        "position_authority_valid": True,
+                    },
+                ),
+                account=bound_account,
+            ).execute(
+                StageRequest(
+                    run_id=request.run_id,
+                    stage=RunStage.PREOPEN,
+                    idempotency_key=_sha256(f"{request.run_id}:preopen"),
+                    input_bundle_sha256=_sha256(context),
+                    bundle=preopen_bundle,  # type: ignore[arg-type]
+                    allowed_actions=("open", "increase", "reduce", "exit", "hold"),
+                    permitted_order_ids=(),
+                )
+            )
+        risk_bundle = _fill_bundle(
+            **context,
+            snapshot=snapshot_before,
+            permitted_order_ids=(order["order_id"],),
+            stage_payloads={
+                RunStage.RISK_CHECKED: {
+                    "risk_policy_version": "ashare-paper-bar-evidence-v1",
+                    "oms_plan_id": f"PLAN-{request.symbol}",
+                    "approved_orders": [order],
+                    "rejected_decisions": [],
+                }
+            },
+        )
+        risk_payload = (
+            CapitalBackedRiskStagePort(
+                base_port=_StaticFillStagePort(
+                    RunStage.RISK_CHECKED,
+                    {
+                        "risk_policy_version": "ashare-paper-bar-evidence-v1",
+                        "oms_plan_id": f"PLAN-{request.symbol}",
+                        "approved_orders": [order],
+                        "rejected_decisions": [],
+                    },
+                ),
+                account=bound_account,
+            )
+            .execute(
+                StageRequest(
+                    run_id=request.run_id,
+                    stage=RunStage.RISK_CHECKED,
+                    idempotency_key=_sha256(f"{request.run_id}:risk:{request.symbol}"),
+                    input_bundle_sha256=_sha256(context),
+                    bundle=risk_bundle,  # type: ignore[arg-type]
+                    allowed_actions=("open", "increase", "reduce", "exit", "hold"),
+                    permitted_order_ids=(order["order_id"],),
+                )
+            )
+            .payload
+        )
+        approved = risk_payload.get("approved_orders") or []
+        if not approved:
+            rejected = risk_payload.get("rejected_decisions") or []
+            reason = "capital_reservation_rejected"
+            if rejected and isinstance(rejected[0], Mapping):
+                reason = str(rejected[0].get("reason") or reason)
+            return _unfilled_attempt(reason)
+        execution_bundle = _fill_bundle(
+            **context,
+            snapshot=snapshot_before,
+            permitted_order_ids=(order["order_id"],),
+            stage_payloads={RunStage.RISK_CHECKED: risk_payload},
+        )
+        payload = CapitalBackedSimulationExecutionStagePort(
+            account=bound_account,
+            market_snapshots={order["order_id"]: market_snapshot},
+            execution_clock=NonProductionFixtureExecutionClock.from_isoformat(
+                default_instant=execution_text,
+                effect_overrides={},
+            ),
+        ).execute(
+            StageRequest(
+                run_id=request.run_id,
+                stage=RunStage.ORDERS_SIMULATED,
+                idempotency_key=_sha256(f"{request.run_id}:exec:{request.symbol}"),
+                input_bundle_sha256=_sha256(context),
+                bundle=execution_bundle,  # type: ignore[arg-type]
+                allowed_actions=("open", "increase", "reduce", "exit", "hold"),
+                permitted_order_ids=(order["order_id"],),
+            )
+        ).payload
+    except PaperCapitalStageError as exc:
+        reason = str(exc).split(":", 1)[0]
+        if not reason:
+            reason = "capital_fill_port_rejected"
+        return _unfilled_attempt(reason)
+    except (TypeError, ValueError) as exc:
+        reason = str(exc).split(":", 1)[0] or "capital_fill_port_rejected"
+        if reason.startswith("paper_") or reason.startswith("capital_"):
+            return _unfilled_attempt(reason)
+        return _unfilled_attempt("capital_fill_port_rejected")
+    receipts = payload.get("order_receipts") or []
+    receipt = receipts[0] if receipts else {}
+    if not isinstance(receipt, Mapping):
+        return _unfilled_attempt("order_not_filled_by_simulator")
+    filled_quantity = int(receipt.get("filled_quantity") or 0)
+    filled_price = float(receipt.get("filled_price_cny") or 0.0)
+    filled_notional = float(
+        receipt.get("filled_notional_cny") or (filled_quantity * filled_price)
+    )
+    after = ledger.snapshot()
+    committed = receipt.get("capital_commit_status") == "committed"
+    if not committed or filled_quantity <= 0:
+        return _unfilled_attempt(
+            str(receipt.get("execution_reason") or "order_not_filled_by_simulator")
+        )
+    return FillAttemptResult(
+        committed=True,
+        fill_id=str(receipt.get("simulated_fill_id") or "") or None,
+        filled_quantity=filled_quantity,
+        filled_notional_cny=filled_notional,
+        actual_cost_cny=float(receipt.get("fee_cny") or 0.0),
+        ledger_event_id=after.event_id,
+        reason_code="simulated_fill_recorded",
+    )
 
 
 def _requested_notional(window: SymbolWindow | None) -> float:
@@ -850,6 +1398,10 @@ def run_capital_backed_paper_session(
                         champion=champion,
                         window=window,
                         snapshot_before=ledger_cursor,
+                        trade_date=config.trade_date,
+                        decision_as_of=config.decision_as_of,
+                        run_id=run_id,
+                        artifact_root=config.latest_path.parent / "capital-artifacts",
                     )
                 )
                 if type(fill_result) is not FillAttemptResult:
@@ -948,6 +1500,18 @@ def make_observation_window(
     quote_trade_date: str = "",
     quote_clock_at: str = "",
     quote_clock_dataset_id: str = "",
+    snapshot_last_cny: float | None = None,
+    snapshot_high_cny: float | None = None,
+    snapshot_low_cny: float | None = None,
+    snapshot_open_cny: float | None = None,
+    snapshot_volume: float | None = None,
+    snapshot_receipt_id: str = "",
+    snapshot_source_sha256: str = "",
+    snapshot_lineage_sha256: str = "",
+    snapshot_data_through: str = "",
+    snapshot_observed_at: str = "",
+    snapshot_available_at: str = "",
+    snapshot_catalog_version: str = "",
 ) -> SymbolWindow:
     return SymbolWindow(
         symbol=symbol,
@@ -961,6 +1525,18 @@ def make_observation_window(
         quote_trade_date=quote_trade_date,
         quote_clock_at=quote_clock_at,
         quote_clock_dataset_id=quote_clock_dataset_id,
+        snapshot_last_cny=snapshot_last_cny,
+        snapshot_high_cny=snapshot_high_cny,
+        snapshot_low_cny=snapshot_low_cny,
+        snapshot_open_cny=snapshot_open_cny,
+        snapshot_volume=snapshot_volume,
+        snapshot_receipt_id=snapshot_receipt_id,
+        snapshot_source_sha256=snapshot_source_sha256,
+        snapshot_lineage_sha256=snapshot_lineage_sha256,
+        snapshot_data_through=snapshot_data_through,
+        snapshot_observed_at=snapshot_observed_at,
+        snapshot_available_at=snapshot_available_at,
+        snapshot_catalog_version=snapshot_catalog_version,
     )
 
 
@@ -1236,36 +1812,162 @@ def bind_quote_clocks(
     for symbol, window in dict(windows).items():
         clock = clocks.get(symbol)
         if clock is None or not window.observation_ready:
-            bound[symbol] = SymbolWindow(
-                symbol=window.symbol,
-                dataset_id=window.dataset_id,
-                catalog_version=window.catalog_version,
-                quote_fresh=window.quote_fresh,
-                prior_close_cny=window.prior_close_cny,
-                session_calendar_ok=window.session_calendar_ok,
+            bound[symbol] = _replace_window(
+                window,
                 quote_clocks_ok=False,
                 reason_code=(
                     window.reason_code
                     if not window.observation_ready
                     else "quote_clocks_unavailable"
                 ),
-                quote_trade_date=window.quote_trade_date,
                 quote_clock_at="",
                 quote_clock_dataset_id="",
             )
             continue
-        bound[symbol] = SymbolWindow(
-            symbol=window.symbol,
-            dataset_id=window.dataset_id,
-            catalog_version=window.catalog_version,
-            quote_fresh=window.quote_fresh,
-            prior_close_cny=window.prior_close_cny,
-            session_calendar_ok=window.session_calendar_ok,
+        bound[symbol] = _replace_window(
+            window,
             quote_clocks_ok=True,
             reason_code="window_ready",
-            quote_trade_date=window.quote_trade_date,
             quote_clock_at=clock.strftime(QUOTE_CLOCK_TIME_FORMAT),
             quote_clock_dataset_id=QUOTE_CLOCK_DATASET_ID,
+        )
+    return bound
+
+
+@dataclass(frozen=True)
+class QuoteClockQueryProof:
+    """Receipt/lineage proof for one rt_min clock query.  Not a fill."""
+
+    receipt_id: str
+    catalog_version: str
+    data_through: str
+    observed_at: str
+    source_sha256: str
+    source_lineage_sha256: str
+
+
+def _finite_price(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        try:
+            parsed = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+    else:
+        parsed = float(value)
+    if parsed != parsed or parsed <= 0:
+        return None
+    return parsed
+
+
+def bind_market_snapshots(
+    windows: Mapping[str, SymbolWindow],
+    *,
+    trade_date: str,
+    decision_as_of: datetime,
+    snapshot_rows: Sequence[Mapping[str, Any]],
+    snapshot_proof: QuoteClockQueryProof | None = None,
+    source_dataset_id: str = QUOTE_CLOCK_DATASET_ID,
+) -> dict[str, SymbolWindow]:
+    """Bind in-session rt_min bar-evidence onto clocked windows.
+
+    Daily close/touch rows never become a snapshot.  Last/close is the bar
+    mid, not bid/ask.  Missing volume or receipt proof leaves the window
+    clocked but snapshot-unready.  This function never mints a fill.
+    """
+
+    slot = last_complete_in_session_quote_slot(
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+    )
+    def _proof_ready(proof: QuoteClockQueryProof | None) -> bool:
+        return bool(
+            proof is not None
+            and proof.receipt_id
+            and (proof.catalog_version or "")
+            and _looks_like_sha256(proof.source_sha256)
+            and _looks_like_sha256(proof.source_lineage_sha256)
+        )
+
+    bars: dict[str, Mapping[str, Any]] = {}
+    if slot is not None and _proof_ready(snapshot_proof):
+        for row in snapshot_rows:
+            if not isinstance(row, Mapping) or _looks_like_daily_close_row(row):
+                continue
+            symbol = str(row.get("ts_code") or row.get("symbol") or "").upper()
+            if not looks_like_security_symbol(symbol):
+                continue
+            freq = row.get("freq")
+            if freq not in (None, "") and not _five_minute_freq(freq):
+                continue
+            if source_dataset_id != QUOTE_CLOCK_DATASET_ID:
+                continue
+            instant = _parse_quote_clock_time(
+                row.get("time") if row.get("time") not in (None, "") else row.get(
+                    "bar_end"
+                )
+            )
+            if instant is None or instant != slot:
+                continue
+            last = _finite_price(row.get("close") or row.get("last") or row.get("open"))
+            volume = _finite_price(row.get("vol") or row.get("volume") or row.get("vol_shares"))
+            if last is None or volume is None:
+                continue
+            bars[symbol] = row
+
+    bound: dict[str, SymbolWindow] = {}
+    for symbol, window in dict(windows).items():
+        row = bars.get(symbol)
+        if (
+            row is None
+            or not _proof_ready(snapshot_proof)
+            or snapshot_proof is None
+            or not window.fill_quote_ready
+            or window.quote_clock_at == ""
+        ):
+            bound[symbol] = _replace_window(
+                window,
+                snapshot_last_cny=None,
+                snapshot_high_cny=None,
+                snapshot_low_cny=None,
+                snapshot_open_cny=None,
+                snapshot_volume=None,
+                snapshot_receipt_id="",
+                snapshot_source_sha256="",
+                snapshot_lineage_sha256="",
+                snapshot_data_through="",
+                snapshot_observed_at="",
+                snapshot_available_at="",
+                snapshot_catalog_version="",
+            )
+            continue
+        last = _finite_price(row.get("close") or row.get("last") or row.get("open"))
+        volume = _finite_price(row.get("vol") or row.get("volume") or row.get("vol_shares"))
+        clock = _parse_quote_clock_time(window.quote_clock_at)
+        if last is None or volume is None or clock is None:
+            bound[symbol] = _replace_window(
+                window,
+                snapshot_last_cny=None,
+                snapshot_volume=None,
+                snapshot_receipt_id="",
+            )
+            continue
+        data_through = clock.isoformat()
+        observed = clock.isoformat()
+        available = clock.isoformat()
+        bound[symbol] = _replace_window(
+            window,
+            snapshot_last_cny=last,
+            snapshot_high_cny=_finite_price(row.get("high")),
+            snapshot_low_cny=_finite_price(row.get("low")),
+            snapshot_open_cny=_finite_price(row.get("open")),
+            snapshot_volume=volume,
+            snapshot_receipt_id=snapshot_proof.receipt_id,
+            snapshot_source_sha256=snapshot_proof.source_sha256,
+            snapshot_lineage_sha256=snapshot_proof.source_lineage_sha256,
+            snapshot_data_through=data_through,
+            snapshot_observed_at=observed,
+            snapshot_available_at=available,
+            snapshot_catalog_version=snapshot_proof.catalog_version,
         )
     return bound
 
@@ -1365,6 +2067,65 @@ def query_last_complete_daily_rows(
     return tuple(collected)
 
 
+def _envelope_attr(envelope: Any, name: str) -> object:
+    metadata = getattr(envelope, "metadata", None)
+    value = getattr(envelope, name, None)
+    if value not in (None, ""):
+        return value
+    if metadata is None:
+        return None
+    return getattr(metadata, name, None)
+
+
+def _envelope_query_proof(envelope: Any) -> QuoteClockQueryProof:
+    """Bind query-envelope receipt proof.  Missing receipt/SHA stays empty."""
+
+    receipt_id = str(_envelope_attr(envelope, "receipt_id") or "").strip()
+    catalog_version = str(getattr(envelope, "catalog_version", "") or "").strip()
+    data_through = str(_envelope_attr(envelope, "data_through") or "").strip()
+    observed_at = str(_envelope_attr(envelope, "observed_at") or "").strip()
+    source = str(_envelope_attr(envelope, "source_sha256") or "").strip().lower()
+    lineage_sha = str(
+        _envelope_attr(envelope, "source_lineage_sha256")
+        or _envelope_attr(envelope, "lineage_sha256")
+        or ""
+    ).strip().lower()
+    lineage = _envelope_attr(envelope, "lineage")
+    if not _looks_like_sha256(source):
+        source = (
+            _sha256(
+                {
+                    "catalog_version": catalog_version,
+                    "dataset_id": QUOTE_CLOCK_DATASET_ID,
+                    "receipt_id": receipt_id,
+                    "request_id": str(getattr(envelope, "request_id", "") or ""),
+                }
+            )
+            if receipt_id and catalog_version
+            else ""
+        )
+    if not _looks_like_sha256(lineage_sha):
+        lineage_sha = (
+            _sha256(
+                {
+                    "dataset_id": QUOTE_CLOCK_DATASET_ID,
+                    "lineage": lineage if isinstance(lineage, Mapping) else {},
+                    "receipt_id": receipt_id,
+                }
+            )
+            if receipt_id
+            else ""
+        )
+    return QuoteClockQueryProof(
+        receipt_id=receipt_id,
+        catalog_version=catalog_version,
+        data_through=data_through,
+        observed_at=observed_at,
+        source_sha256=source,
+        source_lineage_sha256=lineage_sha,
+    )
+
+
 def _query_quote_clock_chunk(
     client: Any,
     *,
@@ -1372,13 +2133,13 @@ def _query_quote_clock_chunk(
     slot_text: str,
     codes: Sequence[str],
     include_freq: bool,
-) -> tuple[Mapping[str, Any], ...]:
+) -> tuple[tuple[Mapping[str, Any], ...], QuoteClockQueryProof | None]:
     """Query one ``time`` + ``ts_code in`` rt_min shard.  Split on 413."""
 
     from shared.data.sharedsignals_v1 import QueryRequest
 
     if not codes:
-        return ()
+        return (), None
     filters: dict[str, object] = {
         "time": {"eq": slot_text},
         "ts_code": {"in": list(codes)},
@@ -1397,21 +2158,61 @@ def _query_quote_clock_chunk(
     except Exception as exc:
         if _daily_query_budget_exceeded(exc) and len(codes) > 1:
             mid = max(1, len(codes) // 2)
-            return _query_quote_clock_chunk(
+            left_rows, left_proof = _query_quote_clock_chunk(
                 client,
                 schema_major=schema_major,
                 slot_text=slot_text,
                 codes=codes[:mid],
                 include_freq=include_freq,
-            ) + _query_quote_clock_chunk(
+            )
+            right_rows, right_proof = _query_quote_clock_chunk(
                 client,
                 schema_major=schema_major,
                 slot_text=slot_text,
                 codes=codes[mid:],
                 include_freq=include_freq,
             )
+            return left_rows + right_rows, left_proof or right_proof
         raise
-    return tuple(row for row in clock.data if isinstance(row, Mapping))
+    rows = tuple(row for row in clock.data if isinstance(row, Mapping))
+    return rows, _envelope_query_proof(clock)
+
+
+def query_last_complete_quote_clock_bundle(
+    client: Any,
+    *,
+    schema_major: int,
+    slot: datetime,
+    symbols: Sequence[str],
+    chunk_size: int = CASH_SESSION_QUOTE_CLOCK_CHUNK,
+    include_freq: bool = False,
+) -> tuple[tuple[Mapping[str, Any], ...], QuoteClockQueryProof | None]:
+    """Fetch last-complete rt_min rows plus the query envelope proof."""
+
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or chunk_size <= 0
+    ):
+        raise CapitalBackedPaperError("quote_clock_chunk_size_invalid")
+    if slot.tzinfo is None or slot.utcoffset() is None:
+        raise CapitalBackedPaperError("quote_clock_slot_timezone_required")
+    codes = cash_session_daily_ts_codes(symbols)
+    slot_text = slot.astimezone(SHANGHAI).strftime(QUOTE_CLOCK_TIME_FORMAT)
+    collected: list[Mapping[str, Any]] = []
+    proof: QuoteClockQueryProof | None = None
+    for offset in range(0, len(codes), chunk_size):
+        rows, chunk_proof = _query_quote_clock_chunk(
+            client,
+            schema_major=schema_major,
+            slot_text=slot_text,
+            codes=codes[offset : offset + chunk_size],
+            include_freq=include_freq,
+        )
+        collected.extend(rows)
+        if chunk_proof is not None:
+            proof = chunk_proof
+    return tuple(collected), proof
 
 
 def query_last_complete_quote_clock_rows(
@@ -1429,28 +2230,15 @@ def query_last_complete_quote_clock_rows(
     rewritten as a present clock or as a fill.
     """
 
-    if (
-        isinstance(chunk_size, bool)
-        or not isinstance(chunk_size, int)
-        or chunk_size <= 0
-    ):
-        raise CapitalBackedPaperError("quote_clock_chunk_size_invalid")
-    if slot.tzinfo is None or slot.utcoffset() is None:
-        raise CapitalBackedPaperError("quote_clock_slot_timezone_required")
-    codes = cash_session_daily_ts_codes(symbols)
-    slot_text = slot.astimezone(SHANGHAI).strftime(QUOTE_CLOCK_TIME_FORMAT)
-    collected: list[Mapping[str, Any]] = []
-    for offset in range(0, len(codes), chunk_size):
-        collected.extend(
-            _query_quote_clock_chunk(
-                client,
-                schema_major=schema_major,
-                slot_text=slot_text,
-                codes=codes[offset : offset + chunk_size],
-                include_freq=include_freq,
-            )
-        )
-    return tuple(collected)
+    rows, _proof = query_last_complete_quote_clock_bundle(
+        client,
+        schema_major=schema_major,
+        slot=slot,
+        symbols=symbols,
+        chunk_size=chunk_size,
+        include_freq=include_freq,
+    )
+    return rows
 
 
 def query_windows_from_tradingdatas(
@@ -1470,13 +2258,16 @@ def query_windows_from_tradingdatas(
     ``pretrade_date`` / last daily strictly before today).  Daily queries always
     include a ``ts_code`` filter (chunked).  An unfiltered partition pull 413s
     and must not be swallowed into ``missing_prior_close``.  Today's postclose
-    daily partition is not an observation requirement.  Daily close/touch never
-    becomes a quote clock or a fill.
+    daily partition is not an observation requirement.      Daily close/touch never
+    becomes a quote clock, a bid/ask snapshot, or a fill.
 
     In-session quote clocks come from ``cn.dataset.rt_min`` at the last
-    completed five-minute session slot at or before ``decision_as_of``.  Missing
-    clocks stay ``quote_clocks_unavailable``.  A closed calendar stays
-    fail-closed.
+    completed five-minute session slot at or before ``decision_as_of``.  The
+    same last-complete bar may bind volume and query-receipt proof as a
+    bar-evidence snapshot; last/close is the bar mid, not bid/ask.  Missing
+    clocks stay ``quote_clocks_unavailable``.  Present clocks without a
+    snapshot stay ``capital_fill_market_snapshot_unavailable``.  A closed
+    calendar stays fail-closed.
     """
 
     from shared.data.sharedsignals_v1 import (
@@ -1632,21 +2423,29 @@ def query_windows_from_tradingdatas(
         )
 
     clock_rows: tuple[Mapping[str, Any], ...] = ()
+    clock_proof: QuoteClockQueryProof | None = None
     try:
-        clock_rows = query_last_complete_quote_clock_rows(
+        clock_rows, clock_proof = query_last_complete_quote_clock_bundle(
             client,
             schema_major=clock_schema,
             slot=slot,
             symbols=symbols,
         )
     except Exception:
-        clock_rows = ()
-    return bind_quote_clocks(
+        clock_rows, clock_proof = (), None
+    clocked = bind_quote_clocks(
         windows,
         trade_date=trade_date,
         decision_as_of=decision_as_of,
         quote_clock_rows=clock_rows,
         quote_clock_slot=slot,
+    )
+    return bind_market_snapshots(
+        clocked,
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+        snapshot_rows=clock_rows,
+        snapshot_proof=clock_proof,
     )
 
 
