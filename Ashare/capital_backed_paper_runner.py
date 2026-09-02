@@ -52,6 +52,7 @@ from .capital_backed_paper_universe import (
     classify_session_universe,
     looks_like_security_symbol,
 )
+from .minute_auto_runner import session_bar_ends
 from .minute_paper import MinuteFixturePaperBook
 
 
@@ -60,11 +61,16 @@ CANONICAL_DATA_ROOT = Path("/var/lib/tradingagent/ashare-canonical")
 CANONICAL_LEDGER_ROOT = CANONICAL_DATA_ROOT / "shared" / "logs" / "capital" / "ashare"
 RUNNER_CONTRACT_ID = "tradingagent.ashare.capital_backed_paper_session.v1"
 QUOTE_DATASET_ID = "cn.equity.daily"
+QUOTE_CLOCK_DATASET_ID = "cn.dataset.rt_min"
 CALENDAR_DATASET_ID = "cn.market.trade_calendar"
 FORMAL_BASE_URL = "http://127.0.0.1:18082"
 # Bounded ``ts_code in`` shards for last-complete daily.  Aligns with the
 # documented A-share daily query cap; unfiltered partition pulls 413.
 CASH_SESSION_DAILY_TS_CODE_CHUNK = 10
+CASH_SESSION_QUOTE_CLOCK_CHUNK = 10
+QUOTE_CLOCK_FREQ = "5MIN"
+QUOTE_CLOCK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+_FIVE_MINUTE_FREQS = frozenset({"5", "5m", "5min"})
 BUY_LOT = 100
 SINGLE_NAME_CAP_CNY = 7_500.0
 GROSS_CAP_CNY = 45_000.0
@@ -107,6 +113,8 @@ class SymbolWindow:
     quote_clocks_ok: bool
     reason_code: str = "window_ready"
     quote_trade_date: str = ""
+    quote_clock_at: str = ""
+    quote_clock_dataset_id: str = ""
 
     @property
     def observation_ready(self) -> bool:
@@ -938,6 +946,8 @@ def make_observation_window(
     quote_clocks_ok: bool = False,
     quote_fresh: bool = True,
     quote_trade_date: str = "",
+    quote_clock_at: str = "",
+    quote_clock_dataset_id: str = "",
 ) -> SymbolWindow:
     return SymbolWindow(
         symbol=symbol,
@@ -949,6 +959,8 @@ def make_observation_window(
         quote_clocks_ok=quote_clocks_ok,
         reason_code="window_ready" if quote_clocks_ok else "quote_clocks_unavailable",
         quote_trade_date=quote_trade_date,
+        quote_clock_at=quote_clock_at,
+        quote_clock_dataset_id=quote_clock_dataset_id,
     )
 
 
@@ -1031,7 +1043,8 @@ def bind_cash_session_windows(
 
     Today's ``cn.equity.daily`` postclose partition is never required.  A closed
     calendar stays fail-closed.  Daily close/touch is prior-close evidence only
-    and never sets ``quote_clocks_ok``.
+    and never sets ``quote_clocks_ok``.  In-session quote clocks come from
+    ``bind_quote_clocks`` / ``cn.dataset.rt_min``, not from this daily bind.
     """
 
     calendar_row = _calendar_row_for_trade_date(calendar_rows, trade_date)
@@ -1108,6 +1121,153 @@ def bind_cash_session_windows(
             or _compact_session_date(row.get("trade_date")),
         )
     return windows
+
+
+def last_complete_in_session_quote_slot(
+    *,
+    trade_date: str,
+    decision_as_of: datetime,
+) -> datetime | None:
+    """Last completed 5-minute session slot at or before ``decision_as_of``.
+
+    This is an in-session quote clock, not delayed-paper freshness.  Lunch or
+    a later in-session oneshot may use the last morning bar.  Daily close is
+    never a slot.  Before the first 09:35 bar there is no clock.
+    """
+
+    if decision_as_of.tzinfo is None or decision_as_of.utcoffset() is None:
+        return None
+    session = _compact_session_date(trade_date)
+    if not session:
+        return None
+    local = decision_as_of.astimezone(SHANGHAI)
+    if local.date().isoformat() != trade_date:
+        return None
+    eligible = [slot for slot in session_bar_ends(local.date()) if slot <= local]
+    return max(eligible) if eligible else None
+
+
+def _parse_quote_clock_time(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = datetime.strptime(text, QUOTE_CLOCK_TIME_FORMAT).replace(
+                    tzinfo=SHANGHAI
+                )
+            except ValueError:
+                return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=SHANGHAI)
+    return parsed.astimezone(SHANGHAI)
+
+
+def _five_minute_freq(value: object) -> bool:
+    if value in (None, ""):
+        return False
+    return str(value).strip().lower().replace(" ", "") in _FIVE_MINUTE_FREQS
+
+
+def _looks_like_daily_close_row(row: Mapping[str, Any]) -> bool:
+    """Daily close/touch identity: trade_date + close without a 5-min freq."""
+
+    return bool(
+        _compact_session_date(row.get("trade_date"))
+        and row.get("close") not in (None, "")
+        and not _five_minute_freq(row.get("freq"))
+    )
+
+
+def bind_quote_clocks(
+    windows: Mapping[str, SymbolWindow],
+    *,
+    trade_date: str,
+    decision_as_of: datetime,
+    quote_clock_rows: Sequence[Mapping[str, Any]],
+    quote_clock_slot: datetime | None = None,
+    source_dataset_id: str = QUOTE_CLOCK_DATASET_ID,
+) -> dict[str, SymbolWindow]:
+    """Overlay in-session ``rt_min`` clocks onto cash-session windows.
+
+    Daily close/touch rows never set ``quote_clocks_ok``.  A present clock is
+    an exact completed session slot at or before ``decision_as_of``.  Missing
+    clocks stay ``quote_clocks_ok=False``.  This function never mints a fill.
+    """
+
+    slot = quote_clock_slot or last_complete_in_session_quote_slot(
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+    )
+    from_rt_min = source_dataset_id == QUOTE_CLOCK_DATASET_ID
+    clocks: dict[str, datetime] = {}
+    if slot is not None:
+        for row in quote_clock_rows:
+            if not isinstance(row, Mapping) or _looks_like_daily_close_row(row):
+                continue
+            symbol = str(row.get("ts_code") or row.get("symbol") or "").upper()
+            if not looks_like_security_symbol(symbol):
+                continue
+            freq = row.get("freq")
+            if freq not in (None, "") and not _five_minute_freq(freq):
+                continue
+            if not from_rt_min and not _five_minute_freq(freq):
+                continue
+            if from_rt_min and freq in (None, "") and _compact_session_date(
+                row.get("trade_date")
+            ):
+                # Daily identity even if handed in as an rt_min query result.
+                continue
+            instant = _parse_quote_clock_time(
+                row.get("time") if row.get("time") not in (None, "") else row.get(
+                    "bar_end"
+                )
+            )
+            if instant is None or instant != slot:
+                continue
+            clocks[symbol] = instant
+
+    bound: dict[str, SymbolWindow] = {}
+    for symbol, window in dict(windows).items():
+        clock = clocks.get(symbol)
+        if clock is None or not window.observation_ready:
+            bound[symbol] = SymbolWindow(
+                symbol=window.symbol,
+                dataset_id=window.dataset_id,
+                catalog_version=window.catalog_version,
+                quote_fresh=window.quote_fresh,
+                prior_close_cny=window.prior_close_cny,
+                session_calendar_ok=window.session_calendar_ok,
+                quote_clocks_ok=False,
+                reason_code=(
+                    window.reason_code
+                    if not window.observation_ready
+                    else "quote_clocks_unavailable"
+                ),
+                quote_trade_date=window.quote_trade_date,
+                quote_clock_at="",
+                quote_clock_dataset_id="",
+            )
+            continue
+        bound[symbol] = SymbolWindow(
+            symbol=window.symbol,
+            dataset_id=window.dataset_id,
+            catalog_version=window.catalog_version,
+            quote_fresh=window.quote_fresh,
+            prior_close_cny=window.prior_close_cny,
+            session_calendar_ok=window.session_calendar_ok,
+            quote_clocks_ok=True,
+            reason_code="window_ready",
+            quote_trade_date=window.quote_trade_date,
+            quote_clock_at=clock.strftime(QUOTE_CLOCK_TIME_FORMAT),
+            quote_clock_dataset_id=QUOTE_CLOCK_DATASET_ID,
+        )
+    return bound
 
 
 def cash_session_daily_ts_codes(symbols: Sequence[str]) -> tuple[str, ...]:
@@ -1205,6 +1365,94 @@ def query_last_complete_daily_rows(
     return tuple(collected)
 
 
+def _query_quote_clock_chunk(
+    client: Any,
+    *,
+    schema_major: int,
+    slot_text: str,
+    codes: Sequence[str],
+    include_freq: bool,
+) -> tuple[Mapping[str, Any], ...]:
+    """Query one ``time`` + ``ts_code in`` rt_min shard.  Split on 413."""
+
+    from shared.data.sharedsignals_v1 import QueryRequest
+
+    if not codes:
+        return ()
+    filters: dict[str, object] = {
+        "time": {"eq": slot_text},
+        "ts_code": {"in": list(codes)},
+    }
+    if include_freq:
+        filters["freq"] = {"eq": QUOTE_CLOCK_FREQ}
+    try:
+        clock = client.query(
+            QueryRequest(
+                dataset_id=QUOTE_CLOCK_DATASET_ID,
+                schema_major=schema_major,
+                filters=filters,
+                limit=max(len(codes), 1),
+            )
+        )
+    except Exception as exc:
+        if _daily_query_budget_exceeded(exc) and len(codes) > 1:
+            mid = max(1, len(codes) // 2)
+            return _query_quote_clock_chunk(
+                client,
+                schema_major=schema_major,
+                slot_text=slot_text,
+                codes=codes[:mid],
+                include_freq=include_freq,
+            ) + _query_quote_clock_chunk(
+                client,
+                schema_major=schema_major,
+                slot_text=slot_text,
+                codes=codes[mid:],
+                include_freq=include_freq,
+            )
+        raise
+    return tuple(row for row in clock.data if isinstance(row, Mapping))
+
+
+def query_last_complete_quote_clock_rows(
+    client: Any,
+    *,
+    schema_major: int,
+    slot: datetime,
+    symbols: Sequence[str],
+    chunk_size: int = CASH_SESSION_QUOTE_CLOCK_CHUNK,
+    include_freq: bool = False,
+) -> tuple[Mapping[str, Any], ...]:
+    """Fetch the last complete in-session rt_min slot for candidate codes.
+
+    An unfiltered ``cn.dataset.rt_min`` pull 413s.  Empty/413 must not be
+    rewritten as a present clock or as a fill.
+    """
+
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or chunk_size <= 0
+    ):
+        raise CapitalBackedPaperError("quote_clock_chunk_size_invalid")
+    if slot.tzinfo is None or slot.utcoffset() is None:
+        raise CapitalBackedPaperError("quote_clock_slot_timezone_required")
+    codes = cash_session_daily_ts_codes(symbols)
+    slot_text = slot.astimezone(SHANGHAI).strftime(QUOTE_CLOCK_TIME_FORMAT)
+    collected: list[Mapping[str, Any]] = []
+    for offset in range(0, len(codes), chunk_size):
+        collected.extend(
+            _query_quote_clock_chunk(
+                client,
+                schema_major=schema_major,
+                slot_text=slot_text,
+                codes=codes[offset : offset + chunk_size],
+                include_freq=include_freq,
+            )
+        )
+    return tuple(collected)
+
+
 def query_windows_from_tradingdatas(
     symbols: tuple[str, ...],
     *,
@@ -1213,8 +1461,9 @@ def query_windows_from_tradingdatas(
     base_url: str = FORMAL_BASE_URL,
     timeout_seconds: float = 20.0,
     client: Any | None = None,
+    decision_as_of: datetime | None = None,
 ) -> dict[str, SymbolWindow]:
-    """Gate symbols on live trade_calendar plus last complete daily.
+    """Gate symbols on live trade_calendar, last complete daily, and rt_min clocks.
 
     Cash-session paper observes ``cn.market.trade_calendar`` for the trade_date
     and ``cn.equity.daily`` for the preceding complete partition (calendar
@@ -1222,7 +1471,12 @@ def query_windows_from_tradingdatas(
     include a ``ts_code`` filter (chunked).  An unfiltered partition pull 413s
     and must not be swallowed into ``missing_prior_close``.  Today's postclose
     daily partition is not an observation requirement.  Daily close/touch never
-    becomes a fill.  A closed calendar stays fail-closed.
+    becomes a quote clock or a fill.
+
+    In-session quote clocks come from ``cn.dataset.rt_min`` at the last
+    completed five-minute session slot at or before ``decision_as_of``.  Missing
+    clocks stay ``quote_clocks_unavailable``.  A closed calendar stays
+    fail-closed.
     """
 
     from shared.data.sharedsignals_v1 import (
@@ -1250,20 +1504,35 @@ def query_windows_from_tradingdatas(
                 token_file=token_file,
                 base_url=base_url,
             )
-            client = SharedSignalsV1Client(
-                SharedSignalsV1Config(
-                    base_url=base_url,
-                    expected_catalog_version="evidence-only",
-                    dataset_ids=frozenset({CALENDAR_DATASET_ID, QUOTE_DATASET_ID}),
-                    access_policy_id="tradingagent-read-v1",
-                    catalog_version_policy="evidence_only",
-                    timeout_seconds=timeout_seconds,
-                    max_limit=10_000,
-                    cache_ttl_seconds=0.0,
-                ),
-                transport=transport,
+
+            def _make_client(dataset_ids: frozenset[str]) -> Any:
+                return SharedSignalsV1Client(
+                    SharedSignalsV1Config(
+                        base_url=base_url,
+                        expected_catalog_version="evidence-only",
+                        dataset_ids=dataset_ids,
+                        access_policy_id="tradingagent-read-v1",
+                        catalog_version_policy="evidence_only",
+                        timeout_seconds=timeout_seconds,
+                        max_limit=10_000,
+                        cache_ttl_seconds=0.0,
+                    ),
+                    transport=transport,
+                )
+
+            clock_capable_ids = frozenset(
+                {CALENDAR_DATASET_ID, QUOTE_DATASET_ID, QUOTE_CLOCK_DATASET_ID}
             )
-        catalog = client.get_catalog()
+            try:
+                client = _make_client(clock_capable_ids)
+                catalog = client.get_catalog()
+            except Exception:
+                client = _make_client(
+                    frozenset({CALENDAR_DATASET_ID, QUOTE_DATASET_ID})
+                )
+                catalog = client.get_catalog()
+        else:
+            catalog = client.get_catalog()
     except Exception:
         return _missing("tradingdatas_catalog_window_missing")
 
@@ -1331,13 +1600,53 @@ def query_windows_from_tradingdatas(
             symbols=symbols,
         )
 
-    return bind_cash_session_windows(
+    windows = bind_cash_session_windows(
         symbols,
         trade_date=trade_date,
         catalog_version=catalog_version,
         calendar_rows=calendar_rows,
         daily_rows=daily_rows,
         dataset_id=QUOTE_DATASET_ID,
+    )
+    if decision_as_of is None:
+        return windows
+
+    clock_catalog = rows_by_id.get(QUOTE_CLOCK_DATASET_ID)
+    clock_schema = _schema_major(clock_catalog) if clock_catalog is not None else None
+    slot = last_complete_in_session_quote_slot(
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+    )
+    configured_ids = getattr(getattr(client, "config", None), "dataset_ids", frozenset())
+    if (
+        clock_schema is None
+        or slot is None
+        or QUOTE_CLOCK_DATASET_ID not in configured_ids
+    ):
+        return bind_quote_clocks(
+            windows,
+            trade_date=trade_date,
+            decision_as_of=decision_as_of,
+            quote_clock_rows=(),
+            quote_clock_slot=slot,
+        )
+
+    clock_rows: tuple[Mapping[str, Any], ...] = ()
+    try:
+        clock_rows = query_last_complete_quote_clock_rows(
+            client,
+            schema_major=clock_schema,
+            slot=slot,
+            symbols=symbols,
+        )
+    except Exception:
+        clock_rows = ()
+    return bind_quote_clocks(
+        windows,
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+        quote_clock_rows=clock_rows,
+        quote_clock_slot=slot,
     )
 
 
@@ -1383,6 +1692,7 @@ def main(argv: list[str] | None = None) -> int:
                 symbols,
                 token_file=token_file,
                 trade_date=config.trade_date,
+                decision_as_of=config.decision_as_of,
                 base_url=base_url,
             )
 
