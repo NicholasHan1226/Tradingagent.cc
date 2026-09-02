@@ -10,6 +10,7 @@ import pytest
 from Ashare.capital_backed_paper_runner import (
     CALENDAR_DATASET_ID,
     CANONICAL_DATA_ROOT,
+    CASH_SESSION_DAILY_TS_CODE_CHUNK,
     INVENTED_FILL_SOURCES,
     QUOTE_DATASET_ID,
     CapitalBackedPaperConfig,
@@ -17,6 +18,7 @@ from Ashare.capital_backed_paper_runner import (
     FillAttemptRequest,
     FillAttemptResult,
     bind_cash_session_windows,
+    cash_session_daily_ts_codes,
     close_or_touch_is_not_a_fill,
     count_coverage_is_not_a_fill,
     make_missing_window,
@@ -465,6 +467,11 @@ def test_systemd_candidate_is_sim_only_and_points_at_sibling_runner() -> None:
 CASH_SESSION_TRADE_DATE = "2026-09-01"
 LAST_COMPLETE_DAILY = "20260831"
 CASH_SESSION_SYMBOL = "000063.SZ"
+CASH_SESSION_UNIVERSE = (
+    *TECH_MAINBOARD_SYMBOLS,
+    *PHARMA_MAINBOARD_SYMBOLS,
+    *EXPLICIT_ADD_LIST,
+)
 
 
 def _open_calendar_row(*, is_open: object = 1) -> dict[str, object]:
@@ -580,13 +587,26 @@ class _RecordingTDTransport:
                 _td_query_payload(CALENDAR_DATASET_ID, tuple(rows)),
             )
         if dataset_id == QUOTE_DATASET_ID:
+            ts_codes = (filters.get("ts_code") or {}).get("in")
+            if not ts_codes:
+                return HTTPResponse(
+                    413,
+                    {
+                        "error": "budget_exceeded",
+                        "reason": "budget_exceeded",
+                    },
+                )
             trade_date = str((filters.get("trade_date") or {}).get("eq") or "")
+            wanted = {str(code).upper() for code in ts_codes}
+            rows = tuple(
+                row
+                for row in self.daily_by_date.get(trade_date, ())
+                if str(row.get("ts_code") or row.get("symbol") or "").upper()
+                in wanted
+            )
             return HTTPResponse(
                 200,
-                _td_query_payload(
-                    QUOTE_DATASET_ID,
-                    self.daily_by_date.get(trade_date, ()),
-                ),
+                _td_query_payload(QUOTE_DATASET_ID, rows),
             )
         raise AssertionError(f"unexpected dataset {dataset_id}")
 
@@ -682,7 +702,13 @@ def test_query_windows_open_session_does_not_require_todays_daily() -> None:
         if call["method"] == "POST"
         and (call["json_body"] or {}).get("dataset_id") == QUOTE_DATASET_ID
     ]
-    assert daily_filters == [{"trade_date": {"eq": LAST_COMPLETE_DAILY}}]
+    assert daily_filters
+    for filters in daily_filters:
+        assert set(filters) == {"trade_date", "ts_code"}
+        assert filters["trade_date"] == {"eq": LAST_COMPLETE_DAILY}
+        assert filters["ts_code"]["in"]
+        assert CASH_SESSION_SYMBOL in filters["ts_code"]["in"]
+        assert len(filters["ts_code"]["in"]) <= CASH_SESSION_DAILY_TS_CODE_CHUNK
     assert "20260901" not in json.dumps(daily_filters)
 
 
@@ -713,6 +739,92 @@ def test_query_windows_closed_calendar_skips_daily_and_stays_fail_closed() -> No
         for call in transport.calls
         if call["method"] == "POST"
     )
+
+
+def _daily_query_filters(transport: _RecordingTDTransport) -> list[dict[str, object]]:
+    return [
+        call["json_body"]["filters"]
+        for call in transport.calls
+        if call["method"] == "POST"
+        and (call["json_body"] or {}).get("dataset_id") == QUOTE_DATASET_ID
+    ]
+
+
+def _universe_daily_rows() -> tuple[dict[str, object], ...]:
+    assert len(CASH_SESSION_UNIVERSE) == 43
+    return tuple(
+        _daily_row(symbol, trade_date=LAST_COMPLETE_DAILY, close=10.0 + index * 0.1)
+        for index, symbol in enumerate(CASH_SESSION_UNIVERSE)
+    )
+
+
+def test_unfiltered_daily_413_does_not_mark_present_names_missing_prior_close() -> None:
+    transport = _RecordingTDTransport(
+        calendar_rows=(_open_calendar_row(),),
+        daily_by_date={LAST_COMPLETE_DAILY: _universe_daily_rows()},
+    )
+    windows = query_windows_from_tradingdatas(
+        CASH_SESSION_UNIVERSE,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        client=_td_client(transport),
+    )
+    daily_filters = _daily_query_filters(transport)
+    assert daily_filters
+    requested: list[str] = []
+    for filters in daily_filters:
+        assert set(filters) == {"trade_date", "ts_code"}
+        assert filters["trade_date"] == {"eq": LAST_COMPLETE_DAILY}
+        chunk = list(filters["ts_code"]["in"])
+        assert chunk
+        assert len(chunk) <= CASH_SESSION_DAILY_TS_CODE_CHUNK
+        requested.extend(str(code) for code in chunk)
+    assert requested == list(cash_session_daily_ts_codes(CASH_SESSION_UNIVERSE))
+    assert "20260901" not in json.dumps(daily_filters)
+    for index, symbol in enumerate(CASH_SESSION_UNIVERSE):
+        window = windows[symbol]
+        assert window.reason_code != "missing_prior_close"
+        assert window.observation_ready is True
+        assert window.prior_close_cny == pytest.approx(10.0 + index * 0.1)
+        assert window.quote_trade_date == LAST_COMPLETE_DAILY
+
+
+def test_chunk_split_on_budget_exceeded_still_binds_prior_close() -> None:
+    class _SplitOnLargeIn(_RecordingTDTransport):
+        def __call__(self, *, method, url, headers, json_body, timeout_seconds):
+            if method == "POST" and (json_body or {}).get("dataset_id") == QUOTE_DATASET_ID:
+                filters = (json_body or {}).get("filters") or {}
+                ts_codes = (filters.get("ts_code") or {}).get("in") or []
+                if len(ts_codes) > 1:
+                    return HTTPResponse(
+                        413,
+                        {"error": "budget_exceeded", "reason": "budget_exceeded"},
+                    )
+            return super().__call__(
+                method=method,
+                url=url,
+                headers=headers,
+                json_body=json_body,
+                timeout_seconds=timeout_seconds,
+            )
+
+    transport = _SplitOnLargeIn(
+        calendar_rows=(_open_calendar_row(),),
+        daily_by_date={LAST_COMPLETE_DAILY: _universe_daily_rows()},
+    )
+    windows = query_windows_from_tradingdatas(
+        CASH_SESSION_UNIVERSE,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        client=_td_client(transport),
+    )
+    daily_filters = _daily_query_filters(transport)
+    assert daily_filters
+    assert all(len(filters["ts_code"]["in"]) == 1 for filters in daily_filters)
+    assert {filters["ts_code"]["in"][0] for filters in daily_filters} == set(
+        CASH_SESSION_UNIVERSE
+    )
+    for symbol in CASH_SESSION_UNIVERSE:
+        assert windows[symbol].prior_close_cny > 0
+        assert windows[symbol].reason_code != "missing_prior_close"
 
 
 def test_open_window_without_champion_is_not_missing_catalog(tmp_path: Path) -> None:
