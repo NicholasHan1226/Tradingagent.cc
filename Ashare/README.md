@@ -876,8 +876,14 @@ automatic_risk_expansion stay fail-closed. Cash-session daily close is
 prior-close evidence only: it is not a quote clock and cannot mint a fill.
 In-session quote clocks come from the last completed `cn.dataset.rt_min`
 five-minute slot at or before `decision_as_of`. Missing clocks stay honest
-`PAPER_NOT_FILLED` / `quote_clocks_unavailable`; present clocks may still
-non-fill for a later reason (no invented bid/ask snapshot).
+`PAPER_NOT_FILLED` / `quote_clocks_unavailable`. The same last-complete bar
+may bind volume and query-receipt proof as a bar-evidence snapshot: last/close
+is the bar mid, not bid/ask, and bid/ask are last ± conservative slippage
+inside the bar high/low. Daily close/touch never becomes that snapshot and
+cannot mint a fill. Present clocks without a snapshot stay
+`capital_fill_market_snapshot_unavailable`. A bound snapshot older than the
+30s execution quote window stays `paper_market_snapshot_stale`.
+`PAPER_FILLED` still requires a real ledger `fill_commit`.
 `REAL_TRADING_ENABLED` must remain `false`. The systemd
 oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`
 is a candidate only; it is not enabled by this change and does not flip
