@@ -1750,14 +1750,30 @@ def _five_minute_freq(value: object) -> bool:
     return str(value).strip().lower().replace(" ", "") in _FIVE_MINUTE_FREQS
 
 
-def _looks_like_daily_close_row(row: Mapping[str, Any]) -> bool:
-    """Daily close/touch identity: trade_date + close without a 5-min freq."""
+def _row_bar_time(row: Mapping[str, Any]) -> datetime | None:
+    """Parse an in-session bar clock.  Daily close/touch has no such field."""
 
-    return bool(
-        _compact_session_date(row.get("trade_date"))
-        and row.get("close") not in (None, "")
-        and not _five_minute_freq(row.get("freq"))
+    return _parse_quote_clock_time(
+        row.get("time") if row.get("time") not in (None, "") else row.get("bar_end")
     )
+
+
+def _looks_like_daily_close_row(row: Mapping[str, Any]) -> bool:
+    """Daily close/touch: trade_date + close without a 5-min clock identity.
+
+    A real ``cn.dataset.rt_min`` bar may also carry ``trade_date`` and
+    ``close``.  That is still a clock when ``time`` / ``bar_end`` parses as a
+    session slot, even if ``freq`` is omitted.  Daily close never has that
+    bar time and must not mint a clock or a fill.
+    """
+
+    if not _compact_session_date(row.get("trade_date")):
+        return False
+    if row.get("close") in (None, ""):
+        return False
+    if _five_minute_freq(row.get("freq")):
+        return False
+    return _row_bar_time(row) is None
 
 
 def bind_quote_clocks(
@@ -1772,8 +1788,10 @@ def bind_quote_clocks(
     """Overlay in-session ``rt_min`` clocks onto cash-session windows.
 
     Daily close/touch rows never set ``quote_clocks_ok``.  A present clock is
-    an exact completed session slot at or before ``decision_as_of``.  Missing
-    clocks stay ``quote_clocks_ok=False``.  This function never mints a fill.
+    an exact completed session slot at or before ``decision_as_of``.  An
+    ``rt_min`` bar may carry ``trade_date`` + ``close``; that is still a
+    clock when ``time`` matches the slot.  Missing clocks stay
+    ``quote_clocks_ok=False``.  This function never mints a fill.
     """
 
     slot = quote_clock_slot or last_complete_in_session_quote_slot(
@@ -1794,16 +1812,7 @@ def bind_quote_clocks(
                 continue
             if not from_rt_min and not _five_minute_freq(freq):
                 continue
-            if from_rt_min and freq in (None, "") and _compact_session_date(
-                row.get("trade_date")
-            ):
-                # Daily identity even if handed in as an rt_min query result.
-                continue
-            instant = _parse_quote_clock_time(
-                row.get("time") if row.get("time") not in (None, "") else row.get(
-                    "bar_end"
-                )
-            )
+            instant = _row_bar_time(row)
             if instant is None or instant != slot:
                 continue
             clocks[symbol] = instant
@@ -1901,11 +1910,7 @@ def bind_market_snapshots(
                 continue
             if source_dataset_id != QUOTE_CLOCK_DATASET_ID:
                 continue
-            instant = _parse_quote_clock_time(
-                row.get("time") if row.get("time") not in (None, "") else row.get(
-                    "bar_end"
-                )
-            )
+            instant = _row_bar_time(row)
             if instant is None or instant != slot:
                 continue
             last = _finite_price(row.get("close") or row.get("last") or row.get("open"))
@@ -2077,53 +2082,71 @@ def _envelope_attr(envelope: Any, name: str) -> object:
     return getattr(metadata, name, None)
 
 
-def _envelope_query_proof(envelope: Any) -> QuoteClockQueryProof:
-    """Bind query-envelope receipt proof.  Missing receipt/SHA stays empty."""
-
-    receipt_id = str(_envelope_attr(envelope, "receipt_id") or "").strip()
-    catalog_version = str(getattr(envelope, "catalog_version", "") or "").strip()
-    data_through = str(_envelope_attr(envelope, "data_through") or "").strip()
-    observed_at = str(_envelope_attr(envelope, "observed_at") or "").strip()
-    source = str(_envelope_attr(envelope, "source_sha256") or "").strip().lower()
-    lineage_sha = str(
-        _envelope_attr(envelope, "source_lineage_sha256")
-        or _envelope_attr(envelope, "lineage_sha256")
-        or ""
-    ).strip().lower()
-    lineage = _envelope_attr(envelope, "lineage")
-    if not _looks_like_sha256(source):
-        source = (
-            _sha256(
-                {
-                    "catalog_version": catalog_version,
-                    "dataset_id": QUOTE_CLOCK_DATASET_ID,
-                    "receipt_id": receipt_id,
-                    "request_id": str(getattr(envelope, "request_id", "") or ""),
-                }
-            )
-            if receipt_id and catalog_version
-            else ""
-        )
-    if not _looks_like_sha256(lineage_sha):
-        lineage_sha = (
-            _sha256(
-                {
-                    "dataset_id": QUOTE_CLOCK_DATASET_ID,
-                    "lineage": lineage if isinstance(lineage, Mapping) else {},
-                    "receipt_id": receipt_id,
-                }
-            )
-            if receipt_id
-            else ""
-        )
+def _empty_quote_clock_proof() -> QuoteClockQueryProof:
     return QuoteClockQueryProof(
-        receipt_id=receipt_id,
-        catalog_version=catalog_version,
-        data_through=data_through,
-        observed_at=observed_at,
-        source_sha256=source,
-        source_lineage_sha256=lineage_sha,
+        receipt_id="",
+        catalog_version="",
+        data_through="",
+        observed_at="",
+        source_sha256="",
+        source_lineage_sha256="",
     )
+
+
+def _envelope_query_proof(envelope: Any) -> QuoteClockQueryProof:
+    """Bind query-envelope receipt proof.  Missing receipt/SHA stays empty.
+
+    Proof failure must not discard already-fetched clock rows.  A missing
+    proof leaves the window clocked but snapshot-unready.
+    """
+
+    try:
+        receipt_id = str(_envelope_attr(envelope, "receipt_id") or "").strip()
+        catalog_version = str(getattr(envelope, "catalog_version", "") or "").strip()
+        data_through = str(_envelope_attr(envelope, "data_through") or "").strip()
+        observed_at = str(_envelope_attr(envelope, "observed_at") or "").strip()
+        source = str(_envelope_attr(envelope, "source_sha256") or "").strip().lower()
+        lineage_sha = str(
+            _envelope_attr(envelope, "source_lineage_sha256")
+            or _envelope_attr(envelope, "lineage_sha256")
+            or ""
+        ).strip().lower()
+        lineage = _envelope_attr(envelope, "lineage")
+        if not _looks_like_sha256(source):
+            source = (
+                _sha256(
+                    {
+                        "catalog_version": catalog_version,
+                        "dataset_id": QUOTE_CLOCK_DATASET_ID,
+                        "receipt_id": receipt_id,
+                        "request_id": str(getattr(envelope, "request_id", "") or ""),
+                    }
+                )
+                if receipt_id and catalog_version
+                else ""
+            )
+        if not _looks_like_sha256(lineage_sha):
+            lineage_sha = (
+                _sha256(
+                    {
+                        "dataset_id": QUOTE_CLOCK_DATASET_ID,
+                        "lineage": lineage if isinstance(lineage, Mapping) else {},
+                        "receipt_id": receipt_id,
+                    }
+                )
+                if receipt_id
+                else ""
+            )
+        return QuoteClockQueryProof(
+            receipt_id=receipt_id,
+            catalog_version=catalog_version,
+            data_through=data_through,
+            observed_at=observed_at,
+            source_sha256=source,
+            source_lineage_sha256=lineage_sha,
+        )
+    except Exception:
+        return _empty_quote_clock_proof()
 
 
 def _query_quote_clock_chunk(
@@ -2175,6 +2198,8 @@ def _query_quote_clock_chunk(
             return left_rows + right_rows, left_proof or right_proof
         raise
     rows = tuple(row for row in clock.data if isinstance(row, Mapping))
+    # Rows are the clock authority.  Proof is snapshot-only and must not
+    # discard a present in-session bar.
     return rows, _envelope_query_proof(clock)
 
 
@@ -2262,12 +2287,15 @@ def query_windows_from_tradingdatas(
     becomes a quote clock, a bid/ask snapshot, or a fill.
 
     In-session quote clocks come from ``cn.dataset.rt_min`` at the last
-    completed five-minute session slot at or before ``decision_as_of``.  The
-    same last-complete bar may bind volume and query-receipt proof as a
-    bar-evidence snapshot; last/close is the bar mid, not bid/ask.  Missing
-    clocks stay ``quote_clocks_unavailable``.  Present clocks without a
-    snapshot stay ``capital_fill_market_snapshot_unavailable``.  A closed
-    calendar stays fail-closed.
+    completed five-minute session slot at or before ``decision_as_of``.  A
+    live bar may also carry ``trade_date`` and ``close``; that is still a
+    clock when ``time`` matches the slot.  The same last-complete bar may
+    bind volume and query-receipt proof as a bar-evidence snapshot;
+    last/close is the bar mid, not bid/ask.  Receipt-proof failure must not
+    discard present clock rows.  Missing clocks stay
+    ``quote_clocks_unavailable``.  Present clocks without a snapshot stay
+    ``capital_fill_market_snapshot_unavailable``.  A closed calendar stays
+    fail-closed.
     """
 
     from shared.data.sharedsignals_v1 import (
