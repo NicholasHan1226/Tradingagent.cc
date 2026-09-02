@@ -868,7 +868,13 @@ ChiNext `300/301` and STAR `688/689` stay exclusions. Industry shadow names
 are not order identity. Coverage `accepted_count`, daily close/touch, KPI
 pressure, and `MinuteFixturePaperBook` fingerprints are never fills. A
 `PAPER_FILLED` row is written only after `MarketCapitalLedger` proves a new
-`fill_commit`. `REAL_TRADING_ENABLED` must remain `false`. The systemd
+`fill_commit` through `CapitalBackedSimulationExecutionStagePort`. Simulation-only
+Champion current on the empty 50k book is not a live-risk drift latch;
+`drift_constraint_blocks_new_risk` must not fire just because the oneshot used
+to hardcode `drift_ok=False`. Live / real_trading / live_transition /
+automatic_risk_expansion stay fail-closed. Cash-session daily close is not a
+quote clock; missing clocks stay honest `PAPER_NOT_FILLED`.
+`REAL_TRADING_ENABLED` must remain `false`. The systemd
 oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`
 is a candidate only; it is not enabled by this change and does not flip
 `canonicalAccountConnected`.
