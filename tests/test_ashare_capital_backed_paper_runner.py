@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -17,12 +19,14 @@ from Ashare.capital_backed_paper_runner import (
     CapitalBackedPaperError,
     FillAttemptRequest,
     FillAttemptResult,
+    attempt_capital_backed_simulation_fill,
     bind_cash_session_windows,
     cash_session_daily_ts_codes,
     close_or_touch_is_not_a_fill,
     count_coverage_is_not_a_fill,
     make_missing_window,
     make_observation_window,
+    paper_session_drift_allows_new_risk,
     query_windows_from_tradingdatas,
     reject_invented_fill_source,
     run_capital_backed_paper_session,
@@ -187,7 +191,7 @@ def _run_session(
     windows=None,
     extra_symbols=(),
     champion_registry=None,
-    drift_ok=False,
+    drift_ok=None,
     fill_attempt=None,
     fill_source=None,
     coverage_accepted_count=None,
@@ -320,6 +324,161 @@ def test_zero_fill_unless_all_gates_pass(tmp_path: Path) -> None:
         ExposureDisposition.PAPER_NOT_FILLED
     )
     assert result.disposition_for("000001.SZ").nonfill_reason == "quote_clocks_unavailable"
+
+
+def test_empty_sim_book_with_sim_only_current_does_not_reject_as_drift(
+    tmp_path: Path,
+) -> None:
+    registry, _manifest = _manual_registry(tmp_path)
+    windows = {
+        "000001.SZ": make_observation_window(
+            "000001.SZ",
+            prior_close_cny=10.0,
+            quote_clocks_ok=False,
+        )
+    }
+    result = _run_session(
+        tmp_path,
+        windows=windows,
+        champion_registry=registry,
+    )
+    assert result.opening_cash_cny == 50_000.0
+    assert result.fill_count == 0
+    assert result.canonical_account_connected is False
+    row = result.disposition_for("000001.SZ")
+    assert row.rejection_reason != "drift_constraint_blocks_new_risk"
+    assert row.reason_code != "drift_constraint_blocks_new_risk"
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "quote_clocks_unavailable"
+    chinext = result.disposition_for("300750.SZ")
+    star = result.disposition_for("688981.SH")
+    assert chinext.disposition is ExposureDisposition.REJECTED
+    assert chinext.rejection_reason == "chinext_individual_permission_unavailable"
+    assert star.rejection_reason == "star_individual_permission_unavailable"
+
+
+def test_live_risk_flags_still_block_new_risk_as_drift(tmp_path: Path) -> None:
+    registry, _manifest = _manual_registry(tmp_path)
+    current = registry.load_current()
+    windows = {
+        "000001.SZ": make_observation_window(
+            "000001.SZ",
+            prior_close_cny=10.0,
+            quote_clocks_ok=True,
+        )
+    }
+    for field_name in (
+        "live_transition_authorized",
+        "automatic_risk_expansion_enabled",
+        "real_trading_enabled",
+    ):
+        live = replace(current, **{field_name: True})
+        with patch(
+            "Ashare.capital_backed_paper_runner._load_champion",
+            return_value=live,
+        ):
+            result = _run_session(
+                tmp_path,
+                windows=windows,
+                champion_registry=registry,
+                drift_ok=True,
+            )
+        row = result.disposition_for("000001.SZ")
+        assert row.disposition is ExposureDisposition.REJECTED
+        assert row.rejection_reason == "drift_constraint_blocks_new_risk"
+        assert result.fill_count == 0
+        assert result.disposition_for("300750.SZ").rejection_reason == (
+            "chinext_individual_permission_unavailable"
+        )
+        assert result.disposition_for("688981.SH").rejection_reason == (
+            "star_individual_permission_unavailable"
+        )
+
+
+def test_paper_session_drift_helper_fail_closes_live_risk(tmp_path: Path) -> None:
+    ledger = _prepare_ledger(tmp_path)
+    snapshot = ledger.snapshot()
+    registry, _manifest = _manual_registry(tmp_path)
+    champion = registry.load_current()
+    assert snapshot.cash_balance_cny == 50_000.0
+    assert snapshot.positions_market_value_cny == 0.0
+    assert paper_session_drift_allows_new_risk(
+        champion=champion,
+        snapshot=snapshot,
+        requested_drift_ok=None,
+    )
+    assert not paper_session_drift_allows_new_risk(
+        champion=champion,
+        snapshot=snapshot,
+        requested_drift_ok=False,
+    )
+    for field_name in (
+        "live_transition_authorized",
+        "automatic_risk_expansion_enabled",
+        "real_trading_enabled",
+    ):
+        live = replace(champion, **{field_name: True})
+        assert not paper_session_drift_allows_new_risk(
+            champion=live,
+            snapshot=snapshot,
+            requested_drift_ok=True,
+        )
+        assert not paper_session_drift_allows_new_risk(
+            champion=live,
+            snapshot=snapshot,
+            requested_drift_ok=None,
+        )
+    previous = os.environ.get("REAL_TRADING_ENABLED")
+    os.environ["REAL_TRADING_ENABLED"] = "true"
+    try:
+        assert not paper_session_drift_allows_new_risk(
+            champion=champion,
+            snapshot=snapshot,
+            requested_drift_ok=True,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("REAL_TRADING_ENABLED", None)
+        else:
+            os.environ["REAL_TRADING_ENABLED"] = previous
+
+
+def test_default_fill_attempt_does_not_invent_fill_from_daily_close(
+    tmp_path: Path,
+) -> None:
+    registry, _manifest = _manual_registry(tmp_path)
+    windows = {
+        "000001.SZ": make_observation_window(
+            "000001.SZ",
+            prior_close_cny=10.0,
+            quote_clocks_ok=True,
+        )
+    }
+    result = _run_session(
+        tmp_path,
+        windows=windows,
+        champion_registry=registry,
+    )
+    row = result.disposition_for("000001.SZ")
+    assert row.rejection_reason != "drift_constraint_blocks_new_risk"
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "capital_fill_market_snapshot_unavailable"
+    assert result.fill_count == 0
+    request = FillAttemptRequest(
+        symbol="000001.SZ",
+        quantity=100,
+        prior_close_cny=10.0,
+        champion=registry.load_current(),
+        window=windows["000001.SZ"],
+        snapshot_before=_prepare_ledger(tmp_path / "fill-probe").snapshot(),
+    )
+    attempt = attempt_capital_backed_simulation_fill(
+        request,
+        ledger=_prepare_ledger(tmp_path / "fill-probe-ledger"),
+    )
+    assert attempt.committed is False
+    assert attempt.filled_quantity == 0
+    assert attempt.fill_id is None
 
 
 def test_fingerprint_without_ledger_commit_is_not_a_fill(tmp_path: Path) -> None:
@@ -462,6 +621,13 @@ def test_systemd_candidate_is_sim_only_and_points_at_sibling_runner() -> None:
     assert "[Install]" not in service
     assert "REAL_TRADING_ENABLED=false" in env
     assert "tradingagent-ashare-capital-backed-paper.service" in timer
+    runner_source = (
+        Path(__file__).resolve().parents[1] / "Ashare" / "capital_backed_paper_runner.py"
+    ).read_text(encoding="utf-8")
+    main_source = runner_source.split("def main(", 1)[1]
+    assert "drift_ok=False" not in main_source
+    assert "paper_session_drift_allows_new_risk" in runner_source
+    assert "attempt_capital_backed_simulation_fill" in runner_source
 
 
 CASH_SESSION_TRADE_DATE = "2026-09-01"

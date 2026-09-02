@@ -333,6 +333,71 @@ def _bind_ledger(config: CapitalBackedPaperConfig) -> tuple[MarketCapitalLedger,
     return ledger, snapshot
 
 
+def _live_risk_flags_present(
+    *,
+    champion: ChampionSelectionReceipt | None = None,
+    snapshot: MarketCapitalSnapshot | None = None,
+) -> bool:
+    """True when any live / real-trading / risk-expansion flag is not native false."""
+
+    env = os.environ.get("REAL_TRADING_ENABLED", "false").strip().lower()
+    if env != "false":
+        return True
+    flags: list[object] = []
+    if champion is not None:
+        flags.extend(
+            (
+                champion.real_trading_enabled,
+                champion.live_transition_authorized,
+                champion.automatic_risk_expansion_enabled,
+            )
+        )
+    if snapshot is not None:
+        flags.append(snapshot.real_trading_enabled)
+    return any(flag is not False for flag in flags)
+
+
+def _simulation_only_champion(champion: ChampionSelectionReceipt | None) -> bool:
+    return (
+        champion is not None
+        and champion.simulation_only is True
+        and champion.capital_layer == "simulated"
+        and champion.account_type == "simulated"
+        and champion.real_trading_enabled is False
+        and champion.live_transition_authorized is False
+        and champion.automatic_risk_expansion_enabled is False
+    )
+
+
+def paper_session_drift_allows_new_risk(
+    *,
+    champion: ChampionSelectionReceipt | None,
+    snapshot: MarketCapitalSnapshot,
+    requested_drift_ok: bool | None = None,
+) -> bool:
+    """Resolve the paper-session live-risk drift latch.
+
+    Simulation-only Champion current is not a live-risk latch.  The oneshot
+    default used to hardcode ``False``, which rejected every windowed
+    order-identity name as ``drift_constraint_blocks_new_risk`` before lot,
+    cash, T+1, quote clocks, or any fill attempt.
+
+    Live / real_trading / live_transition_authorized / automatic_risk_expansion
+    stay fail-closed even if a caller requests ``drift_ok=True``.  An explicit
+    ``requested_drift_ok=False`` still rejects (tests and a real latch).
+    """
+
+    if _live_risk_flags_present(champion=champion, snapshot=snapshot):
+        return False
+    if snapshot.real_trading_enabled is not False:
+        return False
+    if requested_drift_ok is False:
+        return False
+    if requested_drift_ok is True:
+        return True
+    return _simulation_only_champion(champion)
+
+
 def _load_champion(
     registry: ChampionSelectionRegistry | None,
 ) -> ChampionSelectionReceipt | None:
@@ -342,16 +407,50 @@ def _load_champion(
         current = registry.load_current()
     except ChampionRegistryError:
         return None
-    if (
-        current.real_trading_enabled is not False
-        or current.live_transition_authorized is not False
-        or current.automatic_risk_expansion_enabled is not False
-        or current.capital_layer != "simulated"
-        or current.account_type != "simulated"
-        or current.simulation_only is not True
-    ):
+    if not _simulation_only_champion(current):
         raise CapitalBackedPaperError("champion_current_not_simulation_only")
     return current
+
+
+def _unfilled_attempt(reason_code: str) -> FillAttemptResult:
+    return FillAttemptResult(
+        committed=False,
+        fill_id=None,
+        filled_quantity=0,
+        filled_notional_cny=0.0,
+        actual_cost_cny=0.0,
+        ledger_event_id=None,
+        reason_code=reason_code,
+    )
+
+
+def attempt_capital_backed_simulation_fill(
+    request: FillAttemptRequest,
+    *,
+    ledger: MarketCapitalLedger,
+) -> FillAttemptResult:
+    """The only fill path is ``CapitalBackedSimulationExecutionStagePort``.
+
+    Daily close/touch is valuation, not a fill snapshot.  Missing quote clocks
+    stay ``PAPER_NOT_FILLED``.  This function never mints a commit from
+    ``prior_close_cny``.
+    """
+
+    if type(request) is not FillAttemptRequest:
+        raise CapitalBackedPaperError("fill_attempt_request_invalid")
+    if type(ledger) is not MarketCapitalLedger:
+        raise CapitalBackedPaperError("capital_ledger_required")
+    reject_invented_fill_source("close_touch")
+    if not request.window.fill_quote_ready:
+        return _unfilled_attempt("quote_clocks_unavailable")
+    if (
+        _CAPITAL_EXECUTION_PORT is not CapitalBackedSimulationExecutionStagePort
+        or _PAPER_CAPITAL_ACCOUNT is not PaperCapitalAccount
+    ):
+        raise CapitalBackedPaperError("wrong_capital_fill_port")
+    # Port-grade snapshots need bid/ask + trusted execution clocks.  A cash
+    # session window only carries last-complete daily close; do not invent.
+    return _unfilled_attempt("capital_fill_market_snapshot_unavailable")
 
 
 def _requested_notional(window: SymbolWindow | None) -> float:
@@ -630,7 +729,7 @@ def run_capital_backed_paper_session(
     windows: Mapping[str, SymbolWindow] | None = None,
     window_source: WindowSource | None = None,
     champion_registry: ChampionSelectionRegistry | None = None,
-    drift_ok: bool = False,
+    drift_ok: bool | None = None,
     fill_attempt: FillAttempt | None = None,
     fill_source: str | None = None,
     coverage_accepted_count: int | None = None,
@@ -647,6 +746,17 @@ def run_capital_backed_paper_session(
 
     ledger, snapshot_before = _bind_ledger(config)
     champion = _load_champion(champion_registry)
+    resolved_drift_ok = paper_session_drift_allows_new_risk(
+        champion=champion,
+        snapshot=snapshot_before,
+        requested_drift_ok=drift_ok,
+    )
+    bound_fill_attempt = fill_attempt
+    if bound_fill_attempt is None:
+        def _default_fill(request: FillAttemptRequest) -> FillAttemptResult:
+            return attempt_capital_backed_simulation_fill(request, ledger=ledger)
+
+        bound_fill_attempt = _default_fill
     classifications = classify_session_universe(
         extra_symbols=config.extra_symbols,
         include_exclusion_probes=config.include_exclusion_probes,
@@ -711,10 +821,10 @@ def run_capital_backed_paper_session(
         fill_result = None
         snapshot_after = ledger_cursor
         if (
-            fill_attempt is not None
+            bound_fill_attempt is not None
             and classification.order_identity_allowed
             and champion is not None
-            and drift_ok
+            and resolved_drift_ok
             and window is not None
             and window.fill_quote_ready
         ):
@@ -725,7 +835,7 @@ def run_capital_backed_paper_session(
                 symbol=classification.symbol,
             )
             if lot_ok and cash_ok and t_plus_1_ok:
-                fill_result = fill_attempt(
+                fill_result = bound_fill_attempt(
                     FillAttemptRequest(
                         symbol=classification.symbol,
                         quantity=BUY_LOT,
@@ -743,7 +853,7 @@ def run_capital_backed_paper_session(
             window=window,
             champion=champion,
             snapshot=ledger_cursor,
-            drift_ok=drift_ok,
+            drift_ok=resolved_drift_ok,
             fill_result=fill_result,
             ledger_after=snapshot_after,
             ledger_before=ledger_cursor,
@@ -921,7 +1031,8 @@ def bind_cash_session_windows(
     """Bind an in-session window from live calendar + last complete daily.
 
     Today's ``cn.equity.daily`` postclose partition is never required.  A closed
-    calendar stays fail-closed.  Daily close/touch is prior-close evidence only.
+    calendar stays fail-closed.  Daily close/touch is prior-close evidence only
+    and never sets ``quote_clocks_ok``.
     """
 
     calendar_row = _calendar_row_for_trade_date(calendar_rows, trade_date)
@@ -989,6 +1100,7 @@ def bind_cash_session_windows(
             quote_fresh=True,
             prior_close_cny=prior_close,
             session_calendar_ok=True,
+            # Daily close/touch is prior-close evidence, not a fill quote clock.
             quote_clocks_ok=False,
             reason_code=(
                 "window_ready" if prior_close and prior_close > 0 else "missing_prior_close"
@@ -1280,7 +1392,6 @@ def main(argv: list[str] | None = None) -> int:
         config,
         window_source=window_source,
         champion_registry=registry,
-        drift_ok=False,
     )
     print(
         _canonical_json(
