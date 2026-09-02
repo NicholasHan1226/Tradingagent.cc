@@ -47,6 +47,7 @@ from shared.review.decision_ledger import (
 )
 from shared.review.sample_journal import SampleJournal
 from shared.runtime.capital_stages import (
+    CapitalBackedPreopenStagePort,
     CapitalBackedRiskStagePort,
     CapitalBackedSimulationExecutionStagePort,
     PaperCapitalAccount,
@@ -581,6 +582,17 @@ def _bar_evidence_bid_ask(
     return bid, ask
 
 
+def _reservation_price_cny(*, ask: float, high_cny: float | None) -> float:
+    """Worst-case buy reservation.  The engine may slip through the ask."""
+
+    model = ashare_execution_reality()
+    pad = model.conservative_label_slippage_bps_per_side / 10_000.0
+    padded = model._round_to_tick(ask * (1.0 + pad) + model.price_tick_cny)
+    if high_cny is not None and high_cny >= padded:
+        return model._round_to_tick(float(high_cny))
+    return padded
+
+
 class _StaticFillStagePort:
     """Minimal in-process stage payload.  Not a second capital authority."""
 
@@ -740,6 +752,8 @@ def _build_bar_evidence_snapshot(
         "market_evidence_authority": authority,
         "bar_evidence_fill": True,
         "bar_last_cny": last,
+        "bar_volume": float(window.snapshot_volume or 0.0),
+        "volume": float(window.snapshot_volume or 0.0),
     }
 
 
@@ -820,6 +834,10 @@ def attempt_capital_backed_simulation_fill(
         )
     elif type(bound_account) is not PaperCapitalAccount:
         raise CapitalBackedPaperError("paper_capital_account_invalid")
+    reservation_price = _reservation_price_cny(
+        ask=float(spread[1]),
+        high_cny=request.window.snapshot_high_cny,
+    )
     order = {
         "order_id": f"ORDER-{request.symbol}",
         "decision_id": f"DECISION-{request.symbol}",
@@ -827,10 +845,10 @@ def attempt_capital_backed_simulation_fill(
         "intent": "open",
         "side": "buy",
         "quantity": int(request.quantity),
-        "reservation_price_cny": float(spread[1]),
+        "reservation_price_cny": reservation_price,
         "expected_fee_cny": float(
             ashare_execution_reality()
-            .calculate_fees("buy", request.quantity * spread[1])
+            .calculate_fees("buy", request.quantity * reservation_price)
             .get("total")
             or 5.0
         ),
@@ -844,6 +862,46 @@ def attempt_capital_backed_simulation_fill(
         "decision_as_of": decision_text,
     }
     try:
+        if not bound_account.ledger.provider_state(
+            request.trade_date.replace("-", "")
+        ).get("fresh"):
+            preopen_bundle = _fill_bundle(
+                **context,
+                snapshot=snapshot_before,
+                permitted_order_ids=(),
+                stage_payloads={
+                    RunStage.PREOPEN: {
+                        "market": "ashare",
+                        "account_type": "simulated",
+                        "real_trading_enabled": False,
+                        "account_authority_valid": True,
+                        "position_authority_valid": True,
+                    }
+                },
+            )
+            CapitalBackedPreopenStagePort(
+                base_port=_StaticFillStagePort(
+                    RunStage.PREOPEN,
+                    {
+                        "market": "ashare",
+                        "account_type": "simulated",
+                        "real_trading_enabled": False,
+                        "account_authority_valid": True,
+                        "position_authority_valid": True,
+                    },
+                ),
+                account=bound_account,
+            ).execute(
+                StageRequest(
+                    run_id=request.run_id,
+                    stage=RunStage.PREOPEN,
+                    idempotency_key=_sha256(f"{request.run_id}:preopen"),
+                    input_bundle_sha256=_sha256(context),
+                    bundle=preopen_bundle,  # type: ignore[arg-type]
+                    allowed_actions=("open", "increase", "reduce", "exit", "hold"),
+                    permitted_order_ids=(),
+                )
+            )
         risk_bundle = _fill_bundle(
             **context,
             snapshot=snapshot_before,

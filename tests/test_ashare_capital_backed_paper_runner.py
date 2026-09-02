@@ -1390,6 +1390,7 @@ def test_daily_close_does_not_bind_market_snapshot_or_mint_fill(tmp_path: Path) 
     assert window.quote_clocks_ok is True
     assert window.fill_snapshot_ready is False
     assert window.snapshot_last_cny is None
+    _prepare_ledger(tmp_path)
     registry, _manifest = _manual_registry(tmp_path)
     result = run_capital_backed_paper_session(
         _config(
