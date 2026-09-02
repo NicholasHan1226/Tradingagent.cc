@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -14,6 +15,7 @@ from Ashare.capital_backed_paper_runner import (
     CANONICAL_DATA_ROOT,
     CASH_SESSION_DAILY_TS_CODE_CHUNK,
     INVENTED_FILL_SOURCES,
+    QUOTE_CLOCK_DATASET_ID,
     QUOTE_DATASET_ID,
     CapitalBackedPaperConfig,
     CapitalBackedPaperError,
@@ -21,10 +23,12 @@ from Ashare.capital_backed_paper_runner import (
     FillAttemptResult,
     attempt_capital_backed_simulation_fill,
     bind_cash_session_windows,
+    bind_quote_clocks,
     cash_session_daily_ts_codes,
     close_or_touch_is_not_a_fill,
     count_coverage_is_not_a_fill,
     make_missing_window,
+    last_complete_in_session_quote_slot,
     make_observation_window,
     paper_session_drift_allows_new_risk,
     query_windows_from_tradingdatas,
@@ -628,6 +632,9 @@ def test_systemd_candidate_is_sim_only_and_points_at_sibling_runner() -> None:
     assert "drift_ok=False" not in main_source
     assert "paper_session_drift_allows_new_risk" in runner_source
     assert "attempt_capital_backed_simulation_fill" in runner_source
+    assert "bind_quote_clocks" in runner_source
+    assert "cn.dataset.rt_min" in runner_source
+    assert "decision_as_of=config.decision_as_of" in main_source
 
 
 CASH_SESSION_TRADE_DATE = "2026-09-01"
@@ -715,9 +722,13 @@ class _RecordingTDTransport:
         *,
         calendar_rows: tuple[dict[str, object], ...],
         daily_by_date: dict[str, tuple[dict[str, object], ...]],
+        quote_clock_rows: tuple[dict[str, object], ...] = (),
+        include_quote_clock: bool = False,
     ) -> None:
         self.calendar_rows = calendar_rows
         self.daily_by_date = daily_by_date
+        self.quote_clock_rows = quote_clock_rows
+        self.include_quote_clock = include_quote_clock or bool(quote_clock_rows)
         self.calls: list[dict[str, object]] = []
 
     def __call__(
@@ -737,7 +748,10 @@ class _RecordingTDTransport:
             }
         )
         if method == "GET":
-            return HTTPResponse(200, _td_catalog_payload())
+            return HTTPResponse(
+                200,
+                _td_catalog_payload(include_quote_clock=self.include_quote_clock),
+            )
         dataset_id = str((json_body or {}).get("dataset_id") or "")
         filters = (json_body or {}).get("filters") or {}
         if dataset_id == CALENDAR_DATASET_ID:
@@ -774,26 +788,58 @@ class _RecordingTDTransport:
                 200,
                 _td_query_payload(QUOTE_DATASET_ID, rows),
             )
+        if dataset_id == QUOTE_CLOCK_DATASET_ID:
+            ts_codes = (filters.get("ts_code") or {}).get("in")
+            if not ts_codes:
+                return HTTPResponse(
+                    413,
+                    {
+                        "error": "budget_exceeded",
+                        "reason": "budget_exceeded",
+                    },
+                )
+            slot = str((filters.get("time") or {}).get("eq") or "")
+            wanted = {str(code).upper() for code in ts_codes}
+            rows = tuple(
+                row
+                for row in self.quote_clock_rows
+                if str(row.get("ts_code") or row.get("symbol") or "").upper()
+                in wanted
+                and str(row.get("time") or "") == slot
+            )
+            return HTTPResponse(
+                200,
+                _td_query_payload(QUOTE_CLOCK_DATASET_ID, rows),
+            )
         raise AssertionError(f"unexpected dataset {dataset_id}")
 
 
-def _td_catalog_payload() -> dict[str, object]:
+def _td_catalog_payload(*, include_quote_clock: bool = False) -> dict[str, object]:
+    data: list[dict[str, object]] = [
+        {
+            "dataset_id": CALENDAR_DATASET_ID,
+            "schema_major": 1,
+            "fields": ["exchange", "cal_date", "is_open", "pretrade_date"],
+        },
+        {
+            "dataset_id": QUOTE_DATASET_ID,
+            "schema_major": 1,
+            "fields": ["ts_code", "trade_date", "close", "pre_close"],
+        },
+    ]
+    if include_quote_clock:
+        data.append(
+            {
+                "dataset_id": QUOTE_CLOCK_DATASET_ID,
+                "schema_major": 2,
+                "fields": ["ts_code", "freq", "time", "open", "close", "high", "low"],
+            }
+        )
     return {
         "api_version": "v1",
         "catalog_version": "td-catalog-live",
         "request_id": "catalog-cash-session",
-        "data": [
-            {
-                "dataset_id": CALENDAR_DATASET_ID,
-                "schema_major": 1,
-                "fields": ["exchange", "cal_date", "is_open", "pretrade_date"],
-            },
-            {
-                "dataset_id": QUOTE_DATASET_ID,
-                "schema_major": 1,
-                "fields": ["ts_code", "trade_date", "close", "pre_close"],
-            },
-        ],
+        "data": data,
     }
 
 
@@ -822,12 +868,19 @@ def _td_query_payload(
     }
 
 
-def _td_client(transport: _RecordingTDTransport) -> SharedSignalsV1Client:
+def _td_client(
+    transport: _RecordingTDTransport,
+    *,
+    include_quote_clock: bool = False,
+) -> SharedSignalsV1Client:
+    dataset_ids = {CALENDAR_DATASET_ID, QUOTE_DATASET_ID}
+    if include_quote_clock:
+        dataset_ids.add(QUOTE_CLOCK_DATASET_ID)
     return SharedSignalsV1Client(
         SharedSignalsV1Config(
             base_url="http://127.0.0.1:18082",
             expected_catalog_version="evidence-only",
-            dataset_ids=frozenset({CALENDAR_DATASET_ID, QUOTE_DATASET_ID}),
+            dataset_ids=frozenset(dataset_ids),
             access_policy_id="tradingagent-read-v1",
             catalog_version_policy="evidence_only",
             timeout_seconds=5.0,
@@ -1016,3 +1069,238 @@ def test_open_window_without_champion_is_not_missing_catalog(tmp_path: Path) -> 
     assert row.reason_code != "missing_dataset_catalog_or_session_window"
     assert result.fill_count == 0
     assert result.canonical_account_connected is False
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+CASH_SESSION_DECISION = datetime(2026, 9, 1, 12, 17, tzinfo=SHANGHAI)
+CASH_SESSION_QUOTE_SLOT = "2026-09-01 11:30:00"
+
+
+def _quote_clock_row(
+    symbol: str,
+    *,
+    time_text: str = CASH_SESSION_QUOTE_SLOT,
+    freq: str = "5MIN",
+    close: float = 12.8,
+) -> dict[str, object]:
+    return {
+        "ts_code": symbol,
+        "freq": freq,
+        "time": time_text,
+        "open": close,
+        "close": close,
+        "high": close,
+        "low": close,
+    }
+
+
+def _cash_session_daily_windows(
+    *symbols: str,
+) -> dict[str, object]:
+    return bind_cash_session_windows(
+        symbols,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        catalog_version="td-catalog-live",
+        calendar_rows=(_open_calendar_row(),),
+        daily_rows=tuple(
+            _daily_row(symbol, trade_date=LAST_COMPLETE_DAILY, close=12.5)
+            for symbol in symbols
+        ),
+    )
+
+
+def test_last_complete_in_session_quote_slot_is_not_daily_close() -> None:
+    lunch = last_complete_in_session_quote_slot(
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+    )
+    assert lunch is not None
+    assert lunch.strftime("%Y-%m-%d %H:%M:%S") == CASH_SESSION_QUOTE_SLOT
+    preopen = last_complete_in_session_quote_slot(
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=datetime(2026, 9, 1, 9, 30, tzinfo=SHANGHAI),
+    )
+    assert preopen is None
+    first_bar = last_complete_in_session_quote_slot(
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=datetime(2026, 9, 1, 9, 37, tzinfo=SHANGHAI),
+    )
+    assert first_bar is not None
+    assert first_bar.strftime("%H:%M:%S") == "09:35:00"
+    other_day = last_complete_in_session_quote_slot(
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=datetime(2026, 9, 2, 12, 17, tzinfo=SHANGHAI),
+    )
+    assert other_day is None
+
+
+def test_cash_session_daily_close_does_not_set_clock_or_mint_fill(
+    tmp_path: Path,
+) -> None:
+    windows = _cash_session_daily_windows(CASH_SESSION_SYMBOL)
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.observation_ready is True
+    assert window.prior_close_cny == 12.5
+    assert window.quote_clocks_ok is False
+    assert window.quote_clock_at == ""
+    overlay = bind_quote_clocks(
+        windows,
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        quote_clock_rows=(
+            _daily_row(
+                CASH_SESSION_SYMBOL,
+                trade_date=LAST_COMPLETE_DAILY,
+                close=12.5,
+            ),
+            _daily_row(
+                CASH_SESSION_SYMBOL,
+                trade_date="20260901",
+                close=99.0,
+                pre_close=12.5,
+            ),
+        ),
+    )
+    assert overlay[CASH_SESSION_SYMBOL].quote_clocks_ok is False
+    assert overlay[CASH_SESSION_SYMBOL].quote_clock_at == ""
+    registry, _manifest = _manual_registry(tmp_path)
+    result = _run_session(
+        tmp_path,
+        windows=windows,
+        champion_registry=registry,
+    )
+    row = result.disposition_for(CASH_SESSION_SYMBOL)
+    assert row.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert row.nonfill_reason == "quote_clocks_unavailable"
+    assert result.fill_count == 0
+    assert close_or_touch_is_not_a_fill() == 0
+
+
+def test_missing_and_present_quote_clocks_are_distinguished(tmp_path: Path) -> None:
+    present = CASH_SESSION_SYMBOL
+    missing = "600276.SH"
+    windows = bind_quote_clocks(
+        _cash_session_daily_windows(present, missing),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        quote_clock_rows=(_quote_clock_row(present),),
+    )
+    assert windows[present].quote_clocks_ok is True
+    assert windows[present].quote_clock_at == CASH_SESSION_QUOTE_SLOT
+    assert windows[present].quote_clock_dataset_id == QUOTE_CLOCK_DATASET_ID
+    assert windows[present].prior_close_cny == 12.5
+    assert windows[missing].quote_clocks_ok is False
+    assert windows[missing].quote_clock_at == ""
+    assert windows[missing].observation_ready is True
+    registry, _manifest = _manual_registry(tmp_path)
+    result = _run_session(
+        tmp_path,
+        windows=windows,
+        champion_registry=registry,
+    )
+    filled_or_later = result.disposition_for(present)
+    still_missing = result.disposition_for(missing)
+    assert filled_or_later.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert filled_or_later.nonfill_reason != "quote_clocks_unavailable"
+    assert filled_or_later.nonfill_reason == "capital_fill_market_snapshot_unavailable"
+    assert still_missing.disposition is ExposureDisposition.PAPER_NOT_FILLED
+    assert still_missing.nonfill_reason == "quote_clocks_unavailable"
+    assert result.fill_count == 0
+    assert result.canonical_account_connected is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
+
+
+def test_query_windows_present_rt_min_clock_is_not_daily_close() -> None:
+    transport = _RecordingTDTransport(
+        calendar_rows=(_open_calendar_row(),),
+        daily_by_date={
+            LAST_COMPLETE_DAILY: (
+                _daily_row(
+                    CASH_SESSION_SYMBOL,
+                    trade_date=LAST_COMPLETE_DAILY,
+                    close=12.5,
+                ),
+            ),
+        },
+        quote_clock_rows=(_quote_clock_row(CASH_SESSION_SYMBOL),),
+    )
+    windows = query_windows_from_tradingdatas(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.observation_ready is True
+    assert window.prior_close_cny == 12.5
+    assert window.quote_trade_date == LAST_COMPLETE_DAILY
+    assert window.quote_clocks_ok is True
+    assert window.quote_clock_at == CASH_SESSION_QUOTE_SLOT
+    assert window.fill_quote_ready is True
+    clock_filters = [
+        call["json_body"]["filters"]
+        for call in transport.calls
+        if call["method"] == "POST"
+        and (call["json_body"] or {}).get("dataset_id") == QUOTE_CLOCK_DATASET_ID
+    ]
+    assert clock_filters
+    for filters in clock_filters:
+        assert filters["time"] == {"eq": CASH_SESSION_QUOTE_SLOT}
+        assert CASH_SESSION_SYMBOL in filters["ts_code"]["in"]
+        assert "trade_date" not in filters
+    daily_filters = _daily_query_filters(transport)
+    assert daily_filters
+    for filters in daily_filters:
+        assert filters["trade_date"] == {"eq": LAST_COMPLETE_DAILY}
+
+
+def test_query_windows_missing_rt_min_stays_quote_clocks_unavailable() -> None:
+    transport = _RecordingTDTransport(
+        calendar_rows=(_open_calendar_row(),),
+        daily_by_date={
+            LAST_COMPLETE_DAILY: (
+                _daily_row(
+                    CASH_SESSION_SYMBOL,
+                    trade_date=LAST_COMPLETE_DAILY,
+                    close=12.5,
+                ),
+            ),
+        },
+        include_quote_clock=True,
+    )
+    windows = query_windows_from_tradingdatas(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.observation_ready is True
+    assert window.quote_clocks_ok is False
+    assert window.quote_clock_at == ""
+    assert window.fill_quote_ready is False
+    without_clock_dataset = query_windows_from_tradingdatas(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        decision_as_of=CASH_SESSION_DECISION,
+        client=_td_client(
+            _RecordingTDTransport(
+                calendar_rows=(_open_calendar_row(),),
+                daily_by_date={
+                    LAST_COMPLETE_DAILY: (
+                        _daily_row(
+                            CASH_SESSION_SYMBOL,
+                            trade_date=LAST_COMPLETE_DAILY,
+                            close=12.5,
+                        ),
+                    ),
+                },
+            )
+        ),
+    )
+    assert without_clock_dataset[CASH_SESSION_SYMBOL].quote_clocks_ok is False

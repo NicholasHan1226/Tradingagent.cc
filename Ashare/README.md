@@ -872,8 +872,12 @@ pressure, and `MinuteFixturePaperBook` fingerprints are never fills. A
 Champion current on the empty 50k book is not a live-risk drift latch;
 `drift_constraint_blocks_new_risk` must not fire just because the oneshot used
 to hardcode `drift_ok=False`. Live / real_trading / live_transition /
-automatic_risk_expansion stay fail-closed. Cash-session daily close is not a
-quote clock; missing clocks stay honest `PAPER_NOT_FILLED`.
+automatic_risk_expansion stay fail-closed. Cash-session daily close is
+prior-close evidence only: it is not a quote clock and cannot mint a fill.
+In-session quote clocks come from the last completed `cn.dataset.rt_min`
+five-minute slot at or before `decision_as_of`. Missing clocks stay honest
+`PAPER_NOT_FILLED` / `quote_clocks_unavailable`; present clocks may still
+non-fill for a later reason (no invented bid/ask snapshot).
 `REAL_TRADING_ENABLED` must remain `false`. The systemd
 oneshot under `Ashare/systemd/tradingagent-ashare-capital-backed-paper.service`
 is a candidate only; it is not enabled by this change and does not flip
