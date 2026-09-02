@@ -8,16 +8,20 @@ from pathlib import Path
 import pytest
 
 from Ashare.capital_backed_paper_runner import (
+    CALENDAR_DATASET_ID,
     CANONICAL_DATA_ROOT,
     INVENTED_FILL_SOURCES,
+    QUOTE_DATASET_ID,
     CapitalBackedPaperConfig,
     CapitalBackedPaperError,
     FillAttemptRequest,
     FillAttemptResult,
+    bind_cash_session_windows,
     close_or_touch_is_not_a_fill,
     count_coverage_is_not_a_fill,
     make_missing_window,
     make_observation_window,
+    query_windows_from_tradingdatas,
     reject_invented_fill_source,
     run_capital_backed_paper_session,
 )
@@ -31,6 +35,11 @@ from Ashare.capital_backed_paper_universe import (
     session_candidate_symbols,
 )
 from Ashare.minute_paper import MinuteFixturePaperBook
+from shared.data.sharedsignals_v1 import (
+    HTTPResponse,
+    SharedSignalsV1Client,
+    SharedSignalsV1Config,
+)
 from shared.review.decision_ledger import ExposureDisposition, SampleJournalDecisionLedger
 from shared.review.sample_journal import SampleJournal
 from shared.runtime.capital_stages import PaperCapitalAccount
@@ -451,3 +460,281 @@ def test_systemd_candidate_is_sim_only_and_points_at_sibling_runner() -> None:
     assert "[Install]" not in service
     assert "REAL_TRADING_ENABLED=false" in env
     assert "tradingagent-ashare-capital-backed-paper.service" in timer
+
+
+CASH_SESSION_TRADE_DATE = "2026-09-01"
+LAST_COMPLETE_DAILY = "20260831"
+CASH_SESSION_SYMBOL = "000063.SZ"
+
+
+def _open_calendar_row(*, is_open: object = 1) -> dict[str, object]:
+    return {
+        "exchange": "SSE",
+        "cal_date": "20260901",
+        "is_open": is_open,
+        "pretrade_date": LAST_COMPLETE_DAILY,
+    }
+
+
+def _daily_row(
+    symbol: str,
+    *,
+    trade_date: str,
+    close: float,
+    pre_close: float | None = None,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "ts_code": symbol,
+        "trade_date": trade_date,
+        "close": close,
+    }
+    if pre_close is not None:
+        row["pre_close"] = pre_close
+    return row
+
+
+def test_open_calendar_uses_last_complete_daily_without_todays_partition() -> None:
+    windows = bind_cash_session_windows(
+        (CASH_SESSION_SYMBOL, "300750.SZ"),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        catalog_version="td-catalog-live",
+        calendar_rows=(_open_calendar_row(),),
+        daily_rows=(
+            _daily_row(CASH_SESSION_SYMBOL, trade_date=LAST_COMPLETE_DAILY, close=12.5),
+            _daily_row(
+                CASH_SESSION_SYMBOL,
+                trade_date="20260901",
+                close=99.0,
+                pre_close=12.5,
+            ),
+        ),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.session_calendar_ok is True
+    assert window.observation_ready is True
+    assert window.dataset_id == QUOTE_DATASET_ID
+    assert window.quote_trade_date == LAST_COMPLETE_DAILY
+    assert window.prior_close_cny == 12.5
+    assert window.reason_code != "missing_dataset_catalog_or_session_window"
+    assert window.quote_clocks_ok is False
+
+
+def test_closed_calendar_does_not_pretend_there_is_a_session_window() -> None:
+    windows = bind_cash_session_windows(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        catalog_version="td-catalog-live",
+        calendar_rows=(_open_calendar_row(is_open=0),),
+        daily_rows=(
+            _daily_row(CASH_SESSION_SYMBOL, trade_date=LAST_COMPLETE_DAILY, close=12.5),
+        ),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.session_calendar_ok is False
+    assert window.observation_ready is False
+    assert window.reason_code == "missing_dataset_catalog_or_session_window"
+    assert window.prior_close_cny is None
+
+
+class _RecordingTDTransport:
+    def __init__(
+        self,
+        *,
+        calendar_rows: tuple[dict[str, object], ...],
+        daily_by_date: dict[str, tuple[dict[str, object], ...]],
+    ) -> None:
+        self.calendar_rows = calendar_rows
+        self.daily_by_date = daily_by_date
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers,
+        json_body,
+        timeout_seconds: float,
+    ) -> HTTPResponse:
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "json_body": dict(json_body) if json_body is not None else None,
+            }
+        )
+        if method == "GET":
+            return HTTPResponse(200, _td_catalog_payload())
+        dataset_id = str((json_body or {}).get("dataset_id") or "")
+        filters = (json_body or {}).get("filters") or {}
+        if dataset_id == CALENDAR_DATASET_ID:
+            cal_date = str((filters.get("cal_date") or {}).get("eq") or "")
+            rows = [
+                row
+                for row in self.calendar_rows
+                if str(row.get("cal_date") or "").replace("-", "")
+                == cal_date.replace("-", "")
+            ]
+            return HTTPResponse(
+                200,
+                _td_query_payload(CALENDAR_DATASET_ID, tuple(rows)),
+            )
+        if dataset_id == QUOTE_DATASET_ID:
+            trade_date = str((filters.get("trade_date") or {}).get("eq") or "")
+            return HTTPResponse(
+                200,
+                _td_query_payload(
+                    QUOTE_DATASET_ID,
+                    self.daily_by_date.get(trade_date, ()),
+                ),
+            )
+        raise AssertionError(f"unexpected dataset {dataset_id}")
+
+
+def _td_catalog_payload() -> dict[str, object]:
+    return {
+        "api_version": "v1",
+        "catalog_version": "td-catalog-live",
+        "request_id": "catalog-cash-session",
+        "data": [
+            {
+                "dataset_id": CALENDAR_DATASET_ID,
+                "schema_major": 1,
+                "fields": ["exchange", "cal_date", "is_open", "pretrade_date"],
+            },
+            {
+                "dataset_id": QUOTE_DATASET_ID,
+                "schema_major": 1,
+                "fields": ["ts_code", "trade_date", "close", "pre_close"],
+            },
+        ],
+    }
+
+
+def _td_query_payload(
+    dataset_id: str,
+    rows: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    return {
+        "api_version": "v1",
+        "catalog_version": "td-catalog-live",
+        "request_id": f"query-{dataset_id}",
+        "dataset_id": dataset_id,
+        "data": list(rows),
+        "next_cursor": None,
+        "metadata": {
+            "state": "ready",
+            "degraded": False,
+            "freshness": {"state": "fresh"},
+            "quality": {"state": "valid"},
+            "lineage": {"complete": True, "provider_neutral": True},
+            "receipt_id": f"receipt-{dataset_id}",
+            "data_through": "2026-08-31T16:00:00+08:00",
+            "observed_at": "2026-09-01T09:30:00+08:00",
+            "reasons": [],
+        },
+    }
+
+
+def _td_client(transport: _RecordingTDTransport) -> SharedSignalsV1Client:
+    return SharedSignalsV1Client(
+        SharedSignalsV1Config(
+            base_url="http://127.0.0.1:18082",
+            expected_catalog_version="evidence-only",
+            dataset_ids=frozenset({CALENDAR_DATASET_ID, QUOTE_DATASET_ID}),
+            access_policy_id="tradingagent-read-v1",
+            catalog_version_policy="evidence_only",
+            timeout_seconds=5.0,
+            max_limit=10_000,
+            cache_ttl_seconds=0.0,
+        ),
+        transport=transport,
+    )
+
+
+def test_query_windows_open_session_does_not_require_todays_daily() -> None:
+    transport = _RecordingTDTransport(
+        calendar_rows=(_open_calendar_row(),),
+        daily_by_date={
+            LAST_COMPLETE_DAILY: (
+                _daily_row(
+                    CASH_SESSION_SYMBOL,
+                    trade_date=LAST_COMPLETE_DAILY,
+                    close=12.5,
+                ),
+            ),
+        },
+    )
+    windows = query_windows_from_tradingdatas(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        client=_td_client(transport),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.observation_ready is True
+    assert window.session_calendar_ok is True
+    assert window.prior_close_cny == 12.5
+    assert window.quote_trade_date == LAST_COMPLETE_DAILY
+    assert window.reason_code != "missing_dataset_catalog_or_session_window"
+    daily_filters = [
+        call["json_body"]["filters"]
+        for call in transport.calls
+        if call["method"] == "POST"
+        and (call["json_body"] or {}).get("dataset_id") == QUOTE_DATASET_ID
+    ]
+    assert daily_filters == [{"trade_date": {"eq": LAST_COMPLETE_DAILY}}]
+    assert "20260901" not in json.dumps(daily_filters)
+
+
+def test_query_windows_closed_calendar_skips_daily_and_stays_fail_closed() -> None:
+    transport = _RecordingTDTransport(
+        calendar_rows=(_open_calendar_row(is_open=0),),
+        daily_by_date={
+            LAST_COMPLETE_DAILY: (
+                _daily_row(
+                    CASH_SESSION_SYMBOL,
+                    trade_date=LAST_COMPLETE_DAILY,
+                    close=12.5,
+                ),
+            ),
+        },
+    )
+    windows = query_windows_from_tradingdatas(
+        (CASH_SESSION_SYMBOL,),
+        trade_date=CASH_SESSION_TRADE_DATE,
+        client=_td_client(transport),
+    )
+    window = windows[CASH_SESSION_SYMBOL]
+    assert window.session_calendar_ok is False
+    assert window.observation_ready is False
+    assert window.reason_code == "missing_dataset_catalog_or_session_window"
+    assert not any(
+        (call["json_body"] or {}).get("dataset_id") == QUOTE_DATASET_ID
+        for call in transport.calls
+        if call["method"] == "POST"
+    )
+
+
+def test_open_window_without_champion_is_not_missing_catalog(tmp_path: Path) -> None:
+    windows = {
+        CASH_SESSION_SYMBOL: bind_cash_session_windows(
+            (CASH_SESSION_SYMBOL,),
+            trade_date=CASH_SESSION_TRADE_DATE,
+            catalog_version="td-catalog-live",
+            calendar_rows=(_open_calendar_row(),),
+            daily_rows=(
+                _daily_row(
+                    CASH_SESSION_SYMBOL,
+                    trade_date=LAST_COMPLETE_DAILY,
+                    close=12.5,
+                ),
+            ),
+        )[CASH_SESSION_SYMBOL]
+    }
+    result = _run_session(tmp_path, windows=windows)
+    row = result.disposition_for(CASH_SESSION_SYMBOL)
+    assert row.disposition is ExposureDisposition.REJECTED
+    assert row.reason_code == "champion_current_unavailable"
+    assert row.reason_code != "missing_dataset_catalog_or_session_window"
+    assert result.fill_count == 0
+    assert result.canonical_account_connected is False
