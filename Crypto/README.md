@@ -419,7 +419,7 @@ observation/completion/pending、资本守恒与 head、退出影子是否追平
 checkpoint 是否追平。它只输出单市场 USDT 状态，不跨市场汇总资金，不拥有调度、
 晋级或交易 authority。
 
-`delayed_paper_round_trip_health.py` 是现役 g4 round-trip epoch 的独立只读
+`delayed_paper_round_trip_health.py` 是现役 round-trip epoch 的独立只读
 健康/KPI 读侧。它只接受版本化 epoch manifest，不接受自由 output root；在读取
 前后都重验 epoch identity、旧 g2 archive 锚点、observation/completion 状态、
 Decision Ledger checksum 连续性和 round-trip capital head。缺 lock、缺 state、
@@ -428,7 +428,9 @@ state mtime 漂移、pending、账本链/守恒异常都会失败关闭，绝不
 observation、验证 decision event、capital cycle 与 receipt 分布，不是收益、胜率或
 策略晋级结论。序列化 payload 的 `failure_count` 仅统计同一次 checksum-verified
 Decision Ledger 读取中的持久化 `data_reject` 事件；它不代表 journal-only runtime
-failure，也不统计 `data_gap`、`risk_reject` 或普通 `decision` 事件。
+failure，也不统计 `data_gap`、`risk_reject` 或普通 `decision` 事件。CLI 失败时只向
+stderr 输出固定的 `round_trip_health_*` 原因码；它不会输出原始异常、路径或凭据，且
+该原因码仅用于只读告警定位，不改变核心 accumulator、资本或晋级权限。
 
 `tradingagent-crypto-round-trip-g4-health.service/.timer` 是该读侧的 tracked
 候选：每 15 分钟运行一次，默认不启用、无 token/网络权限、无 ReadWritePaths，
