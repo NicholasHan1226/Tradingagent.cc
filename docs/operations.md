@@ -254,7 +254,8 @@ sudo -u marketgraph "${SAFE_ENV[@]}" npm --version \
 `127.0.0.1:8787/healthz`；任何一次失败都必须在同一发布动作中原子切回先前 immutable
 release 并重启前端，不能等待 service 的自动重启或以 `activating` 代替健康验证。
 
-同一现役发布助手还负责收口五个 G5 round-trip unit 与四个 A股 unit
+同一现役发布助手还负责收口五个 G5 round-trip unit、一个 40 标的 observation
+unit 与四个 A股 unit
 （minute-session、minute-paper、minute-scale500-session、minute-scale500-paper）
 的 release 绑定。初始化和消费必须使用同一不可变版本，不能仅绑定基线 paper。
 切换前这些 one-shot

@@ -15,6 +15,14 @@ ASHARE_RELEASE_UNITS = (
     "tradingagent-ashare-minute-scale500-session.service",
     "tradingagent-ashare-minute-scale500-paper.service",
 )
+CRYPTO_RUNTIME_RELEASE_UNITS = (
+    "tradingagent-crypto-round-trip-g5-acceptance.service",
+    "tradingagent-crypto-round-trip-g5-delayed-paper.service",
+    "tradingagent-crypto-round-trip-g5-health.service",
+    "tradingagent-crypto-round-trip-g5-learning.service",
+    "tradingagent-crypto-round-trip-g5-learning-scrub.service",
+    "tradingagent-crypto-forty-symbol-observation.service",
+)
 
 
 def _read(path: str) -> str:
@@ -156,15 +164,13 @@ def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
 def test_root_release_helper_reconciles_runtime_release_dropins_atomically() -> None:
     helper = _read("deploy/release.sh")
 
-    for unit in (
-        "tradingagent-crypto-round-trip-g5-acceptance.service",
-        "tradingagent-crypto-round-trip-g5-delayed-paper.service",
-        "tradingagent-crypto-round-trip-g5-health.service",
-        "tradingagent-crypto-round-trip-g5-learning.service",
-        "tradingagent-crypto-round-trip-g5-learning-scrub.service",
-        *ASHARE_RELEASE_UNITS,
-    ):
+    for unit in (*CRYPTO_RUNTIME_RELEASE_UNITS, *ASHARE_RELEASE_UNITS):
         assert unit in helper
+    assert (
+        "/etc/systemd/system/tradingagent-crypto-forty-symbol-observation.service.d/"
+        "20-forty-symbol-release.conf"
+    ) in helper
+    assert 'test -r "$root/Crypto/forty_symbol_observation_runtime.py"' in helper
     for unit in ASHARE_RELEASE_UNITS:
         assert f"/etc/systemd/system/{unit}.d/20-ashare-release.conf" in helper
     assert 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")' in helper
@@ -208,12 +214,12 @@ def _release_transaction_fixture(
         (release_root / name).mkdir(parents=True)
     (release_root / "new" / ".deployed-sha").write_text("new\n")
     (release_root / "current").symlink_to(release_root / "old")
-    crypto_units = tuple(
-        f"tradingagent-crypto-round-trip-g5-{name}.service"
-        for name in ("acceptance", "delayed-paper", "health", "learning", "learning-scrub")
-    )
-    units = (*crypto_units, *ASHARE_RELEASE_UNITS)
-    timeouts = dict(zip(units, ("1min 30s", "45min", "infinity") * 3))
+    units = (*CRYPTO_RUNTIME_RELEASE_UNITS, *ASHARE_RELEASE_UNITS)
+    timeout_values = ("1min 30s", "45min", "infinity")
+    timeouts = {
+        unit: timeout_values[index % len(timeout_values)]
+        for index, unit in enumerate(units)
+    }
     canonical_name = "99-tradingagent-release.conf"
     for index, unit in enumerate(units):
         unit_dir = systemd / f"{unit}.d"
@@ -401,6 +407,23 @@ def test_each_ashare_unit_participates_in_preflight_and_transaction_rollback(
         assert calls[-1] == f"cat {unit}"
     if fault == "active-preflight":
         assert f"must be stopped during release preflight: {unit}" in completed.stderr
+    assert not list(tmp_path.glob("backup.*"))
+
+
+def test_forty_symbol_observation_participates_in_release_rollback(
+    tmp_path: Path,
+) -> None:
+    unit = "tradingagent-crypto-forty-symbol-observation.service"
+    completed, systemd, before, _ = _release_transaction_fixture(
+        tmp_path, "readback", unit
+    )
+
+    assert completed.returncode != 0
+    assert (tmp_path / "releases/current").resolve() == tmp_path / "releases/old"
+    after = {str(p.relative_to(systemd)): p.read_bytes() for p in systemd.rglob("*.conf")}
+    assert after == before
+    assert "rolling current back" in completed.stderr
+    assert unit in completed.stderr
     assert not list(tmp_path.glob("backup.*"))
 
 
