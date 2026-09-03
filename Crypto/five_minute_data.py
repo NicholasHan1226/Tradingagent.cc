@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Protocol
@@ -47,6 +47,7 @@ PROFILE_MODES = frozenset({"fixture_mock", "tradingdatas_handoff"})
 _SHA256_HEX = frozenset("0123456789abcdef")
 _BAR_FILTER_ROLES = frozenset({"symbol", "open_time_window"})
 _RULE_FILTER_ROLES = frozenset({"symbol", "active_status"})
+_ADDITIVE_LIMIT_COMPATIBILITY = "additive_max_in_values_unused"
 
 
 class CryptoFiveMinuteDataError(ValueError):
@@ -421,12 +422,20 @@ class CryptoDatasetQueryProfile:
             max_pages=self.max_pages,
             max_rows=self.max_rows,
         )
-        if rebuilt != self:
+        compatibility: str | None = None
+        if rebuilt != self and _is_additive_unused_in_limit_compatibility(
+            profile=self,
+            observed_row=_catalog_row(catalog, self.dataset_id),
+            rebuilt=rebuilt,
+        ):
+            compatibility = _ADDITIVE_LIMIT_COMPATIBILITY
+        elif rebuilt != self:
             raise CryptoFiveMinuteDataError("crypto_5m_catalog_contract_drift")
         return {
             "expected_catalog_version": self.catalog_version,
             "observed_catalog_version": catalog.catalog_version,
             "catalog_version_drift": catalog.catalog_version != self.catalog_version,
+            "catalog_contract_compatibility": compatibility,
         }
 
     @property
@@ -435,6 +444,58 @@ class CryptoDatasetQueryProfile:
 
     def to_payload(self) -> dict[str, Any]:
         return _canonical_value(self)
+
+
+def _catalog_row(
+    catalog: CatalogEnvelope,
+    dataset_id: str,
+) -> Mapping[str, Any]:
+    """Return the unique observed row after ``from_catalog`` has validated it."""
+
+    matches = [row for row in catalog.data if row.get("dataset_id") == dataset_id]
+    if len(matches) != 1:
+        raise CryptoFiveMinuteDataError("crypto_5m_dataset_catalog_row_missing")
+    return matches[0]
+
+
+def _is_additive_unused_in_limit_compatibility(
+    *,
+    profile: CryptoDatasetQueryProfile,
+    observed_row: Mapping[str, Any],
+    rebuilt: CryptoDatasetQueryProfile,
+) -> bool:
+    """Admit only TD's additive ``max_in_values`` limit for an ``eq`` consumer.
+
+    Old manifests fingerprinted the complete catalog ``limits`` mapping.  TD now
+    advertises ``max_in_values``.  The new limit cannot affect this profile when
+    it never submits an ``in`` filter.  Re-hashing exactly the observed row with
+    that one field removed proves the old fingerprint still covers every prior
+    contract field; any other change remains a hard failure.
+    """
+
+    if (
+        replace(
+            rebuilt,
+            catalog_contract_sha256=profile.catalog_contract_sha256,
+        )
+        != profile
+        or any(binding.operator == "in" for binding in profile.filter_bindings)
+    ):
+        return False
+    limits = observed_row.get("limits")
+    if not isinstance(limits, Mapping) or "max_in_values" not in limits:
+        return False
+    legacy_row = dict(observed_row)
+    legacy_limits = dict(limits)
+    legacy_limits.pop("max_in_values", None)
+    legacy_row["limits"] = legacy_limits
+    try:
+        return (
+            dataset_contract_fingerprint(legacy_row)
+            == profile.catalog_contract_sha256
+        )
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)

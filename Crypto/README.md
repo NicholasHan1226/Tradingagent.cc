@@ -152,7 +152,11 @@ python3 -m Crypto.fixture_auto_sim \
   filters、identity 与页预算另由独立 `consumer_profile_sha256` 和外层
   `profile_sha256` 绑定；两层任一漂移都 fail closed。冻结的 catalog version
   和 query receipt 的 observed catalog version 都保留为 evidence，但单独的无关
-  catalog version 变化不阻断四个目标 dataset；目标合同 hash、缺行或重复行仍失败关闭；
+  catalog version 变化不阻断四个目标 dataset。旧 manifest 唯一兼容例外是
+  TradingDatas 在完整 `limits` 映射中新增 `max_in_values`：仅当旧 hash 与删除该
+  字段后的当前同一行精确相符、且本 consumer 的全部 filter 都不是 `in` 时才接受，
+  并在 catalog evidence 标记 `additive_max_in_values_unused`；任一其它 limits、
+  schema、字段、identity、filter/order、缺行或重复行仍失败关闭；
 - 全部为 false 的 real/Testnet/Live/model-network/自动晋级/自动扩风险安全项。
 
 runtime 不在本地动态发明 dataset ID，也不会根据新鲜 catalog 重新生成 profile。
