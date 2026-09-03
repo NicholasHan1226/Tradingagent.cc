@@ -30,6 +30,7 @@ from Ashare.capital_backed_paper_runner import (
     close_or_touch_is_not_a_fill,
     count_coverage_is_not_a_fill,
     make_missing_window,
+    in_session_quote_clock_candidates,
     in_session_quote_clock_slot,
     last_complete_in_session_quote_slot,
     make_observation_window,
@@ -1263,6 +1264,33 @@ def test_in_session_quote_clock_slot_uses_open_print_before_first_complete_bar()
     assert preopen is None
 
 
+def test_in_session_quote_clock_candidates_walk_back_from_just_closed_1005() -> None:
+    """A 10:05 oneshot must still see the published 10:00 print."""
+
+    trade_date = "2026-09-03"
+    oneshot = datetime(2026, 9, 3, 10, 5, tzinfo=SHANGHAI)
+    preferred = in_session_quote_clock_slot(
+        trade_date=trade_date,
+        decision_as_of=oneshot,
+    )
+    assert preferred is not None
+    assert preferred.strftime("%Y-%m-%d %H:%M:%S") == "2026-09-03 10:05:00"
+    candidates = in_session_quote_clock_candidates(
+        trade_date=trade_date,
+        decision_as_of=oneshot,
+    )
+    assert [slot.strftime("%H:%M:%S") for slot in candidates] == [
+        "10:05:00",
+        "10:00:00",
+        "09:55:00",
+    ]
+    afternoon = in_session_quote_clock_candidates(
+        trade_date=trade_date,
+        decision_as_of=datetime(2026, 9, 3, 13, 2, tzinfo=SHANGHAI),
+    )
+    assert [slot.strftime("%H:%M:%S") for slot in afternoon] == ["13:00:00"]
+
+
 def test_cash_session_daily_close_does_not_set_clock_or_mint_fill(
     tmp_path: Path,
 ) -> None:
@@ -2348,4 +2376,198 @@ def test_morning_bar_in_afternoon_session_stays_stale_not_a_fill(
     assert row.nonfill_reason == "paper_market_snapshot_stale"
     assert result.fill_count == 0
     assert close_or_touch_is_not_a_fill() == 0
+
+
+def _thursday_1005_calendar() -> tuple[dict[str, object], ...]:
+    return (
+        {
+            "exchange": "SSE",
+            "cal_date": "20260903",
+            "is_open": 1,
+            "pretrade_date": "20260902",
+        },
+    )
+
+
+def test_query_windows_1005_with_live_1000_rt_min_is_not_quote_clocks_unavailable() -> None:
+    """Host-shaped 10:05 CST oneshot: live rt_min is the published 10:00 bar.
+
+    #629 still queried only the just-closed 10:05 slot.  TD commits that bar
+    about 20s later, so every 科技+医药 name stayed quote_clocks_unavailable
+    even though 10:00 prints were live.  This test must fail if that happens.
+    """
+
+    trade_date = "2026-09-03"
+    decision = datetime(2026, 9, 3, 10, 5, tzinfo=SHANGHAI)
+    tech = "000063.SZ"
+    pharma = "600276.SH"
+    live_bars = (
+        _production_rt_min_row(
+            tech,
+            time_text="2026-09-03 10:00:00",
+            trade_date="20260903",
+            close=12.8,
+            high=12.8,
+            low=12.74,
+        ),
+        _production_rt_min_row(
+            pharma,
+            time_text="2026-09-03 10:00:00",
+            trade_date="20260903",
+            close=28.4,
+            high=28.5,
+            low=28.1,
+        ),
+    )
+    transport = _RecordingTDTransport(
+        calendar_rows=_thursday_1005_calendar(),
+        daily_by_date={
+            "20260902": (
+                _daily_row(tech, trade_date="20260902", close=12.8),
+                _daily_row(pharma, trade_date="20260902", close=28.4),
+            ),
+        },
+        quote_clock_rows=live_bars,
+    )
+    windows = query_windows_from_tradingdatas(
+        (tech, pharma),
+        trade_date=trade_date,
+        decision_as_of=decision,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    for symbol in (tech, pharma):
+        window = windows[symbol]
+        assert window.observation_ready is True
+        assert window.quote_clocks_ok is True
+        assert window.quote_clock_at == "2026-09-03 10:00:00"
+        assert window.fill_snapshot_ready is True
+        assert window.reason_code == "window_ready"
+    clock_filters = [
+        call["json_body"]["filters"]
+        for call in transport.calls
+        if call["method"] == "POST"
+        and (call["json_body"] or {}).get("dataset_id") == QUOTE_CLOCK_DATASET_ID
+    ]
+    assert clock_filters
+    assert clock_filters[0]["time"] == {"eq": "2026-09-03 10:05:00"}
+    assert any(filters["time"] == {"eq": "2026-09-03 10:00:00"} for filters in clock_filters)
+    for filters in clock_filters:
+        assert "trade_date" not in filters
+
+
+def test_query_windows_1005_daily_close_stays_quote_clocks_unavailable() -> None:
+    trade_date = "2026-09-03"
+    decision = datetime(2026, 9, 3, 10, 5, tzinfo=SHANGHAI)
+    symbol = "000063.SZ"
+    transport = _RecordingTDTransport(
+        calendar_rows=_thursday_1005_calendar(),
+        daily_by_date={
+            "20260902": (_daily_row(symbol, trade_date="20260902", close=12.8),),
+        },
+        quote_clock_rows=(
+            _daily_row(symbol, trade_date="20260902", close=12.8),
+            _daily_row(symbol, trade_date="20260903", close=99.0, pre_close=12.8),
+        ),
+        include_quote_clock=True,
+    )
+    windows = query_windows_from_tradingdatas(
+        (symbol,),
+        trade_date=trade_date,
+        decision_as_of=decision,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[symbol]
+    assert window.observation_ready is True
+    assert window.quote_clocks_ok is False
+    assert window.quote_clock_at == ""
+    assert window.fill_snapshot_ready is False
+
+
+def test_thursday_1005_oneshot_with_live_1000_rt_min_keeps_snapshot_and_bar_evidence(
+    tmp_path: Path,
+) -> None:
+    """Thu 2026-09-03 10:05 CST: live 10:00 rt_min is a clock, not a miss."""
+
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    trade_date = "2026-09-03"
+    decision = datetime(2026, 9, 3, 10, 5, tzinfo=SHANGHAI)
+    tech = "000063.SZ"
+    pharma = "600276.SH"
+    live_bars = (
+        _production_rt_min_row(
+            tech,
+            time_text="2026-09-03 10:00:00",
+            trade_date="20260903",
+            close=12.8,
+            high=12.8,
+            low=12.74,
+        ),
+        _production_rt_min_row(
+            pharma,
+            time_text="2026-09-03 10:00:00",
+            trade_date="20260903",
+            close=28.4,
+            high=28.5,
+            low=28.1,
+        ),
+    )
+    transport = _RecordingTDTransport(
+        calendar_rows=_thursday_1005_calendar(),
+        daily_by_date={
+            "20260902": (
+                _daily_row(tech, trade_date="20260902", close=12.8),
+                _daily_row(pharma, trade_date="20260902", close=28.4),
+            ),
+        },
+        quote_clock_rows=live_bars,
+    )
+    windows = query_windows_from_tradingdatas(
+        (tech, pharma),
+        trade_date=trade_date,
+        decision_as_of=decision,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    assert windows[tech].quote_clocks_ok is True
+    assert windows[pharma].quote_clocks_ok is True
+    assert windows[tech].fill_snapshot_ready is True
+    assert windows[pharma].fill_snapshot_ready is True
+    result = run_capital_backed_paper_session(
+        _config(tmp_path, trade_date=trade_date, decision_as_of=decision),
+        windows=windows,
+        champion_registry=registry,
+    )
+    for symbol in (tech, pharma):
+        row = result.disposition_for(symbol)
+        assert row.nonfill_reason != "quote_clocks_unavailable"
+        assert row.nonfill_reason not in IN_SESSION_BANNED_NONFILL
+        assert row.disposition is ExposureDisposition.PAPER_FILLED
+        assert row.simulated_fill_id
+        assert row.filled_quantity == 100
+    assert result.fill_count == 2
+    ledger = MarketCapitalLedger(
+        _config(tmp_path, trade_date=trade_date, decision_as_of=decision).ledger_root,
+        policy=MarketPolicy.load("ashare"),
+    )
+    snapshot = ledger.snapshot()
+    assert snapshot.cash_balance_cny < 50_000.0
+    assert snapshot.unreconciled_fill_commit_ids
+    events = [
+        json.loads(line)
+        for line in (Path(ledger.root) / ledger.events_filename)
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(row.get("event_type") == "fill_commit" for row in events)
+    latest = json.loads(result.latest_path.read_text(encoding="utf-8"))
+    assert latest["fill_count"] == 2
+    assert latest["canonical_account_connected"] is False
+    assert latest["real_trading_enabled"] is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
 
