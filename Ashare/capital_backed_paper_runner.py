@@ -20,7 +20,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, fields
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from collections.abc import Sequence
 from types import SimpleNamespace
@@ -600,10 +600,13 @@ def _bar_evidence_fill_gate(
     """Return a non-fill reason, or None when the last-complete bar may fill.
 
     A last-complete ``rt_min`` five-minute bar in the same continuous session
-    is fill-fresh until the next session slot.  The 30s L1 quote window is
-    not a 5-minute bar clock.  Lunch and the closing auction have no
-    continuous session.  A morning bar is stale once the afternoon session
-    has started.  Daily close/touch never reaches this gate.
+    is fill-fresh until the next session slot.  Before that first complete
+    bar, the session-open print (09:30 AM / 13:00 PM) is the earliest
+    allowable in-session evidence and is also fill-fresh in that session.
+    The 30s L1 quote window is not a 5-minute bar clock.  Lunch and the
+    closing auction have no continuous session.  A morning bar is stale
+    once the afternoon session has started.  Daily close/touch never
+    reaches this gate.
     """
 
     if bar_slot is None:
@@ -804,8 +807,10 @@ def attempt_capital_backed_simulation_fill(
     stay ``PAPER_NOT_FILLED``.  This function never mints a commit from
     ``prior_close_cny``.  A bound in-session ``rt_min`` bar may become
     bar-evidence bid/ask (last ± conservative slippage), never a copied close.
-    The last-complete bar in the same continuous session is fill-fresh; lunch
-    and the closing auction do not mint a fill.
+    The last-complete bar in the same continuous session is fill-fresh;
+    before that bar exists, the session-open print is the earliest
+    allowable in-session evidence and stays fill-fresh.  Lunch and the
+    closing auction do not mint a fill.
     """
 
     if type(request) is not FillAttemptRequest:
@@ -1750,7 +1755,9 @@ def last_complete_in_session_quote_slot(
 
     This is an in-session quote clock, not delayed-paper freshness.  Lunch or
     a later in-session oneshot may use the last morning bar.  Daily close is
-    never a slot.  Before the first 09:35 bar there is no clock.
+    never a slot.  Before the first 09:35 bar there is no *completed*
+    five-minute clock; early continuous auction uses
+    ``in_session_quote_clock_slot`` for the session-open print.
     """
 
     if decision_as_of.tzinfo is None or decision_as_of.utcoffset() is None:
@@ -1763,6 +1770,68 @@ def last_complete_in_session_quote_slot(
         return None
     eligible = [slot for slot in session_bar_ends(local.date()) if slot <= local]
     return max(eligible) if eligible else None
+
+
+def _continuous_session_open_print(
+    *,
+    trade_date: str,
+    session: str,
+) -> datetime | None:
+    """Earliest allowable in-session print: 09:30 AM or 13:00 PM."""
+
+    try:
+        day = date.fromisoformat(trade_date)
+    except ValueError:
+        return None
+    if session == "continuous_auction_am":
+        return datetime.combine(day, time(9, 30), tzinfo=SHANGHAI)
+    if session == "continuous_auction_pm":
+        return datetime.combine(day, time(13, 0), tzinfo=SHANGHAI)
+    return None
+
+
+def in_session_quote_clock_slot(
+    *,
+    trade_date: str,
+    decision_as_of: datetime,
+) -> datetime | None:
+    """Slot for clock + snapshot + bar-evidence bind.
+
+    After the first complete five-minute bar in the current continuous
+    session, this is that last-complete bar.  Before that bar completes,
+    early continuous auction may use the session-open print (09:30 AM /
+    13:00 PM) as the earliest allowable in-session evidence.  Lunch and
+    the closing auction keep the last-complete bar for clock bind; the
+    fill gate still fail-closes those sessions.  Pre-open and other-day
+    decisions have no slot.  Daily close is never a slot.
+    """
+
+    complete = last_complete_in_session_quote_slot(
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+    )
+    if decision_as_of.tzinfo is None or decision_as_of.utcoffset() is None:
+        return None
+    if not _compact_session_date(trade_date):
+        return None
+    local = decision_as_of.astimezone(SHANGHAI)
+    if local.date().isoformat() != trade_date:
+        return None
+    decision_session = ashare_continuous_session(local)
+    if decision_session is None:
+        return complete
+    if (
+        complete is not None
+        and ashare_continuous_session(complete) == decision_session
+    ):
+        return complete
+    open_print = _continuous_session_open_print(
+        trade_date=trade_date,
+        session=decision_session,
+    )
+    if open_print is None or open_print > local:
+        return None
+    return open_print
 
 
 def _parse_quote_clock_time(value: object) -> datetime | None:
@@ -1830,13 +1899,14 @@ def bind_quote_clocks(
     """Overlay in-session ``rt_min`` clocks onto cash-session windows.
 
     Daily close/touch rows never set ``quote_clocks_ok``.  A present clock is
-    an exact completed session slot at or before ``decision_as_of``.  An
-    ``rt_min`` bar may carry ``trade_date`` + ``close``; that is still a
-    clock when ``time`` matches the slot.  Missing clocks stay
+    an exact in-session slot at or before ``decision_as_of``: the last
+    complete five-minute bar, or the session-open print before that bar
+    exists.  An ``rt_min`` bar may carry ``trade_date`` + ``close``; that
+    is still a clock when ``time`` matches the slot.  Missing clocks stay
     ``quote_clocks_ok=False``.  This function never mints a fill.
     """
 
-    slot = quote_clock_slot or last_complete_in_session_quote_slot(
+    slot = quote_clock_slot or in_session_quote_clock_slot(
         trade_date=trade_date,
         decision_as_of=decision_as_of,
     )
@@ -1917,16 +1987,19 @@ def bind_market_snapshots(
     decision_as_of: datetime,
     snapshot_rows: Sequence[Mapping[str, Any]],
     snapshot_proof: QuoteClockQueryProof | None = None,
+    quote_clock_slot: datetime | None = None,
     source_dataset_id: str = QUOTE_CLOCK_DATASET_ID,
 ) -> dict[str, SymbolWindow]:
     """Bind in-session rt_min bar-evidence onto clocked windows.
 
     Daily close/touch rows never become a snapshot.  Last/close is the bar
-    mid, not bid/ask.  Missing volume or receipt proof leaves the window
-    clocked but snapshot-unready.  This function never mints a fill.
+    mid, not bid/ask.  The bind uses the same slot as the quote clock:
+    last-complete bar, or the session-open print before that bar exists.
+    Missing volume or receipt proof leaves the window clocked but
+    snapshot-unready.  This function never mints a fill.
     """
 
-    slot = last_complete_in_session_quote_slot(
+    slot = quote_clock_slot or in_session_quote_clock_slot(
         trade_date=trade_date,
         decision_as_of=decision_as_of,
     )
@@ -2329,13 +2402,15 @@ def query_windows_from_tradingdatas(
     becomes a quote clock, a bid/ask snapshot, or a fill.
 
     In-session quote clocks come from ``cn.dataset.rt_min`` at the last
-    completed five-minute session slot at or before ``decision_as_of``.  A
-    live bar may also carry ``trade_date`` and ``close``; that is still a
-    clock when ``time`` matches the slot.  The same last-complete bar may
-    bind volume and query-receipt proof as a bar-evidence snapshot;
-    last/close is the bar mid, not bid/ask.  Receipt-proof failure must not
-    discard present clock rows.  Missing clocks stay
-    ``quote_clocks_unavailable``.  Present clocks without a snapshot stay
+    completed five-minute session slot at or before ``decision_as_of``, or
+    the session-open print (09:30 AM / 13:00 PM) when continuous auction
+    has started but that first complete bar is not out yet.  A live bar
+    may also carry ``trade_date`` and ``close``; that is still a clock
+    when ``time`` matches the slot.  The same slot may bind volume and
+    query-receipt proof as a bar-evidence snapshot; last/close is the bar
+    mid, not bid/ask.  Receipt-proof failure must not discard present
+    clock rows.  Missing clocks stay ``quote_clocks_unavailable``.
+    Present clocks without a snapshot stay
     ``capital_fill_market_snapshot_unavailable``.  A closed calendar stays
     fail-closed.
     """
@@ -2474,7 +2549,7 @@ def query_windows_from_tradingdatas(
 
     clock_catalog = rows_by_id.get(QUOTE_CLOCK_DATASET_ID)
     clock_schema = _schema_major(clock_catalog) if clock_catalog is not None else None
-    slot = last_complete_in_session_quote_slot(
+    slot = in_session_quote_clock_slot(
         trade_date=trade_date,
         decision_as_of=decision_as_of,
     )
@@ -2516,6 +2591,7 @@ def query_windows_from_tradingdatas(
         decision_as_of=decision_as_of,
         snapshot_rows=clock_rows,
         snapshot_proof=clock_proof,
+        quote_clock_slot=slot,
     )
 
 
