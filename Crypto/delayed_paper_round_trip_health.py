@@ -490,6 +490,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     code = health_exit_code(result)
     if code:
+        # A stale but checksum-verified snapshot is non-authoritative, not an
+        # exception. Preserve it for bounded operational diagnosis while the
+        # nonzero exit code continues to fail closed.
+        print(
+            json.dumps(
+                result,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
         print("crypto round-trip health failed closed", file=sys.stderr)
         return code
     print(
