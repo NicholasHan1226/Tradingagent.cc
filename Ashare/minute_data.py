@@ -736,6 +736,16 @@ class MinuteDatasetProfile:
             or page_limit > server_page_size
         ):
             raise MinuteDataContractError("minute_page_limit_exceeds_catalog")
+        server_max_in_values = limits.get("max_in_values")
+        if (
+            isinstance(server_max_in_values, bool)
+            or not isinstance(server_max_in_values, int)
+            or server_max_in_values <= 0
+            or page_limit > server_max_in_values
+        ):
+            raise MinuteDataContractError(
+                "minute_page_limit_exceeds_catalog_in_values"
+            )
         raw_filter_operators = row.get("filter_operators")
         if not isinstance(raw_filter_operators, Mapping):
             raise MinuteDataContractError("minute_catalog_filter_operators_invalid")

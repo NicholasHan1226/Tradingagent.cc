@@ -44,6 +44,7 @@ class _Transport:
         *,
         rows: list[dict[str, Any]] | None = None,
         max_page_size: int = 10,
+        max_in_values: int | None = None,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.rows = rows or [
@@ -59,6 +60,9 @@ class _Transport:
             }
         ]
         self.max_page_size = max_page_size
+        self.max_in_values = (
+            max_page_size if max_in_values is None else max_in_values
+        )
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(kwargs)
@@ -108,6 +112,7 @@ class _Transport:
                             },
                             "limits": {
                                 "max_page_size": self.max_page_size,
+                                "max_in_values": self.max_in_values,
                                 "max_lookback_days": 1,
                             },
                             "availability": {"activation_states": ["active"]},
@@ -886,6 +891,20 @@ def test_exact_thirty_snapshot_rows_round_trip_without_second_query() -> None:
     ]
 
 
+def test_profile_rejects_page_limit_above_catalog_max_in_values() -> None:
+    config = _config(max_rows=500, page_limit=500)
+    client = SharedSignalsV1Client(
+        config.client_config(),
+        transport=_Transport(max_page_size=500, max_in_values=100),
+    )
+
+    with pytest.raises(
+        MinuteDataContractError,
+        match="minute_page_limit_exceeds_catalog_in_values",
+    ):
+        config.build_profile(client)
+
+
 def _real_rt_min_rows() -> list[dict[str, Any]]:
     symbols = [
         *(f"{index:06d}.SZ" for index in range(1, 16)),
@@ -970,7 +989,11 @@ class _RealRtMinTransport:
                                 field: ["eq", "in", "gte", "lte", "between"]
                                 for field in fields
                             },
-                            "limits": {"max_page_size": 30, "max_lookback_days": 1},
+                            "limits": {
+                                "max_page_size": 30,
+                                "max_in_values": 30,
+                                "max_lookback_days": 1,
+                            },
                             "availability": {"activation_states": ["active"]},
                         }
                     ],
