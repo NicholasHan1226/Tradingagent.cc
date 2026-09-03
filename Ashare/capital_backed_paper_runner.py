@@ -1834,6 +1834,64 @@ def in_session_quote_clock_slot(
     return open_print
 
 
+def in_session_quote_clock_slots(
+    *,
+    trade_date: str,
+    decision_as_of: datetime,
+) -> tuple[datetime, ...]:
+    """Preferred last-complete slot, then the prior 5-min print in-session.
+
+    Production ``cn.dataset.rt_min`` may label the same completed bar as
+    the bar-end (10:05) or the bar-start (10:00).  A 10:05 oneshot must
+    accept either.  The session-open print stays the only candidate before
+    the first complete bar.  A morning print is not an afternoon slot.
+    Daily close is never a slot.
+    """
+
+    preferred = in_session_quote_clock_slot(
+        trade_date=trade_date,
+        decision_as_of=decision_as_of,
+    )
+    if preferred is None:
+        return ()
+    slots = [preferred]
+    prior = preferred - timedelta(minutes=5)
+    if decision_as_of.tzinfo is None or decision_as_of.utcoffset() is None:
+        return tuple(slots)
+    local = decision_as_of.astimezone(SHANGHAI)
+    if prior > local:
+        return tuple(slots)
+    preferred_session = ashare_continuous_session(preferred)
+    prior_session = ashare_continuous_session(prior)
+    if prior_session is not None and prior_session == preferred_session:
+        slots.append(prior)
+        return tuple(slots)
+    open_print = (
+        _continuous_session_open_print(
+            trade_date=trade_date,
+            session=preferred_session,
+        )
+        if preferred_session
+        else None
+    )
+    if open_print is not None and prior == open_print:
+        slots.append(prior)
+    return tuple(slots)
+
+
+def _allowed_in_session_clock_slots(
+    *,
+    trade_date: str,
+    decision_as_of: datetime,
+) -> frozenset[datetime]:
+    return frozenset(
+        in_session_quote_clock_slots(
+            trade_date=trade_date,
+            decision_as_of=decision_as_of,
+        )
+    )
+
+
 def _parse_quote_clock_time(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
@@ -1899,20 +1957,24 @@ def bind_quote_clocks(
     """Overlay in-session ``rt_min`` clocks onto cash-session windows.
 
     Daily close/touch rows never set ``quote_clocks_ok``.  A present clock is
-    an exact in-session slot at or before ``decision_as_of``: the last
-    complete five-minute bar, or the session-open print before that bar
-    exists.  An ``rt_min`` bar may carry ``trade_date`` + ``close``; that
-    is still a clock when ``time`` matches the slot.  Missing clocks stay
-    ``quote_clocks_ok=False``.  This function never mints a fill.
+    an in-session slot at or before ``decision_as_of``: the last complete
+    five-minute bar-end, the same bar's prior 5-min print (bar-start), or
+    the session-open print before that bar exists.  A 10:05 oneshot may
+    bind 10:05 or 10:00.  An ``rt_min`` bar may carry ``trade_date`` +
+    ``close``; that is still a clock when ``time`` matches an allowed
+    slot.  Missing clocks stay ``quote_clocks_ok=False``.  This function
+    never mints a fill.
     """
 
-    slot = quote_clock_slot or in_session_quote_clock_slot(
+    allowed = _allowed_in_session_clock_slots(
         trade_date=trade_date,
         decision_as_of=decision_as_of,
     )
+    if quote_clock_slot is not None:
+        allowed = frozenset(set(allowed) | {quote_clock_slot})
     from_rt_min = source_dataset_id == QUOTE_CLOCK_DATASET_ID
     clocks: dict[str, datetime] = {}
-    if slot is not None:
+    if allowed:
         for row in quote_clock_rows:
             if not isinstance(row, Mapping) or _looks_like_daily_close_row(row):
                 continue
@@ -1925,9 +1987,11 @@ def bind_quote_clocks(
             if not from_rt_min and not _five_minute_freq(freq):
                 continue
             instant = _row_bar_time(row)
-            if instant is None or instant != slot:
+            if instant is None or instant not in allowed:
                 continue
-            clocks[symbol] = instant
+            existing = clocks.get(symbol)
+            if existing is None or instant > existing:
+                clocks[symbol] = instant
 
     bound: dict[str, SymbolWindow] = {}
     for symbol, window in dict(windows).items():
@@ -1994,15 +2058,19 @@ def bind_market_snapshots(
 
     Daily close/touch rows never become a snapshot.  Last/close is the bar
     mid, not bid/ask.  The bind uses the same slot as the quote clock:
-    last-complete bar, or the session-open print before that bar exists.
-    Missing volume or receipt proof leaves the window clocked but
-    snapshot-unready.  This function never mints a fill.
+    last-complete bar-end, the same bar's prior 5-min print, or the
+    session-open print before that bar exists.  Snapshot fields stay on
+    the bound clock, not a different slot.  Missing volume or receipt
+    proof leaves the window clocked but snapshot-unready.  This function
+    never mints a fill.
     """
 
-    slot = quote_clock_slot or in_session_quote_clock_slot(
+    allowed = _allowed_in_session_clock_slots(
         trade_date=trade_date,
         decision_as_of=decision_as_of,
     )
+    if quote_clock_slot is not None:
+        allowed = frozenset(set(allowed) | {quote_clock_slot})
     def _proof_ready(proof: QuoteClockQueryProof | None) -> bool:
         return bool(
             proof is not None
@@ -2012,8 +2080,8 @@ def bind_market_snapshots(
             and _looks_like_sha256(proof.source_lineage_sha256)
         )
 
-    bars: dict[str, Mapping[str, Any]] = {}
-    if slot is not None and _proof_ready(snapshot_proof):
+    bars: dict[tuple[str, datetime], Mapping[str, Any]] = {}
+    if allowed and _proof_ready(snapshot_proof):
         for row in snapshot_rows:
             if not isinstance(row, Mapping) or _looks_like_daily_close_row(row):
                 continue
@@ -2026,17 +2094,18 @@ def bind_market_snapshots(
             if source_dataset_id != QUOTE_CLOCK_DATASET_ID:
                 continue
             instant = _row_bar_time(row)
-            if instant is None or instant != slot:
+            if instant is None or instant not in allowed:
                 continue
             last = _finite_price(row.get("close") or row.get("last") or row.get("open"))
             volume = _finite_price(row.get("vol") or row.get("volume") or row.get("vol_shares"))
             if last is None or volume is None:
                 continue
-            bars[symbol] = row
+            bars[(symbol, instant)] = row
 
     bound: dict[str, SymbolWindow] = {}
     for symbol, window in dict(windows).items():
-        row = bars.get(symbol)
+        clock = _parse_quote_clock_time(window.quote_clock_at)
+        row = bars.get((symbol, clock)) if clock is not None else None
         if (
             row is None
             or not _proof_ready(snapshot_proof)
@@ -2381,6 +2450,42 @@ def query_last_complete_quote_clock_rows(
     return rows
 
 
+def query_in_session_quote_clock_bundle(
+    client: Any,
+    *,
+    schema_major: int,
+    slots: Sequence[datetime],
+    symbols: Sequence[str],
+    chunk_size: int = CASH_SESSION_QUOTE_CLOCK_CHUNK,
+    include_freq: bool = False,
+) -> tuple[tuple[Mapping[str, Any], ...], QuoteClockQueryProof | None, datetime | None]:
+    """Query preferred last-complete slot, then the prior in-session print.
+
+    An empty 10:05 query must still bind a present 10:00 bar.  Empty or
+    413 answers never invent a clock or a fill.
+    """
+
+    last_proof: QuoteClockQueryProof | None = None
+    first_slot = slots[0] if slots else None
+    for slot in slots:
+        try:
+            rows, proof = query_last_complete_quote_clock_bundle(
+                client,
+                schema_major=schema_major,
+                slot=slot,
+                symbols=symbols,
+                chunk_size=chunk_size,
+                include_freq=include_freq,
+            )
+        except Exception:
+            rows, proof = (), None
+        if proof is not None:
+            last_proof = proof
+        if rows:
+            return rows, proof, slot
+    return (), last_proof, first_slot
+
+
 def query_windows_from_tradingdatas(
     symbols: tuple[str, ...],
     *,
@@ -2404,13 +2509,15 @@ def query_windows_from_tradingdatas(
     In-session quote clocks come from ``cn.dataset.rt_min`` at the last
     completed five-minute session slot at or before ``decision_as_of``, or
     the session-open print (09:30 AM / 13:00 PM) when continuous auction
-    has started but that first complete bar is not out yet.  A live bar
-    may also carry ``trade_date`` and ``close``; that is still a clock
-    when ``time`` matches the slot.  The same slot may bind volume and
-    query-receipt proof as a bar-evidence snapshot; last/close is the bar
-    mid, not bid/ask.  Receipt-proof failure must not discard present
-    clock rows.  Missing clocks stay ``quote_clocks_unavailable``.
-    Present clocks without a snapshot stay
+    has started but that first complete bar is not out yet.  A 10:05
+    oneshot may bind a last-complete 10:05 bar-end or the same bar's
+    10:00 print; the query tries the preferred slot then that prior
+    print.  A live bar may also carry ``trade_date`` and ``close``; that
+    is still a clock when ``time`` matches an allowed slot.  The same
+    slot may bind volume and query-receipt proof as a bar-evidence
+    snapshot; last/close is the bar mid, not bid/ask.  Receipt-proof
+    failure must not discard present clock rows.  Missing clocks stay
+    ``quote_clocks_unavailable``.  Present clocks without a snapshot stay
     ``capital_fill_market_snapshot_unavailable``.  A closed calendar stays
     fail-closed.
     """
@@ -2549,10 +2656,11 @@ def query_windows_from_tradingdatas(
 
     clock_catalog = rows_by_id.get(QUOTE_CLOCK_DATASET_ID)
     clock_schema = _schema_major(clock_catalog) if clock_catalog is not None else None
-    slot = in_session_quote_clock_slot(
+    slots = in_session_quote_clock_slots(
         trade_date=trade_date,
         decision_as_of=decision_as_of,
     )
+    slot = slots[0] if slots else None
     configured_ids = getattr(getattr(client, "config", None), "dataset_ids", frozenset())
     if (
         clock_schema is None
@@ -2567,23 +2675,18 @@ def query_windows_from_tradingdatas(
             quote_clock_slot=slot,
         )
 
-    clock_rows: tuple[Mapping[str, Any], ...] = ()
-    clock_proof: QuoteClockQueryProof | None = None
-    try:
-        clock_rows, clock_proof = query_last_complete_quote_clock_bundle(
-            client,
-            schema_major=clock_schema,
-            slot=slot,
-            symbols=symbols,
-        )
-    except Exception:
-        clock_rows, clock_proof = (), None
+    clock_rows, clock_proof, bound_slot = query_in_session_quote_clock_bundle(
+        client,
+        schema_major=clock_schema,
+        slots=slots,
+        symbols=symbols,
+    )
     clocked = bind_quote_clocks(
         windows,
         trade_date=trade_date,
         decision_as_of=decision_as_of,
         quote_clock_rows=clock_rows,
-        quote_clock_slot=slot,
+        quote_clock_slot=bound_slot,
     )
     return bind_market_snapshots(
         clocked,
@@ -2591,7 +2694,7 @@ def query_windows_from_tradingdatas(
         decision_as_of=decision_as_of,
         snapshot_rows=clock_rows,
         snapshot_proof=clock_proof,
-        quote_clock_slot=slot,
+        quote_clock_slot=bound_slot,
     )
 
 

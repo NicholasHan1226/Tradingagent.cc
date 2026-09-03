@@ -877,9 +877,11 @@ prior-close evidence only: it is not a quote clock and cannot mint a fill.
 In-session quote clocks come from the last completed `cn.dataset.rt_min`
 five-minute slot at or before `decision_as_of`, or from the session-open
 print (09:30 AM / 13:00 PM) when continuous auction has started but that
-first complete bar is not out yet. A live `rt_min` bar may also
-carry `trade_date` and `close`; that is still a clock when `time` matches the
-slot, even if `freq` is omitted. Missing clocks stay honest
+first complete bar is not out yet. A 10:05 CST oneshot may bind the
+last-complete 10:05 bar-end or the same bar's 10:00 print; querying only
+10:05 must not drop a present 10:00 clock. A live `rt_min` bar may also
+carry `trade_date` and `close`; that is still a clock when `time` matches an
+allowed slot, even if `freq` is omitted. Missing clocks stay honest
 `PAPER_NOT_FILLED` / `quote_clocks_unavailable`. The same slot
 may bind volume and query-receipt proof as a bar-evidence snapshot: last/close
 is the bar mid, not bid/ask, and bid/ask are last ± conservative slippage

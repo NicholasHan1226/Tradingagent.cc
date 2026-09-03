@@ -31,6 +31,7 @@ from Ashare.capital_backed_paper_runner import (
     count_coverage_is_not_a_fill,
     make_missing_window,
     in_session_quote_clock_slot,
+    in_session_quote_clock_slots,
     last_complete_in_session_quote_slot,
     make_observation_window,
     paper_session_drift_allows_new_risk,
@@ -1263,6 +1264,32 @@ def test_in_session_quote_clock_slot_uses_open_print_before_first_complete_bar()
     assert preopen is None
 
 
+def test_in_session_quote_clock_slots_accept_1000_or_1005_at_1005() -> None:
+    decision = datetime(2026, 9, 3, 10, 5, tzinfo=SHANGHAI)
+    preferred = in_session_quote_clock_slot(
+        trade_date="2026-09-03",
+        decision_as_of=decision,
+    )
+    assert preferred is not None
+    assert preferred.strftime("%Y-%m-%d %H:%M:%S") == "2026-09-03 10:05:00"
+    slots = in_session_quote_clock_slots(
+        trade_date="2026-09-03",
+        decision_as_of=decision,
+    )
+    assert [slot.strftime("%H:%M:%S") for slot in slots] == ["10:05:00", "10:00:00"]
+    complete = last_complete_in_session_quote_slot(
+        trade_date="2026-09-03",
+        decision_as_of=decision,
+    )
+    assert complete is not None
+    assert complete.strftime("%H:%M:%S") == "10:05:00"
+    afternoon = in_session_quote_clock_slots(
+        trade_date="2026-09-03",
+        decision_as_of=datetime(2026, 9, 3, 13, 2, tzinfo=SHANGHAI),
+    )
+    assert [slot.strftime("%H:%M:%S") for slot in afternoon] == ["13:00:00"]
+
+
 def test_cash_session_daily_close_does_not_set_clock_or_mint_fill(
     tmp_path: Path,
 ) -> None:
@@ -2255,6 +2282,275 @@ def test_thursday_open_oneshot_close_at_high_is_paper_filled(
     assert result.fill_count == 1
     ledger = MarketCapitalLedger(
         _config(tmp_path, trade_date=trade_date, decision_as_of=decision).ledger_root,
+        policy=MarketPolicy.load("ashare"),
+    )
+    snapshot = ledger.snapshot()
+    assert snapshot.cash_balance_cny < 50_000.0
+    assert snapshot.unreconciled_fill_commit_ids
+    events = [
+        json.loads(line)
+        for line in (Path(ledger.root) / ledger.events_filename)
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(row.get("event_type") == "fill_commit" for row in events)
+    latest = json.loads(result.latest_path.read_text(encoding="utf-8"))
+    assert latest["fill_count"] == 1
+    assert latest["canonical_account_connected"] is False
+    assert latest["real_trading_enabled"] is False
+    assert result.disposition_for("300750.SZ").rejection_reason == (
+        "chinext_individual_permission_unavailable"
+    )
+    assert result.disposition_for("688981.SH").rejection_reason == (
+        "star_individual_permission_unavailable"
+    )
+
+
+THURSDAY_TRADE_DATE = "2026-09-03"
+THURSDAY_1005 = datetime(2026, 9, 3, 10, 5, tzinfo=SHANGHAI)
+
+
+def _thursday_cash_windows(*symbols: str) -> dict[str, object]:
+    return bind_cash_session_windows(
+        symbols,
+        trade_date=THURSDAY_TRADE_DATE,
+        catalog_version="td-catalog-live",
+        calendar_rows=(
+            {
+                "exchange": "SSE",
+                "cal_date": "20260903",
+                "is_open": 1,
+                "pretrade_date": "20260902",
+            },
+        ),
+        daily_rows=tuple(
+            _daily_row(symbol, trade_date="20260902", close=12.8)
+            for symbol in symbols
+        ),
+    )
+
+
+def _thursday_rt_min_row(symbol: str, *, time_text: str) -> dict[str, object]:
+    return _production_rt_min_row(
+        symbol,
+        time_text=time_text,
+        trade_date="20260903",
+        close=12.8,
+        high=12.8,
+        low=12.74,
+    )
+
+
+def _thursday_clock_and_snapshot(
+    symbol: str,
+    *,
+    time_text: str,
+) -> dict[str, object]:
+    live_bar = _thursday_rt_min_row(symbol, time_text=time_text)
+    clocked = bind_quote_clocks(
+        _thursday_cash_windows(symbol),
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        quote_clock_rows=(live_bar,),
+    )
+    return bind_market_snapshots(
+        clocked,
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        snapshot_rows=(live_bar,),
+        snapshot_proof=_quote_clock_proof(),
+    )
+
+
+@pytest.mark.parametrize(
+    "time_text",
+    ("2026-09-03 10:00:00", "2026-09-03 10:05:00"),
+)
+def test_thursday_1005_oneshot_last_complete_bar_is_not_quote_clocks_unavailable(
+    time_text: str,
+) -> None:
+    symbol = CASH_SESSION_SYMBOL
+    overlay = _thursday_clock_and_snapshot(symbol, time_text=time_text)
+    window = overlay[symbol]
+    assert window.quote_clocks_ok is True
+    assert window.quote_clock_at == time_text
+    assert window.fill_snapshot_ready is True
+    assert window.snapshot_last_cny == 12.8
+    assert window.reason_code == "window_ready"
+
+
+def test_thursday_1005_daily_close_is_not_a_clock_or_snapshot() -> None:
+    symbol = CASH_SESSION_SYMBOL
+    clocked = bind_quote_clocks(
+        _thursday_cash_windows(symbol),
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        quote_clock_rows=(
+            _daily_row(symbol, trade_date="20260902", close=12.8),
+            _daily_row(symbol, trade_date="20260903", close=99.0, pre_close=12.8),
+        ),
+    )
+    overlay = bind_market_snapshots(
+        clocked,
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        snapshot_rows=(_daily_row(symbol, trade_date="20260902", close=12.8),),
+        snapshot_proof=_quote_clock_proof(),
+    )
+    window = overlay[symbol]
+    assert window.quote_clocks_ok is False
+    assert window.quote_clock_at == ""
+    assert window.fill_snapshot_ready is False
+
+
+def test_query_windows_1005_falls_back_to_last_complete_1000_bar() -> None:
+    symbol = CASH_SESSION_SYMBOL
+    transport = _RecordingTDTransport(
+        calendar_rows=(
+            {
+                "exchange": "SSE",
+                "cal_date": "20260903",
+                "is_open": 1,
+                "pretrade_date": "20260902",
+            },
+        ),
+        daily_by_date={
+            "20260902": (_daily_row(symbol, trade_date="20260902", close=12.8),),
+        },
+        quote_clock_rows=(
+            _thursday_rt_min_row(symbol, time_text="2026-09-03 10:00:00"),
+        ),
+    )
+    windows = query_windows_from_tradingdatas(
+        (symbol,),
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[symbol]
+    assert window.quote_clocks_ok is True
+    assert window.quote_clock_at == "2026-09-03 10:00:00"
+    assert window.fill_snapshot_ready is True
+    assert window.snapshot_last_cny == 12.8
+    clock_filters = [
+        call["json_body"]["filters"]
+        for call in transport.calls
+        if call["method"] == "POST"
+        and (call["json_body"] or {}).get("dataset_id") == QUOTE_CLOCK_DATASET_ID
+    ]
+    assert [filters["time"]["eq"] for filters in clock_filters] == [
+        "2026-09-03 10:05:00",
+        "2026-09-03 10:00:00",
+    ]
+    for filters in clock_filters:
+        assert symbol in filters["ts_code"]["in"]
+        assert "trade_date" not in filters
+
+
+def test_query_windows_1005_uses_present_1005_bar() -> None:
+    symbol = CASH_SESSION_SYMBOL
+    transport = _RecordingTDTransport(
+        calendar_rows=(
+            {
+                "exchange": "SSE",
+                "cal_date": "20260903",
+                "is_open": 1,
+                "pretrade_date": "20260902",
+            },
+        ),
+        daily_by_date={
+            "20260902": (_daily_row(symbol, trade_date="20260902", close=12.8),),
+        },
+        quote_clock_rows=(
+            _thursday_rt_min_row(symbol, time_text="2026-09-03 10:05:00"),
+        ),
+    )
+    windows = query_windows_from_tradingdatas(
+        (symbol,),
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[symbol]
+    assert window.quote_clocks_ok is True
+    assert window.quote_clock_at == "2026-09-03 10:05:00"
+    assert window.fill_snapshot_ready is True
+    clock_filters = [
+        call["json_body"]["filters"]
+        for call in transport.calls
+        if call["method"] == "POST"
+        and (call["json_body"] or {}).get("dataset_id") == QUOTE_CLOCK_DATASET_ID
+    ]
+    assert [filters["time"]["eq"] for filters in clock_filters] == [
+        "2026-09-03 10:05:00"
+    ]
+
+
+def test_query_windows_1005_missing_rt_min_stays_quote_clocks_unavailable() -> None:
+    symbol = CASH_SESSION_SYMBOL
+    transport = _RecordingTDTransport(
+        calendar_rows=(
+            {
+                "exchange": "SSE",
+                "cal_date": "20260903",
+                "is_open": 1,
+                "pretrade_date": "20260902",
+            },
+        ),
+        daily_by_date={
+            "20260902": (_daily_row(symbol, trade_date="20260902", close=12.8),),
+        },
+        include_quote_clock=True,
+    )
+    windows = query_windows_from_tradingdatas(
+        (symbol,),
+        trade_date=THURSDAY_TRADE_DATE,
+        decision_as_of=THURSDAY_1005,
+        client=_td_client(transport, include_quote_clock=True),
+    )
+    window = windows[symbol]
+    assert window.observation_ready is True
+    assert window.quote_clocks_ok is False
+    assert window.fill_snapshot_ready is False
+
+
+def test_thursday_1005_oneshot_with_1000_bar_is_paper_filled(
+    tmp_path: Path,
+) -> None:
+    """Proof window: Thu 2026-09-03 10:05 CST with a last-complete 10:00 bar."""
+
+    _prepare_ledger(tmp_path)
+    registry, _manifest = _manual_registry(tmp_path)
+    symbol = "000063.SZ"
+    overlay = _thursday_clock_and_snapshot(
+        symbol,
+        time_text="2026-09-03 10:00:00",
+    )
+    assert overlay[symbol].quote_clocks_ok is True
+    assert overlay[symbol].fill_snapshot_ready is True
+    result = run_capital_backed_paper_session(
+        _config(
+            tmp_path,
+            trade_date=THURSDAY_TRADE_DATE,
+            decision_as_of=THURSDAY_1005,
+        ),
+        windows=overlay,
+        champion_registry=registry,
+    )
+    filled = result.disposition_for(symbol)
+    assert filled.nonfill_reason not in IN_SESSION_BANNED_NONFILL
+    assert filled.nonfill_reason != "quote_clocks_unavailable"
+    assert filled.disposition is ExposureDisposition.PAPER_FILLED
+    assert filled.simulated_fill_id
+    assert filled.filled_quantity == 100
+    assert result.fill_count == 1
+    ledger = MarketCapitalLedger(
+        _config(
+            tmp_path,
+            trade_date=THURSDAY_TRADE_DATE,
+            decision_as_of=THURSDAY_1005,
+        ).ledger_root,
         policy=MarketPolicy.load("ashare"),
     )
     snapshot = ledger.snapshot()
