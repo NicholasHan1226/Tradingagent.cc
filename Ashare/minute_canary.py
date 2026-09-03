@@ -1127,7 +1127,19 @@ def load_minute_snapshot(
             transport=shard_transport,
         )
 
-    profile = config.build_profile(client)
+    try:
+        profile = config.build_profile(client)
+    except HTTPStatusError as exc:
+        # Profile construction performs the first authenticated catalog read.
+        # Preserve the same narrow retry contract as minute query reads so a
+        # transient 429/503 does not escape as an untyped, day-latching error.
+        if str(exc).endswith(("HTTP 429", "HTTP 503")):
+            raise MinuteDataContractError(
+                "minute_tradingdatas_request_failed",
+                failure_stage="catalog_request",
+                failure_class="HTTPStatusError",
+            ) from exc
+        raise
     audit = MinuteEvidenceAuditLedger()
     selected_bar_end = (
         _normalize_bar_end(bar_end, timestamp_format=profile.timestamp_format)

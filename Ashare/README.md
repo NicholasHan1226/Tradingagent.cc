@@ -557,10 +557,10 @@ they must be identical or the initializer fails closed.
 
 For a reviewed scale transition, the initializer accepts an explicit absolute
 `--universe-source` artifact. It derives `page_limit`, `max_rows` and
-`max_pages` from that universe and the current catalog page limit, then binds
-the canonical universe SHA into the published manifest. Minute `ts_code in`
-filters are capped at 100 values by the V1 contract, so larger artifacts use
-100-symbol shards and replayed shard aggregation; a 500-symbol artifact is not
+`max_pages` from that universe and the current catalog page and `max_in_values`
+limits, then binds the canonical universe SHA into the published manifest.
+Minute `ts_code in` shards use the lower of those two observed limits, and
+each shard fits in one response page with replayed aggregation; a 500-symbol artifact is not
 silently truncated to the preceding 30-symbol canary. Fixed-cohort mode requires
 complete prior-close and exact minute coverage for its reviewed cohort.
 `rolling_eligible` instead publishes the eligible partition: recent listings
@@ -583,12 +583,10 @@ keeps its complete-cohort requirement.
 Prior-session daily references use the same bounded catalog contract instead
 of a fixed 10-symbol batch. The initializer derives each batch from the
 reviewed Universe size, the daily dataset's current `max_page_size`, and the
-500-row TA query ceiling. It separately enforces the provider-neutral V1
-`QueryDefaults.max_in_values=100` filter contract. Minute query profiles use
-`page_limit=100` and `max_pages=ceil(symbol_count/100)`; every shard is read
-twice and merged only after identity and same-observation checks. Daily
-references still use five 100-symbol batches for a 500-symbol Universe even
-when catalog `max_page_size=500`.
+500-row TA query ceiling. Its conservative daily-reference batch remains capped
+at 100 symbols. Minute query profiles independently bind the current catalog
+`max_page_size` and `max_in_values`; every one-page shard is read twice and
+merged only after identity and same-observation checks.
 Every batch is independently read twice, allows at most five cursor pages, and
 has a row budget exactly equal to its requested symbol set. In fixed-cohort
 mode, returned `(ts_code, trade_date)` identities must exactly match that set; missing, extra,

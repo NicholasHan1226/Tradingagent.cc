@@ -68,10 +68,20 @@ def _catalog_row(**overrides: Any) -> dict[str, Any]:
         "filter_operators": {
             value: ["eq", "in", "gte", "lte", "between"] for value in FIELDS
         },
-        "limits": {"max_page_size": 2, "max_lookback_days": 30},
+        "limits": {
+            "max_page_size": 2,
+            "max_in_values": 2,
+            "max_lookback_days": 30,
+        },
         "availability": {"activation_states": ["active"]},
     }
     row.update(overrides)
+    limits = row.get("limits")
+    if isinstance(limits, dict) and "max_in_values" not in limits:
+        row["limits"] = {
+            **limits,
+            "max_in_values": limits.get("max_page_size"),
+        }
     return row
 
 
@@ -211,7 +221,11 @@ def test_minute_port_proof_opt_in_is_forwarded_and_validator_blocks() -> None:
 def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> None:
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class ShardTransport(_Transport):
         def __init__(self) -> None:
@@ -274,6 +288,65 @@ def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> No
         len(body["filters"]["ts_code"]["in"]) <= 100
         for body in transport.query_bodies
     )
+
+
+def test_minute_port_uses_catalog_bound_500_symbol_one_page_shards() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(501))
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 500, "max_in_values": 500, "max_lookback_days": 30}
+    )
+
+    class ShardTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self.query_sizes: list[int] = []
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            self.query_sizes.append(len(requested))
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"catalog-bound-shard-{len(self.query_sizes)}",
+                    rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                    next_cursor=None,
+                ),
+            )
+
+    transport = ShardTransport()
+    client = _client(transport, max_limit=500)
+    profile = _profile(client, max_pages=2, max_rows=501, page_limit=500)
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 501
+    assert snapshot.page_count == 2
+    assert sorted(transport.query_sizes) == [1, 1, 500, 500]
 
 
 def test_minute_port_quarantines_bad_row_inside_large_shard() -> None:
@@ -433,7 +506,11 @@ def test_minute_port_uses_single_flight_client_per_parallel_worker() -> None:
 def test_minute_port_retains_successful_shards_when_one_request_fails() -> None:
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class PartialShardTransport(_Transport):
         def __call__(self, **kwargs: Any) -> HTTPResponse:
@@ -491,7 +568,11 @@ def test_minute_port_retains_successful_shards_when_one_request_fails() -> None:
 def test_minute_port_isolates_raw_transport_error_to_one_shard() -> None:
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class RawTransportError(_Transport):
         def __call__(self, **kwargs: Any) -> HTTPResponse:
@@ -1769,7 +1850,11 @@ def test_minute_port_shard_load_budget_stops_reads_before_requests() -> None:
 
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     transport = _Transport(catalog_row=catalog_row)
     client = _client(transport, max_limit=100)
@@ -1800,7 +1885,11 @@ def test_minute_port_partial_budget_failure_keeps_typed_reason() -> None:
 
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class BudgetSplitTransport(_Transport):
         def __call__(self, **kwargs: Any) -> HTTPResponse:
@@ -1935,7 +2024,11 @@ def test_minute_fanout_slow_front_shard_cannot_starve_valid_tail(
     )
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(201))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
     query_timeouts: list[tuple[str, float]] = []
 
     class SlowFrontTransport(_Transport):
@@ -1983,7 +2076,11 @@ def test_minute_fanout_hard_error_is_not_downgraded_to_partial_success(
     monkeypatch.setattr(minute_data_module, "_sleep", lambda delay: None)
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class HardFailureTransport(_Transport):
         def __call__(self, **kwargs: Any) -> HTTPResponse:
@@ -2031,7 +2128,11 @@ def test_minute_deadline_client_caps_each_page_and_worker_catalog(
     monkeypatch.setattr(minute_data_module, "_monotonic", lambda: clock["now"])
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(100))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
     timeouts: list[float] = []
     worker_catalog_timeouts: list[float] = []
 
@@ -2094,7 +2195,11 @@ def test_minute_fanout_four_slow_workers_leave_budget_for_queued_shards(
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(801))
     slow_symbols = frozenset(symbols[index] for index in (0, 100, 200, 300))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class FourSlowTransport(_Transport):
         def __call__(self, **kwargs: Any) -> HTTPResponse:
@@ -2194,7 +2299,11 @@ def test_minute_worker_catalog_transient_isolation_preserves_hard_guards(
     monkeypatch.setattr(minute_data_module, "MAX_MINUTE_FANOUT_WORKERS", 1)
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(201))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
     workers: list[Any] = []
 
     class CatalogFailureTransport(_Transport):
@@ -2254,7 +2363,11 @@ def test_minute_fanout_production_budget_preserves_healthy_pairs_and_worker_isol
     # a healthy pair of 12.653 + 9.344s.
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(3188))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
     local_clock = threading.local()
     barrier = threading.Barrier(4)
     lock = threading.Lock()
@@ -2409,7 +2522,11 @@ def test_minute_stable_pair_retries_once_then_accepts_converged_pair(
     """
 
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
     transport = _Transport(catalog_row=catalog_row, replay_change=True)
     client = _client(transport, max_limit=100)
     profile = _profile(client, max_pages=2, max_rows=4, page_limit=2)
@@ -2431,7 +2548,11 @@ def test_minute_stable_pair_quiescent_observation_costs_one_pair(
     """A stable observation accepts on the first pair without extra reads."""
 
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
     transport = _Transport(catalog_row=catalog_row)
     client = _client(transport, max_limit=100)
     profile = _profile(client, max_pages=2, max_rows=4, page_limit=2)
@@ -2455,7 +2576,11 @@ def test_minute_shard_never_converging_degrades_typed_not_crash(
     )
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row()
-    catalog_row["limits"] = {"max_page_size": 100, "max_lookback_days": 30}
+    catalog_row["limits"] = {
+        "max_page_size": 100,
+        "max_in_values": 100,
+        "max_lookback_days": 30,
+    }
 
     class SinglePageShardTransport(_Transport):
         # Sharded loads grant one page per shard collect; serve every

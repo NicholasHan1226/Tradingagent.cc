@@ -44,6 +44,7 @@ class _Transport:
         *,
         rows: list[dict[str, Any]] | None = None,
         max_page_size: int = 10,
+        max_in_values: int | None = None,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.rows = rows or [
@@ -59,6 +60,9 @@ class _Transport:
             }
         ]
         self.max_page_size = max_page_size
+        self.max_in_values = (
+            max_page_size if max_in_values is None else max_in_values
+        )
 
     def __call__(self, **kwargs: Any) -> HTTPResponse:
         self.calls.append(kwargs)
@@ -108,6 +112,7 @@ class _Transport:
                             },
                             "limits": {
                                 "max_page_size": self.max_page_size,
+                                "max_in_values": self.max_in_values,
                                 "max_lookback_days": 1,
                             },
                             "availability": {"activation_states": ["active"]},
@@ -338,6 +343,50 @@ def test_read_only_canary_uses_catalog_query_and_same_observation() -> None:
     ]
     assert all("/v1/" in call["url"] for call in transport.calls)
     assert all("/tushare" not in call["url"] for call in transport.calls)
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_snapshot_maps_transient_profile_catalog_http_failure_for_retry(
+    status: int,
+) -> None:
+    class FailingCatalogTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return HTTPResponse(status, {})
+            raise AssertionError("query must not run after catalog failure")
+
+    with pytest.raises(
+        MinuteDataContractError, match="minute_tradingdatas_request_failed"
+    ) as caught:
+        minute_canary_module.load_minute_snapshot(
+            _config(),
+            token_file=Path("/run/secrets/fixture.token"),
+            decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            trading_date=date(2026, 7, 28),
+            reference_facts={},
+            transport_factory=lambda *_args, **_kwargs: FailingCatalogTransport(),
+        )
+
+    assert caught.value.failure_stage == "catalog_request"
+    assert caught.value.failure_class == "HTTPStatusError"
+
+
+def test_snapshot_keeps_nonretryable_profile_catalog_http_failure_distinct() -> None:
+    class FailingCatalogTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return HTTPResponse(400, {})
+            raise AssertionError("query must not run after catalog failure")
+
+    with pytest.raises(HTTPStatusError, match="HTTP 400"):
+        minute_canary_module.load_minute_snapshot(
+            _config(),
+            token_file=Path("/run/secrets/fixture.token"),
+            decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            trading_date=date(2026, 7, 28),
+            reference_facts={},
+            transport_factory=lambda *_args, **_kwargs: FailingCatalogTransport(),
+        )
 
 
 def test_canary_preserves_row_quality_quarantines_separately() -> None:
@@ -842,6 +891,20 @@ def test_exact_thirty_snapshot_rows_round_trip_without_second_query() -> None:
     ]
 
 
+def test_profile_rejects_page_limit_above_catalog_max_in_values() -> None:
+    config = _config(max_rows=500, page_limit=500)
+    client = SharedSignalsV1Client(
+        config.client_config(),
+        transport=_Transport(max_page_size=500, max_in_values=100),
+    )
+
+    with pytest.raises(
+        MinuteDataContractError,
+        match="minute_page_limit_exceeds_catalog_in_values",
+    ):
+        config.build_profile(client)
+
+
 def _real_rt_min_rows() -> list[dict[str, Any]]:
     symbols = [
         *(f"{index:06d}.SZ" for index in range(1, 16)),
@@ -926,7 +989,11 @@ class _RealRtMinTransport:
                                 field: ["eq", "in", "gte", "lte", "between"]
                                 for field in fields
                             },
-                            "limits": {"max_page_size": 30, "max_lookback_days": 1},
+                            "limits": {
+                                "max_page_size": 30,
+                                "max_in_values": 30,
+                                "max_lookback_days": 1,
+                            },
                             "availability": {"activation_states": ["active"]},
                         }
                     ],
