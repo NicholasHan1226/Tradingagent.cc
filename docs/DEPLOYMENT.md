@@ -83,7 +83,7 @@ An existing SHA-named release is reused only when both metadata values match **a
 
 ## Root trust boundary
 
-GitHub Actions does **not** upload and execute a new privileged deployment script on every release.
+GitHub Actions does **not** upload a separate privileged deployment script on every release.
 
 The repository file:
 
@@ -106,9 +106,12 @@ The helper:
 - requires the spool and uploaded archive/request to belong to the non-root sudo caller;
 - copies the archive to a root-owned temporary file before validation/extraction;
 - validates the requested SHA, checksum, archive member types and release shape;
-- requires an existing valid `current` immutable-release symlink before automated cutover.
+- requires an existing valid `current` immutable-release symlink before automated cutover;
+- after the immutable release is on disk, replaces itself only when `deploy/release.sh` from that same validated release differs, then re-enters so this controller-accepted-deploy applies that SHA's unit bindings.
 
-This prevents the SSH deployment account from obtaining unrestricted root shell access or replacing the privileged helper during an ordinary deployment.
+The SSH deployment account still cannot replace the helper or obtain an unrestricted root shell. The only allowed self-refresh source is the already-validated immutable release for the requested SHA. A stale installed helper that lacks this refresh (or the forty-symbol binding) cannot silently succeed: GitHub verify requires the forty-symbol observer pin to equal the deployed SHA.
+
+The first delivery of helper refresh still requires one controlled reinstall of `/usr/local/sbin/tradingagent-release` from the accepted release. After that, ordinary `controller-accepted-deploy` keeps the helper and the forty-symbol pin on the same SHA.
 
 ## One-time server bootstrap
 
@@ -233,7 +236,7 @@ After the server helper returns success, GitHub Actions independently reads:
 /opt/investment/releases/tradingagent/current/.deployed-sha
 ```
 
-and requires it to equal the successful CI workflow-run SHA.
+and requires it to equal the successful CI workflow-run SHA. It also reads the effective `WorkingDirectory` and `DropInPaths` of `tradingagent-crypto-forty-symbol-observation.service` and requires the unit to be pinned to that same SHA through `99-tradingagent-release.conf`, with `20-forty-symbol-release.conf` no longer effective. The installed helper must contain that unit name. A current-symlink update alone is not enough.
 
 Repository tests also lock the main deployment trust boundaries: workflow trigger, exact artifact linkage, stale-main prevention, root-helper invocation, immutable modes, immutable-release reuse checks, bounded health check and rollback behavior.
 

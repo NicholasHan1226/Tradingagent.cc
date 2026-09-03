@@ -204,4 +204,24 @@ jobs:
           deployed_sha="$(ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "cat /opt/investment/releases/tradingagent/current/.deployed-sha")"
           [[ "$deployed_sha" == "$DEPLOY_SHA" ]]
+
+          forty_unit=tradingagent-crypto-forty-symbol-observation.service
+          forty_release="/opt/investment/releases/tradingagent/${DEPLOY_SHA}"
+          forty_working="$(ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "systemctl show -p WorkingDirectory --value '$forty_unit'")"
+          forty_dropins="$(ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "systemctl show -p DropInPaths --value '$forty_unit'")"
+          [[ "$forty_working" == "$forty_release" ]]
+          case " $forty_dropins " in
+            *" /etc/systemd/system/${forty_unit}.d/99-tradingagent-release.conf "*) ;;
+            *) echo "forty-symbol canonical release drop-in is not effective" >&2; exit 1 ;;
+          esac
+          case " $forty_dropins " in
+            *" /etc/systemd/system/${forty_unit}.d/20-forty-symbol-release.conf "*)
+              echo "legacy forty-symbol release drop-in remains effective" >&2
+              exit 1
+              ;;
+          esac
+          ssh "${ssh_opts[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "grep -Fq '$forty_unit' /usr/local/sbin/tradingagent-release"
           echo "Verified production release: $deployed_sha"

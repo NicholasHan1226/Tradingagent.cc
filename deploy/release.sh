@@ -88,6 +88,53 @@ validate_immutable_release() {
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_health.py"
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_learning_worker.py"
   runuser -u tradingagent -- test -r "$root/Crypto/forty_symbol_observation_runtime.py"
+  runuser -u tradingagent -- test -r "$root/deploy/release.sh"
+}
+
+refresh_installed_helper_from_release() {
+  local release_dir="$1"
+  local source="$release_dir/deploy/release.sh"
+  local tmp mode source_digest installed_digest
+
+  [[ -f "$source" && ! -L "$source" ]] || fail "release helper is missing or unsafe: $source"
+  [[ "$(stat -c '%U:%G' -- "$source")" == 'root:root' ]] \
+    || fail "release helper is not root:root: $source"
+  [[ "$(stat -c '%h' -- "$source")" == 1 ]] || fail "release helper has multiple hard links: $source"
+  mode="$(stat -c '%a' -- "$source")"
+  (( (8#$mode & 0022) == 0 )) || fail "release helper is group/other writable: $source"
+  [[ -x "$source" ]] || fail "release helper is not executable: $source"
+  bash -n "$source" || fail "release helper failed syntax check: $source"
+  grep -Fq 'tradingagent-crypto-forty-symbol-observation.service' "$source" \
+    || fail "release helper is missing forty-symbol observation reconciliation"
+
+  source_digest="$(sha256sum -- "$source" | awk '{print $1}')"
+  installed_digest="$(sha256sum -- "$installed_path" | awk '{print $1}')"
+  [[ "$source_digest" =~ ^[0-9a-f]{64}$ ]] || fail "release helper digest is invalid"
+  [[ "$installed_digest" =~ ^[0-9a-f]{64}$ ]] || fail "installed helper digest is invalid"
+  if [[ "$source_digest" == "$installed_digest" ]]; then
+    return 0
+  fi
+
+  tmp="$(mktemp "${installed_path}.XXXXXX")"
+  cp -- "$source" "$tmp"
+  chown root:root "$tmp"
+  chmod 0755 "$tmp"
+  [[ "$(sha256sum -- "$tmp" | awk '{print $1}')" == "$source_digest" ]] \
+    || fail "staged helper checksum mismatch"
+  mv -f -- "$tmp" "$installed_path"
+  [[ -f "$installed_path" && ! -L "$installed_path" ]] \
+    || fail "installed helper is missing or unsafe after refresh"
+  [[ "$(sha256sum -- "$installed_path" | awk '{print $1}')" == "$source_digest" ]] \
+    || fail "installed helper did not refresh from the immutable release"
+
+  printf 'tradingagent-release: refreshed installed helper from %s; re-entering\n' \
+    "$release_dir" >&2
+  trap - EXIT
+  [[ -n "${root_archive:-}" ]] && rm -f -- "$root_archive"
+  [[ -n "${staging_dir:-}" && -d "$staging_dir" ]] && rm -rf -- "$staging_dir"
+  [[ -n "${link_tmp:-}" ]] && rm -f -- "$link_tmp"
+  exec "$installed_path"
+  fail "failed to re-enter refreshed helper"
 }
 
 validate_managed_g5_dropin() {
@@ -371,6 +418,7 @@ required = {
     'AGENTS.md',
     'requirements.txt',
     'front/dist-server/server/tradingAgentSnapshotHttp.js',
+    'deploy/release.sh',
 }
 seen = set()
 with tarfile.open(archive, 'r:gz') as tf:
@@ -441,6 +489,7 @@ else
 fi
 
 validate_immutable_release "$release_dir"
+refresh_installed_helper_from_release "$release_dir"
 prepare_g5_release_reconciliation
 
 link_tmp="$release_root/.current-${sha}-$$"
