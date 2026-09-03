@@ -914,12 +914,12 @@ def test_round_trip_health_cli_emits_only_stable_failure_code(
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.splitlines()[0] == "crypto round-trip health failed closed"
-    assert json.loads(captured.err.splitlines()[1]) == {
+    assert json.loads(captured.err.splitlines()[0]) == {
         "contract": "tradingagent.crypto.round_trip_health_failure.v1",
         "failure_code": "round_trip_health_core_incomplete",
         "status": "failed_closed",
     }
+    assert captured.err.splitlines()[1] == "crypto round-trip health failed closed"
 
 
 def test_round_trip_health_cli_hides_unexpected_exception_details(
@@ -936,6 +936,29 @@ def test_round_trip_health_cli_hides_unexpected_exception_details(
 
     captured = capsys.readouterr()
     assert "token=" not in captured.err
-    assert json.loads(captured.err.splitlines()[1])["failure_code"] == (
+    assert json.loads(captured.err.splitlines()[0])["failure_code"] == (
+        "round_trip_health_unexpected_error"
+    )
+
+
+def test_round_trip_health_cli_preserves_fail_closed_receipt_when_error_string_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class BrokenStringHealthError(CryptoRoundTripHealthError):
+        def __str__(self) -> str:
+            raise RuntimeError("do not expose this detail")
+
+    monkeypatch.setattr(
+        health_module,
+        "run_crypto_delayed_paper_round_trip_health_once",
+        lambda **_: (_ for _ in ()).throw(BrokenStringHealthError()),
+    )
+
+    assert health_module.main(["--epoch-manifest", "/tmp/manifest.json"]) == 2
+
+    captured = capsys.readouterr()
+    assert "do not expose" not in captured.err
+    assert json.loads(captured.err.splitlines()[0])["failure_code"] == (
         "round_trip_health_unexpected_error"
     )

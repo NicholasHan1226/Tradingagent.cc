@@ -60,7 +60,10 @@ def _public_failure_code(exc: Exception) -> str:
     """Expose only stable health reason codes in a fail-closed CLI receipt."""
 
     if isinstance(exc, CryptoRoundTripHealthError):
-        reason = str(exc)
+        try:
+            reason = str(exc)
+        except Exception:
+            return "round_trip_health_unexpected_error"
         if _PUBLIC_FAILURE_CODE.fullmatch(reason):
             return reason
     return "round_trip_health_unexpected_error"
@@ -468,12 +471,12 @@ def main(argv: list[str] | None = None) -> int:
             epoch_manifest=args.epoch_manifest
         )
     except Exception as exc:
-        print("crypto round-trip health failed closed", file=sys.stderr)
+        failure_code = _public_failure_code(exc)
         print(
             json.dumps(
                 {
                     "contract": "tradingagent.crypto.round_trip_health_failure.v1",
-                    "failure_code": _public_failure_code(exc),
+                    "failure_code": failure_code,
                     "status": "failed_closed",
                 },
                 ensure_ascii=True,
@@ -483,6 +486,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             file=sys.stderr,
         )
+        print("crypto round-trip health failed closed", file=sys.stderr)
         return 2
     code = health_exit_code(result)
     if code:
