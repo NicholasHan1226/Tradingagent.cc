@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 from typing import Any, Mapping
@@ -50,6 +51,19 @@ MAX_COMPLETION_LAG = timedelta(minutes=30)
 
 class CryptoRoundTripHealthError(RuntimeError):
     """Stable fail-closed error for non-authoritative health evidence."""
+
+
+_PUBLIC_FAILURE_CODE = re.compile(r"round_trip_health_[a-z0-9_]+")
+
+
+def _public_failure_code(exc: Exception) -> str:
+    """Expose only stable health reason codes in a fail-closed CLI receipt."""
+
+    if isinstance(exc, CryptoRoundTripHealthError):
+        reason = str(exc)
+        if _PUBLIC_FAILURE_CODE.fullmatch(reason):
+            return reason
+    return "round_trip_health_unexpected_error"
 
 
 def _failure_count(ledger_rows: list[Mapping[str, Any]]) -> int:
@@ -453,8 +467,22 @@ def main(argv: list[str] | None = None) -> int:
         result = run_crypto_delayed_paper_round_trip_health_once(
             epoch_manifest=args.epoch_manifest
         )
-    except Exception:
+    except Exception as exc:
         print("crypto round-trip health failed closed", file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "contract": "tradingagent.crypto.round_trip_health_failure.v1",
+                    "failure_code": _public_failure_code(exc),
+                    "status": "failed_closed",
+                },
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
         return 2
     code = health_exit_code(result)
     if code:
