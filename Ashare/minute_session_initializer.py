@@ -440,6 +440,7 @@ def _scaled_minute_profile(
     *,
     symbol_count: int,
     catalog_page_size: int,
+    catalog_max_in_values: int,
 ) -> dict[str, Any]:
     if (
         isinstance(symbol_count, bool)
@@ -448,12 +449,15 @@ def _scaled_minute_profile(
         or isinstance(catalog_page_size, bool)
         or not isinstance(catalog_page_size, int)
         or catalog_page_size <= 0
+        or isinstance(catalog_max_in_values, bool)
+        or not isinstance(catalog_max_in_values, int)
+        or catalog_max_in_values <= 0
     ):
         raise MinuteSessionInitializerError("minute_session_profile_scale_invalid")
-    # The V1 filter contract caps ``in`` values at 100. Minute consumers
-    # therefore fan out larger reviewed universes into 100-symbol shards;
-    # keeping the manifest bound aligned prevents a 413 request body.
-    page_limit = min(symbol_count, catalog_page_size, 100)
+    # Bind both the page and ``in`` filter budgets from the same observed
+    # catalog row. Keeping them aligned lets each shard finish in one page and
+    # avoids repeatedly scanning the provider-native read model.
+    page_limit = min(symbol_count, catalog_page_size, catalog_max_in_values)
     profile = dict(template_profile)
     profile["page_limit"] = page_limit
     profile["max_rows"] = symbol_count
@@ -953,12 +957,20 @@ def initialize_minute_session(
         if isinstance(minute_limits, Mapping)
         else None
     )
+    minute_max_in_values = (
+        minute_limits.get("max_in_values")
+        if isinstance(minute_limits, Mapping)
+        else None
+    )
     if type(minute_page_size) is not int or minute_page_size <= 0:
+        raise MinuteSessionInitializerError("minute_session_minute_limit_invalid")
+    if type(minute_max_in_values) is not int or minute_max_in_values <= 0:
         raise MinuteSessionInitializerError("minute_session_minute_limit_invalid")
     scaled_profile = _scaled_minute_profile(
         template_config.profile,
         symbol_count=len(symbols),
         catalog_page_size=minute_page_size,
+        catalog_max_in_values=minute_max_in_values,
     )
 
     client = SharedSignalsV1Client(
@@ -1156,6 +1168,7 @@ def initialize_minute_session(
             template_config.profile,
             symbol_count=len(symbols),
             catalog_page_size=minute_page_size,
+            catalog_max_in_values=minute_max_in_values,
         )
         current_manifest = MinuteCanaryConfig(
             base_url=base_url,

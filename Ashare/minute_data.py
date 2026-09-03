@@ -56,7 +56,6 @@ FIVE_MINUTES = timedelta(minutes=5)
 MAX_MINUTE_DATA_LATENCY = timedelta(seconds=30)
 FIXED_CATALOG_ROUTE = "GET /v1/catalog"
 FIXED_QUERY_ROUTE = "POST /v1/query"
-MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD = 100
 MAX_MINUTE_FANOUT_WORKERS = 4
 # TradingDatas can briefly return a retryable response while its provider
 # collector holds the SQLite authority lock. Keep this bounded so a stale
@@ -1850,8 +1849,16 @@ def _minute_symbol_shards(
     *,
     filters: Mapping[str, Any],
     symbol_field: str,
+    max_symbols_per_shard: int,
 ) -> tuple[tuple[str, ...], ...] | None:
     """Return bounded symbol shards for the V1 ``max_in_values`` contract."""
+
+    if (
+        isinstance(max_symbols_per_shard, bool)
+        or not isinstance(max_symbols_per_shard, int)
+        or max_symbols_per_shard <= 0
+    ):
+        raise MinuteDataContractError("minute_symbol_shard_limit_invalid")
 
     condition = filters.get(symbol_field)
     if not isinstance(condition, Mapping) or "in" not in condition:
@@ -1865,13 +1872,13 @@ def _minute_symbol_shards(
         for symbol in symbols
     ):
         raise MinuteDataContractError("minute_symbol_filter_invalid")
-    if len(symbols) <= MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD:
+    if len(symbols) <= max_symbols_per_shard:
         return None
     if len(symbols) != len(set(symbols)):
         raise MinuteDataContractError("minute_symbol_filter_duplicate")
     return tuple(
-        symbols[index : index + MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD]
-        for index in range(0, len(symbols), MAX_MINUTE_QUERY_SYMBOLS_PER_SHARD)
+        symbols[index : index + max_symbols_per_shard]
+        for index in range(0, len(symbols), max_symbols_per_shard)
     )
 
 
@@ -2211,6 +2218,7 @@ class TradingDatasMinuteMarketDataPort:
             symbol_shards = _minute_symbol_shards(
                 filters=filters,
                 symbol_field=profile.symbol_field,
+                max_symbols_per_shard=profile.page_limit,
             )
             if symbol_shards is not None:
                 return self._load_sharded_snapshot(

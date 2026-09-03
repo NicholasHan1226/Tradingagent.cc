@@ -276,6 +276,65 @@ def test_minute_port_fanouts_large_symbol_filter_into_replayed_v1_shards() -> No
     )
 
 
+def test_minute_port_uses_catalog_bound_500_symbol_one_page_shards() -> None:
+    symbols = tuple(f"{index + 1:06d}.SZ" for index in range(501))
+    catalog_row = _catalog_row(
+        limits={"max_page_size": 500, "max_in_values": 500, "max_lookback_days": 30}
+    )
+
+    class ShardTransport(_Transport):
+        def __init__(self) -> None:
+            super().__init__(catalog_row=catalog_row)
+            self.query_sizes: list[int] = []
+
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return super().__call__(**kwargs)
+            body = kwargs["json_body"]
+            assert body is not None
+            requested = tuple(body["filters"]["ts_code"]["in"])
+            self.query_sizes.append(len(requested))
+            return HTTPResponse(
+                200,
+                _query_payload(
+                    request_id=f"catalog-bound-shard-{len(self.query_sizes)}",
+                    rows=[_row(symbol, "20260727 09:40:00") for symbol in requested],
+                    next_cursor=None,
+                ),
+            )
+
+    transport = ShardTransport()
+    client = _client(transport, max_limit=500)
+    profile = _profile(client, max_pages=2, max_rows=501, page_limit=500)
+    references = {
+        symbol: MinuteReferenceFact(
+            symbol=symbol,
+            trade_date=date(2026, 7, 27),
+            previous_close_cny=10.0,
+            suspended=False,
+            evidence_sha256="a" * 64,
+        )
+        for symbol in symbols
+    }
+
+    snapshot = TradingDatasMinuteMarketDataPort(client).load_snapshot(
+        profile=profile,
+        filters={
+            "ts_code": {"in": list(symbols)},
+            "bar_time": {"eq": "20260727 09:40:00"},
+        },
+        decision_time=datetime.fromisoformat("2026-07-27T09:45:25+08:00"),
+        trading_dates=frozenset({date(2026, 7, 27)}),
+        audit_ledger=MinuteEvidenceAuditLedger(),
+        reference_facts=references,
+        evidence_use=MinuteEvidenceUse.DELAYED_PAPER,
+    )
+
+    assert snapshot.row_count == 501
+    assert snapshot.page_count == 2
+    assert sorted(transport.query_sizes) == [1, 1, 500, 500]
+
+
 def test_minute_port_quarantines_bad_row_inside_large_shard() -> None:
     symbols = tuple(f"{index + 1:06d}.SZ" for index in range(101))
     catalog_row = _catalog_row(

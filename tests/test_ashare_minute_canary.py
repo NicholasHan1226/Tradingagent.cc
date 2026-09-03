@@ -340,6 +340,50 @@ def test_read_only_canary_uses_catalog_query_and_same_observation() -> None:
     assert all("/tushare" not in call["url"] for call in transport.calls)
 
 
+@pytest.mark.parametrize("status", [429, 503])
+def test_snapshot_maps_transient_profile_catalog_http_failure_for_retry(
+    status: int,
+) -> None:
+    class FailingCatalogTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return HTTPResponse(status, {})
+            raise AssertionError("query must not run after catalog failure")
+
+    with pytest.raises(
+        MinuteDataContractError, match="minute_tradingdatas_request_failed"
+    ) as caught:
+        minute_canary_module.load_minute_snapshot(
+            _config(),
+            token_file=Path("/run/secrets/fixture.token"),
+            decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            trading_date=date(2026, 7, 28),
+            reference_facts={},
+            transport_factory=lambda *_args, **_kwargs: FailingCatalogTransport(),
+        )
+
+    assert caught.value.failure_stage == "catalog_request"
+    assert caught.value.failure_class == "HTTPStatusError"
+
+
+def test_snapshot_keeps_nonretryable_profile_catalog_http_failure_distinct() -> None:
+    class FailingCatalogTransport(_Transport):
+        def __call__(self, **kwargs: Any) -> HTTPResponse:
+            if kwargs["method"] == "GET":
+                return HTTPResponse(400, {})
+            raise AssertionError("query must not run after catalog failure")
+
+    with pytest.raises(HTTPStatusError, match="HTTP 400"):
+        minute_canary_module.load_minute_snapshot(
+            _config(),
+            token_file=Path("/run/secrets/fixture.token"),
+            decision_time=datetime.fromisoformat("2026-07-28T09:35:25+08:00"),
+            trading_date=date(2026, 7, 28),
+            reference_facts={},
+            transport_factory=lambda *_args, **_kwargs: FailingCatalogTransport(),
+        )
+
+
 def test_canary_preserves_row_quality_quarantines_separately() -> None:
     transport = _Transport(
         rows=[

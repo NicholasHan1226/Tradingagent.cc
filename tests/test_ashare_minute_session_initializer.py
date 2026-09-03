@@ -55,6 +55,7 @@ def _catalog_row(
         },
         "limits": {
             "max_page_size": max_page_size,
+            "max_in_values": 500,
             "max_lookback_days": 36500,
         },
         "availability": {"activation_states": ["active"]},
@@ -756,15 +757,15 @@ def test_initializer_promotes_explicit_reviewed_universe_to_500(
 
     assert result["status"] == "pass"
     assert result["symbol_count"] == 500
-    assert result["profile_max_pages"] == 5
+    assert result["profile_max_pages"] == 1
     assert result["profile_max_rows"] == 500
-    assert result["profile_page_limit"] == 100
+    assert result["profile_page_limit"] == 500
     day = tmp_path / "20260729"
     manifest = json.loads((day / "minute-manifest.json").read_text())
     published_universe = json.loads((day / "universe.json").read_text())
-    assert manifest["profile"]["max_pages"] == 5
+    assert manifest["profile"]["max_pages"] == 1
     assert manifest["profile"]["max_rows"] == 500
-    assert manifest["profile"]["page_limit"] == 100
+    assert manifest["profile"]["page_limit"] == 500
     assert manifest["universe_sha256"] == result["universe_sha256"]
     assert published_universe == universe
 
@@ -878,13 +879,14 @@ def test_scaled_profile_uses_catalog_page_budget() -> None:
         },
         symbol_count=500,
         catalog_page_size=200,
+        catalog_max_in_values=500,
     )
 
     assert profile == {
         "dataset_contract_fingerprint": "b" * 64,
-        "max_pages": 5,
+        "max_pages": 3,
         "max_rows": 500,
-        "page_limit": 100,
+        "page_limit": 200,
     }
 
 
@@ -1174,8 +1176,8 @@ def test_initializer_upgrades_pagination_profile_before_state_bundle(
     )
     manifest_path = tmp_path / "20260729" / "minute-manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["profile"]["max_pages"] = 1
-    manifest["profile"]["page_limit"] = 500
+    manifest["profile"]["max_pages"] = 5
+    manifest["profile"]["page_limit"] = 100
     manifest["profile"]["consumer_profile_sha256"] = "d" * 64
     manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
 
@@ -1190,7 +1192,7 @@ def test_initializer_upgrades_pagination_profile_before_state_bundle(
     assert result["reused"] is True
     assert upgraded["profile"]["max_pages"] == result["profile_max_pages"]
     assert upgraded["profile"]["page_limit"] == result["profile_page_limit"]
-    assert upgraded["profile"]["page_limit"] != 500
+    assert upgraded["profile"]["page_limit"] != 100
 
 
 def test_initializer_refreshes_evidence_catalog_version_with_pagination_upgrade(
@@ -1206,8 +1208,8 @@ def test_initializer_refreshes_evidence_catalog_version_with_pagination_upgrade(
     manifest_path = tmp_path / "20260729" / "minute-manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["observed_catalog_version"] = "v1-old-evidence"
-    manifest["profile"]["max_pages"] = 1
-    manifest["profile"]["page_limit"] = 500
+    manifest["profile"]["max_pages"] = 5
+    manifest["profile"]["page_limit"] = 100
     manifest["profile"]["consumer_profile_sha256"] = "d" * 64
     manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
 
