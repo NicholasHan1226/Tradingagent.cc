@@ -16,12 +16,14 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 import sys
 from typing import Any, Mapping
 
 from Crypto.ten_symbol_observation_runtime import (
     FORTY_SYMBOL_RUNTIME_CONFIG,
     RUNTIME_TOKEN_FILE,
+    CryptoTenSymbolObservationRuntimeError,
     CryptoTenSymbolObservationRuntimeManifest,
     crypto_ten_symbol_observation_exit_code,
     load_crypto_ten_symbol_observation_runtime_manifest,
@@ -34,6 +36,17 @@ FORTY_SYMBOL_RUNTIME_CONTRACT = FORTY_SYMBOL_RUNTIME_CONFIG.runtime_contract
 FORTY_SYMBOL_MANIFEST_CONTRACT = FORTY_SYMBOL_RUNTIME_CONFIG.manifest_contract
 FORTY_SYMBOL_TOKEN_FILE = RUNTIME_TOKEN_FILE
 FORTY_SYMBOL_INVOCATION_BUDGET_SECONDS = 300.0
+_PUBLIC_RUNTIME_FAILURE_CODE = re.compile(r"runtime_[a-z0-9_]+")
+
+
+def _public_runtime_failure_code(exc: Exception) -> str:
+    """Return only a stable core failure code, never raw exception detail."""
+
+    if isinstance(exc, CryptoTenSymbolObservationRuntimeError):
+        reason = str(exc)
+        if _PUBLIC_RUNTIME_FAILURE_CODE.fullmatch(reason):
+            return reason
+    return "runtime_unexpected_error"
 
 
 def load_crypto_forty_symbol_observation_runtime_manifest(
@@ -85,9 +98,23 @@ def main(argv: list[str] | None = None) -> int:
             invocation_budget_seconds=FORTY_SYMBOL_INVOCATION_BUDGET_SECONDS,
         )
         exit_code = crypto_ten_symbol_observation_exit_code(receipt)
-    except Exception:
+    except Exception as exc:
         print(
             "crypto forty symbol observation runtime failed closed",
+            file=sys.stderr,
+        )
+        print(
+            json.dumps(
+                {
+                    "contract": "tradingagent.crypto.forty_symbol_runtime_failure.v1",
+                    "failure_code": _public_runtime_failure_code(exc),
+                    "status": "failed_closed",
+                },
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
             file=sys.stderr,
         )
         return 2

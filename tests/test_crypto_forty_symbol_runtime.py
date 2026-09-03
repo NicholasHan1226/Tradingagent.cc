@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
+import pytest
+
+import Crypto.forty_symbol_observation_runtime as forty_runtime
 from Crypto.forty_symbol_observation_runtime import (
     FORTY_SYMBOL_INVOCATION_BUDGET_SECONDS,
     FORTY_SYMBOL_RUNTIME_CONTRACT,
 )
 from Crypto.ten_symbol_observation_runtime import (
+    CryptoTenSymbolObservationRuntimeError,
     FORTY_SYMBOL_RUNTIME_CONFIG,
     TEN_SYMBOL_RUNTIME_CONFIG,
     _family_event_id,
@@ -77,3 +82,52 @@ def test_forty_symbol_window_waits_for_its_fixed_receipt_settle_boundary() -> No
     )
     assert ten_symbol.window_end == window_end
     assert ten_symbol.observation_cutoff == window_end + timedelta(seconds=55)
+
+
+def test_forty_symbol_cli_emits_only_stable_core_failure_code(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        forty_runtime,
+        "run_crypto_forty_symbol_observation_once",
+        lambda **_: (_ for _ in ()).throw(
+            CryptoTenSymbolObservationRuntimeError("runtime_cycle_failed")
+        ),
+    )
+
+    assert forty_runtime.main(
+        ["--runtime-manifest", "/tmp/manifest.json", "--token-file", "/tmp/token"]
+    ) == 2
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines()[0] == (
+        "crypto forty symbol observation runtime failed closed"
+    )
+    assert json.loads(captured.err.splitlines()[1]) == {
+        "contract": "tradingagent.crypto.forty_symbol_runtime_failure.v1",
+        "failure_code": "runtime_cycle_failed",
+        "status": "failed_closed",
+    }
+
+
+def test_forty_symbol_cli_hides_unexpected_exception_details(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        forty_runtime,
+        "run_crypto_forty_symbol_observation_once",
+        lambda **_: (_ for _ in ()).throw(ValueError("token=/private/secret")),
+    )
+
+    assert forty_runtime.main(
+        ["--runtime-manifest", "/tmp/manifest.json", "--token-file", "/tmp/token"]
+    ) == 2
+
+    captured = capsys.readouterr()
+    assert "token=" not in captured.err
+    assert json.loads(captured.err.splitlines()[1])["failure_code"] == (
+        "runtime_unexpected_error"
+    )
