@@ -611,7 +611,9 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 > spreads）与独立 store root `/var/lib/tradingagent/crypto-40-symbol-observation`
 > 40 币观察链可通过独立的 thin runtime 和 systemd 候选启动，但不接
 > 晋级/资本；因子投影仍保持 detached，不接 systemd/晋级。thin runtime 见
-> `forty_symbol_observation_runtime.py`。40 币因子投影使用 feature set
+> `forty_symbol_observation_runtime.py`。其 CLI 失败时仅输出固定的 `runtime_*`
+> 原因码，不输出原始异常、路径或凭据；原因码只用于只读故障定位，不授予资本、订单或
+> 晋级权限。40 币因子投影使用 feature set
 > `crypto-5m-ohlcv-factor-research-v3` + consumer profile
 > `crypto-5m-ohlcv-13bar-forward-labels-v3` + 投影命名空间
 > `evolution/forty_symbol_factor_research/`，不写旧
