@@ -875,10 +875,12 @@ to hardcode `drift_ok=False`. Live / real_trading / live_transition /
 automatic_risk_expansion stay fail-closed. Cash-session daily close is
 prior-close evidence only: it is not a quote clock and cannot mint a fill.
 In-session quote clocks come from the last completed `cn.dataset.rt_min`
-five-minute slot at or before `decision_as_of`. A live `rt_min` bar may also
+five-minute slot at or before `decision_as_of`, or from the session-open
+print (09:30 AM / 13:00 PM) when continuous auction has started but that
+first complete bar is not out yet. A live `rt_min` bar may also
 carry `trade_date` and `close`; that is still a clock when `time` matches the
 slot, even if `freq` is omitted. Missing clocks stay honest
-`PAPER_NOT_FILLED` / `quote_clocks_unavailable`. The same last-complete bar
+`PAPER_NOT_FILLED` / `quote_clocks_unavailable`. The same slot
 may bind volume and query-receipt proof as a bar-evidence snapshot: last/close
 is the bar mid, not bid/ask, and bid/ask are last ± conservative slippage
 (one tick if rounding collapses). A bar that closes at the high or low still
@@ -887,7 +889,9 @@ close/touch never becomes that snapshot and cannot mint a fill. A missing or
 broken query receipt must not discard a present clock. Present clocks without
 a snapshot stay `capital_fill_market_snapshot_unavailable`. A last-complete
 five-minute bar in the same continuous session is fill-fresh for an in-session
-oneshot; the fill snapshot is as-of decision/execution, not the 30s L1 quote
+oneshot; before that bar exists, the session-open print is the earliest
+allowable in-session evidence and stays fill-fresh. The fill snapshot is
+as-of decision/execution, not the 30s L1 quote
 window. Lunch and the closing auction stay
 `paper_continuous_session_unavailable`. A morning bar used after the afternoon
 session starts stays `paper_market_snapshot_stale`.
