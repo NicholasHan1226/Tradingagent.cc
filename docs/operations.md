@@ -258,6 +258,13 @@ release 并重启前端，不能等待 service 的自动重启或以 `activating
 unit 与四个 A股 unit
 （minute-session、minute-paper、minute-scale500-session、minute-scale500-paper）
 的 release 绑定。初始化和消费必须使用同一不可变版本，不能仅绑定基线 paper。
+`current` 切换前，助手只允许用本次已校验 immutable release 内的
+`deploy/release.sh` 原子替换 `/usr/local/sbin/tradingagent-release`；字节不同则替换后
+重新进入，使同一次 `controller-accepted-deploy` 按该 SHA 的 unit 名单收口，包括把
+`tradingagent-crypto-forty-symbol-observation.service` 从
+`20-forty-symbol-release.conf` 收到 `99-tradingagent-release.conf` 并钉到该 SHA。
+GitHub 读回必须同时核对 `current/.deployed-sha` 与该 40 标的 unit 的有效
+`WorkingDirectory`/drop-in；只更新 symlink、仍钉在旧 SHA（例如 `7eb0e624`）视为失败。
 切换前这些 one-shot
 unit 必须全部已停止：正常状态为 `inactive`；上一轮失败遗留的 `failed` 仅在
 `MainPID=0` 且 `ControlPID=0` 时允许切换，并保留失败事实，不执行 `reset-failed` 或手工
@@ -267,8 +274,9 @@ unit 必须全部已停止：正常状态为 `inactive`；上一轮失败遗留�
 `PYTHONPATH`、只读 release 路径和原有效 timeout；`daemon-reload` 后逐 unit 读回，旧
 drop-in、路径漂移或运行中竞态均使整次发布失败。失败路径同时恢复前一 `current`、原
 drop-in 集合和前端健康；不得手工删除其它 drop-in，也不得把 unit inactive 或配置读回
-冒充自然 receipt、消费者或模拟结果。首次交付此行为时须从已验收的精确 release 重新
-安装 root-owned `/usr/local/sbin/tradingagent-release`，之后才允许用普通发布路径验证。
+冒充自然 receipt、消费者或模拟结果。首次交付助手自刷新或新 unit 绑定时，须从已验收的
+精确 release 重新安装 root-owned `/usr/local/sbin/tradingagent-release`，之后普通
+`controller-accepted-deploy` 才会按新名单收口；陈旧助手不能静默成功。
 
 不可变 staging 不能把 Git tree 中的 executable bit 统一抹成 `0444`。目录权限归一后，
 普通文件可设为只读，但每个 Git mode `100755`（或经已验旧 immutable release 精确同路径

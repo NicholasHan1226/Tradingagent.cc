@@ -139,6 +139,13 @@ def test_deploy_workflow_requires_controller_accepted_exact_main_test_run() -> N
     assert "sudo -n /usr/local/sbin/tradingagent-release" in workflow
     assert "if: steps.publish.outputs.published == 'true'" in workflow
     assert "deploy/release.sh" not in workflow
+    assert "tradingagent-crypto-forty-symbol-observation.service" in workflow
+    assert "20-forty-symbol-release.conf" in workflow
+    assert "99-tradingagent-release.conf" in workflow
+    assert "systemctl show -p WorkingDirectory --value" in workflow
+    assert "systemctl show -p DropInPaths --value" in workflow
+    assert "legacy forty-symbol release drop-in remains effective" in workflow
+    assert "grep -Fq '$forty_unit' /usr/local/sbin/tradingagent-release" in workflow
 
 
 def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
@@ -151,6 +158,14 @@ def test_root_release_helper_enforces_immutable_cutover_and_rollback() -> None:
     assert "unsupported archive member type" in helper
     assert "validate_immutable_release()" in helper
     assert "validate_immutable_release \"$release_dir\"" in helper
+    assert "refresh_installed_helper_from_release \"$release_dir\"" in helper
+    assert "'deploy/release.sh'" in helper
+    assert helper.index("refresh_installed_helper_from_release \"$release_dir\"") < helper.index(
+        "prepare_g5_release_reconciliation\n"
+    )
+    assert helper.index(
+        "refresh_installed_helper_from_release \"$release_dir\"\nprepare_g5_release_reconciliation\n"
+    ) < helper.index('reconcile_g5_release_dropins "$release_dir"')
     assert "find \"$staging_dir\" -type d -exec chmod 0755" in helper
     assert "find \"$staging_dir\" -type f -perm /0111 -exec chmod 0555" in helper
     assert "find \"$staging_dir\" -type f ! -perm /0111 -exec chmod 0444" in helper
@@ -171,6 +186,9 @@ def test_root_release_helper_reconciles_runtime_release_dropins_atomically() -> 
         "20-forty-symbol-release.conf"
     ) in helper
     assert 'test -r "$root/Crypto/forty_symbol_observation_runtime.py"' in helper
+    assert 'test -r "$root/deploy/release.sh"' in helper
+    assert "refreshed installed helper from" in helper
+    assert 'exec "$installed_path"' in helper
     for unit in ASHARE_RELEASE_UNITS:
         assert f"/etc/systemd/system/{unit}.d/20-ashare-release.conf" in helper
     assert 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")' in helper
@@ -408,6 +426,104 @@ def test_each_ashare_unit_participates_in_preflight_and_transaction_rollback(
     if fault == "active-preflight":
         assert f"must be stopped during release preflight: {unit}" in completed.stderr
     assert not list(tmp_path.glob("backup.*"))
+
+
+def _refresh_helper_fixture(tmp_path: Path, *, source_text: str, installed_text: str) -> subprocess.CompletedProcess[str]:
+    helper = _read("deploy/release.sh")
+    match = re.search(
+        r"refresh_installed_helper_from_release\(\) \{\n.*?\n\}\n",
+        helper,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    installed = tmp_path / "tradingagent-release"
+    release_dir = tmp_path / "release"
+    source = release_dir / "deploy" / "release.sh"
+    source.parent.mkdir(parents=True)
+    installed.write_text(installed_text)
+    source.write_text(source_text)
+    installed.chmod(0o755)
+    source.chmod(0o755)
+    harness = f"""
+set -euo pipefail
+installed_path="{installed}"
+fail() {{ printf '%s\\n' "$*" >&2; exit 97; }}
+stat() {{
+  case "$2" in
+    %U:%G) printf 'root:root\\n' ;;
+    %h) printf '1\\n' ;;
+    %a) printf '755\\n' ;;
+    *) return 98 ;;
+  esac
+}}
+chown() {{ :; }}
+exec() {{
+  printf '%s\\n' "$*" > "{tmp_path}/reentered"
+  exit 0
+}}
+{match.group(0)}
+refresh_installed_helper_from_release "{release_dir}"
+"""
+    return subprocess.run(
+        ["bash", "-c", harness],
+        env={"PATH": "/usr/bin:/bin", "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+
+def test_release_helper_refresh_is_noop_when_installed_matches_release(
+    tmp_path: Path,
+) -> None:
+    text = (
+        "#!/bin/bash\n"
+        "tradingagent-crypto-forty-symbol-observation.service\n"
+    )
+    completed = _refresh_helper_fixture(
+        tmp_path, source_text=text, installed_text=text
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert not (tmp_path / "reentered").exists()
+    assert (tmp_path / "tradingagent-release").read_text() == text
+
+
+def test_release_helper_refresh_replaces_stale_helper_and_reenters(
+    tmp_path: Path,
+) -> None:
+    source_text = (
+        "#!/bin/bash\n"
+        "tradingagent-crypto-forty-symbol-observation.service\n"
+        "canonical forty-symbol bind\n"
+    )
+    completed = _refresh_helper_fixture(
+        tmp_path,
+        source_text=source_text,
+        installed_text="#!/bin/bash\n# stale host helper\n",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert (tmp_path / "tradingagent-release").read_text() == source_text
+    assert (tmp_path / "reentered").read_text() == (
+        f"{tmp_path / 'tradingagent-release'}\n"
+    )
+    assert "refreshed installed helper from" in completed.stderr
+
+
+def test_release_helper_refresh_rejects_source_missing_forty_symbol(
+    tmp_path: Path,
+) -> None:
+    completed = _refresh_helper_fixture(
+        tmp_path,
+        source_text="#!/bin/bash\n# no forty-symbol unit\n",
+        installed_text="#!/bin/bash\n# stale host helper\n",
+    )
+    assert completed.returncode == 97
+    assert "missing forty-symbol observation reconciliation" in completed.stderr
+    assert (tmp_path / "tradingagent-release").read_text() == (
+        "#!/bin/bash\n# stale host helper\n"
+    )
+    assert not (tmp_path / "reentered").exists()
 
 
 def test_forty_symbol_observation_participates_in_release_rollback(
