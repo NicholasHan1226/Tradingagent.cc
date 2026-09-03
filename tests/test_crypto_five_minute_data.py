@@ -736,6 +736,67 @@ def test_profile_fails_closed_when_canonical_contract_field_drifts(
         frozen.verify_catalog(drifting_catalog)
 
 
+def test_profile_accepts_additive_in_limit_when_consumer_uses_only_eq() -> None:
+    frozen = profile(client(FixtureTradingDatasTransport()))
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    changed = copy.deepcopy(rows)
+    for row in changed:
+        row["limits"]["max_in_values"] = 100
+    observed = client(FixtureTradingDatasTransport(catalog_rows=changed)).get_catalog()
+
+    evidence = frozen.verify_catalog(observed)
+
+    assert {
+        item["catalog_contract_compatibility"]
+        for item in evidence["dataset_contracts"]
+    } == {"additive_max_in_values_unused"}
+
+
+def test_profile_rejects_additive_in_limit_when_consumer_uses_in() -> None:
+    frozen = profile(client(FixtureTradingDatasTransport()))
+    bars = frozen.binding_for("BTCUSDT").bars
+    in_filter = replace(bars.filter_bindings[0], operator="in")
+    in_profile = replace(
+        bars,
+        filter_bindings=(in_filter, *bars.filter_bindings[1:]),
+    )
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    changed = copy.deepcopy(rows)
+    target = next(row for row in changed if row["dataset_id"] == bars.dataset_id)
+    target["limits"]["max_in_values"] = 100
+    observed = client(FixtureTradingDatasTransport(catalog_rows=changed)).get_catalog()
+
+    with pytest.raises(
+        CryptoFiveMinuteDataError,
+        match="crypto_5m_catalog_contract_drift",
+    ):
+        in_profile.verify_catalog(observed)
+
+
+def test_profile_rejects_additive_in_limit_with_any_other_limit_drift() -> None:
+    frozen = profile(client(FixtureTradingDatasTransport()))
+    payload = catalog_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    changed = copy.deepcopy(rows)
+    target = next(
+        row for row in changed if row["dataset_id"] == BAR_DATASETS["BTCUSDT"]
+    )
+    target["limits"]["max_in_values"] = 100
+    target["limits"]["max_lookback_days"] = 36501
+    observed = client(FixtureTradingDatasTransport(catalog_rows=changed)).get_catalog()
+
+    with pytest.raises(
+        CryptoFiveMinuteDataError,
+        match="crypto_5m_catalog_contract_drift",
+    ):
+        frozen.verify_catalog(observed)
+
+
 @pytest.mark.parametrize("mutation", ("missing", "duplicate"))
 def test_profile_fails_closed_for_missing_or_duplicate_target_catalog_row(
     mutation: str,
