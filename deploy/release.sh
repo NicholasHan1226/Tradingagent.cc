@@ -17,6 +17,7 @@ g5_units=(
   tradingagent-crypto-round-trip-g5-health.service
   tradingagent-crypto-round-trip-g5-learning.service
   tradingagent-crypto-round-trip-g5-learning-scrub.service
+  tradingagent-crypto-forty-symbol-observation.service
 )
 ashare_release_units=(
   tradingagent-ashare-minute-session.service
@@ -33,6 +34,7 @@ g5_legacy_dropins=(
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-health.service.d/release.conf
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning.service.d/20-immutable-release.conf
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning-scrub.service.d/20-immutable-release.conf
+  /etc/systemd/system/tradingagent-crypto-forty-symbol-observation.service.d/20-forty-symbol-release.conf
 )
 ashare_legacy_dropins=(
   /etc/systemd/system/tradingagent-ashare-minute-session.service.d/20-ashare-release.conf
@@ -85,6 +87,7 @@ validate_immutable_release() {
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_report.py"
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_health.py"
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_learning_worker.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/forty_symbol_observation_runtime.py"
 }
 
 validate_managed_g5_dropin() {
