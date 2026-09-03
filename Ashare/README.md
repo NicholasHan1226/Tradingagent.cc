@@ -875,9 +875,11 @@ to hardcode `drift_ok=False`. Live / real_trading / live_transition /
 automatic_risk_expansion stay fail-closed. Cash-session daily close is
 prior-close evidence only: it is not a quote clock and cannot mint a fill.
 In-session quote clocks come from the last completed `cn.dataset.rt_min`
-five-minute slot at or before `decision_as_of`, or from the session-open
-print (09:30 AM / 13:00 PM) when continuous auction has started but that
-first complete bar is not out yet. A live `rt_min` bar may also
+five-minute slot at or before `decision_as_of`, the previous same-session
+published bar when that just-closed print is not committed yet (TD commits
+about 20s after the 5-min boundary, so a 10:05 oneshot must still bind live
+10:00), or from the session-open print (09:30 AM / 13:00 PM) when continuous
+auction has started but that first complete bar is not out yet. A live `rt_min` bar may also
 carry `trade_date` and `close`; that is still a clock when `time` matches the
 slot, even if `freq` is omitted. Missing clocks stay honest
 `PAPER_NOT_FILLED` / `quote_clocks_unavailable`. The same slot
