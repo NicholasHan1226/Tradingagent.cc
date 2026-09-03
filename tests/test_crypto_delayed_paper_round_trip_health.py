@@ -941,6 +941,31 @@ def test_round_trip_health_cli_hides_unexpected_exception_details(
     )
 
 
+def test_round_trip_health_cli_emits_checksum_verified_stale_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stale = {
+        "contract": health_module.ROUND_TRIP_HEALTH_CONTRACT,
+        "status": "stale",
+        "authority": "none",
+        "read_only": True,
+        "real_trading_enabled": False,
+        "freshness": {"state": "stale", "completion_lag_seconds": 1801},
+    }
+    monkeypatch.setattr(
+        health_module,
+        "run_crypto_delayed_paper_round_trip_health_once",
+        lambda **_: stale,
+    )
+
+    assert health_module.main(["--epoch-manifest", "/tmp/manifest.json"]) == 2
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == stale
+    assert captured.err == "crypto round-trip health failed closed\n"
+
+
 def test_round_trip_health_cli_preserves_fail_closed_receipt_when_error_string_breaks(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
