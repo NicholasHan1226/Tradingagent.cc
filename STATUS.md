@@ -1,8 +1,23 @@
 # TradingAgent current status
 
-Observed at: 2026-09-05T00:12:00+08:00. This replaceable snapshot separates
+Observed at: 2026-09-05T01:05:00+08:00. This replaceable snapshot separates
 source, configuration, runtime and market evidence. Simulation only; no live
 trading, new capital, risk expansion or strategy promotion.
+
+## 2026-09-05 01:05 CST garden closeout
+
+- Local canonical `main` remains `c1d0aa8d` (`#640`) until this page merges.
+  Worktree clean. Extra feature locals archived to `archive/20260905/*` plus
+  bundles under `~/Archives/Finance-worktrees/20260905/`, then deleted.
+  Worktrees stay at 4: canonical plus `.worktrees/market-{ashare,cnfutures,crypto}`.
+- GitHub: deleted already-merged remote feature heads (crypto v2 lineage,
+  panel/prereg, minute-guard, 20260830 ops, etc.). Kept `recovery/` `wire/`
+  `controller/` `agent/` `archive/` `release/` and the three market lanes.
+  Drafts `#606` / `#608` / `#610` / `#612` still open, not merged.
+- Production files unchanged: `current` → `53734f2b`. This page is docs-only
+  and is not a GZ cut. `REAL_TRADING_ENABLED=false`.
+- `#630` remains closed (superseded by `#631`). 00:12 oneshot diagnosis below
+  is unchanged and was not restarted.
 
 ## 2026-09-05 00:12 CST residual garden
 
