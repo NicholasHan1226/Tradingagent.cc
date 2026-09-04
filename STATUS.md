@@ -1,8 +1,38 @@
 # TradingAgent current status
 
-Observed at: 2026-08-31T00:53:00+08:00. This replaceable snapshot separates
+Observed at: 2026-09-04T21:35:00+08:00. This replaceable snapshot separates
 source, configuration, runtime and market evidence. Simulation only; no live
 trading, new capital, risk expansion or strategy promotion.
+
+## 2026-09-04 21:35 CST three-surface garden
+
+- Local canonical `main` fast-forwarded `33f6c90f` → `53734f2b` (`#639`).
+  `git rev-list --left-right --count HEAD...origin/main` = `0 0`; worktree clean.
+- GitHub `origin/main` = `53734f2b3e1bb38841a8535c11250540caf71650`. The 13
+  commits local had lacked are ashare catalog/minute bindings (`#631`/`#632`)
+  plus crypto health/forty-symbol observer/deploy pin (`#634`–`#639`). They
+  are already on the immutable production pointer below; this round did not
+  merge extra feature PRs.
+- Open leftovers: `#630` (in-session clocks) is `CONFLICTING` against main —
+  not merged. Drafts `#606`/`#608`/`#610`/`#612` kept. No `automerge-m0`
+  hygiene candidates besides this page.
+- Production files: `marketgraph-main`
+  `/opt/investment/releases/tradingagent/current` → `53734f2b` with matching
+  `.source-sha`. No TradingAgentSource checkout. This round did not switch
+  releases. `REAL_TRADING_ENABLED=false` on 26 `tradingagent-*.service` units.
+  `tradingagent-front-api` is `active/running`.
+- Runtime health (not gardening): failed oneshots with `ExecMainStatus=2` —
+  `ashare-minute-scale500-paper` (15:07), `ashare-minute-scale500-session`
+  (09:36), `ashare-minute-session` (09:18), `crypto-ten-symbol-factor-research`
+  (21:29), `crypto-ten-symbol-observation` (21:28). Not restarted.
+- Worktrees: removed 4 extra trees under `TradingAgent-worktrees/` (2 ancestors
+  of origin/main, 2 patch-equivalent). Kept canonical plus
+  `.worktrees/market-{ashare,cnfutures,crypto}`. Local patch-equivalent
+  branches `codex/cnfutures-td-major2-consumer-20260830` and
+  `codex/ashare-td-major2-consumers-20260830` retained after worktree removal.
+
+The 2026-08-31 private-API / account-relocation snapshot below is historical
+and is not a current main/release pointer.
 
 ## Source and release layers
 
