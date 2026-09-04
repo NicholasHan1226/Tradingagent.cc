@@ -1,8 +1,34 @@
 # TradingAgent current status
 
-Observed at: 2026-09-04T21:35:00+08:00. This replaceable snapshot separates
+Observed at: 2026-09-05T00:12:00+08:00. This replaceable snapshot separates
 source, configuration, runtime and market evidence. Simulation only; no live
 trading, new capital, risk expansion or strategy promotion.
+
+## 2026-09-05 00:12 CST residual garden
+
+- Local canonical `main` remains `c1d0aa8d` (`#640`).
+  `git rev-list --left-right --count HEAD...origin/main` = `0 0`; worktree clean.
+- GitHub `origin/main` = `c1d0aa8dfafa1eb50302140415bed350a613057a`. This page
+  is docs-only and is not a GZ release.
+- `#630` closed (not merged) as superseded by already-merged `#631`. Current
+  `main` has `in_session_quote_clock_candidates` (10:05 → 10:00 → 09:55). The
+  conflict was a stale base, not a product conflict. Drafts `#606` / `#608` /
+  `#610` / `#612` kept.
+- Production files: `marketgraph-main`
+  `/opt/investment/releases/tradingagent/current` still → `53734f2b` with
+  matching `.source-sha` / `.deployed-sha`. This round did not switch
+  releases. `REAL_TRADING_ENABLED=false` on 26 `tradingagent-*.service` units.
+  `tradingagent-front-api` is `active/running`.
+- Oneshot diagnosis only (not restarted), all `real_trading_enabled=false`:
+  - `ashare-minute-scale500-paper` Fri 15:07: `minute_scale500_session_inputs_missing`
+  - `ashare-minute-scale500-session` Fri 09:36: `minute_dataset_contract_drift`
+  - `ashare-minute-session` Fri 09:18: `minute_session_input_invalid`
+  - `crypto-ten-symbol-factor-research` Sat 00:04: generic fail-closed; WorkingDirectory pinned to `4720d04b` via `20-ten-symbol-factor-release.conf`
+  - `crypto-ten-symbol-observation` Sat 00:03: generic fail-closed; WorkingDirectory pinned to `5d335012` (`#358`) via `20-ten-symbol-release.conf`
+  Forty-symbol observation completed exit 0 on current `53734f2b` (00:04–00:07).
+  A-share three are real fail-closed from Friday session hours, not leftover transients.
+  Crypto ten-symbol pair is real runtime health: stale release pins, same class `#638`/`#639` already fixed for forty-symbol.
+- Worktrees unchanged: canonical plus `.worktrees/market-{ashare,cnfutures,crypto}`.
 
 ## 2026-09-04 21:35 CST three-surface garden
 
