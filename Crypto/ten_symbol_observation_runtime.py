@@ -1007,7 +1007,9 @@ def _data_reject_event(
     window: CryptoObservationWindow,
     reason_code: str,
     config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+    observed_at: datetime | None = None,
 ) -> dict[str, Any]:
+    observed_iso = _iso_utc(observed_at) if observed_at is not None else None
     id_material = {
         "event_type": "data_reject",
         "window_end": _iso_utc(window.window_end),
@@ -1016,7 +1018,9 @@ def _data_reject_event(
         "profile_sha256": manifest.profile.profile_sha256,
         "catalog_version": manifest.catalog_version,
     }
-    return {
+    if observed_iso is not None:
+        id_material["observed_at"] = observed_iso
+    event = {
         "contract": config.store_contracts.event,
         "event_id": _family_event_id(config, "data-reject", id_material),
         "event_type": "data_reject",
@@ -1032,6 +1036,9 @@ def _data_reject_event(
         "capital_write_eligible": False,
         "model_authority": False,
     }
+    if observed_iso is not None:
+        event["observed_at"] = observed_iso
+    return event
 
 
 def _data_gap_event(
@@ -1098,6 +1105,7 @@ def _append_reject(
     window: CryptoObservationWindow,
     reason_code: str,
     config: CryptoTenSymbolObservationRuntimeConfig = TEN_SYMBOL_RUNTIME_CONFIG,
+    observed_at: datetime | None = None,
 ) -> dict[str, Any]:
     stored = store.append_event(
         _data_reject_event(
@@ -1105,9 +1113,10 @@ def _append_reject(
             window=window,
             reason_code=reason_code,
             config=config,
+            observed_at=observed_at,
         )
     )
-    return {
+    receipt = {
         "status": "data_reject",
         "reason_code": reason_code,
         "event_id": stored["event_id"],
@@ -1116,6 +1125,9 @@ def _append_reject(
         "observation_cutoff": _iso_utc(window.observation_cutoff),
         **_non_authority_receipt_fields(),
     }
+    if observed_at is not None:
+        receipt["observed_at"] = _iso_utc(observed_at)
+    return receipt
 
 
 def _persisted_spread_block(
@@ -1289,6 +1301,7 @@ def _fresh_cycle(
             window=window,
             reason_code=str(exc),
             config=config,
+            observed_at=getattr(exc, "observed_at", None),
         )
         store.clear_pending(_iso_utc(window.window_end))
         return result
@@ -1366,6 +1379,7 @@ def _attempt_outage_gap_recovery(
             window=current_window,
             reason_code=str(exc),
             config=config,
+            observed_at=getattr(exc, "observed_at", None),
         )
         store.clear_pending(_iso_utc(current_window.window_end))
         return result
