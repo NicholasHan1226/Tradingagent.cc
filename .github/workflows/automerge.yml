@@ -79,5 +79,6 @@ jobs:
             --method POST \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/dispatches" \
             -f ref=main \
+            -f "inputs[docs_fast_path]=true" \
             -f "inputs[expected_sha]=$merge_sha"
           echo "Merged eligible M0 PR #${PR_NUMBER}; dispatched exact-main validation for ${merge_sha}."
