@@ -505,6 +505,7 @@ class RoundTripCapitalLedger:
         *,
         sequence: int,
         previous_checksum: str,
+        _order_proof: dict[str, Any] | None = None,
     ) -> None:
         expected_keys = {
             "contract",
@@ -562,17 +563,22 @@ class RoundTripCapitalLedger:
             return
         if not state["initialized"]:
             raise CryptoRoundTripError("round_trip_opening_required")
-        self._apply_cycle(state, payload, reference_id=reference_id)
+        self._apply_cycle(
+            state, payload, reference_id=reference_id, _order_proof=_order_proof
+        )
 
     def _replay(self, rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], str]:
         state = self._empty_state()
         previous = ""
+        # This proof belongs to this replay only; no runtime/writer cache escapes.
+        order_proof: dict[str, Any] = {}
         for index, row in enumerate(rows, start=1):
             self._validate_event(
                 state,
                 row,
                 sequence=index,
                 previous_checksum=previous,
+                _order_proof=order_proof,
             )
             previous = str(row["checksum"])
         return state, previous
@@ -583,6 +589,7 @@ class RoundTripCapitalLedger:
         payload: Mapping[str, Any],
         *,
         reference_id: str,
+        _order_proof: dict[str, Any] | None = None,
     ) -> None:
         required = {
             "contract",
@@ -629,7 +636,7 @@ class RoundTripCapitalLedger:
         previous_slot = state["last_slot_by_symbol"].get(symbol)
         if previous_slot is not None and execution_slot <= previous_slot:
             raise CryptoRoundTripError("round_trip_cycle_slot_not_monotonic")
-        before = self._capital_checkpoint(state)
+        before = self._capital_checkpoint(state, _order_proof=_order_proof)
         if _canonical_json(payload.get("before")) != _canonical_json(before):
             raise CryptoRoundTripError("round_trip_cycle_before_mismatch")
         quote = payload.get("quote")
@@ -700,6 +707,9 @@ class RoundTripCapitalLedger:
                 instrument=typed_cycle["instrument"],
                 cycle_binding=payload,
             )
+            # Replay orders are append-only, and this is their sole mutation.
+            if _order_proof is not None:
+                _order_proof.clear()
         expected_side = (
             "sell"
             if expected_exit_reason is not None
@@ -714,7 +724,7 @@ class RoundTripCapitalLedger:
             raise CryptoRoundTripError("round_trip_order_action_mismatch")
         state["cycles"][cycle_id] = _sha256(payload)
         state["last_slot_by_symbol"][symbol] = execution_slot
-        after = self._capital_checkpoint(state)
+        after = self._capital_checkpoint(state, _order_proof=_order_proof)
         if _canonical_json(payload.get("after")) != _canonical_json(after):
             raise CryptoRoundTripError("round_trip_cycle_after_mismatch")
 
@@ -971,7 +981,9 @@ class RoundTripCapitalLedger:
             }
         )
 
-    def _snapshot(self, state: Mapping[str, Any]) -> dict[str, Any]:
+    def _snapshot(
+        self, state: Mapping[str, Any], *, _include_orders: bool = True
+    ) -> dict[str, Any]:
         position_value = ZERO
         for symbol, position in state["positions"].items():
             mark = state["marks"].get(symbol)
@@ -986,7 +998,7 @@ class RoundTripCapitalLedger:
             "initial_cash": self.policy.initial_cash,
             "cash": _money(state["cash"]),
             "positions": state["positions"],
-            "orders": state["orders"],
+            **({"orders": state["orders"]} if _include_orders else {}),
             "fees": _money(state["fees"], rounding=ROUND_UP),
             "realized_pnl": _money(state["realized_pnl"]),
             "marks": state["marks"],
@@ -998,13 +1010,23 @@ class RoundTripCapitalLedger:
         }
         return _canonical_value(snapshot)
 
-    def _capital_checkpoint(self, state: Mapping[str, Any]) -> dict[str, Any]:
-        """Bounded conservation proof without copying order history per event."""
+    def _capital_checkpoint(
+        self, state: Mapping[str, Any], *, _order_proof: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Preserve the wire proof without copying order history into a snapshot."""
 
-        snapshot = self._snapshot(state)
-        orders = snapshot.pop("orders")
+        snapshot = self._snapshot(state, _include_orders=False)
+        orders = state["orders"]
+        # Existing canonical values are idempotent under _canonical_value, so
+        # hashing raw state orders produces exactly the former snapshot digest.
+        if _order_proof is None:
+            digest = _sha256(orders)
+        else:
+            if not _order_proof:
+                _order_proof["digest"] = _sha256(orders)
+            digest = _order_proof["digest"]
         snapshot["order_count"] = len(orders)
-        snapshot["orders_sha256"] = _sha256(orders)
+        snapshot["orders_sha256"] = digest
         return snapshot
 
     def _validated_state(self) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
