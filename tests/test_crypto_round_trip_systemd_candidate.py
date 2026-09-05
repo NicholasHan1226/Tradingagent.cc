@@ -136,7 +136,10 @@ def test_g5_health_timer_runs_between_observed_core_cadences() -> None:
 
     core_points = _minute_second_points(core_timer)
     health_points = _minute_second_points(health_timer)
-    assert "OnCalendar=*-*-* *:0/5:55" in core_timer
+    # G5 waits an additional two minutes after its already-settled source bar
+    # instead of repeatedly turning ordinary source publication lag into a
+    # runtime backlog recovery.
+    assert "OnCalendar=*-*-* *:2/5:55" in core_timer
     assert "OnCalendar=*-*-* *:4/15:30" in health_timer
     assert health_points == [
         4 * 60 + 30,
