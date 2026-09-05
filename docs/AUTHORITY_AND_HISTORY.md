@@ -43,7 +43,7 @@ TradingAgent 的研究、simulation 和 shadow 域以机器证据驱动，不依
 
 | 事实类型 | 权威 | Markdown 的作用 |
 | --- | --- | --- |
-| 当前跨线自动开发状态 | `../autodev-control/AUTODEV_STATE.json` + 本轮新鲜 readback | 只做解释 |
+| 当前跨线自动开发状态 | Mac mini Controller 状态入口（机器归属与写权见根 `AGENTS.md`）+ 本轮新鲜 readback | 只做解释 |
 | TradingDatas 数据可用性 | authenticated `catalog/query` envelope + receipt/lineage | 不复制数据健康状态 |
 | capital / positions / reservations / fills | 各市场 append-only authority、ledger head、outbox/reconcile | 文档不成为资金事实 |
 | Champion / Challenger / promotion | registry + evaluation artifact + promotion receipt | 记录规则和重大变更 |
@@ -77,12 +77,14 @@ TradingAgent 的研究、simulation 和 shadow 域以机器证据驱动，不依
 
 ## GitHub Actions
 
-GitHub Actions 是可选远端检查，不是模拟/数据链运行门禁。Actions 不可用时使用：
+GitHub Actions 不应阻断已经运行且有证据的数据、研究或模拟链，但普通代码合并和发布仍须遵守根 `AGENTS.md` 的精确候选、主线 CI 与 Controller 验收门禁。Actions 暂时不可用不授权从本地测试直接跳到 production release。独立 fallback runner 只有另行提供同等级机器证据并满足既有门禁后才能替代 CI；本文件不新增该权限。
+
+发布证据顺序为：
 
 ```text
-candidate source
--> 可执行环境中的确定性测试/校验
--> immutable release 或隔离 runtime
+精确候选与确定性测试
+-> PR / 精确主线 CI 与 Controller 验收
+-> 明确请求的 immutable release
 -> service/timer readback
 -> 数据/资本/决策 receipt
 -> consumer/evaluation readback

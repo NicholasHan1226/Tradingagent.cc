@@ -1466,3 +1466,28 @@ front mount namespace仍因 `ProtectSystem=strict` 不可写。root管理权不�
 `server_validated_non_authority_simulation_only`只描述目标服务器安装与旁路验证，
 不自行升级为当前运行、完整账户接线或实盘能力。已经运行的组件以同轮
 `STATUS.md` 与直接 runtime/receipt/readback 分层确认，不使用本节静态文字覆盖新证据。
+
+
+### Existing minute-session failure diagnosis
+
+The initializer preserves a small allowlist of data-contract reason codes, including
+`minute_dataset_contract_drift` and catalog limit mismatches. Unknown contract errors
+remain `minute_session_data_contract_invalid`, without provider payloads or credentials.
+A scale-session contract rejection can leave the paper consumer with
+`minute_scale500_session_inputs_missing`; diagnose and rebind the reviewed upstream
+contract before the next session rather than relaxing fingerprint checks, inventing
+session inputs, or clearing systemd failure state. A dated failed oneshot does not
+prove that the same failure has run again on the current release.
+
+A reviewed catalog contract update can be rebound for **future** sessions with
+`ASHARE_MINUTE_ACCEPTED_DATASET_CONTRACT_FINGERPRINT` in the existing minute
+session environment file. The value must be one exact lowercase SHA-256. The
+initializer substitutes that reviewed binding into its copied profile and still
+requires equality with the authenticated current catalog on every run; it
+recomputes the consumer profile digest. Missing configuration preserves the old
+template binding. This does not accept arbitrary future drift, change historical
+manifests, or authorize strategy/execution changes. Review the complete per-dataset
+contract difference before setting it; save the previous environment value for
+rollback. A closed-day preflight is not proof of a successful open-day session.
+The bootstrap manifest option is only used when no prior session exists, so it
+cannot rebind an established session history.

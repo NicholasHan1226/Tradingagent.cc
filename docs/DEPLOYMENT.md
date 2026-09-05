@@ -214,6 +214,8 @@ There is no wildcard `systemctl restart tradingagent-*`.
 
 Timer/oneshot units that already resolve code through `current` use the new release on their next invocation; this deployment bootstrap does not broadly restart or enable them.
 
+The existing ten-symbol observation, factor-research and factor-research-scrub units also participate in release-pin reconciliation. Their legacy `20-ten-symbol-release.conf` / `20-ten-symbol-factor-release.conf` bindings are backed up and replaced with the same canonical release drop-in as G5 and the forty-symbol observer. Preserve the independent `10-scrub-timeout.conf` and each effective timeout. No timer is added or enabled; each unit must be stopped under the existing preflight, and rollback restores its prior pin. Rebinding does not claim its input manifest or next natural run is healthy.
+
 ## Automatic rollback
 
 The previous `current` target is captured before cutover.

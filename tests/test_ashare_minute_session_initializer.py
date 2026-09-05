@@ -1104,6 +1104,8 @@ def test_cli_logs_only_a_structured_initializer_failure_code(
             "minute_session_dependency_failed",
         ),
         (OSError("private detail"), "minute_session_dependency_failed"),
+        (initializer_module.MinuteDataContractError("minute_dataset_contract_drift"), "minute_dataset_contract_drift"),
+        (initializer_module.MinuteDataContractError("private provider/token detail"), "minute_session_data_contract_invalid"),
         (ValueError("private detail"), "minute_session_input_invalid"),
     ],
 )
@@ -1737,3 +1739,42 @@ def test_scale500_env_example_sets_wider_session_timeout() -> None:
         REPO_ROOT / "Ashare/systemd/tradingagent-ashare-minute-scale500.env.example"
     ).read_text(encoding="utf-8")
     assert "ASHARE_MINUTE_SESSION_TIMEOUT_SECONDS=60" in example
+
+
+@pytest.mark.parametrize("binding", [None, "a" * 64, "reviewed"])
+def test_reviewed_contract_rebind_remains_exact_and_preserves_history(tmp_path, binding):
+    from shared.governance.evidence_readiness import dataset_contract_fingerprint
+    from Ashare.minute_data import MinuteDataContractError
+
+    day = _template(tmp_path)
+    manifest_path = day / "minute-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["profile"]["dataset_contract_fingerprint"] = "b" * 64
+    manifest_path.write_text(json.dumps(manifest))
+    original = manifest_path.read_bytes()
+    current = dataset_contract_fingerprint(next(
+        row for row in _catalog_rows() if row["dataset_id"] == "cn.dataset.rt_min"
+    ))
+    accepted = current if binding == "reviewed" else binding
+    kwargs = dict(state_root=tmp_path, token_file=Path("/run/private/token"),
+                  now=_now(), transport_factory=_factory(FixtureTransport()),
+                  accepted_dataset_contract_fingerprint=accepted)
+    if binding == "reviewed":
+        result = initialize_minute_session(**kwargs)
+        assert result["status"] == "pass"
+        new = json.loads((tmp_path / "20260729/minute-manifest.json").read_text())
+        assert new["profile"]["dataset_contract_fingerprint"] == current
+        assert len(new["profile"]["consumer_profile_sha256"]) == 64
+    else:
+        with pytest.raises(MinuteDataContractError, match="minute_dataset_contract_drift"):
+            initialize_minute_session(**kwargs)
+        assert not (tmp_path / "20260729/minute-manifest.json").exists()
+    assert manifest_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("binding", ["*", "auto", "", "A" * 64])
+def test_reviewed_contract_rebind_rejects_nonexact_values(binding):
+    with pytest.raises(MinuteSessionInitializerError, match="minute_session_accepted_contract_invalid"):
+        _scaled_minute_profile({}, symbol_count=1, catalog_page_size=500,
+                               catalog_max_in_values=500,
+                               accepted_dataset_contract_fingerprint=binding)

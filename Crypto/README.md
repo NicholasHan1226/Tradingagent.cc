@@ -636,7 +636,9 @@ source store。`--out-json` 与 `--report` 仅写调用方明确指定、位于 
 收盘到收盘基线和 OHLC 触价退出都是描述性 bar-only counterfactual，不能作为
 成交、收益晋级、资本或执行 authority。
 
-既有每日任务的包装器源为 `deploy/run-crypto-forty-symbol-rolling-eval.sh`，
+既有滚动评估读取完整观察 store 时，若并发追加使 head 改变，会从头重新读取和校验，最多三次。只重试 `rolling_evaluation_store_advanced_retry`；hash、schema、文件或其它完整性失败立即停止。三次均重叠仍失败且不写报告，不停止 core writer，不复用部分校验结果。该预算用于恢复偶发读写重叠，不证明持续高负载下一定可完成。
+
+每日任务的包装器源为 `deploy/run-crypto-forty-symbol-rolling-eval.sh`，
 发布时替换原 `/usr/local/sbin/tradingagent-crypto-rolling-eval.sh`，不新增 timer。
 仅传 `--store-root`，不再手工拼接事件分段；每次在既有独立研究 output root 下
 创建唯一 attempt 目录，失败保留诊断且不记成功，不覆盖旧报告，不写 observation store。

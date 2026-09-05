@@ -22,6 +22,9 @@ CRYPTO_RUNTIME_RELEASE_UNITS = (
     "tradingagent-crypto-round-trip-g5-learning.service",
     "tradingagent-crypto-round-trip-g5-learning-scrub.service",
     "tradingagent-crypto-forty-symbol-observation.service",
+    "tradingagent-crypto-ten-symbol-observation.service",
+    "tradingagent-crypto-ten-symbol-factor-research.service",
+    "tradingagent-crypto-ten-symbol-factor-research-scrub.service",
 )
 
 
@@ -654,3 +657,17 @@ def test_server_bootstrap_grants_only_the_fixed_release_helper() -> None:
     assert "release root must already be root:root" in bootstrap
     assert "current must already be an immutable-release symlink" in bootstrap
     assert "deployment spool is not empty" in bootstrap
+
+
+def test_ten_symbol_release_reconciliation_includes_legacy_pins_not_scrub_policy():
+    helper = _read("deploy/release.sh")
+    for unit, legacy in (
+        ("tradingagent-crypto-ten-symbol-observation.service", "20-ten-symbol-release.conf"),
+        ("tradingagent-crypto-ten-symbol-factor-research.service", "20-ten-symbol-factor-release.conf"),
+        ("tradingagent-crypto-ten-symbol-factor-research-scrub.service", "20-ten-symbol-factor-release.conf"),
+    ):
+        assert f"/etc/systemd/system/{unit}.d/{legacy}" in helper
+    # The independently configured scrub timeout is not a release pin to delete.
+    assert "10-scrub-timeout.conf" not in helper
+    assert 'test -r "$root/Crypto/ten_symbol_observation_runtime.py"' in helper
+    assert 'test -r "$root/Crypto/ten_symbol_factor_research_worker.py"' in helper

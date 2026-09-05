@@ -29,7 +29,7 @@ from .minute_canary import (
     load_minute_canary_config,
 )
 from .minute_paper_runner import load_minute_research_universe
-from .minute_data import SHANGHAI, _is_retryable_minute_query_error
+from .minute_data import MinuteDataContractError, SHANGHAI, _is_retryable_minute_query_error
 from .minute_auto_runner import session_bar_ends
 from .minute_research import MinuteResearchUniverse
 from shared.data.evidence_gate import (
@@ -293,6 +293,16 @@ def build_scale500_reference_envelope(
 
 def _runtime_failure_code(error: Exception) -> str:
     """Return a safe, actionable CLI failure category without exception details."""
+    if isinstance(error, MinuteDataContractError):
+        # A bounded vocabulary only: never echo arbitrary provider/error payloads.
+        safe_codes = {
+            "minute_dataset_contract_drift",
+            "minute_dataset_contract_invalid",
+            "minute_catalog_limits_invalid",
+            "minute_page_limit_exceeds_catalog",
+            "minute_page_limit_exceeds_catalog_in_values",
+        }
+        return str(error) if str(error) in safe_codes else "minute_session_data_contract_invalid"
     if isinstance(error, MinuteCanaryConfigurationError):
         return "minute_session_canary_configuration_invalid"
     if isinstance(error, RuntimeGateConfigurationError):
@@ -441,6 +451,7 @@ def _scaled_minute_profile(
     symbol_count: int,
     catalog_page_size: int,
     catalog_max_in_values: int,
+    accepted_dataset_contract_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     if (
         isinstance(symbol_count, bool)
@@ -459,6 +470,15 @@ def _scaled_minute_profile(
     # avoids repeatedly scanning the provider-native read model.
     page_limit = min(symbol_count, catalog_page_size, catalog_max_in_values)
     profile = dict(template_profile)
+    if accepted_dataset_contract_fingerprint is not None:
+        if (
+            not isinstance(accepted_dataset_contract_fingerprint, str)
+            or re.fullmatch(r"[0-9a-f]{64}", accepted_dataset_contract_fingerprint) is None
+        ):
+            raise MinuteSessionInitializerError("minute_session_accepted_contract_invalid")
+        # A reviewed exact binding, still checked against the live catalog by
+        # build_profile. Never accept the currently observed hash implicitly.
+        profile["dataset_contract_fingerprint"] = accepted_dataset_contract_fingerprint
     profile["page_limit"] = page_limit
     profile["max_rows"] = symbol_count
     profile["max_pages"] = (symbol_count + page_limit - 1) // page_limit
@@ -787,6 +807,7 @@ def initialize_minute_session(
     target_bar_end: str | None = None,
     scale500_cohort_receipts: Sequence[Path | str] | None = None,
     allow_pending_recent_listings: bool = False,
+    accepted_dataset_contract_fingerprint: str | None = None,
 ) -> dict[str, object]:
     """Create the current open day's minute inputs, or return a closed-day no-op."""
 
@@ -971,6 +992,7 @@ def initialize_minute_session(
         symbol_count=len(symbols),
         catalog_page_size=minute_page_size,
         catalog_max_in_values=minute_max_in_values,
+        accepted_dataset_contract_fingerprint=accepted_dataset_contract_fingerprint,
     )
 
     client = SharedSignalsV1Client(
@@ -1169,6 +1191,7 @@ def initialize_minute_session(
             symbol_count=len(symbols),
             catalog_page_size=minute_page_size,
             catalog_max_in_values=minute_max_in_values,
+            accepted_dataset_contract_fingerprint=accepted_dataset_contract_fingerprint,
         )
         current_manifest = MinuteCanaryConfig(
             base_url=base_url,
@@ -1369,6 +1392,9 @@ def main(argv: list[str] | None = None) -> int:
             now=now,
             universe_source=configured_universe_source,
             bootstrap_manifest=args.bootstrap_manifest,
+            accepted_dataset_contract_fingerprint=(
+                os.environ.get("ASHARE_MINUTE_ACCEPTED_DATASET_CONTRACT_FINGERPRINT", "").strip() or None
+            ),
             tracking_universe_output=configured_tracking_universe_output,
             target_bar_end=args.target_bar_end,
             scale500_cohort_receipts=args.scale500_cohort_receipts,

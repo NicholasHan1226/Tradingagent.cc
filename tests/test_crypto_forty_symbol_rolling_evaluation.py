@@ -273,7 +273,7 @@ def test_head_advance_requests_retry_not_repair(
 
     monkeypatch.setattr(rolling, "_read_head_bytes", advancing_head)
     with pytest.raises(FortySymbolRollingEvaluationError, match="store_advanced_retry"):
-        _artifact(store)
+        rolling._verified_store_units_once(store.root)
 
 
 def test_entry_requires_bar_after_all_observed_inputs() -> None:
@@ -460,3 +460,46 @@ def test_complete_multi_segment_store_is_accepted_without_writing(tmp_path, monk
     assert result["generated_from"]["head_sequence"] == 5
     assert result["segment"]["slot_count"] == 5
     assert before == {str(p.relative_to(store.root)): p.read_bytes() for p in store.root.rglob("*") if p.is_file()}
+
+
+def test_store_read_retries_full_snapshot_after_concurrent_head_advance(tmp_path, monkeypatch):
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    before = {str(p.relative_to(store.root)): p.read_bytes() for p in store.root.rglob("*") if p.is_file()}
+    real_read = rolling._read_head_bytes
+    calls = 0
+
+    def advance_once(selected):
+        nonlocal calls
+        calls += 1
+        raw = real_read(selected)
+        # Simulate the checkpoint advancing across the first full read only.
+        return raw + b" " if calls == 2 else raw
+
+    monkeypatch.setattr(rolling, "_read_head_bytes", advance_once)
+    recovered = _artifact(store)
+    monkeypatch.setattr(rolling, "_read_head_bytes", real_read)
+    assert recovered == _artifact(store)
+    assert calls >= 5
+    assert before == {str(p.relative_to(store.root)): p.read_bytes() for p in store.root.rglob("*") if p.is_file()}
+
+
+@pytest.mark.parametrize("reason,expected_attempts", [
+    ("rolling_evaluation_store_advanced_retry", 3),
+    ("rolling_evaluation_store_head_invalid", 1),
+    ("rolling_evaluation_store_read_invalid", 1),
+])
+def test_store_read_retry_budget_does_not_retry_corruption(tmp_path, monkeypatch, reason, expected_attempts):
+    calls = 0
+
+    def reject(_root):
+        nonlocal calls
+        calls += 1
+        raise FortySymbolRollingEvaluationError(reason)
+
+    monkeypatch.setattr(rolling, "_verified_store_units_once", reject)
+    output = tmp_path / "result.json"
+    with pytest.raises(FortySymbolRollingEvaluationError, match=reason):
+        main(["--store-root", str(tmp_path / "store"), "--out-json", str(output)])
+    assert calls == expected_attempts
+    assert not output.exists()
