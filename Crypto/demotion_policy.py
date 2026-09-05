@@ -1,78 +1,41 @@
-"""Crypto Demotion Policy - Evidence-based champion demotion rules."""
+"""Fail-closed tombstone for retired C3 demotion scaffolding.
 
-from dataclasses import dataclass
-from typing import Dict, Any
+C3 is not built. This module must not evaluate or authorize demotion, and
+must not claim promotion or capital authority.
+"""
+
+from __future__ import annotations
+
+from typing import Any, NoReturn
+
+from Crypto.registry import CRYPTO_C3_LIFECYCLE_BLOCKER, CryptoC3LifecycleRetired
 
 
-@dataclass
+def _raise_c3_not_built() -> NoReturn:
+    raise CryptoC3LifecycleRetired(
+        f"{CRYPTO_C3_LIFECYCLE_BLOCKER}; C2 rolling evaluation precedes "
+        "any Champion/Challenger demotion; authority=none"
+    )
+
+
 class DemotionCriteria:
-    """Criteria for demoting a champion."""
-    min_consecutive_failures: int = 3
-    max_drawdown_pct: float = 10.0
-    min_sharpe_ratio: float = 0.5
-    min_win_rate: float = 0.4
-    evaluation_window_days: int = 30
+    """Preserve the former type name while refusing construction."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        _raise_c3_not_built()
 
 
 class DemotionPolicy:
-    """Policy for evaluating champion demotion."""
-    
-    def __init__(self, criteria: DemotionCriteria = None):
-        self.criteria = criteria or DemotionCriteria()
-    
-    def evaluate(self, champion_id: str, performance: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Evaluate whether a champion should be demoted.
-        
-        Args:
-            champion_id: Champion identifier
-            performance: Performance metrics
-            
-        Returns:
-            Evaluation result with demotion decision
-        """
-        reasons = []
-        
-        # Check consecutive failures
-        consecutive_failures = performance.get("consecutive_failures", 0)
-        if consecutive_failures >= self.criteria.min_consecutive_failures:
-            reasons.append(
-                f"consecutive_failures={consecutive_failures} "
-                f">= {self.criteria.min_consecutive_failures}"
-            )
-        
-        # Check drawdown
-        drawdown_pct = performance.get("drawdown_pct", 0.0)
-        if drawdown_pct >= self.criteria.max_drawdown_pct:
-            reasons.append(
-                f"drawdown={drawdown_pct:.2f}% >= {self.criteria.max_drawdown_pct}%"
-            )
-        
-        # Check Sharpe ratio
-        sharpe = performance.get("sharpe_ratio", 0.0)
-        if sharpe < self.criteria.min_sharpe_ratio:
-            reasons.append(
-                f"sharpe={sharpe:.2f} < {self.criteria.min_sharpe_ratio}"
-            )
-        
-        # Check win rate
-        win_rate = performance.get("win_rate", 0.0)
-        if win_rate < self.criteria.min_win_rate:
-            reasons.append(
-                f"win_rate={win_rate:.2f} < {self.criteria.min_win_rate}"
-            )
-        
-        should_demote = len(reasons) > 0
-        
-        return {
-            "champion_id": champion_id,
-            "should_demote": should_demote,
-            "reasons": reasons,
-            "performance": performance,
-            "criteria": {
-                "min_consecutive_failures": self.criteria.min_consecutive_failures,
-                "max_drawdown_pct": self.criteria.max_drawdown_pct,
-                "min_sharpe_ratio": self.criteria.min_sharpe_ratio,
-                "min_win_rate": self.criteria.min_win_rate,
-            },
-        }
+    """Preserve the former symbol while refusing construction and evaluation."""
+
+    def __init__(self, criteria: Any = None) -> None:
+        del criteria
+        _raise_c3_not_built()
+
+    def evaluate(self, champion_id: str, performance: Any) -> NoReturn:
+        del champion_id, performance
+        _raise_c3_not_built()
+
+
+__all__ = ["DemotionCriteria", "DemotionPolicy"]
