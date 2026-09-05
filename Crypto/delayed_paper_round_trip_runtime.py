@@ -438,15 +438,20 @@ def _round_trip_data_gap_event(
 def _round_trip_latest_gap_slot(
     store: CryptoDelayedPaperObservationStore,
 ) -> datetime | None:
-    """Return the newest round-trip gap recovery slot, if any."""
+    """Return the newest already-gapped slot so that slot is not retried.
+
+    ``recovery_market_slot`` names the first later slot that still needs a
+    fresh query under its own cutoff. Treating it as latest completion would
+    skip that never-queried slot on the next timer beat.
+    """
 
     latest: datetime | None = None
     for gap in store.data_gap_events():
         if gap.get("gap_contract") != ROUND_TRIP_DATA_GAP_CONTRACT:
             continue
-        recovery = _checkpoint_market_slot(gap.get("recovery_market_slot"))
-        if latest is None or recovery > latest:
-            latest = recovery
+        skipped_to = _checkpoint_market_slot(gap.get("skipped_to"))
+        if latest is None or skipped_to > latest:
+            latest = skipped_to
     return latest
 
 
