@@ -54,6 +54,8 @@ def test_g5_acceptance_unit_is_read_only_and_separate_from_g4() -> None:
     assert "ReadWritePaths=" not in unit
     assert "IPAddressDeny=any" in unit
     assert "--output-root" not in unit
+    assert "OnCalendar=*-*-* 09:05:30" in timer
+    assert "Persistent=false" in timer
     assert "Unit=tradingagent-crypto-round-trip-g5-acceptance.service" in timer
     assert "WantedBy=timers.target" in timer
 
