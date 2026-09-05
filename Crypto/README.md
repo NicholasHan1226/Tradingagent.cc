@@ -646,7 +646,10 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 ### 四十币滚动评估（research-only CLI）
 
 `python3 -m Crypto.forty_symbol_rolling_evaluation --store-root <完整40币只读store>`
-只读取完整的 observation store；不接受自由的 events 尾文件或 bars 目录。它以
+只读取完整的 observation store；不接受自由的 events 尾文件或 bars 目录。可选
+`--window-start` / `--window-end` 指定 store 内一段相邻 5m 连续 eligible
+observation（按槽 `window_end`，含端点）；缺省仍只评 newest suffix，窗口内
+gap/reject/ineligible 失败关闭且不跨缺口拼接。它以
 `head.json` 前后字节一致、`events_read_only()` 全链和既有 sidecar eligibility
 重建为输入锚点；head 缺失、漂移或链/边车不一致时失败关闭或要求重试，绝不修复
 source store。`--out-json` 与 `--report` 仅写调用方明确指定、位于 source store
