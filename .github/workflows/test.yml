@@ -9,6 +9,11 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      docs_fast_path:
+        description: Allow reviewed prose-only exact-main verification without release artifacts
+        required: false
+        default: false
+        type: boolean
       expected_sha:
         description: Exact main commit SHA to validate and package
         required: true
@@ -30,6 +35,8 @@ concurrency:
 
 env:
   SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+  DOCS_FAST_PATH: ${{ inputs.docs_fast_path || false }}
 
 jobs:
   test:
@@ -45,13 +52,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
 
       - name: Verify checkout identity
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
 
+      - name: Classify documentation changes
+        id: changes
+        run: python3 .github/scripts/docs_fast_path.py
+
       - name: Set up Python
+        if: steps.changes.outputs.docs_only != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -59,14 +72,17 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
+        if: steps.changes.outputs.docs_only != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest
 
       - name: Compile Python files
+        if: steps.changes.outputs.docs_only != 'true'
         run: python -m compileall -q .
 
       - name: Run tests
+        if: steps.changes.outputs.docs_only != 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}
           TRADINGDATAS_API_URL: ""
@@ -94,6 +110,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 0
 
       - name: Verify checkout identity
         working-directory: ${{ github.workspace }}
@@ -101,7 +118,13 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
 
+      - name: Classify documentation changes
+        id: changes
+        working-directory: ${{ github.workspace }}
+        run: python3 .github/scripts/docs_fast_path.py
+
       - name: Set up Node
+        if: steps.changes.outputs.docs_only != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -109,15 +132,19 @@ jobs:
           cache-dependency-path: front/package-lock.json
 
       - name: Install frontend dependencies
+        if: steps.changes.outputs.docs_only != 'true'
         run: npm ci
 
       - name: Run frontend tests
+        if: steps.changes.outputs.docs_only != 'true'
         run: npm test
 
       - name: Lint frontend
+        if: steps.changes.outputs.docs_only != 'true'
         run: npm run lint
 
       - name: Build frontend and read-only API
+        if: steps.changes.outputs.docs_only != 'true'
         env:
           REAL_TRADING_ENABLED: "false"
           TRADINGAGENT_LLM_NETWORK_ENABLED: "false"
@@ -127,6 +154,7 @@ jobs:
         run: npm run build:all
 
       - name: Package tested release
+        if: steps.changes.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           release_root="$(mktemp -d "$RUNNER_TEMP/tradingagent-release-root.XXXXXX")"
@@ -152,8 +180,9 @@ jobs:
 
       - name: Upload tested release
         if: >-
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          github.event_name == 'workflow_dispatch'
+          steps.changes.outputs.docs_only != 'true' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v4
         with:
           name: tradingagent-release-${{ env.SOURCE_SHA }}
