@@ -562,17 +562,17 @@ omit `VITE_TRADING_AGENT_SNAPSHOT_URL` and use the same-origin
 
 ## Nginx Shape
 
-Local-only fallback when a single-user remote boundary has not been verified.
-The tracked location is [tradingagent-snapshot-local-only.conf](../../deploy/nginx/tradingagent-snapshot-local-only.conf).
-Replace only the existing snapshot location; preserve the site's listener,
-static root, health route and other sites. Do not add a broad `/api/` proxy.
+The whole-site private origin is [tradingagent-front-local-only.conf](../../deploy/nginx/tradingagent-front-local-only.conf). It restricts the page, assets, health and snapshot to loopback peers and serves `releases/tradingagent/current/front/dist`, so the browser follows the same immutable release pointer as the API. Install it only as the TradingAgent site after backing up that site and validating `nginx -t`; preserve other sites. The older [snapshot-only snippet](../../deploy/nginx/tradingagent-snapshot-local-only.conf) restricts only the snapshot and does not establish page privacy. Do not add a broad `/api/` proxy.
 
 ```nginx
 server {
   listen 443 ssl;
   server_name tradingagent.cc;
+  allow 127.0.0.1;
+  allow ::1;
+  deny all;
 
-  root /opt/investment/tradingagent/front/dist;
+  root /opt/investment/releases/tradingagent/current/front/dist;
   index index.html;
 
   location / {
