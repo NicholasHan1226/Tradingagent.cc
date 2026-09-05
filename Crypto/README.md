@@ -335,8 +335,11 @@ exchange-minimum/模拟流动性拒绝回执均写入独立 checksum ledger。�
 `cost_aware_challenger.py` 另定义一条预注册、simulation-only 的影子候选，
 不替换上述冻结 Champion：其 15m 入场收益必须至少为 `0.32%`，由双边 `0.10%`
 taker fee、双边 `2bps` 滑点、双边 `1bp` 半点差和固定 `6bps` 缓冲组成。它不从历史结果搜索阈值，
-也不修改 G5 root、既有订单、费用或 PnL。`delayed_paper_cost_aware_challenger.py`
-只能被未来独立 epoch 调用并写入独立 root；它没有 CLI、timer 或自动部署路径。
+也不修改 G5 root、既有订单、费用或 PnL。它使用独立
+`crypto-round-trip-cost-aware-challenger-capital-v1` authority 与
+`crypto_sim_round_trip_cost_aware_challenger` account，不能与 G5 的账户、head 或
+收益聚合。`delayed_paper_cost_aware_challenger.py` 只能被未来独立 epoch 调用并写入
+独立 root；它没有 CLI、timer 或自动部署路径。
 它产生的前向费用后样本必须单独通过连续性、守恒和收益核验，不能把零交易或历史
 回测称为正收益。
 

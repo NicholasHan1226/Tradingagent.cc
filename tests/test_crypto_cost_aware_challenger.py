@@ -20,6 +20,7 @@ from Crypto.delayed_paper_cost_aware_challenger import (
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.fixture_auto_sim import evaluate_frozen_champion, qualify_fixture_evidence
 from Crypto.fixture_sim.contracts import CryptoSafetyError
+from Crypto.round_trip_capital import COST_AWARE_CHALLENGER_CAPITAL_POLICY
 from tests.test_crypto_delayed_paper_runner import _runner_inputs
 
 
@@ -136,6 +137,8 @@ def test_shadow_runner_uses_distinct_root_and_challenger_decisions(
 
     assert result["status"] == "completed"
     assert result["challenger_runner_contract"] == COST_AWARE_CHALLENGER_RUNNER_CONTRACT
+    assert result["capital_authority_id"] == COST_AWARE_CHALLENGER_CAPITAL_POLICY.authority_id
+    assert result["capital_generation"] == COST_AWARE_CHALLENGER_CAPITAL_POLICY.generation
     assert result["execution_authority"] is False
     assert result["real_trading_enabled"] is False
     assert _tree(baseline_root) == baseline_before
@@ -144,6 +147,10 @@ def test_shadow_runner_uses_distinct_root_and_challenger_decisions(
         decision = result["symbols"][symbol]["bundle"]["decision"]
         assert decision["champion_id"] == COST_AWARE_CHALLENGER.challenger_id
         assert decision["champion_sha256"] == COST_AWARE_CHALLENGER.sha256
+        assert (
+            result["symbols"][symbol]["capital"]["capital"]["authority_id"]
+            == COST_AWARE_CHALLENGER_CAPITAL_POLICY.authority_id
+        )
 
 
 def test_existing_round_trip_runner_rejects_noncallable_challenger_hook(

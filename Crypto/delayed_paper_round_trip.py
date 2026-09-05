@@ -27,6 +27,7 @@ from Crypto.five_minute_data import CryptoFiveMinuteSnapshot
 from Crypto.round_trip_capital import (
     ROUND_TRIP_CAPITAL_POLICY,
     run_round_trip_fixture_cycle,
+    RoundTripCapitalPolicy,
 )
 
 
@@ -138,6 +139,7 @@ def _execute(
     prepared: Mapping[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]],
     recovered_pending: bool,
     paper_fill_capacities: Mapping[str, Decimal] | None,
+    capital_policy: RoundTripCapitalPolicy,
 ) -> dict[str, Any]:
     symbols: dict[str, Any] = {}
     idempotent = True
@@ -151,6 +153,7 @@ def _execute(
                 if paper_fill_capacities is not None
                 else None
             ),
+            policy=capital_policy,
         )
         bundle = {
             "run_id": result["cycle_id"],
@@ -187,8 +190,8 @@ def _execute(
         "observation_id": observation["observation_id"],
         "observation_content_sha256": observation["observation_content_sha256"],
         "recovered_pending": recovered_pending,
-        "capital_authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
-        "capital_generation": ROUND_TRIP_CAPITAL_POLICY.generation,
+        "capital_authority_id": capital_policy.authority_id,
+        "capital_generation": capital_policy.generation,
         "aggregate_with_prior_generations": False,
         "idempotent_replay": idempotent,
         "symbols": symbols,
@@ -206,6 +209,7 @@ def run_crypto_delayed_paper_round_trip_once(
     request: Any,
     output_root: Path | str,
     paper_fill_capacities: Mapping[str, Decimal] | None = None,
+    capital_policy: RoundTripCapitalPolicy = ROUND_TRIP_CAPITAL_POLICY,
     decision_evaluator: Callable[[QualifiedFixtureEvidence], TimeframeDecision]
     | None = None,
 ) -> dict[str, Any]:
@@ -248,6 +252,7 @@ def run_crypto_delayed_paper_round_trip_once(
                 prepared=prepared,
                 recovered_pending=True,
                 paper_fill_capacities=paper_fill_capacities,
+                capital_policy=capital_policy,
             )
         snapshot = port.load_snapshot(profile=profile, request=request)
         if not isinstance(snapshot, CryptoFiveMinuteSnapshot):
@@ -271,6 +276,7 @@ def run_crypto_delayed_paper_round_trip_once(
             prepared=prepared,
             recovered_pending=False,
             paper_fill_capacities=paper_fill_capacities,
+            capital_policy=capital_policy,
         )
 
 

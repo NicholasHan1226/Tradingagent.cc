@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from Crypto.cost_aware_challenger import evaluate_cost_aware_challenger
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.fixture_sim.contracts import _assert_simulation_only
+from Crypto.round_trip_capital import COST_AWARE_CHALLENGER_CAPITAL_POLICY
 
 
 COST_AWARE_CHALLENGER_RUNNER_CONTRACT = (
@@ -38,6 +39,7 @@ def run_cost_aware_challenger_once(
         request=request,
         output_root=output_root,
         paper_fill_capacities=paper_fill_capacities,
+        capital_policy=COST_AWARE_CHALLENGER_CAPITAL_POLICY,
         decision_evaluator=evaluate_cost_aware_challenger,
     )
     return {
