@@ -1,9 +1,16 @@
 # TradingAgent 当前状态
 
-观察时间：2026-09-05 13:17 Asia/Shanghai。Simulation only；不启用真实交易、
+Observed at: 2026-09-05 13:17 Asia/Shanghai。Simulation only；不启用真实交易、
 新资本或风险扩张。本页是可替换摘要，历史失败不能被配置一致掩盖。
 
 ## 源码、发布和实际进程
+
+| 层面 | 核验入口 |
+|---|---|
+| 本地主线 | 现场读取仓库，不将文档自身的提交写成永久当前值 |
+| GitHub 主线 | 刷新远端后与本地分别核对 |
+
+实时源码核验使用 `git rev-parse HEAD origin/main`；以下为上述观察时间的发布快照。
 
 - 最近已合主线：`074e9c2e10129eb8d2692a57977dae5938c73655`（#642）。
   本机主仓与 GitHub 一致且干净。
@@ -25,6 +32,16 @@
 - G5 验收在单次调用内复用已完整验证的归档语义回放，每次仍读取全量字节并核对整套文件身份；
   合成测试约 4 倍提速，篡改与跨文件并发变化必须拒绝。生产整轮耗时仍须部署后验证。
 - 修复和测试不代表策略有效、下一开市日执行已恢复或历史失败已消失。
+
+## Crypto track
+
+G5 delayed-paper service 的发布配置与实际运行结果分别核验；本轮仍保留历史失败。
+latest continuous 288-bar segment 仅衡量 runtime maturity；历史断点
+ do not block safe-segment simulation，但不能被解释为策略有效或允许风险扩张。
+
+## Copilot and paused scopes
+
+TradingCopilot 仍为独立人工辅助边界，不授予自动交易权限。
 
 ## 研究、工作树与暂停范围
 
