@@ -150,9 +150,9 @@ REAL_TRADING_ENABLED=false python -m pytest -q \
 
 ### 部署流程
 
-1. **候选验收并合并 PR**：核对精确 head、范围、测试、独立复审与回退方式；不得以直接推送主线绕过验收。
+1. **候选验收并合并 PR**：核对精确 head、范围、测试与回退方式；已绿、范围清楚、非红线候选由作者 `NicholasHan1226` 直接合并，Controller / `AUTODEV_RETURN_V1` 不是前置条件。不得以直接推送主线绕过验收。
 2. **精确主线测试与打包**：`TradingAgent Tests` 的 `push` run 必须在待部署 SHA 上成功，产物的 source SHA 和校验和须匹配。
-3. **显式请求部署**：发布负责人接受该 SHA 后，通过既有 `controller-accepted-deploy` 事件传入 SHA 和测试 run ID；工作流再次核对当前 main，再由现有 release helper 切换。
+3. **显式请求部署**：主助手按 standing authorization 接受该 SHA 后，通过既有 `controller-accepted-deploy` 事件传入 SHA 和测试 run ID；工作流再次核对当前 main，再由现有 release helper 切换。该事件名是机械入口，不是 Controller 复审门。
 4. **运行读回**：分别确认 current、服务实际版本、健康状态与消费者回执。工作流成功或被跳过均不能替代运行证据。仅文档/测试的 M0 通道不触发生产部署。
 
 ### 配置要求

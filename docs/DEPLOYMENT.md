@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Production deployment is Controller-authorized, repository-driven, commit-pinned, and artifact-pinned. A merge to `main` does not directly mutate the server. The Finance Delivery Controller must first accept the immutable candidate head and perform the merge. The exact merged `main` commit must then complete the `TradingAgent Tests` workflow successfully. Only then may the Controller explicitly request deployment with that exact successful test-run ID; the deployment workflow downloads the artifact produced by that same run.
+Production deployment is repository-driven, commit-pinned, and artifact-pinned. A merge to `main` does not directly mutate the server. A green, in-scope, non-red-line candidate may be merged by author `NicholasHan1226` under standing authorization; Controller / `AUTODEV_RETURN_V1` review is optional post-audit, not a merge prerequisite. The exact merged `main` commit must then complete the `TradingAgent Tests` workflow successfully. After that, the same standing authorization may request the existing `controller-accepted-deploy` path with that exact successful test-run ID; the deployment workflow downloads the artifact produced by that same run.
 
 The deployment workflow is intentionally disabled until the one-time server bootstrap is complete, the `production` GitHub Environment contains the required SSH secrets, and the repository variable `DEPLOY_ENABLED` is set to `true`.
 
@@ -40,7 +40,7 @@ The artifact is named:
 tradingagent-release-<40-char-git-sha>
 ```
 
-The production workflow runs only after an explicit `controller-accepted-deploy` repository dispatch initiated by the Controller's GitHub identity. It validates that the supplied test-run ID is a successful `TradingAgent Tests` **push** run for the supplied current-`main` SHA, then downloads the artifact from that exact run, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
+The production workflow runs only after an explicit `controller-accepted-deploy` repository dispatch from the `NicholasHan1226` GitHub identity. That event name is the existing mechanical entry, not a Controller-review merge gate. It validates that the supplied test-run ID is a successful `TradingAgent Tests` **push** run for the supplied current-`main` SHA, then downloads the artifact from that exact run, verifies the checksum and `.source-sha`, and never substitutes a newer checkout or a newly rebuilt frontend.
 
 ## Immutable server release model
 
@@ -163,7 +163,7 @@ Configure these **repository-level Actions variables**:
 
 A production deployment runs only when all of the following are true:
 
-1. the Finance Delivery Controller has accepted the immutable candidate head, merged it, and issued a `controller-accepted-deploy` request from its GitHub identity containing the SHA and exact main test-run ID;
+1. the exact merged `main` SHA has green `TradingAgent Tests` evidence, and an authorized `NicholasHan1226` identity has issued a `controller-accepted-deploy` request containing the SHA and exact main test-run ID;
 2. `TradingAgent Tests` completed successfully for that test-run ID;
 3. the successful run was triggered by a `push` and tested branch was `main`;
 4. the test-run SHA, artifact name, and artifact `.source-sha` all equal the Controller-requested SHA;
@@ -269,9 +269,9 @@ Repository tests also lock the main deployment trust boundaries: workflow trigge
 
 ## Change control
 
-Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are M1 infrastructure changes. They require a fresh Controller review of the immutable candidate head, a Controller merge, and exact-main test evidence.
+Changes under `.github/workflows/`, `deploy/release.sh`, `deploy/bootstrap-production-server.sh`, or the deployment trust boundary are M1 infrastructure changes. They still require an immutable candidate head and exact-main test evidence, but Controller review is optional post-audit rather than a merge prerequisite.
 
-CI is candidate evidence, not production-deployment authority. The narrowly defined `automerge-m0` path may merge only a trusted, current-main-base PR that changes only `docs/**`, `tests/**`, or Markdown files; it then dispatches exact-main validation and cannot deploy. Everything outside that path—including all business, shared, workflow and deployment changes—remains Controller-merged M1. For each accepted M1 merge, the Controller independently records the merge commit and exact successful main test run before issuing the narrowly scoped deployment dispatch; afterward it reads back GitHub, server source, immutable effective release, and runtime separately. High-authority actions, including real trading, capital, accounts, secrets, and public exposure, remain outside this workflow.
+CI is candidate evidence, not production-deployment authority. The narrowly defined `automerge-m0` path may merge only a trusted, current-main-base PR that changes only `docs/**`, `tests/**`, or Markdown files; it then dispatches exact-main validation and cannot deploy. Everything outside that path—including all business, shared, workflow and deployment changes—is standing-authorization M1: author `NicholasHan1226` may merge when tests are green and scope is clear. After an M1 merge, the same standing authorization may issue the existing `controller-accepted-deploy` dispatch using the merge commit and exact successful main test run; afterward GitHub, server source, immutable effective release, and runtime are read back separately. High-authority actions, including real trading, capital, accounts, secrets, and public exposure, remain outside this workflow.
 
 ## Push-CI recursion caveat
 

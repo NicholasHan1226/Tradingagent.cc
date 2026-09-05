@@ -1,6 +1,6 @@
 # TradingAgent 多市场 fixture 与服务器旁路运行、验收及回滚
 
-> 本文是 **simulation-only** 本地、服务器旁路及既有内部运行服务的操作入口；CNFutures 当前暂停，不据本文启用。正常发布的 standing authorization 及例外以 [项目规则](../AGENTS.md#验收与发布边界) 为准：范围明确，测试、独立审计、preflight、回退与新鲜读回路径成立后，可继续提交、PR/合并、不可变 release 及既有内部 sim-only localhost 服务/定时任务的安装、启用或切换。公开入口、生产密钥/账号/权限、破坏性数据操作、broker、真实交易与其它例外不因此获授权。仓库模板、fixture、本地测试、候选分支和旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据以本轮运行读回为准；AutoDev 状态是入口，[STATUS.md](../STATUS.md) 是带时间戳快照。
+> 本文是 **simulation-only** 本地、服务器旁路及既有内部运行服务的操作入口；CNFutures 当前暂停，不据本文启用。正常发布的 standing authorization 及例外以 [项目规则](../AGENTS.md#验收与发布边界) 为准：范围明确，测试、preflight、回退与新鲜读回路径成立后，可继续提交、PR/合并、不可变 release 及既有内部 sim-only localhost 服务/定时任务的安装、启用或切换；不再等待 Controller / `AUTODEV_RETURN_V1`。公开入口、生产密钥/账号/权限、破坏性数据操作、broker、真实交易与其它例外不因此获授权。仓库模板、fixture、本地测试、候选分支和旁路成功均不代表 Git 主线、TradingDatas runtime 或现役生产已生效。当前执行证据以本轮运行读回为准；AutoDev 状态是入口，[STATUS.md](../STATUS.md) 是带时间戳快照。
 
 ## 1. 不可突破的边界
 

@@ -74,7 +74,7 @@ jobs:
 
           # A GITHUB_TOKEN merge does not emit a push workflow run. Exact-main
           # validation is dispatched for the merge SHA, but deployment remains
-          # impossible unless the Controller later sends controller-accepted-deploy.
+          # a separate explicit controller-accepted-deploy dispatch.
           gh api \
             --method POST \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/dispatches" \
