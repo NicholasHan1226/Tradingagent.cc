@@ -237,7 +237,7 @@ def test_bar_failure_never_persists_partial_or_late_bars(subject, monkeypatch, f
     if fault == "late-last-bar":
         assert receipt["status"] == "data_reject"
         assert receipt["core_result"]["reason_code"] == (
-            "crypto_observation_watermark_invalid"
+            "crypto_observation_observed_at_after_cutoff"
         )
     else:
         assert receipt["status"] == "backlog_pending"

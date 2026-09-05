@@ -789,7 +789,9 @@ query-shape 瞬时错误仍允许预算内 20/45 秒重试；严格早于本次�
   清除 marker 并由 data_gap 合同显式覆盖该槽——这也与 core 的 pending 必须
   完整恢复不同，因为积累器的 pending 不含任何已验证数据。
 - data_gap 合同：current-read 查询不带 `as_of`，历史槽的
-  `observed_at` 必然越过其 cutoff（`crypto_observation_watermark_invalid`），
+  `observed_at` 必然越过其 cutoff
+  （`crypto_observation_observed_at_after_cutoff`；旧链中的
+  `crypto_observation_watermark_invalid` 仅为兼容读取），
   因此历史窗口确定不可恢复，不伪造 PIT。历史槽若因上游采集缺口导致源行
   永久缺失，则每次重试都在形状门禁失败
   （`crypto_observation_query_shape_invalid`），同样确定不可恢复；两种

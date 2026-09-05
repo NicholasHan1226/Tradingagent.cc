@@ -596,7 +596,7 @@ def test_outage_gap_recovers_latest_window_after_unrecoverable_history(
     assert reject_cycle["result"]["status"] == "data_reject"
     assert (
         reject_cycle["result"]["reason_code"]
-        == "crypto_observation_watermark_invalid"
+        == "crypto_observation_observed_at_after_cutoff"
     )
     gap_result = recovered["cycle_results"][1]["result"]
     assert gap_result["status"] == "completed"
@@ -611,7 +611,7 @@ def test_outage_gap_recovers_latest_window_after_unrecoverable_history(
     gap = gaps[0]
     assert gap["gap_contract"] == TEN_SYMBOL_DATA_GAP_CONTRACT
     assert gap["prior_market_slot"] == iso(WINDOW_END)
-    assert gap["reason_code"] == "crypto_observation_watermark_invalid"
+    assert gap["reason_code"] == "crypto_observation_observed_at_after_cutoff"
     assert len(gap["recovery_observation"]["sources"]) == 10
     assert store.checkpoint()["latest_terminal_slot"] == iso(current_end)
     _assert_recursive_non_authority(gap)
@@ -1387,7 +1387,7 @@ def test_forty_historical_shape_failure_preserves_current_gap_recovery(
         assert receipt["status"] == "data_reject"
         assert receipt["outage_gap_recovered"] is False
         assert receipt["cycle_results"][1]["result"]["reason_code"] == (
-            "crypto_observation_watermark_invalid"
+            "crypto_observation_observed_at_after_cutoff"
         )
         assert store.data_gap_events() == []
         assert store.checkpoint()["latest_terminal_slot"] == iso(WINDOW_END)
