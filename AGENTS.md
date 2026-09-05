@@ -1,12 +1,12 @@
 # TradingAgent 项目规则
 
-> 阅读顺序：本文件 → `../autodev-control/AUTODEV_STATE.json` 与本轮新鲜运行读回 → [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md) 规划权威 → [STATUS.md](STATUS.md) 历史快照 → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。
+> 阅读顺序：本文件 → [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md) 规划权威 → [STATUS.md](STATUS.md) 历史快照与本轮新鲜运行读回 → [docs/AGENTS.md](docs/AGENTS.md)。跨仓修改还需读取 Finance 工作区和目标仓最近层 `AGENTS.md`。跨线验收仍由 Finance Delivery Controller 负责；其机器归属和状态入口见下方“验收与发布边界”，开发机缺少该目录不撤销 Controller 职责。
 
 ## 项目定位
 
 - TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统，负责候选、预测、组合决策、风险门禁、执行、样本与复盘，并通过证据门禁下的自我学习、自我迭代、自我更新和自我修复持续提升费用后胜率与净投资回报，同时控制回撤、流动性和运行风险。当前开发市场是 A股与 Crypto；美股和 A股期权是未来隔离范围；预测市场与 CNFutures 当前暂停。`TradingCopilot/` 是同仓、独立 namespace 的过渡性 A 股实盘辅助、解释、观察与人工接管工具，不是第二套量化系统，也不是终局交易产品。
 - TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。认证只允许最终HTTP transport从仓外、绝对路径、可信owner、精确`0600`且无symlink/硬链接别名的TA专用token file注入Bearer header；禁止明文token环境变量、manifest/日志/回执泄露、401/403重试和任何legacy/provider fallback。TradingDatas fresh handoff 前只允许 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID。
-- MarketGraph 是可选只读研究增强。它不是价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
+- MarketGraph 已按 Finance 工作区规则退役，不再是活跃服务或开发入口。仅保留历史 `mg_on` / `mg_off` 配对研究合同与只读证据；它们没有价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
 - 当前目标是验证可持续自我改进的自动量化闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。长期方向是在逐市场明确授权后由 TA 接管决策与执行，而不是把人工计划永久作为核心流程。
 - 系统总目标、A股/Crypto/CNFutures 独立阶段、研究轨和执行优先级以 `docs/EVOLUTION_PROGRAM.md` 为规划 authority；它不代表当前运行事实，也不授予真实资金权限。各市场按证据独立前进，不使用一套全市场共享的线性晋级门禁。
 
@@ -103,6 +103,6 @@
 - 命令、运行顺序和回滚见 [docs/operations.md](docs/operations.md)；字段见 [docs/data_contract.md](docs/data_contract.md)；样本与成熟度见 [docs/capital_growth_validation.md](docs/capital_growth_validation.md)；系统与市场演进计划见 [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md)。
 - GitHub 传输优先使用 Nicholas 已登录的 `gh` HTTPS 凭据链：先核对 `gh auth status`，仓库 `origin` 固定为 `https://github.com/NicholasHan1226/Tradingagent.cc.git`。若 `git@github.com` 的 SSH/22 端口失败一次，不重复重试或上报为长期 blocker；立即验证 HTTPS `git ls-remote`，切换现有 remote 后 fetch。不得输出 token，也不得另建凭据或绕过 host-key 校验。
 - 当前公共仓库的 pull-request CI 是候选证据，不是生产部署权限：受限 M0 自动通道只接受可信作者、精确 candidate head、`automerge-m0` 标签、绿 CI 且仅改 `docs/**`、`tests/**` 或 Markdown 的可逆非运行时 PR；无关 main 前进不要求重写 M0 分支，GitHub mergeability 仍是冲突边界。M0 合并后只触发 exact-main 验证，绝不触发服务器部署。其他候选只有在 immutable head 的配置测试全部通过、Finance Delivery Controller 独立复审并执行合并后才可进入 `main`。shared core/deployment/dependency authority 在 `main` 任意前进后必须基于 fresh `main` 重新集成；与主线变更文件和 authority domain 均不重叠的 market-local 变更可保留已测试 head 并行等待 Controller 验收。M1（shared/workflow/contract/receipt/registry/query/schema/deploy/risk/execution/promotion）还须 current-main/merge-group 验证、parity 与 rollback。合并后的 exact-SHA CI/打包证据仅在 Controller 对该 M1 merge commit 记录接受并显式请求后，才可触发既有自动生产部署。Actions/CI 只管理 Git 集成与部署证据，不是 runtime/data truth，也不授予策略晋级、风险扩张、broker 或真实交易权限。若 Actions 临时不可用，已运行的市场 core、数据采集和模拟生命周期继续按各自 runtime evidence 运转，但普通代码 PR 不得因此绕过 `main` gate；独立 fallback runner 需另行形成同等级机器证据后才能替代。
-- 当前跨线机器事实写入 `../autodev-control/AUTODEV_STATE.json`，但每个运行结论仍须由本轮新鲜读回验证；[STATUS.md](STATUS.md) 是历史快照。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
+- 跨线编排与验收状态由 Finance Delivery Controller 独占维护在 Mac mini 的 `/Users/nicholashan/Projects/Finance/autodev-control/AUTODEV_STATE.json`。该仓是本地控制面，无已批准的 GitHub canonical；其它开发机不要求存在同路径副本，也不得自行补建或代写。Controller 继续负责精确候选审计、接受/退回、授权合并及分层收尾；每个运行结论仍须由本轮新鲜读回验证；[STATUS.md](STATUS.md) 是历史快照。文档不得把本地测试、GitHub、生产文件、生产 runtime、cron、真实市场样本或真实交易混成一个“完成”。
 - 回滚只能停止新任务、切回已验证代码并保留 append-only 事实；不得删除/改写新账本，也不得恢复旧共享账本。
 - Nicholas 已于 2026-07-20 对本项目授予正常发布的 standing authorization：当开发/修复范围明确、确定性测试/审计通过且 release preflight、rollback 与新鲜 readback 路径成立时，主助手默认继续完成 commit、PR/merge、push、服务器旁路、不可变 release、既有内部 sim-only localhost service/timer 的安装/启用/切换与读回，不再等待逐次发布确认。该授权不包含 force-push/历史重写、删除或覆盖数据、密钥/账号/权限、数据库破坏性迁移、公开入口切换、未经当期任务包含的外部模型网络调用、邮件/GUI 外部写入、自动风险扩张、broker 或真实交易/live transition；这些动作仍须由当期任务明确包含并通过各自独立 authority。

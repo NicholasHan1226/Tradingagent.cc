@@ -1,6 +1,6 @@
 # TradingAgent 文档导航
 
-> 阅读顺序：[../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) 与本轮新鲜运行读回 → 本文件。跨仓 Controller 路由可参考本地 `../../autodev-control/AUTODEV_STATE.json`，但它不替代直接运行证据。
+> 阅读顺序：[../AGENTS.md](../AGENTS.md) → [../STATUS.md](../STATUS.md) 与本轮新鲜运行读回 → 本文件。规划入口是 [EVOLUTION_PROGRAM.md](EVOLUTION_PROGRAM.md)。Controller 的跨线验收职责及 Mac mini 控制面归属见根 `AGENTS.md`；开发机缺少该目录不撤销其职责，也不替代直接运行证据。
 
 ## Canonical 文档
 

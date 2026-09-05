@@ -1,23 +1,23 @@
 # TradingAgent 架构
 
-> 本文定义长期系统边界与当前 capital-growth 架构。当前完成度以 AutoDev 状态和本轮新鲜读回为准；[STATUS.md](../STATUS.md) 是历史快照。字段见 [data_contract.md](data_contract.md)，运行和回滚见 [operations.md](operations.md)。
+> 本文定义长期系统边界与当前 capital-growth 架构。当前完成度以本轮新鲜运行读回及其回执为准；[STATUS.md](../STATUS.md) 是历史快照。字段见 [data_contract.md](data_contract.md)，运行和回滚见 [operations.md](operations.md)。
 
 ## 目标与非目标
 
-TradingAgent 的短期目标是在 A股和国内期货形成“数据 → 预测 → 风控 → 真实规格模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，并让 Crypto 在独立市场 lane 中推进自己的闭环；三者用真实证据分别判断策略是否存在可重复正期望。
+TradingAgent 的短期目标是在 A股与 Crypto 各自独立的市场 lane 中形成“数据 → 预测 → 风控 → 市场规则约束下的模拟成交/拒绝 → 前向标签 → 费用后复盘”的可学习闭环，分别用真实证据判断策略是否存在可重复正期望。CNFutures 当前暂停，其既有合同与证据只读保留，不据此启动新开发或运行。
 
 仓库同时提供 A 股 `TradingCopilot` 人工决策面。它读取 Quant Core 已验证的只读观察，结合用户申报账户形成行动卡；没有正式覆盖时必须显示 `analysis_unavailable`。它的资金、持仓、关注和人工意图属于独立状态面，不能进入量化资本、订单、SampleJournal、Champion 或收益统计。
 
 A股与 CNFutures 各有独立 50,000 CNY simulated authority；Crypto 目前只有隔离的 10,000 USDT 本地 fixture opening candidate，尚无可轮换 current/runtime/live capital authority。三者的原生币种边界不是盈利承诺，不换汇、不相加、不净额。首 1–2 周主要验证工程、数据和执行闭环；短期盈利、样本量或 maturity readiness 都不能自动切实盘。
 
-当前非目标：真实券商/期货下单、自动邮件、同花顺自动点击、自动 champion 晋级、自动风险扩张、跨市场资金调拨，以及由 Copilot 自动生成或发送订单。
+当前非目标：真实券商/期货下单、自动邮件、同花顺自动点击、自动风险扩张、跨市场资金调拨，以及由 Copilot 自动生成或发送订单。模拟盘 Champion 晋级遵循 [EVOLUTION_PROGRAM.md](EVOLUTION_PROGRAM.md) 的科学证据门禁，可自动执行；它不授予风险扩张或实盘权限。
 
 ## 三仓边界
 
 ```mermaid
 flowchart LR
     TD["TradingDatas\n采集、校验、统一只读 API"] --> TA["TradingAgent\n候选、预测、风控、模拟执行、复盘"]
-    MG["MarketGraph\n宏观、事件、行业/供应链研究"] -. "paired mg_on / mg_off" .-> TA
+    MG["MarketGraph\n退役历史研究证据"] -. "paired mg_on / mg_off" .-> TA
     TA --> AC["A股 capital authority\n独立 fresh-start 50k CNY"]
     TA --> FC["CNFutures capital authority\n独立 fresh-start 50k CNY"]
     TA --> CC["Crypto local fixture candidate\n独立 opening 10k USDT"]
@@ -34,7 +34,7 @@ flowchart LR
 ```
 
 - TradingDatas 是基础行情、事件、行业、交易日历与合约输入 authority。TradingAgent 只消费 `GET /v1/catalog` 与 `POST /v1/query`，不读取兄弟仓存储，也不现场调用数据提供商；上游是否正式可用与 TA consumer 是否通过是两份独立证据。
-- MarketGraph 是可选只读增强，不是价格、账户、资本或执行 authority。缺 MG 时 `mg_off` 仍应形成基础闭环。
+- MarketGraph 已退役，不是活跃服务或开发入口；仅保留历史配对研究合同与只读证据，不是价格、账户、资本或执行 authority。`mg_off` 仍应独立形成基础闭环。
 - TradingAgent 拥有候选生成、风格预测、组合决策、资本预约、模拟成交、风险拒绝、样本、标签、复盘和只读看板。
 - `front/` 是唯一活跃前端；Quant Core 页面只读。它仅允许把用户申报状态写入 TradingCopilot 独立 append-only namespace，不写量化资金、队列或订单。
 

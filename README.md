@@ -2,7 +2,7 @@
 
 TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统。它通过证据门禁下的自我学习、自我迭代、自我更新和自我修复，在真实数据、费用、滑点和小账户约束下持续改善费用后胜率、净投资回报、回撤和执行可靠性；这不是收益承诺。当前开发市场是 A股和 Crypto；美股与 A股期权是未来隔离范围；预测市场与 CNFutures 当前暂停。
 
-> 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) + 本轮新鲜运行读回 → [docs/AGENTS.md](docs/AGENTS.md)。跨仓 Controller 路由可参考本地 `../autodev-control/AUTODEV_STATE.json`，但运行事实仍需直接验证。
+> 接手顺序：[AGENTS.md](AGENTS.md) → [STATUS.md](STATUS.md) + 本轮新鲜运行读回 → [docs/AGENTS.md](docs/AGENTS.md)。规划入口是 [docs/EVOLUTION_PROGRAM.md](docs/EVOLUTION_PROGRAM.md)。Controller 的跨线验收职责及 Mac mini 控制面归属见根 `AGENTS.md`；开发机缺少该目录不撤销其职责，运行事实仍需直接验证。
 
 ## 终局系统与过渡工具
 
@@ -33,7 +33,7 @@ flowchart LR
     O --> F["多期限 forecast\nuncalibrated shadow"]
     F --> R["三风格 router\nabstain / counterfactual"]
     U --> CH["冻结 rank-score Champion"]
-    MG["MarketGraph\n可选只读研究"] -. "paired mg_on / mg_off" .-> CH
+    MG["MarketGraph\n退役历史研究证据"] -. "paired mg_on / mg_off" .-> CH
     CH --> P["50k 整数股计划\n费用 / 现金 / T+1"]
     P --> T["六维论点风险 authority\n现仓 + pending + 新动作"]
     T --> D["持久 drift 约束 + 硬风控"]
@@ -45,7 +45,7 @@ flowchart LR
 ```
 
 - TradingDatas 提供统一只读数据；TradingAgent 不直读兄弟仓数据库，也不现场采集行情。
-- MarketGraph 只作可开关增强，不阻塞基础样本闭环，也没有资金或执行权。
+- MarketGraph 已退役；图中的连线仅表示保留的历史配对研究合同，不是活跃服务依赖，不阻塞基础样本闭环，也没有资金或执行权。
 - 独立分钟研究模拟、Crypto G5 模拟账本与统一账户接线是不同能力。只读总览可以
   展示各自已验证的覆盖、数据时间与模拟结果，但不得将研究账本合并成统一账户、
   用页面刷新时间替代数据时间，或将历史恢复目录当作现役写入根；当前接线见 `STATUS.md`。
