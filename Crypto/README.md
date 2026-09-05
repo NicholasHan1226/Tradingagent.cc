@@ -1076,9 +1076,10 @@ detached 的假设研究调度器。输入为观测 store 根目录加预筛配�
 **已注册**的四个预筛候选（`xs_rs`、`short_reversal`、`amihud_illiquidity`、
 `momentum_vol_regime`）在最新观测证据上自动重估，产出 immutable 自动评审
 报告 artifact（`review.recommendation=automatic_reevaluation_complete`，
-逐候选给出 `auto_promote`/`auto_demote`/`auto_retain`）。第一阶段不生成新
-假设、不改评估逻辑、不接 systemd、不接执行；晋级在模拟域内自动，实盘仍由
-`REAL_TRADING_ENABLED=false` 硬闸。
+逐候选给出 `positive_in_sample_only`/`nonpositive_in_sample`/`auto_retain`）。
+v3 保留四个旧候选的描述性重估，增加一个固定的低换手趋势基准及封存的前向
+窗口。不再由历史最优正收益格子给出晋级或资金分配指令；不接 systemd/执行，
+`REAL_TRADING_ENABLED=false` 保持不变。旧 v1/v2 目录只读保留、不迁移。
 
 ### 数据路径与证据绑定
 
@@ -1098,21 +1099,22 @@ detached 的假设研究调度器。输入为观测 store 根目录加预筛配�
 ### Artifact 合约
 
 - 评审报告（contract
-  `tradingagent.crypto.ten_symbol_research_loop_review.v2`）immutable 写入
-  `<store_root>/evolution/ten_symbol_research_loop/reports/{report_sha256}.json`，
+  `tradingagent.crypto.ten_symbol_research_loop_review.v3`）immutable 写入
+  `<store_root>/evolution/ten_symbol_research_loop.v3/reports/{report_sha256}.json`，
   自含 `report_sha256`；内容包括：store 链绑定（event 计数、head
   checksum、逐槽 terminal_units 三件套与其聚合 sha）、数据窗口、每个
   horizon 的完整预筛分析、`metrics_summary`（每候选 × horizon × variant
   的费用前 `mean_gross` 与费用后 `mean_net`、hit_rate、baseline_delta、
   非重叠子样本指标）、`diff_vs_previous`（与上一份报告的逐 cell 对比：
   change 分类、计数差、Decimal 指标差）以及自动
-  `review.recommendation`（每候选按最优非重叠费用后净收益推导）。artifact
+  `review.recommendation`（最优历史均值仅供描述，禁止据此晋级）、
+  `trial_accounting` 和 `slow_trend` 冻结基准。artifact
   因含逐槽绑定随历史线性增长，读取沿用共享 2 MiB canonical 上限，超限
   fail closed。
-- compact `research_loop_checkpoint.json`（contract
-  `tradingagent.crypto.ten_symbol_research_loop_checkpoint.v2`，原子覆写）
+- compact `research_loop_checkpoint.v3.json`（contract
+  `tradingagent.crypto.ten_symbol_research_loop_checkpoint.v3`，原子覆写）
   绑定 `last_input_digest` 与 `report_sha256`。input digest 覆盖 horizon
-  配置、store 链 head 与逐槽资格材料：同输入重跑先重验 checkpoint 与其
+  配置、低换手冻结计划 SHA、store 链 head 与逐槽资格材料：同输入重跑先重验 checkpoint 与其
   绑定报告，返回 `no_new_input` 且 artifact 字节不变（幂等）；checkpoint
   或报告篡改 fail closed。无 terminal 事件返回 `deferred_core_pending`，
   全部槽 ineligible 返回 `insufficient_eligible_slots`（非错误）；退出码经
@@ -1122,6 +1124,9 @@ detached 的假设研究调度器。输入为观测 store 根目录加预筛配�
   <path> [--horizon-bars 12,48,144,288]`；无 worker、无 systemd unit。
 
 ### 模拟域自动晋级边界
+
+上述研究循环 v3 无晋级权限；此处其它模块的既有模拟域合同不因 v3 研究结果
+改变。`positive_in_sample_only` 不得路由到资本、Champion 或订单。
 
 - **假设生成器（第二阶段）**：B 类候选通过可行性检查后自动标记
   `registration_status=auto_registered` 并写入 `registered_into_prescreen/
@@ -1303,3 +1308,55 @@ REAL_TRADING_ENABLED=false python3 -m pytest -q tests/test_crypto_*.py
 - fixture 测试结果不是收益率、胜率或晋级证据。
 
 停止本地运行即可回滚本批候选行为；已经产生的 append-only 资本与复盘输出应保留作审计，不得改写为其它账户事实。
+
+## 低换手基准与套息核算（research-only）
+
+`research_accounting.py` 按固定币数量核算现货/USDT 线性合约：费用逐腿乘实际
+成交名义金额、滑点改变成交价；同数量现货多头和合约空头的相同价格变动必须
+抵消。`funded_hedge` 只做完全抵押的 long-spot/short-perp 研究，投入资本分母
+包括现货开仓现金和全部合约抵押金，资金费只计 `(entry, exit]` 内真实结算事件，
+支持毫秒结算时间，不按持仓小时摊算。调用方必须提供独立完整结算日程，缺事件、
+价格缺口、重复事件或保证金路径风险时不出可用净收益。保证金只按采样 mark 检查，
+不声称交易所级清算或真实成交。不得将其用作现役模拟账户 writer。
+
+`forty_symbol_funding_carry_research.evaluate_settled_carry` 是新纯函数入口：输入
+`prices[{time,spot,perp,mark}]`、`funding[{funding_time,funding_rate,mark_price}]`、
+`expected_funding_times`、数量/两腿费用/滑点/抵押金/maintenance rate，以及
+`source` 的五项数据面证据（spot/perp_trade/perp_mark/settled_funding/funding_schedule）。
+缺证据返回 `data_unavailable`、净收益 null；source 仍是调用方来源绑定，不是独立
+PIT/晋级认证。旧 `analyze` 的方向性 premium 模型显式标记不可用于真实套息结论。
+基差旧模型 v2 虽修正为等币数量/逐腿费用，仍有合成 perp 等限制；旧报告不重写。
+
+`slow_trend_research.py` 固定一套基准，而不是参数网格：20/60 日 SMA、20 日历史
+波动率缩仓、每币目标权重最多 10%、不加杠杆、每日一次、25% 相对目标偏离带。
+对照为同期间现金和全仓持有 BTC；两种投资策略均计入开平仓费用和终端清仓成本。
+初始研究单位沿用 opening baseline，但结果不是任何当前账户收益。BTC 为全敞口，
+低敞口策略回撤较低不能自动解释为 alpha。日收盘回撤不代表日内最大回撤。
+日线只需 23:55 bar close 与 00:05 bar open，缺其它未使用日内行不会阻断该日；
+必需时点缺失绝不前填。缺特征的单币空仓，其它币仍可评估；缺组合估值日不能拼接。
+
+历史诊断选择最长连续可估值段，不按收益选择。固定前向窗口
+`2026-08-31T00:00:00Z` 至 `2026-11-29T00:00:00Z`，结束前仅输出覆盖数量，
+不输出收益。到期需完整 90 天；不足则报告 `fixed_window_incomplete_no_return_claim`，
+不延期、不换参数再追认。正结果仍需 first-seen/PIT 和独立科学证据，不能从
+offline rows 自签晋级。现有 K10 的定义、窗口及一次性读数完全不变。
+
+```bash
+# 已验证 raw cache 的无网络历史诊断：
+REAL_TRADING_ENABLED=false python3 -m Crypto.slow_trend_research \
+  --raw-dir /absolute/research/raw --as-of 2026-08-30T06:00:00Z
+
+# 服务身份下的显式正式 API 研究取数；最多400天，每次100个精确时间点：
+REAL_TRADING_ENABLED=false python3 -m Crypto.slow_trend_research \
+  --runtime-manifest /etc/tradingagent/crypto-ten-symbol-observation.runtime.json \
+  --start 2026-02-01T00:00:00Z --end 2026-08-30T00:00:00Z \
+  --as-of 2026-08-30T06:00:00Z --report /absolute/new-research-report.json
+
+REAL_TRADING_ENABLED=false python3 -m pytest -q \
+  tests/test_crypto_research_accounting.py tests/test_crypto_slow_trend_research.py \
+  tests/test_crypto_ten_symbol_research_loop.py tests/test_crypto_ten_symbol_time_split.py
+```
+
+复用原有研究循环时 v3 会自动附带基准、封存窗口覆盖和试验计数，但不会新增
+timer/service；代码接入不等于自动调度已生效。回滚停止调用新研究入口，保留
+v3 与旧 v1/v2 产物，切回原代码即可；不回写原始数据、账户、K10 或历史结论。

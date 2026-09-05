@@ -1,4 +1,8 @@
-"""Offline 40-symbol funding-carry research over perp premium_index + spot 5m.
+"""Settled two-leg funding research plus retired premium-proxy replay.
+
+Use evaluate_settled_carry for explicit observed price/mark/funding inputs.
+The historical SQLite/proxy functions below are forensic replay only, not
+the formal TD consumer path and not evidence about real funding-carry returns.
 
 This module is *research only*.  It reads a read-only TradingDatas crypto
 read-model SQLite file (no network, no capital/order/Champion writes) and
@@ -28,7 +32,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-CONTRACT = "tradingagent.crypto.forty_symbol_funding_carry_research.v1"
+from Crypto.research_accounting import funded_hedge
+
+CONTRACT = "tradingagent.crypto.forty_symbol_funding_carry_research.v2"
 ALLOWED_HORIZON_BARS = (12, 48, 144, 288)
 ALLOWED_THRESHOLDS = ("0.0001", "0.0002", "0.0005", "0.001")
 FUNDING_INTERVAL_SLOTS = 96  # 8h funding cadence expressed in 5m slots
@@ -640,6 +646,9 @@ def analyze(
     return {
         "contract": CONTRACT,
         "event_type": "forty_symbol_funding_carry_analysis",
+        "model_status": "legacy_directional_premium_proxy_not_funding_carry",
+        "invalid_for_real_carry_conclusion": True,
+        "replacement": "evaluate_settled_carry; actual_prices_marks_and_funding_required",
         "symbols": list(symbols),
         "data_window": data_window,
         "data_source": {
@@ -671,6 +680,37 @@ def analyze(
 
 
 # ---------------------------------------------------------------------------
+# Real two-leg research entrypoint. No direct provider or database access.
+# Historical premium-proxy analysis above is retained for forensic replay only.
+# ---------------------------------------------------------------------------
+
+
+def evaluate_settled_carry(*, prices, funding, expected_funding_times, source, **costs):
+    """Evaluate explicit observed/fixture contracts, never synthetic premiums.
+
+Source proof must come from the formal TD consumer. Caller-provided receipts
+bind provenance only; this offline function cannot establish PIT or promotion.
+"""
+    _assert_simulation_only()
+    if not isinstance(source, Mapping) or source.get("kind") not in {
+        "tradingdatas_catalog_query", "fixture",
+    }:
+        raise FortySymbolFundingCarryError("settled_carry_source_invalid")
+    required = ("spot", "perp_trade", "perp_mark", "settled_funding", "funding_schedule")
+    missing = [key for key in required if not source.get(key)]
+    if missing:
+        return {"status": "data_unavailable", "missing_planes": missing,
+                "net_pnl": None, **_non_evidence_fields()}
+    if source.get("synthetic_perp") or source.get("premium_proxy"):
+        raise FortySymbolFundingCarryError("settled_carry_proxy_forbidden")
+    result = funded_hedge(prices, funding, expected_funding_times=expected_funding_times, **costs)
+    result["contract"] = "tradingagent.crypto.settled_funding_carry.v1"
+    result["source"] = dict(source)
+    result["historical_backfill_no_pit"] = True
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
 
@@ -697,6 +737,9 @@ def _horizon_label(bars: int) -> str:
 def render_report(result: Mapping[str, Any]) -> str:
     lines: list[str] = [
         "# Crypto 40 币 funding carry 结构性风险溢价预筛（非证据研究）",
+        "",
+        "> 已退役为旧代理结果复现：方向性价格变化＋摊算 premium 不是真实 funding carry。"
+        "以下数字不能用于否定或证明真实套息盈利；新研究必须调用 evaluate_settled_carry。",
         "",
         "> **非证据声明**：本报告全部数字来自无 PIT 证明的 TradingDatas 历史回填"
         "（`historical_backfill_no_pit=true`），仅供工程/定义检查"

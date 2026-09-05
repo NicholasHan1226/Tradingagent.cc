@@ -322,17 +322,34 @@ delayed-paper core 与 G5 detached learning/scrub units 只在 simulation/shadow
   horizon 配置；复用 factor v2 投影的 sidecar 资格门禁与
   `ten_symbol_factor_prescreen.analyze` 评估口径（不改评估逻辑、不
   复制实现），把四个已注册预筛候选在最新观测证据上重估，产出
-  `<store_root>/evolution/ten_symbol_research_loop.v2/` 下 checksum 绑定的
+  `<store_root>/evolution/ten_symbol_research_loop.v3/` 下 checksum 绑定的
   immutable 评审报告（每候选×horizon 费用前后指标、与上份报告的
   diff、自动 `review.recommendation`：逐候选按最优非重叠费用后净收益
-  推导 `auto_promote`/`auto_demote`/`auto_retain`）与
-  compact checkpoint；v2 命名空间与 v1 的未版本化目录完全隔离、保留
-  既有 v1 证据不迁移不覆盖；同输入重跑 `no_new_input` 且字节不变（幂等），
+  推导描述性 `positive_in_sample_only`/`nonpositive_in_sample`/`auto_retain`）与
+  compact checkpoint；v3 与既有 v1/v2 目录完全隔离，旧证据不迁移不覆盖。
+  历史最优格子不得输出晋级或资金分配动作；报告计入本轮评估格子数，历史累计
+  试验数不完整时显式 unknown，不据此声称显著性。额外固定一套
+  `slow_trend_research.py` 基准，计划 SHA 纳入 input digest；同输入重跑
+  `no_new_input` 且字节不变（幂等），
   链/sidecar/checkpoint/report 篡改一律 fail closed。第一阶段不生成
-  新假设（注册集合漂移 fail closed）、不接 systemd、无 worker；晋级
-  在模拟域内自动，实盘仍由 `REAL_TRADING_ENABLED=false` 硬闸。固定
+  新的搜索变体（注册集合漂移 fail closed）、不接 systemd、无 worker；研究
+  循环无晋级权限，实盘仍由 `REAL_TRADING_ENABLED=false` 硬闸。固定
   `authority=none`、零 core/资本/order/Champion/learning 写权限，不构成
   edge、参数变更、风险扩张或执行授权。
+- `research_accounting.py` 仅提供纯 Decimal 线性合约/现货逐腿核算与离散资金费
+  现金流。`forty_symbol_funding_carry_research.evaluate_settled_carry` 要求实际
+  现货、合约成交价、标记价、资金费事件及独立结算日程；缺项不出收益，禁止
+  premium 代理或合成 perp 冒充实际套息。完全抵押、不加杠杆，采样标记价保证金
+  检查不等同交易所清算精度。旧 proxy 路径仅作历史复现，禁止用于真实套息结论。
+- `slow_trend_research.py` 固定十币种 20/60 日均线、20 日波动率、日频 long/flat，
+  只使用前一日及更早收盘，次日 UTC 00:05 open 作为含成本反事实。只要求实际
+  使用的每日两个时点，不伪造完整日内路径；某币缺完整特征窗口只使该币空仓。
+  组合估值缺所需价格时不得跳日拼接收益。历史按最长连续可估值段、同长取最早
+  选择，不按收益选择。2026-08-31 至 2026-11-29 UTC 为固定前向窗口，结束前
+  不输出该窗口收益；结束后缺窗口则明确失败，不延期挑结果。任何定义变化都
+  必须新版本、新窗口；offline 原始行不能自行证明 first-seen/PIT 或晋级 authority。
+  K10 独立预注册不读、不改、不提前计算。CLI 正式取数复用 TradingDatas
+  catalog/query 和专用 transport；不得直连交易所、读取 TD SQLite 或修改核心资金。
 - `ten_symbol_health_watch.py` 是十币种观测链与 TradingDatas 数据面的
   只读健康检查器：只经 store lock-free 只读路径读取，绝不重建
   head/index、绝不写任何 store 文件；检查 latest_terminal_slot 滞后

@@ -12,10 +12,9 @@ the perp ``premium_index`` close:
     so directional price risk is hedged and the position monetises premium /
     basis convergence.
 
-The portfolio gross is computed directly from the two legs (NOT from the
-premium difference) so the residual approximation error of the delta-neutral
-first-order argument stays visible.  A separate "pure basis convergence"
-``premium_0 - premium_H`` is reported alongside for comparison.
+The two legs use equal coin quantities with linear P&L, both normalised by
+spot entry notional. Synthetic perp prices remain a proxy: this is not real
+cash-and-carry evidence. A separate ``premium_0 - premium_H`` is descriptive.
 
 The history is a *backfill without PIT proof*: every artifact this module
 produces is fixed ``not_promotion_evidence=true`` and may only ever feed
@@ -36,7 +35,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-CONTRACT = "tradingagent.crypto.forty_symbol_basis_carry_research.v1"
+from Crypto.research_accounting import linear_leg
+
+CONTRACT = "tradingagent.crypto.forty_symbol_basis_carry_research.v2"
 ALLOWED_HORIZON_BARS = (12, 48, 144, 288)
 ALLOWED_THRESHOLDS = ("0.0001", "0.0002", "0.0005", "0.001")
 MAX_RAW_ROWS_PER_DATASET = 400_000
@@ -445,17 +446,21 @@ def _evaluate_cell(
             if s_entry <= ZERO or p_entry <= ZERO or p_exit <= ZERO:
                 raise FortySymbolBasisCarryError("basis_carry_invalid_price")
 
-            # Each leg is normalised to its own entry notional.  The combined
-            # gross is the sum of the two legs (equal notional per leg), so
-            # the approximation error of the delta-neutral argument is visible
-            # rather than hand-removed.
-            spot_leg = Decimal(direction) * (s_exit / s_entry - ONE)
-            perp_leg = Decimal(direction) * (p_entry / p_exit - ONE)
+            # Equal COIN quantity hedges the linear contract's price delta.
+            # Both legs use the spot entry notional denominator; this is NOT
+            # return on total committed spot cash + futures collateral.
+            quantity = ONE / s_entry
+            spot_account = linear_leg(quantity=quantity, entry=s_entry, exit=s_exit,
+                                      side=direction, fee_rate=FEE, slippage=SLIP)
+            perp_account = linear_leg(quantity=quantity, entry=p_entry, exit=p_exit,
+                                      side=-direction, fee_rate=FEE, slippage=SLIP)
+            spot_leg = spot_account["gross_pnl"]
+            perp_leg = perp_account["gross_pnl"]
             gross = spot_leg + perp_leg
             basis = Decimal(direction) * (premium_entry - premium_exit)
 
-            spot_net = _leg_net_taker(spot_leg)
-            perp_net = _leg_net_taker(perp_leg)
+            spot_net = spot_account["net_pnl"]
+            perp_net = perp_account["net_pnl"]
             net_taker = spot_net + perp_net
             net_maker = gross  # maker hypothesis: fee=0, slippage=0
 
@@ -639,7 +644,7 @@ def _evaluate_cell(
                 " (1 + premium_close); direction=+1 => long spot + short perp"
                 " (premium >= +threshold); direction=-1 => short spot + long"
                 " perp (premium <= -threshold); spot_leg = d*(S_H/S_0 - 1);"
-                " perp_leg = d*(P_0/P_H - 1); portfolio gross = spot_leg +"
+                " perp_leg = d*(P_0-P_H)/S_0; portfolio gross = spot_leg +"
                 " perp_leg (equal notional per leg); basis (pure) ="
                 " d*(premium_0 - premium_H); net_taker = cost(spot_leg) +"
                 " cost(perp_leg) with per-leg crypto-round-trip-taker-v1"
@@ -734,7 +739,10 @@ def analyze(
             ),
             "portfolio_gross": "spot_leg + perp_leg",
             "spot_leg": "d * (S_H / S_0 - 1)",
-            "perp_leg": "d * (P_0 / P_H - 1)",
+            "perp_leg": "d * (P_0 - P_H) / S_0; equal coin quantity",
+            "return_denominator": "spot_entry_notional_only; not_total_capital_return",
+            "invalid_for_real_carry_conclusion": True,
+            "limitations": "synthetic_perp; no_settled_funding; no_margin_path; zero_cost_maker_upper_bound_only",
             "pure_basis": "d * (premium_0 - premium_H)",
             "baselines": {
                 "cash": "0 (market-neutral, no position)",
@@ -928,6 +936,10 @@ def render_report(result: Mapping[str, Any]) -> str:
     lines: list[str] = [
         "# Crypto 40 币 delta-neutral basis / cash-and-carry 预筛（非证据研究）",
         "",
+        "> v2 核算更正：等币数量线性合约、逐腿实际名义金额计费。仍使用合成 perp，"
+        "没有真实资金费及保证金路径；以下代理结果不能用于否定或证明真实套息盈利。"
+        "gross/net 以现货入场名义本金归一化，不是总投入资本收益率。",
+        "",
         "> **非证据声明**：本报告全部数字来自无 PIT 证明的 TradingDatas 历史回填"
         "（`historical_backfill_no_pit=true`），仅供工程/定义检查"
         "（`not_promotion_evidence=true`、`authority=none`、`research_only=true`、"
@@ -943,24 +955,23 @@ def render_report(result: Mapping[str, Any]) -> str:
         "- 构造：per-symbol、每 5m 槽定义 perp 价格 `P = spot_close * (1 +"
         " premium_close)`（premium 为分数）。",
         "- 信号：`premium_close >= +threshold` → 开 **long spot + short perp**"
-        "（收正 funding，赚 premium 收敛）；`premium_close <= -threshold` → 开"
-        " **short spot + long perp**（收负 funding）。threshold 扫 `0.0001 / 0.0002 /"
+        "（仅代理基差变化，不计 funding）；`premium_close <= -threshold` → 开"
+        " **short spot + long perp**（同样不计 funding）。threshold 扫 `0.0001 / 0.0002 /"
         " 0.0005 / 0.001`。",
         "- 持有 12/48/144/288 槽（1h/4h/12h/24h）后平仓，close→close。",
         "- 收益口径（**关键，delta-neutral，直接算两腿**）：令方向 `d=+1`（long spot +"
         " short perp）或 `d=-1`（short spot + long perp），`S_0/S_H` 与 `P_0/P_H` 为"
         " spot/perp 入场与出场价：",
         "  - `spot_leg = d*(S_H/S_0 - 1)`；",
-        "  - `perp_leg = d*(P_0/P_H - 1)`；",
-        "  - **组合 gross = spot_leg + perp_leg**（两腿各按 1x notional 归一，相加；"
-        " 不手动只取 premium 差，近似误差可见）。",
+        "  - `perp_leg = d*(P_0-P_H)/S_0`；",
+        "  - **组合 gross = spot_leg + perp_leg**（等币数量，共同按现货入场名义本金归一；"
+        " 不是含抵押金的总资本收益率）。",
         "  - 同时报告**纯 basis 收敛**口径 `premium_0 - premium_H`（`d` 符号化）与组合"
-        " gross 对照，看 delta 中性近似有多大误差。",
-        "- 成本：两腿各自套用 `crypto-round-trip-taker-v1`（fee 0.001 双边 taker +"
-        " slippage 2bps 双边，`(1+net_leg)=(1+gross_leg)*(1-fee)/(1+fee)*(1-slip)^2-1`），"
-        " 每腿往返约 0.24%，**两腿合计约 0.48%**。",
+        " gross 对照；premium 差不等于实际资金费现金流。",
+        "- 成本：费率每边 0.001、滑点每边 2bps；逐腿按实际成交数量×成交价计费，"
+        " 两腿往返成本在价格近似不变时约为现货入场名义金额的 0.48%。",
         "- maker 假设：`fee=0`、`slippage=0`，此时 `net_maker = gross`，用于判断"
-        " 去掉成本后毛 edge 能否转正（是否值得做市/限价执行）。",
+        " 零成本上界；不证明 maker 成交概率或实际可执行收益。",
         "- 基线：现金/中性基线固定 0；另报 always-long spot 单腿方向基线作对照。",
         "- 口径：每个 threshold×horizon 报全样本与非重叠子样本（stride=horizon 槽数）、"
         " 等权权益曲线 maxDD、尾部（最差单样本/单槽、连亏）、以及正 premium 侧 vs 负"
@@ -968,18 +979,17 @@ def render_report(result: Mapping[str, Any]) -> str:
         "",
         "## 近似与局限（必须读）",
         "",
-        "- **用 spot 近似 perp 价格**：`P = spot*(1+premium)` 是 perp 无 tick 级价差的"
-        " 一阶重构；真实 perp 与 spot 的 tick/点差/深度/基差未建模，组合 gross 因此含"
-        " 二阶凸性误差（`S_H/S_0 + S_0/S_H - 2` 等），本报告用「组合 gross − 纯 basis」"
-        " 显式量化该误差。",
+        "- **合成 perp**：`P = spot*(1+premium)` 不是实际合约成交价，premium index"
+        " 也不是简单现货-期货价差。v2 已移除倒数空头公式制造的凸性残差，但代理输入"
+        " 仍不能支持真实套息结论。",
         "- **无真实 funding schedule**：`premium_index` 只是 funding 代理，不逐 8h 按当期"
-        " premium 结算；funding 现金流未独立入账，只体现在 premium 收敛里。",
+        " premium 结算；资金费现金流完全缺失，不能认为已包含在 premium 收敛中。",
         "- **无保证金/强平/资金费率具体时点**：delta-neutral 对冲掉一阶方向风险，但两腿"
         " 各自仍暴露于基差跳空、极端插针与杠杆/保证金约束；本模型允许单样本 net <"
         " -100% 出现（研究上限，非可交易结果）。",
         "- **负 premium 侧（short spot + long perp）需要借券**：现实成本更高/受限，"
         " 报告分拆表单独标注该方向不可无借券执行；正 premium 侧（long spot + short"
-        " perp）是主口径、可直接执行。",
+        " perp）仍需实际两腿行情、保证金、成本及授权，不能直接执行。",
         "- **无 PIT**：历史回填，`historical_backfill_no_pit=true`，仅工程/定义检查。",
         "",
         "## 数据窗口",
