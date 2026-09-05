@@ -12,17 +12,22 @@ import pytest
 import Crypto.forty_symbol_rolling_evaluation as rolling
 import Crypto.ten_symbol_observation_store as store_module
 from Crypto.forty_symbol_rolling_evaluation import (
+    COST_AWARE_CONFIGURATION_ID,
+    DEFAULT_CONFIGURATION_ID,
     ENTRY_FEE,
     ENTRY_THRESHOLD,
     EXIT_FEE,
+    FROZEN_CHAMPION_CONFIGURATION_ID,
     FortySymbolRollingEvaluationError,
     SLIPPAGE_RATE,
     _evaluate_segment,
     _first_executable_entry_index,
     _round_trip_net,
+    _resolve_configuration,
     build_artifact,
     main,
 )
+from Crypto.cost_aware_challenger import ROUND_TRIP_COST_FLOOR_RETURN
 from Crypto.market_observation import (
     OBSERVATION_SYMBOLS_V40,
     CryptoMarketObservation,
@@ -494,6 +499,155 @@ def test_store_read_retries_full_snapshot_after_concurrent_head_advance(tmp_path
     assert before == {str(p.relative_to(store.root)): p.read_bytes() for p in store.root.rglob("*") if p.is_file()}
 
 
+def test_default_configuration_is_frozen_champion_and_authority_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    result = _artifact(_store_with_slots(tmp_path))
+    assert DEFAULT_CONFIGURATION_ID == FROZEN_CHAMPION_CONFIGURATION_ID
+    assert result["evaluated_configuration"]["configuration_id"] == (
+        FROZEN_CHAMPION_CONFIGURATION_ID
+    )
+    assert result["evaluated_configuration"]["entry_threshold"] == "0.001"
+    assert result["champion_configuration"]["entry_fee"] == "0.001"
+    assert result["champion_configuration"]["exit_fee"] == "0.001"
+    assert result["champion_configuration"]["slippage_rate_per_leg"] == "0.0002"
+    assert result["authority"] == "none"
+    assert result["capital_write_eligible"] is False
+
+
+def test_cost_aware_configuration_is_selectable_with_same_cost_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    result = build_artifact(
+        store_root=store.root,
+        replay_command="test-replay",
+        configuration_id=COST_AWARE_CONFIGURATION_ID,
+    )
+    resolved = _resolve_configuration(COST_AWARE_CONFIGURATION_ID)
+    assert COST_AWARE_CONFIGURATION_ID == "crypto-spot-15m-momentum-cost-floor-v1"
+    assert resolved["entry_threshold"] == ROUND_TRIP_COST_FLOOR_RETURN
+    assert resolved["entry_threshold"] == Decimal("0.0032")
+    assert result["evaluated_configuration"]["configuration_id"] == (
+        COST_AWARE_CONFIGURATION_ID
+    )
+    assert result["evaluated_configuration"]["entry_threshold"] == "0.0032"
+    assert result["evaluated_configuration"]["role"] == (
+        "preregistered_shadow_challenger"
+    )
+    assert result["champion_configuration"]["entry_fee"] == "0.001"
+    assert result["champion_configuration"]["exit_fee"] == "0.001"
+    assert result["champion_configuration"]["slippage_rate_per_leg"] == "0.0002"
+    assert result["authority"] == "none"
+    assert result["capital_write_eligible"] is False
+    assert before == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_unknown_configuration_id_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    with pytest.raises(
+        FortySymbolRollingEvaluationError,
+        match="rolling_evaluation_configuration_unknown",
+    ):
+        build_artifact(
+            store_root=store.root,
+            replay_command="test-replay",
+            configuration_id="crypto-spot-15m-momentum-invented-v9",
+        )
+
+
+def test_cost_aware_cli_does_not_write_store_or_g5_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    g5_root = tmp_path / "crypto-delayed-paper-round-trip-epoch-g5-20260801"
+    g5_root.mkdir()
+    marker = g5_root / "round_trip_capital.jsonl"
+    marker.write_text("untouched\n", encoding="utf-8")
+    before_store = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    before_g5 = {
+        str(path.relative_to(g5_root)): path.read_bytes()
+        for path in g5_root.rglob("*")
+        if path.is_file()
+    }
+    out_json = tmp_path / "cost-aware.json"
+    assert (
+        main(
+            [
+                "--store-root",
+                str(store.root),
+                "--configuration",
+                COST_AWARE_CONFIGURATION_ID,
+                "--out-json",
+                str(out_json),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["evaluated_configuration"]["configuration_id"] == (
+        COST_AWARE_CONFIGURATION_ID
+    )
+    assert payload["authority"] == "none"
+    assert payload["capital_write_eligible"] is False
+    assert before_store == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    assert before_g5 == {
+        str(path.relative_to(g5_root)): path.read_bytes()
+        for path in g5_root.rglob("*")
+        if path.is_file()
+    }
+    assert list(g5_root.rglob("*")) == [marker]
+
+
+def test_mid_band_decision_is_champion_only() -> None:
+    start = datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc)
+    open_times = [_iso(start + timedelta(minutes=5 * index)) for index in range(16)]
+    rows = []
+    for index in range(16):
+        price = Decimal("100.20") if index >= 12 else Decimal("100")
+        text = format(price, "f")
+        rows.append({"open": text, "high": text, "low": text, "close": text})
+    available = [
+        start + timedelta(minutes=5 * (index + 1), seconds=20) for index in range(16)
+    ]
+    segment = {
+        "open_times": open_times,
+        "bars_by_symbol": {symbol: rows for symbol in SYMBOLS},
+        "available_at_by_symbol": {symbol: available for symbol in SYMBOLS},
+    }
+    champion = _evaluate_segment(segment, entry_threshold=ENTRY_THRESHOLD)
+    cost_aware = _evaluate_segment(
+        segment, entry_threshold=ROUND_TRIP_COST_FLOOR_RETURN
+    )
+    assert ENTRY_THRESHOLD <= Decimal("0.002") < ROUND_TRIP_COST_FLOOR_RETURN
+    assert champion["trips_total"] == len(SYMBOLS)
+    assert cost_aware["trips_total"] == 0
+    assert cost_aware["observe_slots_total"] > champion["observe_slots_total"]
+
+
 @pytest.mark.parametrize("reason,expected_attempts", [
     ("rolling_evaluation_store_advanced_retry", 3),
     ("rolling_evaluation_store_head_invalid", 1),
@@ -723,7 +877,13 @@ def test_cli_explicit_window_is_read_only_and_keeps_default_flags(
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["authority"] == "none"
     assert payload["segment"]["slot_count"] == 5
+    assert payload["evaluated_configuration"]["configuration_id"] == (
+        DEFAULT_CONFIGURATION_ID
+    )
     assert "--window-start 2026-08-30T04:00:00Z" in payload["generated_from"][
+        "replay_command"
+    ]
+    assert f"--configuration {DEFAULT_CONFIGURATION_ID}" in payload["generated_from"][
         "replay_command"
     ]
     assert before == {
@@ -731,5 +891,3 @@ def test_cli_explicit_window_is_read_only_and_keeps_default_flags(
         for path in store.root.rglob("*")
         if path.is_file()
     }
-    with pytest.raises(SystemExit, match="2"):
-        main(["--store-root", str(store.root), "--configuration", "alt"])

@@ -11,12 +11,14 @@ event in the checksum-chained append-only log, and the selected slots must form
 a gap-free 5-minute segment.  Labels never cross a gap; any missing slot fails
 closed.
 
-On that segment it runs exactly one pre-registered configuration of the existing
-frozen champion momentum strategy (mirrors ``Crypto.fixture_sim.contracts.
-FrozenChampionCandidate``: decision lookback 3 bars, regime lookback 12 bars,
-minimum decision return 0.001, minimum regime return 0) with the champion exit
-ladder (take-profit +3%, stop-loss -2%, 24h max hold, momentum reversal), plus
-a simple buy-and-hold baseline, both net of declared taker fees and slippage.
+On that segment it runs exactly one selected pre-registered configuration:
+the frozen champion momentum strategy (mirrors ``FrozenChampionCandidate``:
+decision lookback 3 bars, regime lookback 12 bars, minimum decision return
+0.001, minimum regime return 0) or the existing cost-floor Challenger
+``crypto-spot-15m-momentum-cost-floor-v1`` (same lookbacks and exit ladder,
+minimum decision return 0.0032).  Both keep the champion exit ladder
+(take-profit +3%, stop-loss -2%, 24h max hold, momentum reversal) plus a
+simple buy-and-hold baseline, both net of declared taker fees and slippage.
 No threshold or horizon scanning happens here.
 
 The output is shadow-only by construction (``authority=none``,
@@ -39,6 +41,11 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from Crypto.cost_aware_challenger import (
+    COST_AWARE_CHALLENGER,
+    ROUND_TRIP_COST_FLOOR_RETURN,
+)
+from Crypto.fixture_auto_sim import FROZEN_CHAMPION
 from Crypto.market_observation import (
     OBSERVATION_SYMBOLS_V40 as FORTY_SYMBOLS,
 )
@@ -57,8 +64,11 @@ from Crypto.ten_symbol_observation_store import (
 CONTRACT = "tradingagent.crypto.forty_symbol_rolling_evaluation.v1"
 EVENT_CONTRACT = "tradingagent.crypto.forty_symbol_observation_event.v1"
 
-# Frozen champion parameters (single pre-registered configuration; no scan).
+# Frozen champion parameters (default pre-registered configuration; no scan).
 ENTRY_THRESHOLD = Decimal("0.001")
+FROZEN_CHAMPION_CONFIGURATION_ID = FROZEN_CHAMPION.champion_id
+COST_AWARE_CONFIGURATION_ID = COST_AWARE_CHALLENGER.challenger_id
+DEFAULT_CONFIGURATION_ID = FROZEN_CHAMPION_CONFIGURATION_ID
 MINIMUM_REGIME_RETURN = Decimal("0")
 DECISION_LOOKBACK_BARS = 3  # 15 minutes expressed in 5m bars
 REGIME_LOOKBACK_BARS = 12  # 1 hour expressed in 5m bars
@@ -83,6 +93,42 @@ ONE = Decimal("1")
 
 class FortySymbolRollingEvaluationError(RuntimeError):
     """Stable fail-closed error for receipt-bound rolling evaluation."""
+
+
+def _resolve_configuration(configuration_id: str) -> dict[str, Any]:
+    """Return one frozen, already-registered evaluation configuration."""
+
+    if configuration_id == FROZEN_CHAMPION_CONFIGURATION_ID:
+        if FROZEN_CHAMPION.minimum_decision_return != ENTRY_THRESHOLD:
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_configuration_binding_invalid"
+            )
+        return {
+            "configuration_id": FROZEN_CHAMPION_CONFIGURATION_ID,
+            "role": "frozen_champion",
+            "entry_threshold": ENTRY_THRESHOLD,
+            "baseline_champion_id": FROZEN_CHAMPION.champion_id,
+        }
+    if configuration_id == COST_AWARE_CONFIGURATION_ID:
+        if (
+            COST_AWARE_CHALLENGER.challenger_id != COST_AWARE_CONFIGURATION_ID
+            or COST_AWARE_CHALLENGER.minimum_decision_return
+            != ROUND_TRIP_COST_FLOOR_RETURN
+            or COST_AWARE_CHALLENGER.baseline_champion_id
+            != FROZEN_CHAMPION.champion_id
+        ):
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_configuration_binding_invalid"
+            )
+        return {
+            "configuration_id": COST_AWARE_CONFIGURATION_ID,
+            "role": "preregistered_shadow_challenger",
+            "entry_threshold": ROUND_TRIP_COST_FLOOR_RETURN,
+            "baseline_champion_id": FROZEN_CHAMPION.champion_id,
+        }
+    raise FortySymbolRollingEvaluationError(
+        "rolling_evaluation_configuration_unknown"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -522,11 +568,16 @@ def _first_executable_entry_index(
 
 
 # ---------------------------------------------------------------------------
-# Frozen champion evaluation (single pre-registered configuration)
+# Frozen configuration evaluation (one selected pre-registered configuration)
 # ---------------------------------------------------------------------------
 
 
-def _is_entry_signal(closes: Sequence[Decimal], index: int) -> bool:
+def _is_entry_signal(
+    closes: Sequence[Decimal],
+    index: int,
+    *,
+    entry_threshold: Decimal = ENTRY_THRESHOLD,
+) -> bool:
     if index < REGIME_LOOKBACK_BARS:
         return False
     base_decision = closes[index - DECISION_LOOKBACK_BARS]
@@ -537,7 +588,7 @@ def _is_entry_signal(closes: Sequence[Decimal], index: int) -> bool:
     regime_return = closes[index] / base_regime - ONE
     return (
         regime_return >= MINIMUM_REGIME_RETURN
-        and decision_return >= ENTRY_THRESHOLD
+        and decision_return >= entry_threshold
     )
 
 
@@ -627,7 +678,11 @@ def _recommendation(resolved_trips: int, mean_net: Decimal | None) -> dict[str, 
     return {"action": "disable_candidate", "detail": "materially negative mean net"}
 
 
-def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
+def _evaluate_segment(
+    segment: Mapping[str, Any],
+    *,
+    entry_threshold: Decimal = ENTRY_THRESHOLD,
+) -> dict[str, Any]:
     trips: list[dict[str, Any]] = []
     abstentions_data_end = 0
     abstentions_unavailable_entry = 0
@@ -643,7 +698,9 @@ def _evaluate_segment(segment: Mapping[str, Any]) -> dict[str, Any]:
         available_at = segment["available_at_by_symbol"][symbol]
         index = REGIME_LOOKBACK_BARS
         while index < len(closes):
-            if not _is_entry_signal(closes, index):
+            if not _is_entry_signal(
+                closes, index, entry_threshold=entry_threshold
+            ):
                 index += 1
                 observe_slots += 1
                 continue
@@ -742,10 +799,12 @@ def build_artifact(
     *,
     store_root: Path,
     replay_command: str,
+    configuration_id: str = DEFAULT_CONFIGURATION_ID,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
 ) -> dict[str, Any]:
     _assert_simulation_only()
+    configuration = _resolve_configuration(configuration_id)
     _, units, head = _verified_store_units(store_root)
     selected, dropped = _select_observation_units(units, window_start, window_end)
     receipts: list[dict[str, str]] = []
@@ -764,7 +823,9 @@ def build_artifact(
             raise FortySymbolRollingEvaluationError("rolling_evaluation_slot_gap")
 
     segment = _assemble_segment(selected)
-    evaluation = _evaluate_segment(segment)
+    evaluation = _evaluate_segment(
+        segment, entry_threshold=configuration["entry_threshold"]
+    )
 
     return {
         "contract": CONTRACT,
@@ -778,8 +839,16 @@ def build_artifact(
             "full_chain_event_count": head["event_count"],
             "replay_command": replay_command,
         },
+        "evaluated_configuration": {
+            "configuration_id": configuration["configuration_id"],
+            "role": configuration["role"],
+            "entry_threshold": format(configuration["entry_threshold"], "f"),
+            "baseline_champion_id": configuration["baseline_champion_id"],
+        },
         "champion_configuration": {
-            "entry_threshold": format(ENTRY_THRESHOLD, "f"),
+            "configuration_id": configuration["configuration_id"],
+            "role": configuration["role"],
+            "entry_threshold": format(configuration["entry_threshold"], "f"),
             "minimum_regime_return": format(MINIMUM_REGIME_RETURN, "f"),
             "decision_lookback_bars": DECISION_LOOKBACK_BARS,
             "regime_lookback_bars": REGIME_LOOKBACK_BARS,
@@ -818,7 +887,9 @@ def render_markdown(result: Mapping[str, Any]) -> str:
         f"- 段：{segment['first_open_time']} → {segment['last_open_time']}"
         f"（每标的 {segment['bar_count_per_symbol']} 根 5m，"
         f"{segment['slot_count']} 个连续回执槽，无缺口）。",
-        f"- 冻结冠军单配置（阈值 {result['champion_configuration']['entry_threshold']}，"
+        f"- 冻结配置 `{result['evaluated_configuration']['configuration_id']}`"
+        f"（{result['evaluated_configuration']['role']}，"
+        f"阈值 {result['champion_configuration']['entry_threshold']}，"
         f"3/12 根回看），零扫描；费用 taker 双边 0.1% + 每腿 2bps 滑点。",
         "",
         "## 结果",
@@ -857,6 +928,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-json", type=Path, help="write machine artifact JSON here")
     parser.add_argument("--report", type=Path, help="write Markdown report here")
     parser.add_argument(
+        "--configuration",
+        default=DEFAULT_CONFIGURATION_ID,
+        help=(
+            "pre-registered frozen configuration id: "
+            f"{FROZEN_CHAMPION_CONFIGURATION_ID} or "
+            f"{COST_AWARE_CONFIGURATION_ID}"
+        ),
+    )
+    parser.add_argument(
         "--window-start",
         help=(
             "inclusive first observation window_end (UTC). "
@@ -885,7 +965,8 @@ def main(argv: list[str] | None = None) -> int:
     window_end = _parse_utc(args.window_end) if args.window_end else None
     replay_command = (
         f"python3 -m Crypto.forty_symbol_rolling_evaluation "
-        f"--store-root {args.store_root}"
+        f"--store-root {args.store_root} "
+        f"--configuration {args.configuration}"
     )
     if window_start is not None and window_end is not None:
         replay_command += (
@@ -895,6 +976,7 @@ def main(argv: list[str] | None = None) -> int:
     result = build_artifact(
         store_root=args.store_root,
         replay_command=replay_command,
+        configuration_id=args.configuration,
         window_start=window_start,
         window_end=window_end,
     )
