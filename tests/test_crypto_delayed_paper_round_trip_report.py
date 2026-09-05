@@ -320,9 +320,11 @@ def test_g5_acceptance_runner_returns_not_ready_without_mutating_epoch(
     monkeypatch.setattr(
         report_module, "load_round_trip_epoch_manifest", lambda _: context
     )
-    monkeypatch.setattr(
-        report_module, "prepare_round_trip_epoch_candidate", lambda _: prepared
-    )
+    verification_calls = []
+    def prepare(_, *, _archive_verification):
+        verification_calls.append(_archive_verification)
+        return prepared
+    monkeypatch.setattr(report_module, "prepare_round_trip_epoch_candidate", prepare)
     monkeypatch.setattr(report_module, "_existing_root", lambda _: None)
     monkeypatch.setattr(
         report_module,
@@ -339,8 +341,39 @@ def test_g5_acceptance_runner_returns_not_ready_without_mutating_epoch(
 
     assert result["status"] == "not_ready"
     assert result["epoch_generation"] == 5
+    assert len(verification_calls) == 2
+    assert verification_calls[0] is verification_calls[1]
+    run_crypto_delayed_paper_round_trip_acceptance_once(epoch_manifest=manifest)
+    assert verification_calls[2] is verification_calls[3]
+    assert verification_calls[2] is not verification_calls[0]
     assert identity.read_bytes() == b"g5-identity\n"
 
 
 def test_module_cli_executes_the_fail_closed_acceptance_path(tmp_path: Path) -> None:
     assert main(["--epoch-manifest", str(tmp_path / "g4.json")]) == 2
+
+
+@pytest.mark.parametrize("change", ["identity", "epoch"])
+def test_acceptance_rechecks_current_epoch_after_evaluation(monkeypatch, tmp_path, change):
+    identity = tmp_path / ".round_trip_epoch_identity.json"
+    identity.write_bytes(b"before")
+    context = SimpleNamespace(epoch_generation=5, output_root=tmp_path)
+    prepared = SimpleNamespace(identity_path=identity, output_root=tmp_path)
+    calls = []
+    def prepare(_, *, _archive_verification):
+        calls.append(_archive_verification)
+        if change == "epoch" and len(calls) == 2:
+            raise report_module.CryptoRoundTripEpochError("round_trip_epoch_context_stale")
+        return prepared
+    def evaluate(**kwargs):
+        if change == "identity":
+            identity.write_bytes(b"after")
+        return {"status": "not_ready"}
+    monkeypatch.setattr(report_module, "_manifest_path", lambda _: tmp_path / "manifest")
+    monkeypatch.setattr(report_module, "load_round_trip_epoch_manifest", lambda _: context)
+    monkeypatch.setattr(report_module, "_existing_root", lambda _: None)
+    monkeypatch.setattr(report_module, "prepare_round_trip_epoch_candidate", prepare)
+    monkeypatch.setattr(report_module, "evaluate_crypto_delayed_paper_round_trip_acceptance", evaluate)
+    with pytest.raises(CryptoRoundTripReportError, match="round_trip_report_epoch_"):
+        run_crypto_delayed_paper_round_trip_acceptance_once(epoch_manifest=tmp_path / "manifest")
+    assert len(calls) == 2

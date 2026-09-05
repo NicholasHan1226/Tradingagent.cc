@@ -499,6 +499,8 @@ immutable release、enablement 与自然 readback 以 `STATUS.md`/`AUTODEV_STATE
 receipt 守恒与零重复 fill 验收，再按可回退流程切换 unit。
 G5 health 与十币种 health watch 只负责输出告警/记录和数据质量信息，不是模拟盘上线的
 硬门禁；只有配置、凭证、写库或状态完整性错误仍可阻断运行。
+G5 acceptance 在单次调用内复用一次已完整回放的归档资本 head。每次复用仍重新流式读取全部 events/head 并核对内容 SHA-256、文件身份与可信路径；首次回放前后也必须一致，变化即拒绝。缓存不跨调用、不按 TTL 或仅凭 mtime 命中；epoch manifest、归档 identity、supersession 与当前 identity 仍逐次验证。此优化不改变门禁、timeout、账本或冻结研究结果。
+
 G5 acceptance 的 48 小时/90% 覆盖门禁只衡量 runtime maturity 及后续
 promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛；历史
 288 根连续 closed-5m 只衡量 runtime maturity，不替代当前模拟盘上线门禁。
@@ -636,7 +638,9 @@ source store。`--out-json` 与 `--report` 仅写调用方明确指定、位于 
 收盘到收盘基线和 OHLC 触价退出都是描述性 bar-only counterfactual，不能作为
 成交、收益晋级、资本或执行 authority。
 
-既有每日任务的包装器源为 `deploy/run-crypto-forty-symbol-rolling-eval.sh`，
+既有滚动评估读取完整观察 store 时，若并发追加使 head 改变，会从头重新读取和校验，最多三次。只重试 `rolling_evaluation_store_advanced_retry`；hash、schema、文件或其它完整性失败立即停止。三次均重叠仍失败且不写报告，不停止 core writer，不复用部分校验结果。该预算用于恢复偶发读写重叠，不证明持续高负载下一定可完成。
+
+每日任务的包装器源为 `deploy/run-crypto-forty-symbol-rolling-eval.sh`，
 发布时替换原 `/usr/local/sbin/tradingagent-crypto-rolling-eval.sh`，不新增 timer。
 仅传 `--store-root`，不再手工拼接事件分段；每次在既有独立研究 output root 下
 创建唯一 attempt 目录，失败保留诊断且不记成功，不覆盖旧报告，不写 observation store。

@@ -214,6 +214,8 @@ There is no wildcard `systemctl restart tradingagent-*`.
 
 Timer/oneshot units that already resolve code through `current` use the new release on their next invocation; this deployment bootstrap does not broadly restart or enable them.
 
+The existing ten-symbol observation, factor-research and factor-research-scrub units also participate in release-pin reconciliation. Their legacy `20-ten-symbol-release.conf` / `20-ten-symbol-factor-release.conf` bindings are backed up and replaced with the same canonical release drop-in as G5 and the forty-symbol observer. Preserve the independent `10-scrub-timeout.conf` and each effective timeout. No timer is added or enabled; each unit must be stopped under the existing preflight, and rollback restores its prior pin. Rebinding does not claim its input manifest or next natural run is healthy.
+
 ## Automatic rollback
 
 The previous `current` target is captured before cutover.
@@ -227,6 +229,31 @@ If any failure occurs after `current` has switched but before the new release is
 5. exits non-zero so GitHub records deployment failure.
 
 Historical immutable release directories are not automatically deleted.
+
+A separate rollback **after a successful deployment** is a new release operation,
+not the in-flight failure rollback above. Before self-refresh, the installed
+helper requires the requested helper's static `g5_units` and
+`ashare_release_units` arrays and their `release_units` union to retain every
+currently managed unit. Comment-only names, dynamic entries, duplicate arrays,
+or a missing union fail closed before helper replacement, `current` switching or
+drop-in reconciliation. This deliberately rejects older helpers that predate the
+ten-symbol units, even when the old application SHA was once healthy. This is a
+compatibility check of already-reviewed helper versions and the supported literal
+array format, not a general shell-parser security certification; a future helper
+layout change requires explicit review.
+
+Before deployment, retain a separate reviewed rollback snapshot of the full
+managed drop-in set, absence/presence, effective timeouts, installed-helper digest,
+current SHA and service/timer states. The helper's temporary transaction backup
+is not a post-success rollback artifact. A post-success rollback requires either
+a CI-verified rollback release retaining the current coordinator's complete unit
+coverage, or a separately reviewed privileged recovery using that full snapshot.
+Stop the managed writers first; restore all exact release pins and effective
+timeouts, including ten-symbol observation/research/scrub, then verify
+`WorkingDirectory`, `PYTHONPATH`, `DropInPaths`, current SHA and resumed process
+cwd against the selected rollback. Preserve independent scrub timeout policy,
+original enablement, and all append-only facts/receipts. Never bypass the coverage
+guard or equate a restored `current`/healthy frontend with complete rollback.
 
 ## Verification
 

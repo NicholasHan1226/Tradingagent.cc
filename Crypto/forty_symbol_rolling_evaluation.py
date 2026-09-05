@@ -228,7 +228,28 @@ def _read_head_bytes(store: CryptoTenSymbolObservationStore) -> bytes:
         ) from exc
 
 
+# A core append may overlap the expensive eligibility read. Retry the complete
+# read, never reuse partially validated units or weaken the checkpoint checks.
+STORE_READ_MAX_ATTEMPTS = 3
+
+
 def _verified_store_units(
+    store_root: Path,
+) -> tuple[CryptoTenSymbolObservationStore, list[dict[str, Any]], dict[str, Any]]:
+    """Retry only a concurrently advanced head, with a fixed work budget."""
+    for attempt in range(STORE_READ_MAX_ATTEMPTS):
+        try:
+            return _verified_store_units_once(store_root)
+        except FortySymbolRollingEvaluationError as exc:
+            if (
+                str(exc) != "rolling_evaluation_store_advanced_retry"
+                or attempt + 1 == STORE_READ_MAX_ATTEMPTS
+            ):
+                raise
+    raise AssertionError("unreachable store read attempt")
+
+
+def _verified_store_units_once(
     store_root: Path,
 ) -> tuple[CryptoTenSymbolObservationStore, list[dict[str, Any]], dict[str, Any]]:
     """Read one stable, full-store snapshot with a read-only head anchor."""

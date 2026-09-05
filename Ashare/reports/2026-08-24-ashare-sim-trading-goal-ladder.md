@@ -1012,9 +1012,9 @@ rule 149/69/45/69/25），探针→引擎零漂移再次成立；边界含闭用
 
 ### 加密侧计数更新（执行归档文档预留的记账动作）
 
-funding/basis 双矩阵 32 配置逐表入已核验计数：**60+ → 92+**（唯一配置去重口径，全部为 concluded 身份，只增不减）；[归档文档](../Crypto/reports/2026-08-25-crypto-carry-matrix-archive.md)。**新增正收益因子判定 = 0**：全场唯一净正格 funding 0.001×24h hit_rate 49.74% 不过半，非重叠子样本（stride=24h，n=608）净 −0.0278% 转负。
+funding/basis 双矩阵 32 配置逐表入已核验计数：**60+ → 92+**（唯一配置去重口径，全部为 concluded 身份，只增不减）；[归档文档](../../Crypto/reports/2026-08-25-crypto-carry-matrix-archive.md)。**新增正收益因子判定 = 0**：全场唯一净正格 funding 0.001×24h hit_rate 49.74% 不过半，非重叠子样本（stride=24h，n=608）净 −0.0278% 转负。
 
-辅助 horizon 矩阵四候选族 32 配置逐表入已核验计数：**92+ → 124+**（唯一配置去重口径，全部为 concluded 身份，只增不减）；[归档文档](../Crypto/reports/2026-08-25-crypto-aux-horizon-matrix-archive.md)（已合入主线 #563，本节执行其预留的记账动作）。**新增正收益因子判定 = 0**：XS-RS 横截面相对强弱 / 短期反转 / Amihud 非流动性 / 波动率 regime 四族在 1h→24h 全部 horizon 费前 gross 即全负；唯二非重叠正单元（low_vol_half 12h/24h）已被源报告逐条排除为小样本噪声（同变体全样本深负、符号随 horizon 翻转、t 远低于门槛、对 stride 相位敏感）。
+辅助 horizon 矩阵四候选族 32 配置逐表入已核验计数：**92+ → 124+**（唯一配置去重口径，全部为 concluded 身份，只增不减）；[归档文档](../../Crypto/reports/2026-08-25-crypto-aux-horizon-matrix-archive.md)（已合入主线 #563，本节执行其预留的记账动作）。**新增正收益因子判定 = 0**：XS-RS 横截面相对强弱 / 短期反转 / Amihud 非流动性 / 波动率 regime 四族在 1h→24h 全部 horizon 费前 gross 即全负；唯二非重叠正单元（low_vol_half 12h/24h）已被源报告逐条排除为小样本噪声（同变体全样本深负、符号随 horizon 翻转、t 远低于门槛、对 stride 相位敏感）。
 
 ### 候选台账（现行编号空间）
 

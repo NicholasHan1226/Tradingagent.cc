@@ -18,6 +18,9 @@ g5_units=(
   tradingagent-crypto-round-trip-g5-learning.service
   tradingagent-crypto-round-trip-g5-learning-scrub.service
   tradingagent-crypto-forty-symbol-observation.service
+  tradingagent-crypto-ten-symbol-observation.service
+  tradingagent-crypto-ten-symbol-factor-research.service
+  tradingagent-crypto-ten-symbol-factor-research-scrub.service
 )
 ashare_release_units=(
   tradingagent-ashare-minute-session.service
@@ -35,6 +38,9 @@ g5_legacy_dropins=(
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning.service.d/20-immutable-release.conf
   /etc/systemd/system/tradingagent-crypto-round-trip-g5-learning-scrub.service.d/20-immutable-release.conf
   /etc/systemd/system/tradingagent-crypto-forty-symbol-observation.service.d/20-forty-symbol-release.conf
+  /etc/systemd/system/tradingagent-crypto-ten-symbol-observation.service.d/20-ten-symbol-release.conf
+  /etc/systemd/system/tradingagent-crypto-ten-symbol-factor-research.service.d/20-ten-symbol-factor-release.conf
+  /etc/systemd/system/tradingagent-crypto-ten-symbol-factor-research-scrub.service.d/20-ten-symbol-factor-release.conf
 )
 ashare_legacy_dropins=(
   /etc/systemd/system/tradingagent-ashare-minute-session.service.d/20-ashare-release.conf
@@ -88,6 +94,8 @@ validate_immutable_release() {
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_health.py"
   runuser -u tradingagent -- test -r "$root/Crypto/delayed_paper_round_trip_learning_worker.py"
   runuser -u tradingagent -- test -r "$root/Crypto/forty_symbol_observation_runtime.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/ten_symbol_observation_runtime.py"
+  runuser -u tradingagent -- test -r "$root/Crypto/ten_symbol_factor_research_worker.py"
   runuser -u tradingagent -- test -r "$root/deploy/release.sh"
 }
 
@@ -106,6 +114,38 @@ refresh_installed_helper_from_release() {
   bash -n "$source" || fail "release helper failed syntax check: $source"
   grep -Fq 'tradingagent-crypto-forty-symbol-observation.service' "$source" \
     || fail "release helper is missing forty-symbol observation reconciliation"
+
+  # Never replace this coordinator with a helper that would omit a unit whose
+  # canonical binding it already manages. Older releases need a reviewed rollback.
+  python3 - "$source" "${release_units[@]}" <<'COVERAGE' \
+    || fail "release helper would drop managed unit coverage"
+from pathlib import Path
+import re
+import shlex
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+units = set()
+for name in ("g5_units", "ashare_release_units"):
+    blocks = re.findall(r"^" + name + r"=\(\n(.*?)^\)\s*$", text, re.M | re.S)
+    if len(blocks) != 1:
+        raise SystemExit("release helper requires one static " + name + " array")
+    for line in blocks[0].splitlines():
+        values = shlex.split(line, comments=True)
+        if not values:
+            continue
+        if len(values) != 1 or not re.fullmatch(r"tradingagent-[a-z0-9-]+\.service", values[0]):
+            raise SystemExit("release helper managed array has unsupported syntax")
+        units.add(values[0])
+# Keep the reviewed static union contract; names in comments or unreferenced
+# arrays cannot authorize dropping a managed service during helper replacement.
+union = 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")'
+if text.splitlines().count(union) != 1:
+    raise SystemExit("release helper requires the managed array union")
+missing = sorted(set(sys.argv[2:]) - units)
+if missing:
+    raise SystemExit("release helper is missing managed units: " + ", ".join(missing))
+COVERAGE
 
   source_digest="$(sha256sum -- "$source" | awk '{print $1}')"
   installed_digest="$(sha256sum -- "$installed_path" | awk '{print $1}')"
