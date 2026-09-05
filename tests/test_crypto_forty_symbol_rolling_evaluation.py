@@ -131,14 +131,24 @@ def _observation_and_rows(
     )
 
 
-def _store_with_slots(tmp_path: Path, slots: int = 4) -> CryptoTenSymbolObservationStore:
-    root = tmp_path / "forty-store"
+def _store_with_slots(
+    tmp_path: Path,
+    slots: int = 4,
+    *,
+    start: datetime | None = None,
+    skip: frozenset[int] | set[int] | tuple[int, ...] = (),
+    root_name: str = "forty-store",
+) -> CryptoTenSymbolObservationStore:
+    root = tmp_path / root_name
     store = CryptoTenSymbolObservationStore(root, contracts=FORTY_SYMBOL_CONTRACTS)
-    start = datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc)
+    origin = start or datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc)
+    skipped = frozenset(skip)
     for index in range(slots):
+        if index in skipped:
+            continue
         window = CryptoObservationWindow(
-            window_end=start + timedelta(minutes=5 * index),
-            observation_cutoff=start + timedelta(minutes=5 * index, seconds=270),
+            window_end=origin + timedelta(minutes=5 * index),
+            observation_cutoff=origin + timedelta(minutes=5 * index, seconds=270),
         )
         observation, rows_by_symbol = _observation_and_rows(window)
         sidecar = build_ten_symbol_bars_sidecar(
@@ -658,3 +668,226 @@ def test_store_read_retry_budget_does_not_retry_corruption(tmp_path, monkeypatch
         main(["--store-root", str(tmp_path / "store"), "--out-json", str(output)])
     assert calls == expected_attempts
     assert not output.exists()
+
+
+def _gapped_historical_store(tmp_path: Path) -> CryptoTenSymbolObservationStore:
+    """Older contiguous run, one missing slot, then a shorter newest suffix."""
+
+    return _store_with_slots(tmp_path, slots=9, skip={5})
+
+
+def test_default_path_still_selects_newest_suffix_after_a_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _gapped_historical_store(tmp_path)
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    result = _artifact(store)
+    assert result["authority"] == "none"
+    assert result["capital_write_eligible"] is False
+    assert result["segment"]["slot_count"] == 3
+    assert [item["window_end"] for item in result["receipts"]] == [  # type: ignore[index]
+        "2026-08-30T04:30:00Z",
+        "2026-08-30T04:35:00Z",
+        "2026-08-30T04:40:00Z",
+    ]
+    assert before == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_explicit_contiguous_window_evaluates_older_gap_free_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _gapped_historical_store(tmp_path)
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    g5_probe = tmp_path / "g5-sentinel"
+    result = build_artifact(
+        store_root=store.root,
+        replay_command="test-replay",
+        window_start=datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 8, 30, 4, 20, tzinfo=timezone.utc),
+    )
+    assert result["authority"] == "none"
+    assert result["capital_write_eligible"] is False
+    assert result["execution_eligible"] is False
+    assert result["segment"]["slot_count"] == 5
+    assert result["segment"]["gap_free"] is True
+    assert [item["window_end"] for item in result["receipts"]] == [  # type: ignore[index]
+        "2026-08-30T04:00:00Z",
+        "2026-08-30T04:05:00Z",
+        "2026-08-30T04:10:00Z",
+        "2026-08-30T04:15:00Z",
+        "2026-08-30T04:20:00Z",
+    ]
+    assert before == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    assert not g5_probe.exists()
+
+
+def test_explicit_window_matching_newest_suffix_matches_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    default = _artifact(store)
+    explicit = build_artifact(
+        store_root=store.root,
+        replay_command="test-replay",
+        window_start=datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 8, 30, 4, 15, tzinfo=timezone.utc),
+    )
+    assert explicit["receipts"] == default["receipts"]
+    assert explicit["segment"]["slot_count"] == default["segment"]["slot_count"]
+    assert explicit["authority"] == "none"
+
+
+def test_explicit_window_spanning_gap_fails_closed_without_stitching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _gapped_historical_store(tmp_path)
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(FortySymbolRollingEvaluationError, match="window_gap"):
+        build_artifact(
+            store_root=store.root,
+            replay_command="test-replay",
+            window_start=datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 8, 30, 4, 40, tzinfo=timezone.utc),
+        )
+    assert before == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+
+
+def test_explicit_window_with_ineligible_slot_fails_and_does_not_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    sidecar = store.bars_sidecar_path("2026-08-30T04:10:00Z")
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["sources"][0]["receipt_id"] = "forged-receipt"
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    with pytest.raises(FortySymbolRollingEvaluationError, match="window_ineligible"):
+        build_artifact(
+            store_root=store.root,
+            replay_command="test-replay",
+            window_start=datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 8, 30, 4, 15, tzinfo=timezone.utc),
+        )
+    assert before == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize(
+    "window_start,window_end",
+    [
+        (datetime(2026, 8, 30, 4, 0, tzinfo=timezone.utc), None),
+        (None, datetime(2026, 8, 30, 4, 15, tzinfo=timezone.utc)),
+    ],
+)
+def test_single_window_bound_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    window_start: datetime | None,
+    window_end: datetime | None,
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    with pytest.raises(
+        FortySymbolRollingEvaluationError, match="window_bounds_incomplete"
+    ):
+        build_artifact(
+            store_root=store.root,
+            replay_command="test-replay",
+            window_start=window_start,
+            window_end=window_end,
+        )
+
+
+def test_unaligned_explicit_window_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _store_with_slots(tmp_path)
+    with pytest.raises(FortySymbolRollingEvaluationError, match="window_not_aligned"):
+        build_artifact(
+            store_root=store.root,
+            replay_command="test-replay",
+            window_start=datetime(2026, 8, 30, 4, 1, tzinfo=timezone.utc),
+            window_end=datetime(2026, 8, 30, 4, 15, tzinfo=timezone.utc),
+        )
+
+
+def test_cli_explicit_window_is_read_only_and_keeps_default_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
+    store = _gapped_historical_store(tmp_path)
+    output = tmp_path / "window.json"
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }
+    assert (
+        main(
+            [
+                "--store-root",
+                str(store.root),
+                "--window-start",
+                "2026-08-30T04:00:00Z",
+                "--window-end",
+                "2026-08-30T04:20:00Z",
+                "--out-json",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["authority"] == "none"
+    assert payload["segment"]["slot_count"] == 5
+    assert payload["evaluated_configuration"]["configuration_id"] == (
+        DEFAULT_CONFIGURATION_ID
+    )
+    assert "--window-start 2026-08-30T04:00:00Z" in payload["generated_from"][
+        "replay_command"
+    ]
+    assert f"--configuration {DEFAULT_CONFIGURATION_ID}" in payload["generated_from"][
+        "replay_command"
+    ]
+    assert before == {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*")
+        if path.is_file()
+    }

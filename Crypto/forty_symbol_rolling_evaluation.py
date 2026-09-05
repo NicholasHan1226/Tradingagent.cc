@@ -351,6 +351,11 @@ def _verified_store_units_once(
         ) from exc
 
 
+def _assert_five_minute_aligned(value: datetime, *, reason: str) -> None:
+    if value.second != 0 or value.microsecond != 0 or value.minute % 5 != 0:
+        raise FortySymbolRollingEvaluationError(reason)
+
+
 def _contiguous_eligible_observation_suffix(
     units: Sequence[Mapping[str, Any]],
 ) -> tuple[list[Mapping[str, Any]], list[str]]:
@@ -380,6 +385,85 @@ def _contiguous_eligible_observation_suffix(
         for item in ordered[: len(ordered) - len(selected)]
     ]
     return selected, dropped
+
+
+def _contiguous_eligible_observation_window(
+    units: Sequence[Mapping[str, Any]],
+    window_start: datetime,
+    window_end: datetime,
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    """Return one exact contiguous eligible observation segment, or fail closed.
+
+    The requested bounds are inclusive observation ``window_end`` values.  A
+    missing adjacent 5-minute slot, reject, data_gap, or ineligible sidecar
+    fails the whole request.  The function never stitches across a gap and
+    never substitutes the newest suffix or another run.
+    """
+
+    if window_end < window_start:
+        raise FortySymbolRollingEvaluationError(
+            "rolling_evaluation_window_bounds_invalid"
+        )
+    _assert_five_minute_aligned(
+        window_start, reason="rolling_evaluation_window_not_aligned"
+    )
+    _assert_five_minute_aligned(
+        window_end, reason="rolling_evaluation_window_not_aligned"
+    )
+
+    by_end: dict[datetime, Mapping[str, Any]] = {}
+    for unit in units:
+        slot_end = unit["window_end"]
+        if slot_end in by_end:
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_window_duplicate_slot"
+            )
+        by_end[slot_end] = unit
+
+    selected: list[Mapping[str, Any]] = []
+    expected = window_start
+    while expected <= window_end:
+        unit = by_end.get(expected)
+        if unit is None:
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_window_gap"
+            )
+        event = unit["event"]
+        if (
+            event.get("event_type") != "observation"
+            or unit.get("eligible") is not True
+        ):
+            raise FortySymbolRollingEvaluationError(
+                "rolling_evaluation_window_ineligible"
+            )
+        selected.append(unit)
+        expected = expected + timedelta(seconds=FIVE_MINUTE_SECONDS)
+    if not selected:
+        raise FortySymbolRollingEvaluationError(
+            "rolling_evaluation_success_events_empty"
+        )
+
+    ordered = sorted(units, key=lambda unit: unit["window_end"])
+    dropped = [
+        str(item["window_end"])
+        for item in ordered
+        if item["window_end"] < window_start
+    ]
+    return selected, dropped
+
+
+def _select_observation_units(
+    units: Sequence[Mapping[str, Any]],
+    window_start: datetime | None,
+    window_end: datetime | None,
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    if window_start is None and window_end is None:
+        return _contiguous_eligible_observation_suffix(units)
+    if window_start is None or window_end is None:
+        raise FortySymbolRollingEvaluationError(
+            "rolling_evaluation_window_bounds_incomplete"
+        )
+    return _contiguous_eligible_observation_window(units, window_start, window_end)
 
 
 def _assemble_segment(units: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -716,11 +800,13 @@ def build_artifact(
     store_root: Path,
     replay_command: str,
     configuration_id: str = DEFAULT_CONFIGURATION_ID,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
 ) -> dict[str, Any]:
     _assert_simulation_only()
     configuration = _resolve_configuration(configuration_id)
     _, units, head = _verified_store_units(store_root)
-    selected, dropped = _contiguous_eligible_observation_suffix(units)
+    selected, dropped = _select_observation_units(units, window_start, window_end)
     receipts: list[dict[str, str]] = []
     for unit in selected:
         event = unit["event"]
@@ -850,6 +936,20 @@ def main(argv: list[str] | None = None) -> int:
             f"{COST_AWARE_CONFIGURATION_ID}"
         ),
     )
+    parser.add_argument(
+        "--window-start",
+        help=(
+            "inclusive first observation window_end (UTC). "
+            "omit with --window-end to keep the default newest eligible suffix"
+        ),
+    )
+    parser.add_argument(
+        "--window-end",
+        help=(
+            "inclusive last observation window_end (UTC). "
+            "omit with --window-start to keep the default newest eligible suffix"
+        ),
+    )
     args = parser.parse_args(argv)
 
     # A read-only store cannot also be a report destination (including aliases).
@@ -861,15 +961,24 @@ def main(argv: list[str] | None = None) -> int:
                 "rolling_evaluation_output_inside_source_store"
             )
 
+    window_start = _parse_utc(args.window_start) if args.window_start else None
+    window_end = _parse_utc(args.window_end) if args.window_end else None
     replay_command = (
         f"python3 -m Crypto.forty_symbol_rolling_evaluation "
         f"--store-root {args.store_root} "
         f"--configuration {args.configuration}"
     )
+    if window_start is not None and window_end is not None:
+        replay_command += (
+            f" --window-start {_iso_slot(window_start)}"
+            f" --window-end {_iso_slot(window_end)}"
+        )
     result = build_artifact(
         store_root=args.store_root,
         replay_command=replay_command,
         configuration_id=args.configuration,
+        window_start=window_start,
+        window_end=window_end,
     )
     payload = json.dumps(
         result, ensure_ascii=True, allow_nan=False, sort_keys=True, indent=2
