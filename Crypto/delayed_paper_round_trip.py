@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from Crypto.delayed_paper_ledger import (
     DECISION_LEDGER_CONTRACT,
@@ -18,7 +18,11 @@ from Crypto.delayed_paper_runner import (
     _prepare_observation,
     _snapshot_to_observation,
 )
-from Crypto.fixture_sim.contracts import _assert_simulation_only
+from Crypto.fixture_sim.contracts import (
+    QualifiedFixtureEvidence,
+    TimeframeDecision,
+    _assert_simulation_only,
+)
 from Crypto.five_minute_data import CryptoFiveMinuteSnapshot
 from Crypto.round_trip_capital import (
     ROUND_TRIP_CAPITAL_POLICY,
@@ -202,8 +206,16 @@ def run_crypto_delayed_paper_round_trip_once(
     request: Any,
     output_root: Path | str,
     paper_fill_capacities: Mapping[str, Decimal] | None = None,
+    decision_evaluator: Callable[[QualifiedFixtureEvidence], TimeframeDecision]
+    | None = None,
 ) -> dict[str, Any]:
-    """Run/recover one two-symbol observation against generation-2 capital."""
+    """Run/recover one two-symbol observation against an isolated paper root.
+
+    ``None`` keeps the immutable baseline decision path.  An alternative
+    evaluator is only meaningful with a separate output root, which is the
+    caller's epoch-level responsibility; this function never switches or
+    mutates an existing epoch.
+    """
 
     _assert_simulation_only()
     if paper_fill_capacities is not None and any(
@@ -214,11 +226,21 @@ def run_crypto_delayed_paper_round_trip_once(
         for symbol, capacity in paper_fill_capacities.items()
     ):
         raise RuntimeError("round_trip_fill_capacities_invalid")
+    if decision_evaluator is not None and not callable(decision_evaluator):
+        raise RuntimeError("round_trip_decision_evaluator_invalid")
     store = CryptoDelayedPaperObservationStore(output_root)
     with store.cycle():
         pending = store.pending_observation()
         if pending is not None:
-            prepared = _prepare_observation(pending, llm_evidence=None)
+            prepared = _prepare_observation(
+                pending,
+                llm_evidence=None,
+                **(
+                    {"decision_evaluator": decision_evaluator}
+                    if decision_evaluator is not None
+                    else {}
+                ),
+            )
             return _execute(
                 store=store,
                 observation=pending,
@@ -232,7 +254,15 @@ def run_crypto_delayed_paper_round_trip_once(
             raise RuntimeError("round_trip_snapshot_type_invalid")
         snapshot.verify_against(profile=profile, request=request)
         observation = _snapshot_to_observation(snapshot)
-        prepared = _prepare_observation(observation, llm_evidence=None)
+        prepared = _prepare_observation(
+            observation,
+            llm_evidence=None,
+            **(
+                {"decision_evaluator": decision_evaluator}
+                if decision_evaluator is not None
+                else {}
+            ),
+        )
         accepted = store.accept(observation)
         return _execute(
             store=store,
