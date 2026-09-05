@@ -5,7 +5,10 @@ Description=TradingAgent Crypto g5 read-only daily acceptance KPI timer
 OnCalendar=*-*-* 09:05:30
 AccuracySec=1s
 RandomizedDelaySec=3s
-Persistent=true
+# A late daily report must not preempt the closed-5m core after a release or
+# timer restart. The next scheduled daily gate remains sufficient because it
+# is read-only and does not grant any runtime or capital authority.
+Persistent=false
 Unit=tradingagent-crypto-round-trip-g5-acceptance.service
 
 [Install]
