@@ -27,6 +27,7 @@ from Crypto.delayed_paper_round_trip_epoch import (
     ROUND_TRIP_EPOCH_MANIFEST_DIRECTORY,
     ROUND_TRIP_EPOCH_SUCCESSOR_GENERATION,
     CryptoRoundTripEpochError,
+    _InvocationArchiveVerification,
     load_round_trip_epoch_manifest,
     prepare_round_trip_epoch_candidate,
 )
@@ -576,13 +577,18 @@ def run_crypto_delayed_paper_round_trip_acceptance_once(
                 "round_trip_report_epoch_generation_invalid"
             )
         _existing_root(context.output_root)
-        prepared = prepare_round_trip_epoch_candidate(context)
+        archive_verification = _InvocationArchiveVerification()
+        prepared = prepare_round_trip_epoch_candidate(
+            context, _archive_verification=archive_verification
+        )
         identity_before = prepared.identity_path.read_bytes()
         result = evaluate_crypto_delayed_paper_round_trip_acceptance(
             output_root=prepared.output_root, now=now
         )
         if (
-            prepare_round_trip_epoch_candidate(context).identity_path.read_bytes()
+            prepare_round_trip_epoch_candidate(
+                context, _archive_verification=archive_verification
+            ).identity_path.read_bytes()
             != identity_before
         ):
             raise CryptoRoundTripReportError("round_trip_report_epoch_identity_changed")

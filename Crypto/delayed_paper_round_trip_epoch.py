@@ -807,7 +807,69 @@ def _load_recovery_round_trip_epoch_manifest(
     return context
 
 
-def _verify_archive(context: CryptoRoundTripEpochContext) -> None:
+class _InvocationArchiveVerification:
+    """Reuse one complete replay only while archive bytes remain identical.
+
+    Owned by one acceptance call, never persisted or shared across requests.
+    Every use reads all event/head bytes again; timestamps alone are not proof.
+    """
+
+    def __init__(self) -> None:
+        self._binding: tuple[Any, ...] | None = None
+        self._head: tuple[int, str] | None = None
+
+    @staticmethod
+    def _binding_for(ledger: CryptoCapitalLedger) -> tuple[Any, ...]:
+        ledger._assert_safe_paths()
+        paths = (ledger.root, ledger.lock_path, ledger.events_path, ledger.head_path)
+
+        def identity(node: os.stat_result) -> tuple[int, ...]:
+            return (node.st_dev, node.st_ino, node.st_mode, node.st_uid,
+                    node.st_gid, node.st_nlink, node.st_size,
+                    node.st_mtime_ns, node.st_ctime_ns)
+
+        before = {path: identity(path.lstat()) for path in paths}
+        for path in paths[1:]:
+            node = path.lstat()
+            if not stat.S_ISREG(node.st_mode) or node.st_nlink != 1:
+                raise CryptoLedgerError("capital_archive_snapshot_untrusted")
+        digests: list[str] = []
+        for path in (ledger.events_path, ledger.head_path):
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                if identity(os.fstat(stream.fileno())) != before[path]:
+                    raise CryptoLedgerError("capital_archive_snapshot_changed")
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+                if identity(os.fstat(stream.fileno())) != before[path]:
+                    raise CryptoLedgerError("capital_archive_snapshot_changed")
+            digests.append(digest.hexdigest())
+        # Check the complete set after both reads: events may change while head
+        # is being read, or the directory/lock may be replaced between files.
+        ledger._assert_safe_paths()
+        if any(identity(path.lstat()) != before[path] for path in paths):
+            raise CryptoLedgerError("capital_archive_snapshot_changed")
+        return (str(ledger.root), *(before[path] for path in paths), *digests)
+
+    def head(self, ledger: CryptoCapitalLedger) -> tuple[int, str]:
+        binding = self._binding_for(ledger)
+        if self._binding is not None:
+            if binding != self._binding:
+                raise CryptoLedgerError("capital_archive_snapshot_changed")
+            assert self._head is not None
+            return self._head
+        head = ledger.head()
+        if self._binding_for(ledger) != binding:
+            raise CryptoLedgerError("capital_archive_snapshot_changed")
+        self._binding, self._head = binding, head
+        return head
+
+
+def _verify_archive(
+    context: CryptoRoundTripEpochContext,
+    *,
+    verification: _InvocationArchiveVerification | None = None,
+) -> None:
     _secure_directory(
         context.archived_output_root,
         reason="round_trip_archive_root_untrusted",
@@ -820,9 +882,8 @@ def _verify_archive(context: CryptoRoundTripEpochContext) -> None:
     if _sha256_bytes(identity) != context.archived_epoch_identity_file_sha256:
         raise CryptoRoundTripEpochError("round_trip_archive_identity_mismatch")
     try:
-        sequence, checksum = CryptoCapitalLedger(
-            context.archived_output_root / "capital"
-        ).head()
+        ledger = CryptoCapitalLedger(context.archived_output_root / "capital")
+        sequence, checksum = ledger.head() if verification is None else verification.head(ledger)
     except (CryptoLedgerError, OSError, TypeError, ValueError) as exc:
         raise CryptoRoundTripEpochError(
             "round_trip_archive_capital_head_untrusted"
@@ -1467,9 +1528,16 @@ def _verify_identity(context: CryptoRoundTripEpochContext) -> None:
 
 def prepare_round_trip_epoch_candidate(
     context: CryptoRoundTripEpochContext,
+    *,
+    _archive_verification: _InvocationArchiveVerification | None = None,
 ) -> PreparedCryptoRoundTripEpoch:
     """Create/verify g3 without updating the active current-epoch pointer."""
 
+    if (
+        _archive_verification is not None
+        and type(_archive_verification) is not _InvocationArchiveVerification
+    ):
+        raise CryptoRoundTripEpochError("round_trip_archive_verification_invalid")
     _assert_simulation_only()
     if (
         type(context) is not CryptoRoundTripEpochContext
@@ -1492,7 +1560,7 @@ def prepare_round_trip_epoch_candidate(
         ROUND_TRIP_EPOCH_ROOT_PARENT,
         reason="round_trip_epoch_parent_untrusted",
     )
-    _verify_archive(context)
+    _verify_archive(context, verification=_archive_verification)
     if context.output_root.exists() or context.output_root.is_symlink():
         _secure_directory(
             context.output_root,
@@ -1512,7 +1580,7 @@ def prepare_round_trip_epoch_candidate(
             raise CryptoRoundTripEpochError("round_trip_epoch_output_root_unclaimed")
         _write_identity(context.identity_path, _identity(context))
         _verify_identity(context)
-    _verify_archive(context)
+    _verify_archive(context, verification=_archive_verification)
     return PreparedCryptoRoundTripEpoch(context)
 
 

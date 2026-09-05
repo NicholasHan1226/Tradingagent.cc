@@ -1491,3 +1491,14 @@ contract difference before setting it; save the previous environment value for
 rollback. A closed-day preflight is not proof of a successful open-day session.
 The bootstrap manifest option is only used when no prior session exists, so it
 cannot rebind an established session history.
+
+
+### Release-helper rollback coverage
+
+A rollback after a successful cut must preserve the installed coordinator's full
+managed-unit coverage. An older helper missing the ten-symbol units is rejected
+before self-refresh or cutover; names mentioned only in comments do not count.
+Retain the full pre-cut drop-in/timeout/helper/service-state snapshot separately
+from temporary deployment files and follow [the complete rollback procedure](DEPLOYMENT.md#automatic-rollback).
+In-flight failure rollback and a later operator-requested rollback are distinct.
+Neither may rewrite append-only simulation facts or restore old data over new data.

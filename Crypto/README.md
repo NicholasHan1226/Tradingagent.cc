@@ -499,6 +499,8 @@ immutable release、enablement 与自然 readback 以 `STATUS.md`/`AUTODEV_STATE
 receipt 守恒与零重复 fill 验收，再按可回退流程切换 unit。
 G5 health 与十币种 health watch 只负责输出告警/记录和数据质量信息，不是模拟盘上线的
 硬门禁；只有配置、凭证、写库或状态完整性错误仍可阻断运行。
+G5 acceptance 在单次调用内复用一次已完整回放的归档资本 head。每次复用仍重新流式读取全部 events/head 并核对内容 SHA-256、文件身份与可信路径；首次回放前后也必须一致，变化即拒绝。缓存不跨调用、不按 TTL 或仅凭 mtime 命中；epoch manifest、归档 identity、supersession 与当前 identity 仍逐次验证。此优化不改变门禁、timeout、账本或冻结研究结果。
+
 G5 acceptance 的 48 小时/90% 覆盖门禁只衡量 runtime maturity 及后续
 promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的准入门槛；历史
 288 根连续 closed-5m 只衡量 runtime maturity，不替代当前模拟盘上线门禁。

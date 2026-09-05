@@ -115,6 +115,38 @@ refresh_installed_helper_from_release() {
   grep -Fq 'tradingagent-crypto-forty-symbol-observation.service' "$source" \
     || fail "release helper is missing forty-symbol observation reconciliation"
 
+  # Never replace this coordinator with a helper that would omit a unit whose
+  # canonical binding it already manages. Older releases need a reviewed rollback.
+  python3 - "$source" "${release_units[@]}" <<'COVERAGE' \
+    || fail "release helper would drop managed unit coverage"
+from pathlib import Path
+import re
+import shlex
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+units = set()
+for name in ("g5_units", "ashare_release_units"):
+    blocks = re.findall(r"^" + name + r"=\(\n(.*?)^\)\s*$", text, re.M | re.S)
+    if len(blocks) != 1:
+        raise SystemExit("release helper requires one static " + name + " array")
+    for line in blocks[0].splitlines():
+        values = shlex.split(line, comments=True)
+        if not values:
+            continue
+        if len(values) != 1 or not re.fullmatch(r"tradingagent-[a-z0-9-]+\.service", values[0]):
+            raise SystemExit("release helper managed array has unsupported syntax")
+        units.add(values[0])
+# Keep the reviewed static union contract; names in comments or unreferenced
+# arrays cannot authorize dropping a managed service during helper replacement.
+union = 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")'
+if text.splitlines().count(union) != 1:
+    raise SystemExit("release helper requires the managed array union")
+missing = sorted(set(sys.argv[2:]) - units)
+if missing:
+    raise SystemExit("release helper is missing managed units: " + ", ".join(missing))
+COVERAGE
+
   source_digest="$(sha256sum -- "$source" | awk '{print $1}')"
   installed_digest="$(sha256sum -- "$installed_path" | awk '{print $1}')"
   [[ "$source_digest" =~ ^[0-9a-f]{64}$ ]] || fail "release helper digest is invalid"

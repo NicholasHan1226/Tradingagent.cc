@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -450,6 +451,7 @@ def _refresh_helper_fixture(tmp_path: Path, *, source_text: str, installed_text:
     harness = f"""
 set -euo pipefail
 installed_path="{installed}"
+release_units=({' '.join((*CRYPTO_RUNTIME_RELEASE_UNITS, *ASHARE_RELEASE_UNITS))})
 fail() {{ printf '%s\\n' "$*" >&2; exit 97; }}
 stat() {{
   case "$2" in
@@ -480,10 +482,9 @@ refresh_installed_helper_from_release "{release_dir}"
 def test_release_helper_refresh_is_noop_when_installed_matches_release(
     tmp_path: Path,
 ) -> None:
-    text = (
-        "#!/bin/bash\n"
-        "tradingagent-crypto-forty-symbol-observation.service\n"
-    )
+    if shutil.which("sha256sum", path="/usr/bin:/bin") is None:
+        pytest.skip("GNU sha256sum unavailable; full self-refresh runs in Linux CI")
+    text = _managed_helper_source()
     completed = _refresh_helper_fixture(
         tmp_path, source_text=text, installed_text=text
     )
@@ -495,11 +496,9 @@ def test_release_helper_refresh_is_noop_when_installed_matches_release(
 def test_release_helper_refresh_replaces_stale_helper_and_reenters(
     tmp_path: Path,
 ) -> None:
-    source_text = (
-        "#!/bin/bash\n"
-        "tradingagent-crypto-forty-symbol-observation.service\n"
-        "canonical forty-symbol bind\n"
-    )
+    if shutil.which("sha256sum", path="/usr/bin:/bin") is None:
+        pytest.skip("GNU sha256sum unavailable; full self-refresh runs in Linux CI")
+    source_text = _managed_helper_source() + "# canonical managed bindings\n"
     completed = _refresh_helper_fixture(
         tmp_path,
         source_text=source_text,
@@ -671,3 +670,68 @@ def test_ten_symbol_release_reconciliation_includes_legacy_pins_not_scrub_policy
     assert "10-scrub-timeout.conf" not in helper
     assert 'test -r "$root/Crypto/ten_symbol_observation_runtime.py"' in helper
     assert 'test -r "$root/Crypto/ten_symbol_factor_research_worker.py"' in helper
+
+
+def _managed_helper_source(*, omit=()):
+    groups = (("g5_units", CRYPTO_RUNTIME_RELEASE_UNITS),
+              ("ashare_release_units", ASHARE_RELEASE_UNITS))
+    text = "#!/bin/bash\n"
+    for name, units in groups:
+        text += name + "=(\n"
+        text += "".join("  " + unit + "\n" for unit in units if unit not in omit)
+        text += ")\n"
+    return text + 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")\n'
+
+
+def _run_managed_coverage_parser(tmp_path, source_text):
+    helper = _read("deploy/release.sh")
+    body = helper.split("from pathlib import Path", 1)[1].split("\nCOVERAGE\n", 1)[0]
+    body = "from pathlib import Path" + body
+    source = tmp_path / "source.sh"
+    source.write_text(source_text)
+    return subprocess.run([sys.executable, "-", str(source),
+                           *CRYPTO_RUNTIME_RELEASE_UNITS, *ASHARE_RELEASE_UNITS],
+                          input=body, capture_output=True, text=True, timeout=10)
+
+
+@pytest.mark.parametrize("actual_helper", [False, True])
+def test_managed_coverage_parser_accepts_complete_arrays(tmp_path, actual_helper):
+    text = _read("deploy/release.sh") if actual_helper else _managed_helper_source()
+    result = _run_managed_coverage_parser(tmp_path, text)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("variant", ["missing", "comments", "dynamic", "unreferenced", "comment_union", "missing_union", "duplicate"])
+def test_managed_coverage_parser_rejects_lost_or_ambiguous_coverage(tmp_path, variant):
+    unit = "tradingagent-crypto-ten-symbol-observation.service"
+    text = _managed_helper_source(omit=(unit,))
+    if variant == "comments":
+        text = text.replace("g5_units=(\n", "g5_units=(\n  # " + unit + "\n")
+        text += "# " + unit + "\n"
+    elif variant == "dynamic":
+        text = text.replace("g5_units=(\n", 'g5_units=(\n  "${EXTRA_UNIT}"\n')
+    elif variant == "unreferenced":
+        text = _managed_helper_source().replace(' "${ashare_release_units[@]}"', '')
+    elif variant in {"comment_union", "missing_union"}:
+        text = _managed_helper_source()
+        union = 'release_units=("${g5_units[@]}" "${ashare_release_units[@]}")'
+        text = text.replace(union, "# " + union if variant == "comment_union" else "")
+    elif variant == "duplicate":
+        text += "g5_units=(\n  " + unit + "\n)\n"
+    result = _run_managed_coverage_parser(tmp_path, text)
+    assert result.returncode != 0
+
+
+def test_refresh_rejects_old_helper_before_replacement_or_reentry(tmp_path):
+    old = "#!/bin/bash\n# existing coordinator\n"
+    omitted = tuple(unit for unit in CRYPTO_RUNTIME_RELEASE_UNITS if "ten-symbol" in unit)
+    source = _managed_helper_source(omit=omitted)
+    source += "".join("# historical unit " + unit + "\n" for unit in omitted)
+    completed = _refresh_helper_fixture(tmp_path, source_text=source, installed_text=old)
+    assert completed.returncode == 97, completed.stderr
+    assert "would drop managed unit coverage" in completed.stderr
+    assert (tmp_path / "tradingagent-release").read_text() == old
+    assert not (tmp_path / "reentered").exists()
+    helper = _read("deploy/release.sh")
+    assert helper.index("\nCOVERAGE\n") < helper.index('source_digest="$(sha256sum')
+    assert helper.index('refresh_installed_helper_from_release "$release_dir"\n') < helper.index('prepare_g5_release_reconciliation\n')

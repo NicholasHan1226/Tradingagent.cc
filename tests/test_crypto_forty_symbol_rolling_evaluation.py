@@ -490,6 +490,7 @@ def test_store_read_retries_full_snapshot_after_concurrent_head_advance(tmp_path
     ("rolling_evaluation_store_read_invalid", 1),
 ])
 def test_store_read_retry_budget_does_not_retry_corruption(tmp_path, monkeypatch, reason, expected_attempts):
+    monkeypatch.setenv("REAL_TRADING_ENABLED", "false")
     calls = 0
 
     def reject(_root):
