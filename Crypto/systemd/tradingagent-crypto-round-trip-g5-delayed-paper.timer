@@ -2,7 +2,10 @@
 Description=TradingAgent Crypto g5 round-trip closed-5m simulated timer
 
 [Timer]
-OnCalendar=*-*-* *:0/5:55
+# The requested bar remains one fully closed 5-minute interval behind the
+# current clock.  Start two minutes later so its TradingDatas receipt has time
+# to become consumable before the G5 core queries it.
+OnCalendar=*-*-* *:2/5:55
 AccuracySec=1s
 RandomizedDelaySec=3s
 Persistent=false
