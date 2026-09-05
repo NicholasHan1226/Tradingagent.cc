@@ -526,9 +526,10 @@ promotion/risk/execution，不是完整 segment 离线 projection/evaluation 的
 PIT 校验。其 bounded backlog、journal 摘要、单请求超时和 checkpoint 恢复规则沿用既有
 G5 合同；它们不改变 receipt、资本、timer 或任何执行权限。
 
-现役 G5 core timer 在该已结算窗口之后额外保留两分钟的 source-receipt 可用性余量
+仓库定义的 G5 core timer 在该已结算窗口之后额外保留两分钟的 source-receipt 可用性余量
 （`*:2/5:55`）。这只改变自然调度时机：窗口、cutoff、PIT 规则、backlog 恢复、资本账本
 与所有无执行权限字段均不变；目的不是以 backlog recovery 代替正常当前槽消费。
+实际安装的日程和自然回执以带时间戳的运行读回为准，源码合入不等于定时器已切换。
 
 G5 的现役 learning projection 使用既有
 `tradingagent-crypto-round-trip-g5-learning` 与 daily `...-learning-scrub` units；
