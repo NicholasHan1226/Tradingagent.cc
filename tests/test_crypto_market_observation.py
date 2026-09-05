@@ -243,6 +243,22 @@ def test_rejects_cursor_truncation_and_stale_metadata() -> None:
         )
 
 
+def test_rejects_and_classifies_a_receipt_after_the_fixed_cutoff() -> None:
+    transport = _Transport()
+    metadata = transport.metadata[_dataset("BTCUSDT")]
+    metadata["observed_at"] = _iso(CUTOFF + timedelta(seconds=1))
+
+    with pytest.raises(
+        CryptoMarketObservationError,
+        match="crypto_observation_observed_at_after_cutoff",
+    ):
+        collect_market_observation(
+            _client(transport),
+            expected_catalog_version=CATALOG_VERSION,
+            window=_window(),
+        )
+
+
 def test_window_rejects_unaligned_bar_end() -> None:
     with pytest.raises(CryptoMarketObservationError, match="window_end"):
         CryptoObservationWindow(

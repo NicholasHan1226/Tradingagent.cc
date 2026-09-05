@@ -104,19 +104,28 @@ REQUESTS_PER_CYCLE = 22
 MAX_COLLECT_ATTEMPTS = 3
 COLLECT_RETRY_DELAY_SECONDS = 20.0
 OUTAGE_GAP_CONTRACT = TEN_SYMBOL_DATA_GAP_CONTRACT
-HISTORICAL_WINDOW_UNRECOVERABLE_REASON = "crypto_observation_watermark_invalid"
+# New rejects record the precise watermark failure.  The generic legacy code
+# remains accepted for deterministic recovery of already-written events.
+HISTORICAL_WINDOW_UNRECOVERABLE_REASON = (
+    "crypto_observation_observed_at_after_cutoff"
+)
+LEGACY_HISTORICAL_WINDOW_UNRECOVERABLE_REASON = (
+    "crypto_observation_watermark_invalid"
+)
 WARMUP_WINDOW_INCOMPLETE_REASON = "crypto_observation_query_shape_invalid"
 DATA_INCOMPLETE_REASONS = frozenset(
     {
         WARMUP_WINDOW_INCOMPLETE_REASON,
         "crypto_observation_data_source_unavailable",
-        "crypto_observation_watermark_invalid",
+        HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
+        LEGACY_HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
         "crypto_observation_data_through_early",
     }
 )
 HISTORICAL_GAP_RECOVERY_REASONS = frozenset(
     {
         HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
+        LEGACY_HISTORICAL_WINDOW_UNRECOVERABLE_REASON,
         # A historical slot whose source rows are permanently missing (e.g. an
         # upstream collection gap) fails the shape gate on every retry and can
         # never complete; only ever gap-recovered when the slot is strictly
