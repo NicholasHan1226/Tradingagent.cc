@@ -333,8 +333,8 @@ exchange-minimum/模拟流动性拒绝回执均写入独立 checksum ledger。�
 `authority=none` 对照，不能写该资本链。
 
 `cost_aware_challenger.py` 另定义一条预注册、simulation-only 的影子候选，
-不替换上述冻结 Champion：其 15m 入场收益必须至少为 `0.30%`，由双边 `0.10%`
-taker fee、双边 `2bps` 滑点和固定 `6bps` 缓冲组成。它不从历史结果搜索阈值，
+不替换上述冻结 Champion：其 15m 入场收益必须至少为 `0.32%`，由双边 `0.10%`
+taker fee、双边 `2bps` 滑点、双边 `1bp` 半点差和固定 `6bps` 缓冲组成。它不从历史结果搜索阈值，
 也不修改 G5 root、既有订单、费用或 PnL。`delayed_paper_cost_aware_challenger.py`
 只能被未来独立 epoch 调用并写入独立 root；它没有 CLI、timer 或自动部署路径。
 它产生的前向费用后样本必须单独通过连续性、守恒和收益核验，不能把零交易或历史

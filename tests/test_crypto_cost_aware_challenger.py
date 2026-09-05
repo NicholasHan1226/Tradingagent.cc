@@ -11,6 +11,7 @@ from Crypto.cost_aware_challenger import (
     ROUND_TRIP_COST_FLOOR_RETURN,
     CostAwareChallenger,
     evaluate_cost_aware_challenger,
+    ROUND_TRIP_HALF_SPREAD_BPS,
 )
 from Crypto.delayed_paper_cost_aware_challenger import (
     COST_AWARE_CHALLENGER_RUNNER_CONTRACT,
@@ -47,6 +48,8 @@ def test_cost_floor_is_frozen_and_covers_two_leg_model_plus_margin() -> None:
         + candidate.exit_fee_rate
         + candidate.entry_slippage_bps / 10_000
         + candidate.exit_slippage_bps / 10_000
+        + candidate.entry_half_spread_bps / 10_000
+        + candidate.exit_half_spread_bps / 10_000
         + candidate.entry_margin_return
     )
     assert candidate.manual_promotion_required is True
@@ -79,7 +82,13 @@ def test_challenger_rejects_baseline_buy_that_does_not_cover_cost_floor() -> Non
 
 
 def test_challenger_keeps_only_cost_covering_entry_and_never_promotes() -> None:
-    evidence = qualify_fixture_evidence(_fixture())
+    payload = _fixture()
+    bars = payload["bars_5m"]
+    assert isinstance(bars, list)
+    last = bars[-1]
+    assert isinstance(last, dict)
+    last.update({"high": "50150.00", "low": "49900.00", "close": "50050.00"})
+    evidence = qualify_fixture_evidence(payload)
     decision = evaluate_cost_aware_challenger(evidence)
 
     assert decision.action == "buy"
@@ -87,6 +96,7 @@ def test_challenger_keeps_only_cost_covering_entry_and_never_promotes() -> None:
     assert decision.reason == "cost_aware_momentum_cost_floor_passed"
     assert decision.promotion_authorized is False
     assert decision.real_trading_enabled is False
+    assert COST_AWARE_CHALLENGER.entry_half_spread_bps == ROUND_TRIP_HALF_SPREAD_BPS
 
 
 def test_noncanonical_challenger_is_rejected() -> None:
