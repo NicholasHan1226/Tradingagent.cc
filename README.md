@@ -22,6 +22,8 @@ TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统。�
 
 系统只供 Nicholas 内部使用。默认保持 loopback、simulation-only、`REAL_TRADING_ENABLED=false`；[STATUS.md](STATUS.md) 提供带时间戳的分市场当前摘要，远端与服务器事实仍须本轮直接读回。
 
+上游稳定性不作为本项目继续开发、接入、正常发布或有界只读观察的统一前置条件。数据按实际质量呈现；能否进入样本、评估或执行由具体消费者合同决定，拒绝范围限于相应样本/窗口/动作，不阻断其它开发。TD 的独立供数不等待 TA 验收。详见 [TradingDatas 消费分层](AGENTS.md#tradingdatas-消费分层)。
+
 ## 当前架构
 
 ```mermaid

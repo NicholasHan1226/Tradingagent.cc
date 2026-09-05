@@ -5,7 +5,7 @@
 ## 项目定位
 
 - TradingAgent/Quant Core 是 Nicholas 的终局个人自动量化交易系统，负责候选、预测、组合决策、风险门禁、执行、样本与复盘，并通过证据门禁下的自我学习、自我迭代、自我更新和自我修复持续提升费用后胜率与净投资回报，同时控制回撤、流动性和运行风险。当前开发市场是 A股与 Crypto；美股和 A股期权是未来隔离范围；预测市场与 CNFutures 当前暂停。`TradingCopilot/` 是同仓、独立 namespace 的过渡性 A 股实盘辅助、解释、观察与人工接管工具，不是第二套量化系统，也不是终局交易产品。
-- TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。认证只允许最终HTTP transport从仓外、绝对路径、可信owner、精确`0600`且无symlink/硬链接别名的TA专用token file注入Bearer header；禁止明文token环境变量、manifest/日志/回执泄露、401/403重试和任何legacy/provider fallback。TradingDatas fresh handoff 前只允许 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID。
+- TradingDatas（`NicholasHan1226/TradingDatas`；本地目录 `/Users/nicholashan/Projects/Finance/TradingDatas`）是基础数据 authority；TradingAgent 只通过其 `GET /v1/catalog` 与 `POST /v1/query` HTTP 契约消费，不直读兄弟仓数据库，也不在本仓现场采集行情。认证只允许最终HTTP transport从仓外、绝对路径、可信owner、精确`0600`且无symlink/硬链接别名的TA专用token file注入Bearer header；禁止明文token环境变量、manifest/日志/回执泄露、401/403重试和任何legacy/provider fallback。尚未取得已验证访问地址、身份与数据合同时使用 fixture/mock-first，不得臆造 base URL、catalog version 或 dataset ID；访问与合同已核对后可进行有界真实试读，不额外等待上游 stable 或全部数据 fresh。
 - MarketGraph 已按 Finance 工作区规则退役，不再是活跃服务或开发入口。仅保留历史 `mg_on` / `mg_off` 配对研究合同与只读证据；它们没有价格、资本、账户或执行 authority，`mg_off` 必须能独立形成样本闭环。
 - 当前目标是验证可持续自我改进的自动量化闭环、样本质量、费用/滑点后结果与回撤；不承诺盈利，更不承诺稳定盈利。长期方向是在逐市场明确授权后由 TA 接管决策与执行，而不是把人工计划永久作为核心流程。
 - 系统总目标、A股/Crypto/CNFutures 独立阶段、研究轨和执行优先级以 `docs/EVOLUTION_PROGRAM.md` 为规划 authority；它不代表当前运行事实，也不授予真实资金权限。各市场按证据独立前进，不使用一套全市场共享的线性晋级门禁。
@@ -13,10 +13,10 @@
 ## TradingDatas 消费分层
 
 - `contract_ready`：TD registry/capability 与 TA mapping/client 的字段、主键、cadence、as-of 与失败测试兼容。允许 fixture/mock、候选 PR 与内部集成准备；不需要真实 token、receipt 或服务切换，也不得渲染为当前市场事实。
-- `observed`：一次受控 `catalog/query` 真实回读同时带齐 freshness、quality、receipt、lineage、`data_through` 与 `observed_at`。它可进入明确标注为 current-observation、non-authority 的内部研究/Copilot 试读；不能成为历史 PIT、自动调度、模型晋级、资金或订单 authority。
+- `observed`：一次受控 `catalog/query` 真实回读同时带齐 freshness、quality、receipt、lineage、`data_through` 与 `observed_at`。它可进入明确标注为 current-observation、non-authority 的内部研究/Copilot 试读；不能自动成为历史 PIT、策略/执行调度、模型晋级、资金或订单 authority；有界只读观察可按既有预算和合同自动运行。
 - `stable`：跨各自适用 cadence 连续成功，且对应消费者已经 readback。它才允许称为稳定消费能力；不要求其它无关 dataset、消费者或不适用 cadence 一起完成。
 
-缺少 `stable` 只能阻止稳定运行声明和相应自动化，不得阻止普通 dataset 的配置、兼容测试、候选发布或其它已分层能力继续推进。相反，某次 observation 缺 source proof 时只阻断该 dataset/该窗口，不回退数据库、provider 或旧专用接口；不为此新增 dataset-specific route、UI、collector、timer、service 或表。
+缺少 `stable` 只限制稳定消费声明，不得单独阻止开发、兼容测试、正常发布、有界真实试读或既有只读采集/观察自动化。数据源的 empty、partial、stale 或 provider_error 按数据集/窗口如实呈现，不反向阻止 TD 接入与对外供数。样本、策略、评估和执行继续使用各自冻结合同，只拒绝不满足条件的具体样本或动作；不能要求所有源先稳定，也不能为供应商波动新增全局门禁。相反，某次 observation 缺 source proof 时只阻断该 dataset/该窗口，不回退数据库、provider 或旧专用接口；不为此新增 dataset-specific route、UI、collector、timer、service 或表。
 
 ## 当前唯一资本事实
 
