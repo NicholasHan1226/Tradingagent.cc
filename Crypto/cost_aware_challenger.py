@@ -25,8 +25,9 @@ from Crypto.fixture_sim.contracts import (
 COST_AWARE_CHALLENGER_CONTRACT = "tradingagent.crypto.cost_aware_challenger.v1"
 ROUND_TRIP_FEE_RATE = Decimal("0.001")
 ROUND_TRIP_SLIPPAGE_BPS = Decimal("2")
+ROUND_TRIP_HALF_SPREAD_BPS = Decimal("1")
 ENTRY_MARGIN_RETURN = Decimal("0.0006")
-ROUND_TRIP_COST_FLOOR_RETURN = Decimal("0.0030")
+ROUND_TRIP_COST_FLOOR_RETURN = Decimal("0.0032")
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,8 @@ class CostAwareChallenger:
     exit_fee_rate: Decimal = ROUND_TRIP_FEE_RATE
     entry_slippage_bps: Decimal = ROUND_TRIP_SLIPPAGE_BPS
     exit_slippage_bps: Decimal = ROUND_TRIP_SLIPPAGE_BPS
+    entry_half_spread_bps: Decimal = ROUND_TRIP_HALF_SPREAD_BPS
+    exit_half_spread_bps: Decimal = ROUND_TRIP_HALF_SPREAD_BPS
     entry_margin_return: Decimal = ENTRY_MARGIN_RETURN
     minimum_decision_return: Decimal = ROUND_TRIP_COST_FLOOR_RETURN
     status: str = "preregistered_shadow_challenger"
@@ -60,6 +63,8 @@ class CostAwareChallenger:
             ROUND_TRIP_FEE_RATE,
             ROUND_TRIP_SLIPPAGE_BPS,
             ROUND_TRIP_SLIPPAGE_BPS,
+            ROUND_TRIP_HALF_SPREAD_BPS,
+            ROUND_TRIP_HALF_SPREAD_BPS,
             ENTRY_MARGIN_RETURN,
             ROUND_TRIP_COST_FLOOR_RETURN,
             "preregistered_shadow_challenger",
@@ -77,6 +82,8 @@ class CostAwareChallenger:
             self.exit_fee_rate,
             self.entry_slippage_bps,
             self.exit_slippage_bps,
+            self.entry_half_spread_bps,
+            self.exit_half_spread_bps,
             self.entry_margin_return,
             self.minimum_decision_return,
             self.status,
@@ -103,6 +110,8 @@ class CostAwareChallenger:
                 "exit_fee_rate": self.exit_fee_rate,
                 "entry_slippage_bps": self.entry_slippage_bps,
                 "exit_slippage_bps": self.exit_slippage_bps,
+                "entry_half_spread_bps": self.entry_half_spread_bps,
+                "exit_half_spread_bps": self.exit_half_spread_bps,
                 "entry_margin_return": self.entry_margin_return,
                 "minimum_decision_return": self.minimum_decision_return,
                 "status": self.status,
@@ -189,6 +198,7 @@ __all__ = [
     "ENTRY_MARGIN_RETURN",
     "ROUND_TRIP_COST_FLOOR_RETURN",
     "ROUND_TRIP_FEE_RATE",
+    "ROUND_TRIP_HALF_SPREAD_BPS",
     "ROUND_TRIP_SLIPPAGE_BPS",
     "evaluate_cost_aware_challenger",
 ]
