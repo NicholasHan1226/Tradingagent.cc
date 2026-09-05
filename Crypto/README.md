@@ -641,6 +641,7 @@ LLM sidecar 在核心资本 cycle lock 释放后独立追加，并有 1 MiB 本�
 ### 四十币滚动评估（research-only CLI）
 
 `python3 -m Crypto.forty_symbol_rolling_evaluation --store-root <完整40币只读store>`
+可选 `--configuration` 选择已冻结配置：默认 `crypto-spot-15m-momentum-candidate-v1`，或已登记的 `crypto-spot-15m-momentum-cost-floor-v1`。两者都是 `authority=none` 的 shadow 评估，不改 G5、不写 Champion。
 只读取完整的 observation store；不接受自由的 events 尾文件或 bars 目录。它以
 `head.json` 前后字节一致、`events_read_only()` 全链和既有 sidecar eligibility
 重建为输入锚点；head 缺失、漂移或链/边车不一致时失败关闭或要求重试，绝不修复
