@@ -2082,3 +2082,31 @@ def test_scale500_reference_fragment_rejects_non_500_budget() -> None:
             trading_date="2026-07-31",
             expected_bar_end="2026-07-31 13:10:00",
         )
+
+
+@pytest.mark.parametrize("configured", [None, "  " + "b" * 64 + "  "])
+def test_initialize_cli_carries_reviewed_contract_to_session_initializer(
+    tmp_path, monkeypatch, configured,
+):
+    import Ashare.minute_scale500_runtime as runtime
+    scale, rollback, token, universe, digest = _paths(tmp_path)
+    if configured is None:
+        monkeypatch.delenv("ASHARE_MINUTE_ACCEPTED_DATASET_CONTRACT_FINGERPRINT", raising=False)
+    else:
+        monkeypatch.setenv("ASHARE_MINUTE_ACCEPTED_DATASET_CONTRACT_FINGERPRINT", configured)
+    captured = []
+
+    def fixture_initializer(**kwargs):
+        captured.append(kwargs["accepted_dataset_contract_fingerprint"])
+        return _initializer(**kwargs)
+
+    original = runtime.initialize_scale500_session
+    monkeypatch.setattr(runtime, "initialize_scale500_session",
+                        lambda **kwargs: original(**kwargs, initializer=fixture_initializer))
+    assert main([
+        "initialize", "--scale-state-root", str(scale),
+        "--rollback30-state-root", str(rollback), "--token-file", str(token),
+        "--universe-source", str(universe), "--expected-universe-sha256", digest,
+        "--now", "2026-07-31T09:18:00+08:00",
+    ]) == 0
+    assert captured == [None if configured is None else "b" * 64]

@@ -1481,7 +1481,9 @@ prove that the same failure has run again on the current release.
 
 A reviewed catalog contract update can be rebound for **future** sessions with
 `ASHARE_MINUTE_ACCEPTED_DATASET_CONTRACT_FINGERPRINT` in the existing minute
-session environment file. The value must be one exact lowercase SHA-256. The
+session environment file. Both the ordinary minute initializer and the scale500 /
+rolling-eligible initialize entry point pass this explicit binding to the same
+validator. The value must be one exact lowercase SHA-256. The
 initializer substitutes that reviewed binding into its copied profile and still
 requires equality with the authenticated current catalog on every run; it
 recomputes the consumer profile digest. Missing configuration preserves the old
