@@ -410,8 +410,15 @@ def _validate_run(
     observed_at = _parse_utc(
         metadata.observed_at, "crypto_observation_observed_at_invalid"
     )
-    if data_through > observed_at or observed_at > window.observation_cutoff:
-        raise CryptoMarketObservationError("crypto_observation_watermark_invalid")
+    # A receipt that arrived after this slot's fixed cutoff is known to be
+    # unrecoverable by a later current-read.  Keep that case distinct in the
+    # append-only data_reject record without relaxing the PIT gate.  The
+    # stricter data_through > observed_at protocol violation is rejected by
+    # the shared TD envelope parser before this layer.
+    if observed_at > window.observation_cutoff:
+        raise CryptoMarketObservationError(
+            "crypto_observation_observed_at_after_cutoff"
+        )
 
     expected_open = window.first_open_time
     for row in envelope.data:
