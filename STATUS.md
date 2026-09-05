@@ -37,4 +37,6 @@ TradingCopilot 仍为独立人工辅助边界，不授予自动交易权限。#6
 
 ## 保留范围与文档入口
 
+Crypto 当前/历史运行边界见 [Crypto README](Crypto/README.md)；本页的带日期读回不替代模块合同，也不证明尚未观察的服务或样本段成功。
+
 规划见 [EVOLUTION_PROGRAM](docs/EVOLUTION_PROGRAM.md)，运行见 [operations](docs/operations.md)，发布见 [DEPLOYMENT](docs/DEPLOYMENT.md)。纯文档快路径不产生 release artifact，不替代运行时发布证据。
