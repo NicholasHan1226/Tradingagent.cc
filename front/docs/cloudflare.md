@@ -14,7 +14,7 @@ layer. It is a deployment preparation note, not a trading runtime change.
 ## Current Status
 
 The active browser-facing dashboard is served from the TradingAgent production
-host through `/opt/investment/tradingagent/front`. Cloudflare Pages is a tested
+host through `/opt/investment/releases/tradingagent/current/front/dist`. Cloudflare Pages is a tested
 historical deployment and rollback option, not the active production source of
 truth.
 
