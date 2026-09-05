@@ -77,13 +77,13 @@ TradingAgent 的研究、simulation 和 shadow 域以机器证据驱动，不依
 
 ## GitHub Actions
 
-GitHub Actions 不应阻断已经运行且有证据的数据、研究或模拟链，但普通代码合并和发布仍须遵守根 `AGENTS.md` 的精确候选、主线 CI 与 Controller 验收门禁。Actions 暂时不可用不授权从本地测试直接跳到 production release。独立 fallback runner 只有另行提供同等级机器证据并满足既有门禁后才能替代 CI；本文件不新增该权限。
+GitHub Actions 不应阻断已经运行且有证据的数据、研究或模拟链，但普通代码合并和发布仍须遵守根 `AGENTS.md` 的精确候选、主线 CI 与 standing authorization 边界；Controller / `AUTODEV_RETURN_V1` 不是合并前置条件。Actions 暂时不可用不授权从本地测试直接跳到 production release。独立 fallback runner 只有另行提供同等级机器证据并满足既有门禁后才能替代 CI；本文件不新增该权限。
 
 发布证据顺序为：
 
 ```text
 精确候选与确定性测试
--> PR / 精确主线 CI 与 Controller 验收
+-> PR / 精确主线 CI 与 standing authorization 合并
 -> 明确请求的 immutable release
 -> service/timer readback
 -> 数据/资本/决策 receipt
