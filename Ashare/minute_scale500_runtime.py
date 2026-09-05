@@ -950,6 +950,7 @@ def initialize_scale500_session(
     scale500_cohort_receipts: tuple[Path | str, ...] | list[Path | str] | None = None,
     rolling_eligible: bool = False,
     initializer: Initializer = initialize_minute_session,
+    accepted_dataset_contract_fingerprint: str | None = None,
     timeout_seconds: float = 20.0,
 ) -> dict[str, object]:
     """Initialize the exact or rolling-eligible isolated simulation session."""
@@ -998,6 +999,7 @@ def initialize_scale500_session(
             scale500_cohort_receipts=scale500_cohort_receipts,
             timeout_seconds=timeout_seconds,
             allow_pending_recent_listings=rolling_eligible,
+            accepted_dataset_contract_fingerprint=accepted_dataset_contract_fingerprint,
         )
         if rolling_eligible:
             published_count = result.get("symbol_count")
@@ -1832,6 +1834,9 @@ def main(argv: list[str] | None = None) -> int:
             configured_timeout = _timeout_seconds_from_environment()
             result = initialize_scale500_session(
                 **kwargs,
+                accepted_dataset_contract_fingerprint=(
+                    os.environ.get("ASHARE_MINUTE_ACCEPTED_DATASET_CONTRACT_FINGERPRINT", "").strip() or None
+                ),
                 target_bar_end=args.target_bar_end,
                 scale500_cohort_receipts=(
                     tuple(args.scale500_cohort_receipts)
