@@ -20,7 +20,10 @@ from Crypto.delayed_paper_cost_aware_challenger import (
 from Crypto.delayed_paper_round_trip import run_crypto_delayed_paper_round_trip_once
 from Crypto.fixture_auto_sim import evaluate_frozen_champion, qualify_fixture_evidence
 from Crypto.fixture_sim.contracts import CryptoSafetyError
-from Crypto.round_trip_capital import COST_AWARE_CHALLENGER_CAPITAL_POLICY
+from Crypto.round_trip_capital import (
+    COST_AWARE_CHALLENGER_CAPITAL_POLICY,
+    CryptoRoundTripError,
+)
 from tests.test_crypto_delayed_paper_runner import _runner_inputs
 
 
@@ -151,6 +154,29 @@ def test_shadow_runner_uses_distinct_root_and_challenger_decisions(
             result["symbols"][symbol]["capital"]["capital"]["authority_id"]
             == COST_AWARE_CHALLENGER_CAPITAL_POLICY.authority_id
         )
+
+
+def test_shadow_runner_rejects_existing_g5_root_without_writing(tmp_path: Path) -> None:
+    baseline_port, baseline_profile, request, _ = _runner_inputs()
+    baseline_root = tmp_path / "baseline"
+    run_crypto_delayed_paper_round_trip_once(
+        port=baseline_port,
+        profile=baseline_profile,
+        request=request,
+        output_root=baseline_root,
+    )
+    before = _tree(baseline_root)
+    challenger_port, challenger_profile, challenger_request, _ = _runner_inputs()
+
+    with pytest.raises(CryptoRoundTripError, match="round_trip_head_mismatch"):
+        run_cost_aware_challenger_once(
+            port=challenger_port,
+            profile=challenger_profile,
+            request=challenger_request,
+            output_root=baseline_root,
+        )
+
+    assert _tree(baseline_root) == before
 
 
 def test_existing_round_trip_runner_rejects_noncallable_challenger_hook(
