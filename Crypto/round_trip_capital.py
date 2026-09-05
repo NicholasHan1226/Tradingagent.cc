@@ -67,6 +67,12 @@ ROUND_TRIP_CAPITAL_POLICY = RoundTripCapitalPolicy(
     generation=2,
     initial_cash=Decimal("10000"),
 )
+COST_AWARE_CHALLENGER_CAPITAL_POLICY = RoundTripCapitalPolicy(
+    authority_id="crypto-round-trip-cost-aware-challenger-capital-v1",
+    account_id="crypto_sim_round_trip_cost_aware_challenger",
+    generation=1,
+    initial_cash=Decimal("10000"),
+)
 
 
 def _canonical_value(value: Any) -> Any:
@@ -174,11 +180,13 @@ def _money(value: Decimal, *, rounding: str = ROUND_DOWN) -> Decimal:
 
 
 def _validate_policy(policy: RoundTripCapitalPolicy) -> None:
-    if policy != ROUND_TRIP_CAPITAL_POLICY:
+    if policy not in {
+        ROUND_TRIP_CAPITAL_POLICY,
+        COST_AWARE_CHALLENGER_CAPITAL_POLICY,
+    }:
         raise CryptoRoundTripError("round_trip_policy_not_canonical")
     if (
-        policy.generation != 2
-        or policy.initial_cash != Decimal("10000")
+        policy.initial_cash != Decimal("10000")
         or policy.aggregate_with_prior_generations is not False
         or policy.real_trading_enabled is not False
         or policy.execution_authority is not False
@@ -1952,7 +1960,9 @@ def _order_base(
     side: str,
     quantity: Decimal,
     reference_price: Decimal,
+    policy: RoundTripCapitalPolicy = ROUND_TRIP_CAPITAL_POLICY,
 ) -> dict[str, Any]:
+    _validate_policy(policy)
     intent_material = {
         "cycle_id": cycle_id,
         "side": side,
@@ -1963,9 +1973,9 @@ def _order_base(
         "contract": ROUND_TRIP_ORDER_CONTRACT,
         "intent_id": f"crypto-round-trip-intent-{_sha256(intent_material)[:24]}",
         "cycle_id": cycle_id,
-        "authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
-        "authority_generation": ROUND_TRIP_CAPITAL_POLICY.generation,
-        "account_id": ROUND_TRIP_CAPITAL_POLICY.account_id,
+        "authority_id": policy.authority_id,
+        "authority_generation": policy.generation,
+        "account_id": policy.account_id,
         "symbol": cycle["symbol"],
         "side": side,
         "order_type": "fixture_market_at_next_closed_bar_quote",
@@ -1990,7 +2000,9 @@ def _receipt(
     filled_quantity: Decimal,
     status: str,
     reason_code: str | None,
+    policy: RoundTripCapitalPolicy = ROUND_TRIP_CAPITAL_POLICY,
 ) -> dict[str, Any]:
+    _validate_policy(policy)
     price = (
         _decimal(order["reference_price"], "round_trip_order_price_invalid")
         if filled_quantity > ZERO
@@ -2009,9 +2021,9 @@ def _receipt(
         "receipt_id": f"crypto-round-trip-receipt-{_sha256(material)[:24]}",
         "cycle_id": order["cycle_id"],
         "intent_id": order["intent_id"],
-        "authority_id": ROUND_TRIP_CAPITAL_POLICY.authority_id,
-        "authority_generation": ROUND_TRIP_CAPITAL_POLICY.generation,
-        "account_id": ROUND_TRIP_CAPITAL_POLICY.account_id,
+        "authority_id": policy.authority_id,
+        "authority_generation": policy.generation,
+        "account_id": policy.account_id,
         "symbol": order["symbol"],
         "side": order["side"],
         "status": status,
@@ -2021,7 +2033,7 @@ def _receipt(
         "average_price": price,
         "notional": notional,
         "fee": fee,
-        "fee_asset": "USDT",
+        "fee_asset": policy.currency,
         "filled_at": order["execution_slot"],
         **_non_authority_fields(),
     }
@@ -2032,14 +2044,16 @@ def _build_buy(
     *,
     cycle_id: str,
     cash: Decimal,
+    policy: RoundTripCapitalPolicy = ROUND_TRIP_CAPITAL_POLICY,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    _validate_policy(policy)
     instrument = cycle["instrument"]
     price = _ceil_step(
         cycle["quote"]["ask"] * (Decimal("1") + SLIPPAGE_BPS / Decimal("10000")),
         instrument["price_tick"],
     )
     budget = min(
-        ROUND_TRIP_CAPITAL_POLICY.initial_cash * POSITION_FRACTION,
+        policy.initial_cash * POSITION_FRACTION,
         cash,
     )
     quantity = _floor_step(
@@ -2057,12 +2071,14 @@ def _build_buy(
         side="buy",
         quantity=quantity,
         reference_price=price,
+        policy=policy,
     )
     return order, _receipt(
         order=order,
         filled_quantity=quantity,
         status="fixture_simulated",
         reason_code=None,
+        policy=policy,
     )
 
 
@@ -2072,7 +2088,9 @@ def _build_sell(
     cycle_id: str,
     position: Mapping[str, Any],
     fill_capacity: Decimal | None,
+    policy: RoundTripCapitalPolicy = ROUND_TRIP_CAPITAL_POLICY,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    _validate_policy(policy)
     instrument = cycle["instrument"]
     requested = position["quantity"]
     price = _floor_step(
@@ -2085,6 +2103,7 @@ def _build_sell(
         side="sell",
         quantity=requested,
         reference_price=price,
+        policy=policy,
     )
     available = requested if fill_capacity is None else min(requested, fill_capacity)
     filled = _floor_step(available, instrument["quantity_step"])
@@ -2097,6 +2116,7 @@ def _build_sell(
             filled_quantity=ZERO,
             status="fixture_rejected",
             reason_code="paper_liquidity_or_exchange_minimum_reject",
+            policy=policy,
         )
     status = (
         "fixture_simulated" if filled == requested else "fixture_partially_simulated"
@@ -2106,6 +2126,7 @@ def _build_sell(
         filled_quantity=filled,
         status=status,
         reason_code=None,
+        policy=policy,
     )
 
 
@@ -2114,11 +2135,12 @@ def run_round_trip_fixture_cycle(
     *,
     output_root: Path | str,
     paper_fill_capacity: Decimal | None = None,
+    policy: RoundTripCapitalPolicy = ROUND_TRIP_CAPITAL_POLICY,
 ) -> dict[str, Any]:
-    """Apply one validated causal fixture to capital generation 2."""
+    """Apply one validated causal fixture to one frozen paper authority."""
 
     _assert_simulation_only()
-    _validate_policy(ROUND_TRIP_CAPITAL_POLICY)
+    _validate_policy(policy)
     if paper_fill_capacity is not None:
         paper_fill_capacity = _decimal(
             paper_fill_capacity,
@@ -2130,6 +2152,7 @@ def run_round_trip_fixture_cycle(
     capital_root = Path(output_root) / "round_trip_capital"
     ledger = RoundTripCapitalLedger(
         capital_root,
+        policy=policy,
         _capability=_WRITE_CAPABILITY,
     )
     with ledger.cycle():
@@ -2185,12 +2208,14 @@ def run_round_trip_fixture_cycle(
                 cycle_id=cycle_id,
                 position=position,
                 fill_capacity=paper_fill_capacity,
+                policy=policy,
             )
         elif position is None and cycle["decision"]["action"] == "buy":
             order, receipt = _build_buy(
                 cycle,
                 cycle_id=cycle_id,
                 cash=state["cash"],
+                policy=policy,
             )
         projected = copy.deepcopy(state)
         projected["marks"][cycle["symbol"]] = cycle["quote"]["bid"]
@@ -2257,6 +2282,7 @@ def run_round_trip_fixture_cycle(
 
 
 __all__ = [
+    "COST_AWARE_CHALLENGER_CAPITAL_POLICY",
     "CryptoRoundTripError",
     "FROZEN_EXIT_POLICY_ID",
     "MAX_HOLD_SECONDS",
