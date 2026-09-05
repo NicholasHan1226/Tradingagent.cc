@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from Crypto.fixture_auto_sim import (
     FROZEN_CHAMPION,
@@ -25,6 +25,8 @@ from Crypto.fixture_auto_sim import (
 from Crypto.fixture_sim.contracts import (
     ALLOWED_SYMBOLS,
     FIXTURE_CONTRACT,
+    QualifiedFixtureEvidence,
+    TimeframeDecision,
     _assert_simulation_only,
     _validate_json_tree,
 )
@@ -546,7 +548,18 @@ def _prepare_observation(
     observation: Mapping[str, Any],
     *,
     llm_evidence: Mapping[str, Any] | None,
+    decision_evaluator: Callable[[QualifiedFixtureEvidence], TimeframeDecision] = (
+        evaluate_frozen_champion
+    ),
 ) -> dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
+    """Prepare causal fixtures using one explicit, frozen decision evaluator.
+
+    The default remains the existing Champion.  A detached challenger must pass
+    its own deterministic evaluator and use a distinct output root; this helper
+    never chooses, tunes, or promotes an evaluator.
+    """
+    if not callable(decision_evaluator):
+        raise RuntimeError("delayed_paper_decision_evaluator_invalid")
     prepared: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
     for symbol in FROZEN_SYMBOLS:
         fixture, counterfactual = _fixture_and_counterfactual(
@@ -555,7 +568,9 @@ def _prepare_observation(
             llm_evidence=llm_evidence,
         )
         evidence = qualify_fixture_evidence(fixture)
-        decision = evaluate_frozen_champion(evidence, FROZEN_CHAMPION)
+        decision = decision_evaluator(evidence)
+        if not isinstance(decision, TimeframeDecision):
+            raise RuntimeError("delayed_paper_decision_evaluator_invalid")
         prepared[symbol] = (
             fixture,
             counterfactual,
