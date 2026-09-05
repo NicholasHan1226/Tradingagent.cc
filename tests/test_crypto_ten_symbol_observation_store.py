@@ -171,6 +171,32 @@ def test_terminal_slot_conflict_across_event_types(tmp_path: Path) -> None:
         store.append_event(_gap_event(WINDOW_END - timedelta(minutes=10), WINDOW_END))
 
 
+def test_data_reject_persists_failed_observed_at(tmp_path: Path) -> None:
+    store = CryptoTenSymbolObservationStore(tmp_path)
+    observed_at = WINDOW_END + timedelta(seconds=56)
+    event = _reject_event(WINDOW_END)
+    event["observed_at"] = _iso(observed_at)
+
+    stored = store.append_event(event)
+
+    assert stored["observed_at"] == _iso(observed_at)
+    assert store.data_reject_events()[0]["observed_at"] == _iso(observed_at)
+    replay = store.append_event(event)
+    assert replay == stored
+
+
+def test_data_reject_rejects_invalid_observed_at(tmp_path: Path) -> None:
+    store = CryptoTenSymbolObservationStore(tmp_path)
+    event = _reject_event(WINDOW_END)
+    event["observed_at"] = "not-a-timestamp"
+
+    with pytest.raises(
+        CryptoTenSymbolObservationStoreError,
+        match="ten_symbol_observation_event_observed_at_invalid",
+    ):
+        store.append_event(event)
+
+
 def test_data_reject_is_idempotent_per_attempt_and_preserves_changed_reason(
     tmp_path: Path,
 ) -> None:

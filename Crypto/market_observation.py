@@ -416,9 +416,11 @@ def _validate_run(
     # stricter data_through > observed_at protocol violation is rejected by
     # the shared TD envelope parser before this layer.
     if observed_at > window.observation_cutoff:
-        raise CryptoMarketObservationError(
+        error = CryptoMarketObservationError(
             "crypto_observation_observed_at_after_cutoff"
         )
+        error.observed_at = observed_at
+        raise error
 
     expected_open = window.first_open_time
     for row in envelope.data:

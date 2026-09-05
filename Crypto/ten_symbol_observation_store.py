@@ -1068,6 +1068,13 @@ class CryptoTenSymbolObservationStore:
                 raise CryptoTenSymbolObservationStoreError(
                     "ten_symbol_observation_event_reason_invalid"
                 )
+            if "observed_at" in event:
+                try:
+                    _market_slot(event.get("observed_at"), aligned=False)
+                except CryptoTenSymbolObservationStoreError as exc:
+                    raise CryptoTenSymbolObservationStoreError(
+                        "ten_symbol_observation_event_observed_at_invalid"
+                    ) from exc
         if event_type == "data_gap":
             if event.get("gap_contract") != self._contracts.data_gap:
                 raise CryptoTenSymbolObservationStoreError(

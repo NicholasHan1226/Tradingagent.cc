@@ -474,7 +474,37 @@ def test_incomplete_window_writes_one_idempotent_data_reject(
     assert crypto_ten_symbol_observation_exit_code(second) == 0
     store = CryptoTenSymbolObservationStore(output_root)
     assert len(store.data_reject_events()) == 1
+    assert "observed_at" not in store.data_reject_events()[0]
     assert store.checkpoint()["latest_terminal_slot"] is None
+
+
+def test_after_cutoff_reject_records_failed_observed_at(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    token_file, output_root = _runtime_paths(monkeypatch, tmp_path)
+    failed_observed_at = CUTOFF + timedelta(seconds=1)
+    receipt = _run(
+        tmp_path,
+        token_file,
+        output_root,
+        now=WINDOW_END + timedelta(seconds=55),
+        transport_factory=_factory(
+            TenSymbolFixtureTransport(observed_at=failed_observed_at)
+        ),
+    )
+
+    assert receipt["status"] == "data_reject"
+    assert (
+        receipt["core_result"]["reason_code"]
+        == "crypto_observation_observed_at_after_cutoff"
+    )
+    assert receipt["core_result"]["observed_at"] == iso(failed_observed_at)
+    store = CryptoTenSymbolObservationStore(output_root)
+    rejects = store.data_reject_events()
+    assert len(rejects) == 1
+    assert rejects[0]["reason_code"] == "crypto_observation_observed_at_after_cutoff"
+    assert rejects[0]["observed_at"] == iso(failed_observed_at)
 
 
 def test_401_is_not_retried_and_has_no_fallback(
