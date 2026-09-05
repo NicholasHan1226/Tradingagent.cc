@@ -4,6 +4,8 @@
 
 `legacy_inventory.yaml` 中的 `paths` 只登记干净克隆必须存在的源码或配置；`runtime_paths` 单独登记可能尚未生成、不得纳入 Git 的安装态/运行态历史路径，并要求由 `.gitignore` 明确覆盖。运行目录在某台开发机上存在或不存在都不能证明生产消费者已经退役，生产裁决仍需独立的 installed-runtime readback。
 
+数据源稳定性只影响相应能力声明，不是开发、发布或只读观察的全局开关；以根 [AGENTS.md 的消费分层](../AGENTS.md#tradingdatas-消费分层)为准。下文历史 accept/reject 数字是消费者样本验收结果，不代表 TD 接口不能供数或 TA 不能继续开发。
+
 ## 状态语义
 
 | 状态 | 含义 | 可以做什么 | 不能推断什么 |
